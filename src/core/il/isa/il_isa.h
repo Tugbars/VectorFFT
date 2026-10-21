@@ -20,10 +20,11 @@
  *     built per ISA: the AVX2 builders in place, the AVX-512 builders in
  *     avx512/vtw_avx512.h (included here at avx512);
  *   - VFFT_ZTT_REGISTRY_H: the ZTT registry to include (ztt.h);
- *   - VFFT_IL_AVX2_ONLY(stem): the kernels built from env-knob or sed-rename
- *     recipes outside the corpus (pair2p/tangent and the blocked forward pair
- *     variants: design decision D3). They exist in the avx2 tree only; at
- *     avx512 this is 0, so their resolvers report them absent. */
+ *   - VFFT_IL_AVX2_ONLY(stem): a kernel of the avx2 tree only (stem##_avx2
+ *     there, 0 at avx512, so its resolver reports it absent). UNUSED: the
+ *     kernels built outside the corpus (design decision D3: the
+ *     pair2p/tangent kernels and the blocked forward pair variants t2b*,
+ *     n1tb*) exist at both ISAs, and VFFT_IL_SYM names them. */
 #ifndef VFFT_IL_ISA_H
 #define VFFT_IL_ISA_H
 

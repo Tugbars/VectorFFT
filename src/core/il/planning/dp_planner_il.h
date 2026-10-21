@@ -1604,8 +1604,8 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
          *   - the radix-32 slots keep all four forms; radix 4 has one.
          * The odd-N machinery (chain3, the flat DIT, the pair at 2^a * odd)
          * keeps every form, and the superseded kernels stay in the resolvers
-         * for the backward side (no tangent twins yet) and for those cells'
-         * banked rows. */
+         * for the backward side (its default form; the tangent twins race it
+         * as variant 3) and for those cells' banked rows. */
         const int pow2_cell = (N & (N - 1)) == 0;
         if (pow2_cell && (R1 == 64 || R2 == 64)) continue;
         memset(&c, 0, sizeof c);

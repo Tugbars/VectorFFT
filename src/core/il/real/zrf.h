@@ -78,7 +78,7 @@ static inline vfft_il2p_fn vfft_zrf_leaf_fn(int R, int bwd)
 {
     switch (R)
     {
-#if defined(VFFT_IL_R1C_PAIR_RADICES) && VFFT_IL_VW == 4
+#if defined(VFFT_IL_R1C_PAIR_RADICES)
 #define C(R_) case R_: return bwd ? VFFT_IL_SYM(radix##R_##_z_r1c_bwd) : VFFT_IL_SYM(radix##R_##_z_r1c_fwd);
     VFFT_IL_R1C_PAIR_RADICES(C)
 #undef C
@@ -91,7 +91,7 @@ static inline vfft_il2p_fn vfft_zrf_last_fn(int R, int bwd)
 {
     switch (R)
     {
-#if defined(VFFT_IL_T2CSGH_FWD_RADICES) && defined(VFFT_IL_T2CSGHT_BWD_RADICES) && VFFT_IL_VW == 4
+#if defined(VFFT_IL_T2CSGH_FWD_RADICES) && defined(VFFT_IL_T2CSGHT_BWD_RADICES)
 #define C(R_) case R_: return bwd ? VFFT_IL_SYM(radix##R_##_z_t2csght_bwd) : VFFT_IL_SYM(radix##R_##_z_t2csgh_fwd);
     VFFT_IL_T2CSGH_FWD_RADICES(C)
 #undef C
@@ -221,7 +221,6 @@ static inline void vfft_zrf_chain_str(const int *R, int K, char *buf, size_t n)
  * is the mono's (the first level must be flat). */
 static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int nomsz, int tile)
 {
-#if VFFT_IL_VW == 4
     vfft_zrf_plan_t *p;
     long prod = 1;
     size_t Nj;
@@ -263,23 +262,25 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
                 }
         }
         if (fd->tail[1] && !fd->msz[1])
-        {   /* the group base of block 1 at stage 1: w^Q with Q = 1, modulus Nj / D_1 */
+        {   /* the group base of block 1 at stage 1: w^Q with Q = 1, modulus Nj / D_1; broadcast
+             * records of VFFT_IL_TWREC doubles, [c x VW][-s, +s, ..] (the flat DIT's own group
+             * bases, il_flatdit.h) */
             const size_t L = Nj / fd->D[1];
             const int nb = fd->t2nb[1];
             int b[VFFT_IL_GEN2_MAX_BASES], t, lane;
             double c, sn;
             (void)vfft_il2p_gen2_bases(fd->R[1], b);
-            lv->t2 = (double *)vfft_aligned_alloc((size_t)nb * 16 * sizeof(double));
+            lv->t2 = (double *)vfft_aligned_alloc((size_t)nb * 2 * VFFT_IL_TWREC * sizeof(double));
             if (!lv->t2) { vfft_zrf_destroy(p); return 0; }
             for (t = 0; t < nb; t++)
             {   /* base t: w^(b[t]*1); the forward records first, the conjugates after them */
-                double *rf = lv->t2 + t * 8, *rb = lv->t2 + (nb + t) * 8;
+                double *rf = lv->t2 + t * VFFT_IL_TWREC, *rb = lv->t2 + (nb + t) * VFFT_IL_TWREC;
                 vfft_cs2pi_exact((long long)((size_t)b[t] % L), (long long)L, &c, &sn);
                 sn = -sn;
-                for (lane = 0; lane < 4; lane++)
+                for (lane = 0; lane < VFFT_IL_VW; lane++)
                 {
-                    rf[lane] = c; rf[4 + lane] = (lane & 1) ? sn : -sn;
-                    rb[lane] = c; rb[4 + lane] = (lane & 1) ? -sn : sn; /* bwd: conj */
+                    rf[lane] = c; rf[VFFT_IL_VW + lane] = (lane & 1) ? sn : -sn;
+                    rb[lane] = c; rb[VFFT_IL_VW + lane] = (lane & 1) ? -sn : sn; /* bwd: conj */
                 }
             }
         }
@@ -292,7 +293,7 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
             *ct = fd->ct[Kj - 1 - s];
             if (lv->tw && s >= fd->tcut) { _zrf_rebase_rec(cf); _zrf_rebase_rec(ct); continue; } /* the c2c plan's tile records */
             if (!_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2, cf) ||
-                !_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2 ? lv->t2 + 8 * fd->t2nb[1] : 0, ct))
+                !_zrf_range_rec(fd, s, (size_t)lv->h, lv->t2 ? lv->t2 + VFFT_IL_TWREC * fd->t2nb[1] : 0, ct))
             { vfft_zrf_destroy(p); return 0; }
         }
         {   /* THE HERMITIAN LAST STAGE: the group-loop tail's records, their spectrum side
@@ -356,10 +357,6 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
     p->mb = vfft_zrm_fn((int)Nj, 1);
     if (!p->mf || !p->mb) { vfft_zrf_destroy(p); return 0; }
     return p;
-#else
-    (void)N; (void)R; (void)K; (void)nomsz; (void)tile;
-    return 0;
-#endif
 }
 
 /* 1 when any level of the plan is tiled (a budget no level can take builds
@@ -387,10 +384,11 @@ static inline int _zrf_chain_rec(int L, int depth, int need)
     return 0;
 }
 /* 1 when N has at least one chain of two or more stages (the create still
- * validates it) */
+ * validates it). The engine exists where its two kinds do: an ISA whose
+ * registry declares r1c or t2csgh absent has no zrf. */
 static inline int _zrf_has_chain(int N)
 {
-    return VFFT_IL_VW == 4 && N >= 9 && (N & 1) && _zrf_chain_rec(N, 0, 2);
+    return vfft_zrf_leaf_fn(3, 0) && vfft_zrf_last_fn(3, 0) && N >= 9 && (N & 1) && _zrf_chain_rec(N, 0, 2);
 }
 
 #if defined(__AVX2__) || defined(__SSE2__)

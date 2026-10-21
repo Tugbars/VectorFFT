@@ -115,6 +115,11 @@ let colstride = ref false
 let herm = ref 0
 let herm_hl = ref 0
 
+(* the Hermitian kernel's MAIN width (set by C2c_il.emit): a 256-bit arm of a 512-bit kernel
+   (its ladder tail) names the ymm twin of the conjugation mask, _M_IM_y *)
+let herm_main_vw = ref 4
+let herm_ymask () = if !herm_main_vw > 4 then "_M_IM_y" else "_M_IM"
+
 let addr_str (a : caddr) : string =
   match a with
   | AZinLeg l when !colstride -> Printf.sprintf "zin[2*((size_t)%d*Ls + (size_t)k*Gs)]" l
@@ -244,9 +249,10 @@ let render_load (isa : Isa.t) (a : caddr) : string =
   | AZinLeg l when !colstride && !herm = 2 && l > !herm_hl && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_xor_pd(_mm256_loadu2_m128d(zin_unused - 2*(_d0 + ((size_t)k + 1)*Gs + (size_t)%d*Ls), \
-       zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), _M_IM)"
+       zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), %s)"
       l
       l
+      (herm_ymask ())
   | AZinLeg l when !colstride && !herm = 2 && l = !herm_hl && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "({ const size_t _dk = _d0 + (size_t)k*Gs, _dk1 = _d0 + ((size_t)k + 1)*Gs; \
@@ -263,6 +269,27 @@ let render_load (isa : Isa.t) (a : caddr) : string =
       "((2*(_d0 + (size_t)k*Gs) < Ls) ? _mm_loadu_pd(&zin[2*((size_t)%d*Ls + (size_t)k*Gs)]) \
        : _mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_d0 + (size_t)k*Gs + (size_t)%d*Ls)), _M_IM_n))"
       l l
+  (* the Hermitian load edge at 512 bits: four columns k..k+3 at pitch Gs, as the 256-bit
+     edge twice (the mirrored legs: two loadu2 pairs joined, conjugated; the middle leg: per
+     column by its bin) *)
+  | AZinLeg l when !colstride && !herm = 2 && l > !herm_hl && isa.Isa.vec_width = 8 ->
+    let m j = Printf.sprintf "zin_unused - 2*(_d0 + ((size_t)k + %d)*Gs + (size_t)%d*Ls)" j l in
+    Printf.sprintf
+      "_mm512_xor_pd(_mm512_insertf64x4(_mm512_castpd256_pd512(_mm256_loadu2_m128d(%s, %s)), \
+       _mm256_loadu2_m128d(%s, %s), 1), _M_IM)"
+      (m 1) (m 0) (m 3) (m 2)
+  | AZinLeg l when !colstride && !herm = 2 && l = !herm_hl && isa.Isa.vec_width = 8 ->
+    let c j =
+      Printf.sprintf
+        "const size_t _dk%d = _d0 + ((size_t)k + %d)*Gs; \
+         const __m128d _c%d = (2*_dk%d < Ls) ? _mm_loadu_pd(&zin[2*((size_t)%d*Ls + ((size_t)k + %d)*Gs)]) \
+         : _mm_xor_pd(_mm_loadu_pd(zin_unused - 2*(_dk%d + (size_t)%d*Ls)), _M_IM_n); "
+        j j j j l j j l
+    in
+    Printf.sprintf
+      "({ %s%s%s%s_mm512_insertf64x4(_mm512_castpd256_pd512(_mm256_insertf128_pd(_mm256_castpd128_pd256(_c0), _c1, 1)), \
+       _mm256_insertf128_pd(_mm256_castpd128_pd256(_c2), _c3, 1), 1); })"
+      (c 0) (c 1) (c 2) (c 3)
   | AZinLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)], \
@@ -284,7 +311,13 @@ let render_load (isa : Isa.t) (a : caddr) : string =
       l
       l
   | AZinReal l when isa.Isa.vec_width = 2 -> Printf.sprintf "_mm_load_sd(&zin[(size_t)%d*Ls + k])" l
-  | AZinReal _ -> failwith "cx_render.render_load: AZinReal renders at 256 / 128 bits only"
+  | AZinReal l when isa.Isa.vec_width = 8 ->
+    (* the 4 columns' reals in one 256-bit load, spread to the real lanes by
+       one lane permute; the mask zeroes the imaginary lanes *)
+    Printf.sprintf
+      "_mm512_maskz_permutexvar_pd(0x55, _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3), _mm512_castpd256_pd512(_mm256_loadu_pd(&zin[(size_t)%d*Ls + k])))"
+      l
+  | AZinReal _ -> failwith "cx_render.render_load: AZinReal renders at 512 / 256 / 128 bits only"
   | AZinHerm (l, r) when isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_xor_pd(_mm256_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm256_setr_pd(0.0, -0.0, 0.0, -0.0))"
@@ -293,7 +326,11 @@ let render_load (isa : Isa.t) (a : caddr) : string =
     Printf.sprintf
       "_mm_xor_pd(_mm_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm_setr_pd(0.0, -0.0))"
       (r - l)
-  | AZinHerm _ -> failwith "cx_render.render_load: AZinHerm renders at 256 / 128 bits only"
+  | AZinHerm (l, r) when isa.Isa.vec_width = 8 ->
+    Printf.sprintf
+      "_mm512_xor_pd(_mm512_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0))"
+      (r - l)
+  | AZinHerm _ -> failwith "cx_render.render_load: AZinHerm renders at 512 / 256 / 128 bits only"
   | AZeroV when isa.Isa.vec_width = 4 -> "_mm256_setzero_pd()"
   | AZeroV when isa.Isa.vec_width = 2 -> "_mm_setzero_pd()"
   | AZeroV -> failwith "cx_render.render_load: AZeroV renders at 256 / 128 bits only"
@@ -320,10 +357,11 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
   | AZoutLeg l when !colstride && !herm = 1 && l > !herm_hl && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_storeu2_m128d(zout_unused - 2*(_d0 + ((size_t)k + 1)*OGs + (size_t)%d*OLs), \
-       zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm256_xor_pd(%s, _M_IM))"
+       zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm256_xor_pd(%s, %s))"
       l
       l
       v
+      (herm_ymask ())
   | AZoutLeg l when !colstride && !herm = 1 && l = !herm_hl && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "{ const __m256d _hv = %s; const size_t _dk = _d0 + (size_t)k*OGs, _dk1 = _d0 + ((size_t)k + 1)*OGs; \
@@ -339,6 +377,24 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       "{ const __m128d _hv = %s; if (2*(_d0 + (size_t)k*OGs) < OLs) _mm_storeu_pd(&zout[2*((size_t)%d*OLs + (size_t)k*OGs)], _hv); \
        else _mm_storeu_pd(zout_unused - 2*(_d0 + (size_t)k*OGs + (size_t)%d*OLs), _mm_xor_pd(_hv, _M_IM_n)); }"
       v l l
+  (* the Hermitian store edge at 512 bits: four columns k..k+3 at pitch OGs *)
+  | AZoutLeg l when !colstride && !herm = 1 && l > !herm_hl && isa.Isa.vec_width = 8 ->
+    let m j = Printf.sprintf "zout_unused - 2*(_d0 + ((size_t)k + %d)*OGs + (size_t)%d*OLs)" j l in
+    Printf.sprintf
+      "{ const __m512d _hv = _mm512_xor_pd(%s, _M_IM); \
+       _mm256_storeu2_m128d(%s, %s, _mm512_castpd512_pd256(_hv)); \
+       _mm256_storeu2_m128d(%s, %s, _mm512_extractf64x4_pd(_hv, 1)); }"
+      v (m 1) (m 0) (m 3) (m 2)
+  | AZoutLeg l when !colstride && !herm = 1 && l = !herm_hl && isa.Isa.vec_width = 8 ->
+    let c j =
+      let part = Isa.cx_part_pd isa "_hv" j in
+      Printf.sprintf
+        "{ const size_t _dk%d = _d0 + ((size_t)k + %d)*OGs; \
+         if (2*_dk%d < OLs) _mm_storeu_pd(&zout[2*((size_t)%d*OLs + ((size_t)k + %d)*OGs)], %s); \
+         else _mm_storeu_pd(zout_unused - 2*(_dk%d + (size_t)%d*OLs), _mm_xor_pd(%s, _M_IM_n)); } "
+        j j j l j part j l part
+    in
+    Printf.sprintf "{ const __m512d _hv = %s; %s%s%s%s}" v (c 0) (c 1) (c 2) (c 3)
   | AZoutLeg l when !colstride && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], \
@@ -370,7 +426,14 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       l
       v
   | AZoutReal l when isa.Isa.vec_width = 2 -> Printf.sprintf "_mm_store_sd(&zout[(size_t)%d*OLs + k], %s)" l v
-  | AZoutReal _ -> failwith "cx_render.render_store: AZoutReal renders at 256 / 128 bits only"
+  | AZoutReal l when isa.Isa.vec_width = 8 ->
+    (* the 4 real lanes gathered into the low half by one lane permute, one
+       256-bit store *)
+    Printf.sprintf
+      "_mm256_storeu_pd(&zout[(size_t)%d*OLs + k], _mm512_castpd512_pd256(_mm512_permutexvar_pd(_mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7), %s)))"
+      l
+      v
+  | AZoutReal _ -> failwith "cx_render.render_store: AZoutReal renders at 512 / 256 / 128 bits only"
   | _ -> Isa.storeu_pd isa (addr_str a) v
 ;;
 

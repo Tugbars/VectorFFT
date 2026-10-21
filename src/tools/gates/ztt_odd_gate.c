@@ -25,6 +25,14 @@
  *   the scrambled plans roundtrip, and the rows the race banked say
  *   il_route=ztt with an odd radix in il_ztt= — the cascade banks nothing.
  *
+ *   BELOW THE 8-LANE FLOOR (with --wisdir, on its own cold sub-store). At
+ *   2160, 2400 and 15120 (2^4 and 2^5 times odd: ZTURN-T's at avx2, the flat
+ *   DIT's and the small engines' at avx512, policy_il.h
+ *   vfft_policy_ztt_odd_band), every (placement, order) cell is served, the
+ *   natural forward exact and the scrambled forward a permutation of the DFT,
+ *   both roundtrip; the serving route and the banked rows are printed, and at
+ *   avx2 the scrambled row is the plain ZTURN-T on an odd chain.
+ *
  * THE BUILD'S ISA. The registry is ztt.h's (vfft_ztt_cells, the build's
  * ISA). An avx512 row may carry ONE order class (the other's drivers are 0)
  * where the 8-lane laws refuse the other for its chain: that class is
@@ -42,6 +50,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <direct.h>
 #include "vfft.h"
 #include "ztt.h"
 
@@ -587,6 +596,114 @@ static int frontdoor_pass(const char *wisdir)
     return g_fail == fails0;
 }
 
+/* ── pass 4: below the 8-lane floor, on a COLD store ────────────────────────
+ * The odd band's 2^4 * odd and 2^5 * odd lengths (2160 .. 252000, 121 of them)
+ * have no chain the 8-lane laws admit in either class (policy_il.h
+ * vfft_policy_ztt_odd_band): at avx512 they are not ZTURN-T's, the flat DIT
+ * and the small engines race them; at avx2 they stay ZTURN-T's odd band (the
+ * scrambled pool's one writer, the plain ZTURN-T on an odd chain). At three of
+ * them, every (placement, order) cell through the front door on a cold
+ * sub-store <wisdir>/below_floor: the create must serve it (a cold cell races
+ * and banks); the natural forward is exact against the DFT, the scrambled
+ * forward a PERMUTATION of the DFT, both roundtrip; the serving route and the
+ * banked rows are printed. */
+static int cmp_re(const void *a, const void *b)
+{
+    const double x = ((const double *)a)[0], y = ((const double *)b)[0];
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+/* the scrambled forward against the DFT as a multiset: both sorted by the real
+ * part, each element matched to the reference at its rank or a neighbour (two
+ * real parts within rounding may swap ranks); the worst match, relative */
+static double perm_err(const double *y, const double *ref, long N)
+{
+    const size_t nb = (size_t)2 * N * sizeof(double);
+    double *a = (double *)malloc(nb), *b = (double *)malloc(nb), worst = 0, mx = 0;
+    memcpy(a, y, nb);
+    memcpy(b, ref, nb);
+    qsort(a, (size_t)N, 2 * sizeof(double), cmp_re);
+    qsort(b, (size_t)N, 2 * sizeof(double), cmp_re);
+    for (long k = 0; k < N; k++)
+    {
+        double best = 1e300;
+        for (long j = k - 2; j <= k + 2; j++)
+        {
+            double e;
+            if (j < 0 || j >= N) continue;
+            e = fabs(a[2 * k] - b[2 * j]) + fabs(a[2 * k + 1] - b[2 * j + 1]);
+            if (e < best) best = e;
+        }
+        if (best > worst) worst = best;
+        if (fabs(b[2 * k]) > mx) mx = fabs(b[2 * k]);
+        if (fabs(b[2 * k + 1]) > mx) mx = fabs(b[2 * k + 1]);
+    }
+    free(a); free(b);
+    return mx > 0 ? worst / mx : worst;
+}
+static int below_floor_pass(const char *wisdir)
+{
+    static const int NS[] = { 2160, 2400, 15120 };
+    static const char *SHARDS[] = { "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_prime.txt" };
+    int fails0 = g_fail;
+    char dir[1024], path[1200];
+    snprintf(dir, sizeof dir, "%s/below_floor", wisdir);
+    _mkdir(dir);
+    for (int s = 0; s < 3; s++)
+    {   /* COLD: every create below races */
+        snprintf(path, sizeof path, "%s/%s", dir, SHARDS[s]);
+        remove(path);
+    }
+    printf("BELOW THE 8-LANE FLOOR (cold store %s): 2^4*odd and 2^5*odd odd-band N\n", dir);
+    for (int i = 0; i < 3; i++)
+    {
+        const int N = NS[i];
+        const size_t nb = (size_t)2 * N * sizeof(double);
+        double *x = (double *)vfft_aligned_alloc(nb), *ref = (double *)vfft_aligned_alloc(nb);
+        double *o = (double *)vfft_aligned_alloc(nb), *b = (double *)vfft_aligned_alloc(nb);
+        CHECK(vfft_ztt_odd_band(N) && (N & -N) < 64, "N=%d: not a 2^4/2^5 multiple in the odd band", N);
+        fill(x, N, (unsigned)N + 5u);
+        ref_dft(x, 1, ref, N, 0);
+        for (int ip = 0; ip < 2; ip++)
+            for (int scr = 0; scr < 2; scr++)
+            {
+                vfft_plan p = mk_door(dir, N, ip, scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL);
+                vfft_info_t inf;
+                double ef, er;
+                CHECK(p != NULL, "N=%d %s %s: not served", N, ip ? "ip" : "oop", scr ? "scrambled" : "natural");
+                if (!p) continue;
+                vfft_info(p, &inf);
+                if (ip) { memcpy(o, x, nb); vfft_execute(p, VFFT_FORWARD, o, o); }
+                else vfft_execute(p, VFFT_FORWARD, x, o);
+                ef = scr ? perm_err(o, ref, N) : relerr(o, ref, N, 1.0);
+                CHECK(ef < 1e-12, "N=%d %s %s forward vs DFT%s: relerr %.3e", N, ip ? "ip" : "oop",
+                      scr ? "scrambled" : "natural", scr ? " (as a permutation)" : "", ef);
+                if (ip) { memcpy(b, o, nb); vfft_execute(p, VFFT_BACKWARD, b, b); }
+                else vfft_execute(p, VFFT_BACKWARD, o, b);
+                er = relerr(b, x, N, (double)N);
+                CHECK(er < 1e-12, "N=%d %s %s roundtrip: relerr %.3e", N, ip ? "ip" : "oop", scr ? "scrambled" : "natural", er);
+                printf("  %-6d %-4s %-10s served by %-10s fwd vs DFT%s %.2e, roundtrip %.2e\n", N, ip ? "ip" : "oop",
+                       scr ? "scrambled" : "natural", inf.route, scr ? " (perm)" : "       ", ef, er);
+                vfft_destroy(p);
+            }
+        {   /* the banked out-of-place rows: at avx2 the scrambled one is the plain
+             * ZTURN-T on an odd chain (the odd band's writer); at avx512 printed */
+            char rn[16], cn[64], rs[16], cs[64];
+            const int hn = store_row(dir, N, " ord=nat place=oop ", rn, sizeof rn, cn, sizeof cn);
+            const int hs = store_row(dir, N, " ord=scr place=oop ", rs, sizeof rs, cs, sizeof cs);
+#if VFFT_IL_VW == 8
+            (void)hs;
+#else
+            CHECK(hs && !strcmp(rs, "ztt") && chain_has_odd(cs), "N=%d: the ord=scr row is not the plain ZTURN-T on an odd chain (%s %s)",
+                  N, hs ? rs : "none", cs);
+#endif
+            printf("  %-6d banked: ord=nat il_route=%s %s, ord=scr il_route=%s %s\n", N, hn ? rn : "none", cn, hs ? rs : "none", cs);
+        }
+        vfft_aligned_free(x); vfft_aligned_free(ref); vfft_aligned_free(o); vfft_aligned_free(b);
+    }
+    printf("  %d failures\n\n", g_fail - fails0);
+    return g_fail == fails0;
+}
+
 int main(int argc, char **argv)
 {
     const char *wisdir = NULL;
@@ -594,7 +711,11 @@ int main(int argc, char **argv)
     for (int a = 1; a + 1 < argc; a++) if (!strcmp(argv[a], "--wisdir")) wisdir = argv[a + 1];
     ok1 = staged_pass();
     ok2 = odd_pass();
-    if (wisdir) ok3 = frontdoor_pass(wisdir) && frontdoor_mt_pass(wisdir);
+    if (wisdir)
+    {
+        ok3 = frontdoor_pass(wisdir) && frontdoor_mt_pass(wisdir);
+        ok3 = below_floor_pass(wisdir) && ok3;
+    }
     else printf("(no --wisdir: the front-door pass was not run)\n");
     printf("%s\n", (ok1 && ok2 && ok3) ? "ALL PASS" : "*** GATE FAILED ***");
     return (ok1 && ok2 && ok3) ? 0 : 1;

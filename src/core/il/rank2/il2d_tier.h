@@ -902,7 +902,6 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
     T_(VFFT_IL_SYM(radix4_z_n1_bwd), VFFT_IL_SYM(radix4_z_n1r_bwd))
     T_(VFFT_IL_SYM(radix8_z_n1_bwd), VFFT_IL_SYM(radix8_z_n1r_bwd))
     T_(VFFT_IL_SYM(radix16_z_n1_bwd), VFFT_IL_SYM(radix16_z_n1r_bwd))
-#if !defined(VFFT_BUILD_ISA_AVX512)   /* the tangent pair kinds are avx2-only (D3) */
     T_(VFFT_IL_SYM(radix8_z_n1ttan_fwd), VFFT_IL_SYM(radix8_z_n1trtan_fwd))
     T_(VFFT_IL_SYM(radix16_z_n1ttan_fwd), VFFT_IL_SYM(radix16_z_n1trtan_fwd))
     T_(VFFT_IL_SYM(radix8_z_t2tan_fwd), VFFT_IL_SYM(radix8_z_t2rtan_fwd))
@@ -911,7 +910,6 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
     T_(VFFT_IL_SYM(radix16_z_t2ttan_bwd), VFFT_IL_SYM(radix16_z_t2trtan_bwd))
     T_(VFFT_IL_SYM(radix8_z_n1tan_bwd), VFFT_IL_SYM(radix8_z_n1rtan_bwd))
     T_(VFFT_IL_SYM(radix16_z_n1tan_bwd), VFFT_IL_SYM(radix16_z_n1rtan_bwd))
-#endif
 #undef T_
     return 0;
 }

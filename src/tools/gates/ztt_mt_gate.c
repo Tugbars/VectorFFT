@@ -10,6 +10,16 @@
  *   counted as a pass.
  *   ROUNDTRIP. The threaded backward of the serial forward is N*x.
  *
+ * THE BUILD'S ISA. Each cell names one chain; each order class runs it where
+ * the ISA's lane laws admit it (ztt.h's create: at 8 lanes (N / R0) % 8 == 0,
+ * a natural R0 % 8 == 0, a plain R_last % 8 == 0 and (N / R_last) % 8 == 0;
+ * at 4 lanes every chain), else the first ordering of the same radices the
+ * laws admit (odd radices interior), so every class is threaded at both ISAs;
+ * where the laws refuse the cell's chain, its create is checked to return
+ * NULL. A class with no lawful ordering is refused at this ISA: its create is
+ * checked to return NULL and the class is reported, never counted as a pass
+ * or a failure.
+ *
  * Build: python build.py --compile --vfft --src benches/ztt_mt_gate.c */
 #include <math.h>
 #include <stdio.h>
@@ -56,10 +66,61 @@ static const cell_t CELLS[] = {
 static const size_t LADDER[4] = { 512, 1024, 2048, 3072 };
 static const int TS[3] = { 2, 4, 8 };
 
+/* THE LANE LAWS of the build's ISA, as ztt.h's create states them (ztt_gate.c's
+ * spelling): at 8 lanes every chain needs (N / R0) % 8 == 0, a natural chain
+ * R0 % 8 == 0 and a plain chain R_last % 8 == 0 and (N / R_last) % 8 == 0; at
+ * 4 lanes every chain of the grammar meets them */
+static int lane_law_admits(long N, const int *chain, int nf, int scr)
+{
+#if VFFT_IL_VW == 8
+    if ((N / chain[0]) % VFFT_IL_VW) return 0;
+    if (!scr) return chain[0] % VFFT_IL_VW == 0;
+    return chain[nf - 1] % VFFT_IL_VW == 0 && (N / chain[nf - 1]) % VFFT_IL_VW == 0;
+#else
+    (void)N; (void)chain; (void)nf; (void)scr;
+    return 1;
+#endif
+}
+/* the next ordering of a in ascending lexicographic order; 0 after the last */
+static int next_order(int *a, int n)
+{
+    int i = n - 2, j = n - 1, t;
+    while (i >= 0 && a[i] >= a[i + 1]) i--;
+    if (i < 0) return 0;
+    while (a[j] <= a[i]) j--;
+    t = a[i]; a[i] = a[j]; a[j] = t;
+    for (j = n - 1, i++; i < j; i++, j--) { t = a[i]; a[i] = a[j]; a[j] = t; }
+    return 1;
+}
+/* the class's chain at this ISA: the cell's own where the lane laws admit it,
+ * else the first ordering of its radices (ends in {4, 8}, odd radices
+ * interior, (N / R0) % 4 == 0) they admit. 1 = out holds it, 0 = no ordering
+ * is lawful: the class is refused at this ISA. */
+static int class_chain(const cell_t *c, int scr, int *out)
+{
+    int a[VFFT_ZTT_MAX_NF];
+    memcpy(out, c->chain, sizeof(int) * (size_t)c->nf);
+    if (lane_law_admits(c->N, out, c->nf, scr)) return 1;
+    memcpy(a, c->chain, sizeof a);
+    for (int i = 1; i < c->nf; i++)   /* ascending: the first ordering */
+        for (int j = i; j > 0 && a[j - 1] > a[j]; j--) { const int t = a[j]; a[j] = a[j - 1]; a[j - 1] = t; }
+    do
+    {
+        const int e0 = a[0] == 4 || a[0] == 8, e1 = a[c->nf - 1] == 4 || a[c->nf - 1] == 8;
+        if (e0 && e1 && (c->N / a[0]) % 4 == 0 && lane_law_admits(c->N, a, c->nf, scr))
+        {
+            memcpy(out, a, sizeof(int) * (size_t)c->nf);
+            return 1;
+        }
+    } while (next_order(a, c->nf));
+    return 0;
+}
+
 int main(void)
 {
     const int ncell = (int)(sizeof CELLS / sizeof CELLS[0]);
     long runs = 0, declined = 0;
+    int nrefused = 0;
     printf("ZTURN-T MT == ST (bitwise), engagement, roundtrip\n");
     printf("  %-8s %-16s %-4s %-6s %-9s %-9s %s\n", "N", "chain", "scr", "tile", "MT runs", "declined", "verdict");
     for (int ci = 0; ci < ncell; ci++)
@@ -69,21 +130,36 @@ int main(void)
         const size_t nb = (size_t)2 * N * sizeof(double);
         double *x = (double *)vfft_aligned_alloc(nb), *ys = (double *)vfft_aligned_alloc(nb);
         double *ym = (double *)vfft_aligned_alloc(nb), *rt = (double *)vfft_aligned_alloc(nb);
-        char cs[48];
+        char cs0[48];
         int off = 0;
-        for (int s = 0; s < c->nf; s++) off += sprintf(cs + off, "%s%d", s ? "." : "", c->chain[s]);
+        for (int s = 0; s < c->nf; s++) off += sprintf(cs0 + off, "%s%d", s ? "." : "", c->chain[s]);
         fill(x, N, (unsigned)N + 11u);
         for (int scr = 0; scr < 2; scr++)
+        {
+            int ch[VFFT_ZTT_MAX_NF];
+            char cs[48];
+            const int lawful = class_chain(c, scr, ch);
+            if (!lane_law_admits(N, c->chain, c->nf, scr))
+            {   /* the cell's own chain, refused by the lane laws: its create must answer as the law does */
+                vfft_ztt_plan_t *q = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, scr);
+                CHECK(q == NULL, "N=%ld %s scr=%d: a create the %d-lane laws refuse built a plan", N, cs0, scr, VFFT_IL_VW);
+                vfft_ztt_destroy(q);
+                printf("  %-8ld %-16s %-4d refused by the %d-lane laws at %s (create NULL)%s\n", N, cs0, scr, VFFT_IL_VW,
+                       VFFT_IL_ISA_NAME, lawful ? "; threaded on the lawful ordering below" : ": the class is not gated");
+                if (!lawful) { nrefused++; continue; }
+            }
+            off = 0;
+            for (int s = 0; s < c->nf; s++) off += sprintf(cs + off, "%s%d", s ? "." : "", ch[s]);
             for (int ti = -1; ti < 4; ti++)
             {
                 const size_t tile = ti < 0 ? 0 : LADDER[ti];
                 long cruns = 0, cdeclined = 0, f0 = g_fail;
-                if (tile && !vfft_ztt_tile_legal_ord(c->N, c->chain, c->nf, tile, scr)) continue;
+                if (tile && !vfft_ztt_tile_legal_ord(c->N, ch, c->nf, tile, scr)) continue;
                 for (int ip = 0; ip < 2; ip++)
                     for (int bwd = 0; bwd < 2; bwd++)
                     {
                         /* the serial reference on the same plan */
-                        vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, scr);
+                        vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(c->N, ch, c->nf, scr);
                         CHECK(p != NULL, "N=%ld %s scr=%d: create", N, cs, scr);
                         if (!p) continue;
                         if (tile) vfft_ztt_set_tile(p, tile);
@@ -97,7 +173,7 @@ int main(void)
                                 const long e0 = vfft_ztt_mt_passes();
                                 int rc;
                                 memset(ym, 0, nb);
-                                rc = vfft__ztt_mt_probe(c->N, c->chain, c->nf, scr, ip, tile, TS[tI], arm, bwd, x, ym);
+                                rc = vfft__ztt_mt_probe(c->N, ch, c->nf, scr, ip, tile, TS[tI], arm, bwd, x, ym);
                                 CHECK(rc >= 0, "N=%ld %s scr=%d tile=%zu T=%d arm=%d: probe refused", N, cs, scr, tile, TS[tI], arm);
                                 if (rc <= 0) { cdeclined++; continue; }
                                 cruns++;
@@ -108,13 +184,13 @@ int main(void)
                     }
                 /* roundtrip: the threaded backward (T=8, BLOCKS) of the serial forward, out of place */
                 {
-                    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(c->N, c->chain, c->nf, scr);
+                    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(c->N, ch, c->nf, scr);
                     if (p)
                     {
                         if (tile) vfft_ztt_set_tile(p, tile);
                         vfft_ztt_execute_fwd(p, x, ys);
                         vfft_ztt_destroy(p);
-                        if (vfft__ztt_mt_probe(c->N, c->chain, c->nf, scr, 0, tile, 8, 1, 1, ys, rt) == 1)
+                        if (vfft__ztt_mt_probe(c->N, ch, c->nf, scr, 0, tile, 8, 1, 1, ys, rt) == 1)
                         {
                             const double e = relerr(rt, x, N, (double)N);
                             CHECK(e < 1e-12, "N=%ld %s scr=%d tile=%zu: threaded roundtrip relerr %.2e", N, cs, scr, tile, e);
@@ -124,8 +200,12 @@ int main(void)
                 runs += cruns; declined += cdeclined;
                 printf("  %-8ld %-16s %-4d %-6zu %-9ld %-9ld %s\n", N, cs, scr, tile, cruns, cdeclined, g_fail == f0 ? "ok" : "*** FAIL ***");
             }
+        }
         vfft_aligned_free(x); vfft_aligned_free(ys); vfft_aligned_free(ym); vfft_aligned_free(rt);
     }
+    if (nrefused)
+        printf("\n%d (cell, class) pairs refused by the %d-lane laws at %s (no lawful ordering of the chain): not gated\n",
+               nrefused, VFFT_IL_VW, VFFT_IL_ISA_NAME);
     printf("\n%ld threaded executions bitwise the serial walk, %ld declined (untiled TILES arm), %d failures\n", runs, declined, g_fail);
     printf("%s\n", g_fail ? "*** GATE FAILED ***" : "ALL PASS");
     return g_fail ? 1 : 0;

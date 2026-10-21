@@ -13,6 +13,12 @@
  *   - the solo tier's mono-64 IL twins (il_solo_registry.h:
  *     vfft_k1_mono64_8x8_il_fwd / _bwd, kind mono64_8x8_il), which no radix
  *     list names: the whole 64-point transform, one call;
+ *   - the 14 pair2p/tangent kernels (t2tan, t2tanm128, t2bw32, t2bw32m128,
+ *     n1ttan, n1tbw32, n1tbw32t256, t2ttan, n1tan, n1btan216) and the 6
+ *     radix-16/32 forward blocked pair kernels (t2b, t2b48, n1tb, n1tb44,
+ *     n1tb48), built outside the corpus at both ISAs (recipes.tsv's ship and
+ *     replay rows), which no radix list names either: each in the class of
+ *     its classic twin;
  *   - every ZTURN-T fused driver BOTH ztt registries list (the same N and
  *     chain, the slot non-null at both): natural dest and plane (in place),
  *     plain scrambled, forward and backward, untiled and at the smallest tile
@@ -36,7 +42,8 @@
  *   pair records (VTW2: t2, t2t, t2tg, the blocked and _ct forms, the rows'
  *       t2r/t2tr, t2cs)            _vfft_il3p_vtw2 (il2p.h; vtw_avx512.h at avx512)
  *   per-block broadcast records (t2cp, t2c, t2cb*), splat records (msz,
- *       mszt) and the gen2 bases (t2csg, t2csgt, t2csgn, t2csgnt)
+ *       mszt) and the gen2 bases (t2csg, t2csgt, t2csgn, t2csgnt, and the
+ *       Hermitian last stage's t2csgh, t2csght)
  *                                  vfft_ilfd_create_chain (il_flatdit.h): the
  *       tables of a flat DIT plan built at that ISA — chain {4, R, 5} (stage 1
  *       is t2cp and msz), {64, R} (stage 1 is t2csg over 64-column groups, one
@@ -53,8 +60,16 @@
  * its way: natural interleaved; the ZTURN-T plane's block split, 64-B blocks
  * of [re x VW][im x VW] (VW = 4 avx2, 8 avx512: the codelet headers'
  * contract); or a position map (the plain class's scrambled output and tld's:
- * the ISA's own permutation, from its plan). Input values go in by the ISA's
- * layout, outputs come out by it, and the comparison is slot by slot.
+ * the ISA's own permutation, from its plan). The real mono's real side (rn1,
+ * rn1b48, rn1b444: the forward's input, the backward's output) is LOGICAL real
+ * slots, one double each, natural at both ISAs; so are both sides of the real
+ * flat leaf r1c (its real legs, and its digit runs: digit 0 a real run, digits
+ * 1..h complex, every double a slot). The Hermitian last stage (t2csgh,
+ * t2csght) puts a leg above R/2 conjugated at the mirror NM - bin and the
+ * middle leg by its bin: its spectrum holds the direct bins below U and the
+ * mirrored ones above them (NM = 2U), the mirror base passed at the call.
+ * Input values go in by the ISA's layout, outputs come out by it, and the
+ * comparison is slot by slot.
  *
  * WHAT IT CHECKS, per case and per ISA:
  *   1. every output slot in the kernel's footprint is written and finite —
@@ -71,8 +86,10 @@
  *      same way, POISON): a plane driver may use those 2N doubles and leaves
  *      the bands as they were (ztt.h's 4 KB of slack is where the plan
  *      places the plane, not room to store); a dest driver leaves all of it;
- *   5. an in-place case runs a second time with every double outside the
- *      footprint, and the plane, holding a finite value of its own (t_pat):
+ *   5. a case that works in the buffer it stores into — in place, and every
+ *      ZTURN-T driver (dest and scrambled run their pipeline in zout) — runs
+ *      a second time with every double of that buffer outside the footprint,
+ *      its bands, and the plane holding a finite value of its own (t_pat):
  *      there a store of arithmetic on a NaN would carry the NaN through bit
  *      for bit and pass check 2, here it changes the value. That run's
  *      output must equal the first's bitwise, and those doubles must hold;
@@ -81,8 +98,8 @@
  *      counts toward the kind's worst error.
  *
  * TWIN_TOL (8 * DBL_EPSILON, 1.8e-15). Both ISAs evaluate the same DAG on the
- * same twiddles (vtw_avx512.h: every angle is the AVX2 builder's), so 15796
- * of the 16827 kernel cases match bitwise, the ZTURN-T stage kernels and
+ * same twiddles (vtw_avx512.h: every angle is the AVX2 builder's), so 19624
+ * of the 20739 kernel cases match bitwise, the ZTURN-T stage kernels and
  * fused drivers all of theirs. The other kernel cases differ by at most
  * 4.7e-16 (2.1 DBL_EPSILON), and they are exactly two groups: radix 5 and
  * 10 at every count (n1, n1c, n1t, t2, t2t, t2tg, t2c, t2cp, t2cs: the avx2
@@ -184,7 +201,9 @@ typedef struct {
 /* every kernel the registry lists, from its radix lists: the emitter defines
  * the same lists at every ISA, empty where the ISA has no kernel
  * (emit_il_registry.ml), so this table is the registry's, whole; then the
- * solo tier's mono-64 IL twins (il_solo_registry.h), which no list names.
+ * pair2p/tangent kernels and the radix-16/32 forward blocked pair kernels
+ * (il2p.h declares them at this ISA) and the solo tier's mono-64 IL twins
+ * (il_solo_registry.h), which no list names.
  * TWIN_REG_NKERN, the kernels the registry's FWD and BWD lists hold at this
  * side's ISA, comes from twin_gate_build.py: the table must expand exactly
  * those, so a kind the registry gains and the table does not name stops the
@@ -192,6 +211,8 @@ typedef struct {
 #ifndef TWIN_REG_NKERN
 #error "TWIN_REG_NKERN (the kernels the registry's FWD and BWD lists hold) is unset: build with twin_gate_build.py"
 #endif
+#define TWIN_NTAN 14
+#define TWIN_NBLK 6
 #define TWIN_NSOLO 2
 #define _TWIN_K2(kind, dir, bwd, R) \
     { #kind, R, bwd, (twin_kfn)VFFT_IL_SYM(radix##R##_z_##kind##_##dir) },
@@ -409,11 +430,19 @@ static const twin_kernel_t _twin_kern[] = {
 #define TWIN_KIND tmgd
     VFFT_IL_TMGD_FWD_RADICES(TWIN_FX)
 #undef TWIN_KIND
+    _TWIN_K(t2tan, fwd, 0, 8) _TWIN_K(t2tan, fwd, 0, 16) _TWIN_K(t2tanm128, fwd, 0, 16)
+    _TWIN_K(t2bw32, fwd, 0, 32) _TWIN_K(t2bw32m128, fwd, 0, 32)
+    _TWIN_K(n1ttan, fwd, 0, 8) _TWIN_K(n1ttan, fwd, 0, 16)
+    _TWIN_K(n1tbw32, fwd, 0, 32) _TWIN_K(n1tbw32t256, fwd, 0, 32)
+    _TWIN_K(t2ttan, bwd, 1, 8) _TWIN_K(t2ttan, bwd, 1, 16)
+    _TWIN_K(n1tan, bwd, 1, 8) _TWIN_K(n1tan, bwd, 1, 16) _TWIN_K(n1btan216, bwd, 1, 32)
+    _TWIN_K(t2b, fwd, 0, 16) _TWIN_K(t2b, fwd, 0, 32) _TWIN_K(t2b48, fwd, 0, 32)
+    _TWIN_K(n1tb, fwd, 0, 32) _TWIN_K(n1tb44, fwd, 0, 16) _TWIN_K(n1tb48, fwd, 0, 32)
     { "mono64_8x8_il", 64, 0, (twin_kfn)VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd) },
     { "mono64_8x8_il", 64, 1, (twin_kfn)VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd) },
     { NULL, 0, 0, NULL }
 };
-_Static_assert(sizeof _twin_kern / sizeof _twin_kern[0] == (size_t)TWIN_REG_NKERN + TWIN_NSOLO + 1,
+_Static_assert(sizeof _twin_kern / sizeof _twin_kern[0] == (size_t)TWIN_REG_NKERN + TWIN_NTAN + TWIN_NBLK + TWIN_NSOLO + 1,
                "the kernel table does not expand every kernel the registry's FWD and BWD lists hold: "
                "a kind is missing from it (or listed twice)");
 
@@ -617,10 +646,10 @@ static size_t t_band(size_t nd)
     return b > GUARD ? b : GUARD;
 }
 
-/* an in-place case's second fill: a finite value of its own at every double
- * outside the footprint (and in the plane). A store there of arithmetic on
- * what it held cannot leave it as it was, where a NaN carries through bit
- * for bit; a read of it moves the output. */
+/* the second fill (run_case): a finite value of its own at every double of
+ * the store buffer outside the footprint, of its bands and of the plane. A
+ * store there of arithmetic on what it held cannot leave it as it was, where
+ * a NaN carries through bit for bit; a read of it moves the output. */
 static double t_pat(size_t j) { return 1.25 + (double)((j * 2654435761u) % 65521u) / 65521.0; }
 static void t_prefill(double *p, size_t n, int fill, uint64_t bits)
 {
@@ -649,9 +678,9 @@ static t_table_t t_guarded(const double *src, size_t nd)
 }
 
 /* ── logical buffers and each ISA's layout of them ───────────────────── */
-enum { L_NAT, L_BSPLIT, L_MAP };
+enum { L_NAT, L_BSPLIT, L_MAP, L_REAL };   /* L_REAL: a slot is one double (the real mono's real side) */
 typedef struct {
-    size_t n;                 /* logical complex slots */
+    size_t n;                 /* logical complex slots (L_REAL: real slots) */
     int lay;
     unsigned char *fp;        /* the kernel's footprint */
     size_t *map[2];           /* L_MAP: slot -> complex position, per ISA */
@@ -677,9 +706,12 @@ static size_t b_re(const t_buf_t *b, int isa, size_t i)
     const size_t vw = (size_t)S[isa]->vw;
     if (b->lay == L_BSPLIT) return 2 * (i - i % vw) + i % vw;
     if (b->lay == L_MAP) return 2 * b->map[isa][i];
+    if (b->lay == L_REAL) return i;
     return 2 * i;
 }
 static size_t b_im(const t_buf_t *b, int isa) { return b->lay == L_BSPLIT ? (size_t)S[isa]->vw : 1; }
+/* the doubles a buffer's slots span */
+static size_t b_nd(const t_buf_t *b) { return b->lay == L_REAL ? b->n : 2 * b->n; }
 
 /* ── one case ──────────────────────────────────────────────────────────── */
 enum { CALL_K, CALL_ZTT, CALL_ZTTP };
@@ -691,6 +723,9 @@ typedef struct {
     twin_zttp_fn zp[2];
     const double *tw[2], *t2[2];
     const void *a1, *a3;          /* t2csgn's base table and group order */
+    size_t mirror;                /* the Hermitian kinds: the mirror NM in complex slots, its base
+                                   * (zout_unused) NM past the spectrum: out (fwd), in (mirror_in) */
+    int mirror_in;
     const size_t *rb[2];          /* a driver's run-base table (t0tp's rides in t2) */
     size_t plane;                 /* CALL_ZTT: the plane's complex slots (the gate's own, banded) */
     int inplane;                  /* 1: the driver works in the plane (the plane slots); 0: it
@@ -701,11 +736,13 @@ typedef struct {
 /* per ISA: run, check, extract the footprint's values into y (2 per slot).
  * fill 0, every case's run: the bands and the slots outside the footprint
  * hold NaNs (the canary where the kernel stores, POISON where it only reads;
- * the plane POISON). fill 1, an in-place case's second run: those places hold
- * t_pat. Returns 0, or 1 with the first problem in why. */
+ * the plane POISON). fill 1, the second run of a case that works in its
+ * output (run_case): the buffer it stores into, its bands and the plane hold
+ * t_pat; an out-of-place input stays POISON. Returns 0, or 1 with the first
+ * problem in why. */
 static int run_isa(const t_case_t *c, int isa, int fill, const double *x, double *y, char *why, size_t whyn)
 {
-    const size_t nin2 = 2 * c->in.n, nout2 = 2 * c->out.n, np2 = 2 * c->plane;
+    const size_t nin2 = b_nd(&c->in), nout2 = b_nd(&c->out), np2 = 2 * c->plane;
     const size_t len = c->inplace && nin2 > nout2 ? nin2 : nout2;   /* the buffer it stores into */
     const size_t gin = t_band(nin2), gout = t_band(len), gp = t_band(np2);
     const size_t ntot = gout + len + gout, itot = gin + nin2 + gin, ptot = gp + np2 + gp;
@@ -730,7 +767,7 @@ static int run_isa(const t_case_t *c, int isa, int fill, const double *x, double
         if (c->in.fp[i]) {
             const size_t r = b_re(&c->in, isa, i);
             in[r] = x[2 * i];
-            in[r + imi] = x[2 * i + 1];
+            if (c->in.lay != L_REAL) in[r + imi] = x[2 * i + 1];
         }
     if (!c->inplace) {
         icopy = t_alloc(itot, &cbase);
@@ -743,11 +780,13 @@ static int run_isa(const t_case_t *c, int isa, int fill, const double *x, double
     for (i = 0; i < c->out.n; i++)
         if (c->out.fp[i]) {
             const size_t r = b_re(&c->out, isa, i);
-            om[r] = om[r + imo] = 1;
+            om[r] = 1;
+            if (c->out.lay != L_REAL) om[r + imo] = 1;
         }
 
     if (c->call == CALL_K)
-        c->k[isa](in, (const double *)c->a1, out, (double *)c->a3, c->tw[isa], c->t2[isa],
+        c->k[isa](in, (const double *)c->a1, out,
+                  c->mirror ? (c->mirror_in ? in : out) + 2 * c->mirror : (double *)c->a3, c->tw[isa], c->t2[isa],
                   c->Ls, c->Gs, c->OLs, c->OGs, c->count);
     else if (c->call == CALL_ZTT)
         c->zf[isa](in, out, pb + gp, c->tw[isa], c->rb[isa], c->tile);
@@ -771,7 +810,7 @@ static int run_isa(const t_case_t *c, int isa, int fill, const double *x, double
     for (i = 0; i < c->out.n; i++)
         if (c->out.fp[i]) {
             const size_t r = b_re(&c->out, isa, i);
-            const double re = out[r], im = out[r + imo];
+            const double re = out[r], im = c->out.lay == L_REAL ? 0.0 : out[r + imo];
             if (t_is(re, CANARY_BITS) || t_is(im, CANARY_BITS)) nunw++;
             else if (!isfinite(re) || !isfinite(im)) nnan++;
             y[2 * i] = re;
@@ -819,9 +858,11 @@ static void seed(const char *s, int a, int b, int c)
     g_rs = h ? h : 88172645463325252ULL;
 }
 
-/* run one case at both ISAs and judge it; label names it in a FAIL line. An
- * in-place case runs twice per ISA, the second time on the finite fill: its
- * output must not move (it reads nothing outside its footprint) */
+/* run one case at both ISAs and judge it; label names it in a FAIL line. A
+ * case that works in the buffer it stores into (in place, and every ZTURN-T
+ * driver: dest and scrambled run their pipeline in zout) runs twice per ISA,
+ * the second time on the finite fill: its output must not move (it reads
+ * nothing outside its footprint) */
 static int run_case(const t_case_t *c, t_stat_t *st, const char *label)
 {
     double *x = (double *)malloc((2 * c->in.n + 1) * sizeof(double));
@@ -835,11 +876,11 @@ static int run_case(const t_case_t *c, t_stat_t *st, const char *label)
         y[isa] = (double *)calloc(2 * c->out.n + 1, sizeof(double));
         why[isa][0] = 0;
         bad[isa] = run_isa(c, isa, 0, x, y[isa], why[isa], sizeof why[isa]);
-        if (!bad[isa] && c->inplace) {
+        if (!bad[isa] && (c->inplace || c->call != CALL_K)) {
             double *y1 = (double *)calloc(2 * c->out.n + 1, sizeof(double));
             bad[isa] = run_isa(c, isa, 1, x, y1, why[isa], sizeof why[isa]);
             if (!bad[isa] && memcmp(y1, y[isa], 2 * c->out.n * sizeof(double))) {
-                snprintf(why[isa], sizeof why[isa], "%s: in place, its output moves with what the doubles "
+                snprintf(why[isa], sizeof why[isa], "%s (finite fill): its output moves with what the doubles "
                          "outside its footprint hold (it reads them)", S[isa]->isa);
                 bad[isa] = 1;
             }
@@ -893,6 +934,12 @@ enum {
     C_DIGIT,   /* the digit loop: OGs digits at pitch Gs, broadcast records (t2c, t2cp) */
     C_SPLAT,   /* in place, Gs groups of R legs, splat records (msz, mszt) */
     C_MONO,    /* the whole R-point transform, natural in and out, one call (mono64_8x8_il) */
+    C_RMONO,   /* the real mono: real legs l*Ls + k in, the CCE half's bins m*OLs + k out,
+                * the backward the other way (rn1, rn1b48, rn1b444) */
+    C_RLEAF,   /* the real flat leaf: real legs l*Ls + k in, digit 0 real at k and digit p
+                * complex at doubles 2p*OLs + 2k out, the backward the other way (r1c) */
+    C_HERM,    /* the gen2 group loop with the Hermitian edge on the spectrum side: base
+                * table, legs above R/2 at the mirror (t2csgh, t2csght) */
     C_T0TP,    /* ZTURN-T ingest: natural legs in, runs of R0 at rb[c] out (block split) */
     C_TMG,     /* ZTURN-T mid, in place on the block split plane */
     C_TLF,     /* ZTURN-T last: block split in, natural out */
@@ -907,13 +954,20 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "n1cb88", C_COL, TW_NONE },    { "n1cb448", C_COL, TW_NONE },   { "n1cb816", C_COL, TW_NONE },
     { "t2", C_COL, TW_PAIR },        { "t2_ct", C_COL, TW_PAIR },     { "t2b416", C_COL, TW_PAIR },
     { "t2b88", C_COL, TW_PAIR },
+    { "t2b", C_COL, TW_PAIR },       { "t2b48", C_COL, TW_PAIR },
+    { "t2tan", C_COL, TW_PAIR },     { "t2tanm128", C_COL, TW_PAIR }, { "t2bw32", C_COL, TW_PAIR },
+    { "t2bw32m128", C_COL, TW_PAIR }, { "n1tan", C_COL, TW_NONE },    { "n1btan216", C_COL, TW_NONE },
     { "n1t", C_TRANS, TW_NONE },     { "n1t_ct", C_TRANS, TW_NONE },  { "n1tb416", C_TRANS, TW_NONE },
     { "n1tb88", C_TRANS, TW_NONE },  { "t2t", C_TRANS, TW_PAIR },     { "t2t_ct", C_TRANS, TW_PAIR },
     { "t2bt216", C_TRANS, TW_PAIR }, { "t2bt416", C_TRANS, TW_PAIR }, { "t2bt48", C_TRANS, TW_PAIR },
     { "t2bt88", C_TRANS, TW_PAIR },  { "t2tg", C_TRANSG, TW_PAIR },
+    { "n1tb", C_TRANS, TW_NONE },    { "n1tb44", C_TRANS, TW_NONE },  { "n1tb48", C_TRANS, TW_NONE },
+    { "n1ttan", C_TRANS, TW_NONE },  { "n1tbw32", C_TRANS, TW_NONE }, { "n1tbw32t256", C_TRANS, TW_NONE },
+    { "t2ttan", C_TRANS, TW_PAIR },
     { "n1ccs", C_CS, TW_NONE },      { "t2cs", C_CS, TW_PAIR },
     { "t2csg", C_GEN2, TW_GEN2 },    { "t2csgt", C_GEN2, TW_GEN2 },
     { "t2csgn", C_GEN2N, TW_GEN2 },  { "t2csgnt", C_GEN2N, TW_GEN2 },
+    { "t2csgh", C_HERM, TW_GEN2 },   { "t2csght", C_HERM, TW_GEN2 },  { "r1c", C_RLEAF, TW_NONE },
     { "n1r", C_ROWS, TW_NONE },      { "n1rtan", C_ROWS, TW_NONE },   { "t2r", C_ROWS, TW_PAIR },
     { "t2rtan", C_ROWS, TW_PAIR },   { "n1tr", C_ROWST, TW_NONE },    { "n1trtan", C_ROWST, TW_NONE },
     { "t2tr", C_ROWST, TW_PAIR },    { "t2trtan", C_ROWST, TW_PAIR },
@@ -923,6 +977,7 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "t0tp", C_T0TP, TW_NONE },     { "tmg", C_TMG, TW_LANE },       { "tmgd", C_TMG, TW_LANE },
     { "tlf", C_TLF, TW_LANE },       { "tlfi", C_TLF, TW_LANE },      { "t0d", C_T0D, TW_LANE },
     { "tld", C_TLD, TW_NONE },       { "mono64_8x8_il", C_MONO, TW_NONE },
+    { "rn1", C_RMONO, TW_NONE },     { "rn1b48", C_RMONO, TW_NONE },  { "rn1b444", C_RMONO, TW_NONE },
 };
 #define NKINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
@@ -981,8 +1036,8 @@ static void ktab_free(t_ktab_t *kt)
     t_free(kt->tz.base);
 }
 
-/* build the geometry of (class, R, count) into c; aux tables into *aux */
-static int case_geom(int cls, int R, int C, t_case_t *c, size_t **a1, size_t **a3, int ngrp)
+/* build the geometry of (class, R, count, direction) into c; aux tables into *aux */
+static int case_geom(int cls, int R, int C, int bwd, t_case_t *c, size_t **a1, size_t **a3, int ngrp)
 {
     size_t l, m, k, r, g, d, i;
     const size_t RR = (size_t)R, CC = (size_t)C;
@@ -1102,6 +1157,77 @@ static int case_geom(int cls, int R, int C, t_case_t *c, size_t **a1, size_t **a
         b_all(&c->in);
         b_all(&c->out);
         return 1;
+    case C_RMONO: {
+        /* the R reals of a column at pitch rp, its R/2 + 1 bins at pitch cp: the
+         * input's legs at Ls = count + 3, the output's at OLs = count + 5 */
+        const size_t H = RR / 2 + 1;
+        t_buf_t *rs = bwd ? &c->out : &c->in, *cs = bwd ? &c->in : &c->out;
+        size_t rp, cp;
+        c->Ls = CC + 3;
+        c->OLs = CC + 5;
+        rp = bwd ? c->OLs : c->Ls;
+        cp = bwd ? c->Ls : c->OLs;
+        b_init(rs, (RR - 1) * rp + CC, L_REAL);
+        b_init(cs, (H - 1) * cp + CC, L_NAT);
+        for (l = 0; l < RR; l++) for (k = 0; k < CC; k++) rs->fp[l * rp + k] = 1;
+        for (m = 0; m < H; m++) for (k = 0; k < CC; k++) cs->fp[m * cp + k] = 1;
+        return 1;
+    }
+    case C_RLEAF: {
+        /* the R real legs at pitch lp, the digit runs at pitch dp (complex): digit 0
+         * the real run at doubles 0..count-1, digit p (1..h) at doubles 2p*dp + 2k,
+         * 2p*dp + 2k + 1; the rest of block 0 is a gap. The input's pitch is Ls =
+         * count + 3, the output's OLs = count + 5 */
+        const size_t h = RR / 2;
+        t_buf_t *rs = bwd ? &c->out : &c->in, *ds = bwd ? &c->in : &c->out;
+        size_t lp, dp;
+        c->Ls = CC + 3;
+        c->OLs = CC + 5;
+        lp = bwd ? c->OLs : c->Ls;
+        dp = bwd ? c->Ls : c->OLs;
+        b_init(rs, (RR - 1) * lp + CC, L_REAL);
+        b_init(ds, 2 * h * dp + 2 * CC, L_REAL);
+        for (l = 0; l < RR; l++) for (k = 0; k < CC; k++) rs->fp[l * lp + k] = 1;
+        for (k = 0; k < CC; k++) ds->fp[k] = 1;
+        for (m = 1; m <= h; m++) for (k = 0; k < 2 * CC; k++) ds->fp[2 * m * dp + k] = 1;
+        return 1;
+    }
+    case C_HERM: {
+        /* ngrp groups of count columns x R legs on the plane (the forward D columns
+         * per block, the backward one), the spectrum at the groups' bases g*step
+         * (the base table, stride count). Leg l of column k at the bin u = base +
+         * d + k*P + l*S (column pitch P, leg stride S): a leg below R/2 there, one
+         * above conjugated at the mirror NM - u, the middle leg by its bin (direct
+         * when 2*(base + d + k*P) < S: the first columns of group 0). Every u stays
+         * below U and NM = 2U, so the mirrored slots lie above every direct one */
+        const size_t ng = (size_t)ngrp, D = bwd ? 1 : 1 + CC % 3, P = D + 1, S = CC * P + 1;
+        const size_t step = RR * S + 2, U = (ng - 1) * step + RR * S, NM = 2 * U, h = RR / 2;
+        size_t *ob = (size_t *)malloc(ng * CC * sizeof(size_t));
+        t_buf_t *pl = bwd ? &c->out : &c->in, *sp = bwd ? &c->in : &c->out;
+        b_init(pl, ng * CC * RR * D, L_NAT);
+        b_all(pl);
+        b_init(sp, NM + 1, L_NAT);
+        for (g = 0; g < ng; g++) {
+            for (k = 0; k < CC; k++) ob[g * CC + k] = g * step;
+            for (d = 0; d < D; d++) for (k = 0; k < CC; k++) for (l = 0; l < RR; l++) {
+                const size_t dk = g * step + d + k * P, u = dk + l * S;
+                sp->fp[(l < h || (l == h && 2 * dk < S)) ? u : NM - u] = 1;
+            }
+        }
+        c->Gs = ng;
+        if (bwd) {   /* the spectrum's leg stride and column pitch; the plane block by block */
+            c->Ls = S;
+            c->OLs = P;
+        } else {     /* D columns per block; the spectrum's leg stride and column pitch */
+            c->Ls = D;
+            c->OLs = S;
+            c->OGs = P;
+        }
+        c->mirror = NM;
+        c->mirror_in = bwd;
+        *a1 = ob;
+        return 1;
+    }
     case C_T0TP: {
         /* the run-base table (tw_im): column c's run at rb[c] * R0, a bijection */
         size_t *rbt = (size_t *)malloc(CC * sizeof(size_t));
@@ -1246,11 +1372,11 @@ static void gate_kernel(int ki, int R, int bwd, twin_kfn f2, twin_kfn f5, t_stat
                 continue;
             }
         } else {
-            case_geom(cls, R, C, &c, &a1, &a3, kt[0].f.ngrp < 3 ? kt[0].f.ngrp : 3);
+            case_geom(cls, R, C, bwd, &c, &a1, &a3, kt[0].f.ngrp < 3 ? kt[0].f.ngrp : 3);
         }
         c.k[0] = f2;
         c.k[1] = f5;
-        if (cls == C_GEN2N) {
+        if (cls == C_GEN2N || cls == C_HERM) {
             c.a1 = a1;
             c.a3 = a3;
         }

@@ -32,11 +32,9 @@
  *
  * THE BUILD'S ISA (il_isa.h). The corpus kernels are VFFT_IL_SYM's, declared
  * by the registry. The r32 2.16 leaf and the tangent / wing32 forms are built
- * outside the corpus (design D3) and exist at avx2 only: VFFT_IL_AVX2_ONLY
- * names them, 0 at avx512, where that declaration makes their arms absent:
- * reported, not gated. An absent form at avx2 is NOT CORRECT. The
- * twiddle table is sized by the build's record (VFFT_IL_TWREC doubles per
- * VFFT_IL_TWPER columns).
+ * outside the corpus (design D3) at both ISAs: VFFT_IL_SYM names them too,
+ * declared below. An absent form is NOT CORRECT. The twiddle table is sized
+ * by the build's record (VFFT_IL_TWREC doubles per VFFT_IL_TWPER columns).
  *
  * Build (from the repo root):
  *   python gauntlet/build.py --compile --src src/tools/gates/blocked_tail_gate.c
@@ -47,7 +45,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
-#include "il_isa.h"   /* the IL registry at the build's ISA: VFFT_IL_SYM, VFFT_IL_AVX2_ONLY, the record width */
+#include "il_isa.h"   /* the IL registry at the build's ISA: VFFT_IL_SYM, the record width */
 
 #define GUARD  64          /* doubles of guard band on each side */
 #define CANARY (-9.87654321e300)
@@ -59,15 +57,15 @@ typedef void (*kfn)(const double *, const double *, double *, double *,
 #define DECL(SYM) void SYM(const double *, const double *, double *, double *, \
                            const double *, const double *,                     \
                            size_t, size_t, size_t, size_t, size_t);
-DECL(radix32_z_n1tb_fwd_avx2)
+DECL(VFFT_IL_SYM(radix32_z_n1tb_fwd))
 /* TANGENT / wing32 forms. These gained the tail in 4b34dcd8 (a commit whose
    message is about FFTW bench metrics) and were never covered here, while
    il2p.h's count_ok gates were lifted for variants 3 and 4 too -- so an odd
    partner count can now reach them. Their own headers still claim
    "count %% 2 == 0 (blocked, no odd tail)", which is what makes verifying
    the CODE rather than the comment the point. */
-DECL(radix32_z_n1tbw32_fwd_avx2)     DECL(radix32_z_n1tbw32t256_fwd_avx2)
-DECL(radix32_z_t2bw32_fwd_avx2)      DECL(radix32_z_t2bw32m128_fwd_avx2)
+DECL(VFFT_IL_SYM(radix32_z_n1tbw32_fwd))     DECL(VFFT_IL_SYM(radix32_z_n1tbw32t256_fwd))
+DECL(VFFT_IL_SYM(radix32_z_t2bw32_fwd))      DECL(VFFT_IL_SYM(radix32_z_t2bw32m128_fwd))
 #undef DECL
 
 static uint64_t lcg = 0x243F6A8885A308D3ull;
@@ -140,20 +138,13 @@ static void arm(const char *what, int R, kfn blk, kfn mono, int inplace,
 }
 
 /* one blocked form at every count 1..9; a form absent at the build's ISA
- * (blk == 0) is reported and not gated at avx512, where VFFT_IL_AVX2_ONLY
- * declares it absent, and NOT CORRECT at avx2 */
-static int g_absent = 0;
+ * (blk == 0) is NOT CORRECT */
 static void arms(const char *what, int R, kfn blk, kfn mono, int inplace)
 {
     size_t c;
     if (!blk) {
-#if defined(VFFT_BUILD_ISA_AVX512)
-        printf("  %-18s declared absent at %s (VFFT_IL_AVX2_ONLY, design D3): not gated\n", what, VFFT_IL_ISA_NAME);
-        g_absent++;
-#else
         printf("  %-18s absent at %s  *** FAIL ***\n", what, VFFT_IL_ISA_NAME);
         g_fail = 1;
-#endif
         return;
     }
     for (c = 1; c <= 9; c++)
@@ -166,7 +157,7 @@ int main(void)
     printf("blocked cil odd-count tail gate — blocked vs monolithic twin\n");
     printf("  canary prefill: an UNWRITTEN column is proof the tail is missing\n");
     printf("  guard bands: a hit is proof it wrote outside its output region\n\n");
-    arms("r32 leaf 2.16", 32, VFFT_IL_AVX2_ONLY(radix32_z_n1tb_fwd),
+    arms("r32 leaf 2.16", 32, VFFT_IL_SYM(radix32_z_n1tb_fwd),
          VFFT_IL_SYM(radix32_z_n1t_fwd), 0);
     printf("\n");
     arms("r64 leaf 8.8", 64, VFFT_IL_SYM(radix64_z_n1tb88_fwd),
@@ -181,25 +172,19 @@ int main(void)
     arms("r64 mid 4.16", 64, VFFT_IL_SYM(radix64_z_t2b416_fwd),
          VFFT_IL_SYM(radix64_z_t2_fwd), 1);
     printf("\n");
-    arms("r32 wing leaf", 32, VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32_fwd),
+    arms("r32 wing leaf", 32, VFFT_IL_SYM(radix32_z_n1tbw32_fwd),
          VFFT_IL_SYM(radix32_z_n1t_fwd), 0);
     printf("\n");
-    arms("r32 wing T256", 32, VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32t256_fwd),
+    arms("r32 wing T256", 32, VFFT_IL_SYM(radix32_z_n1tbw32t256_fwd),
          VFFT_IL_SYM(radix32_z_n1t_fwd), 0);
     printf("\n");
-    arms("r32 wing mid", 32, VFFT_IL_AVX2_ONLY(radix32_z_t2bw32_fwd),
+    arms("r32 wing mid", 32, VFFT_IL_SYM(radix32_z_t2bw32_fwd),
          VFFT_IL_SYM(radix32_z_t2_fwd), 1);
     printf("\n");
-    arms("r32 wing M128", 32, VFFT_IL_AVX2_ONLY(radix32_z_t2bw32m128_fwd),
+    arms("r32 wing M128", 32, VFFT_IL_SYM(radix32_z_t2bw32m128_fwd),
          VFFT_IL_SYM(radix32_z_t2_fwd), 1);
-    if (g_absent)
-        printf("\n%d of 9 blocked forms declared absent at %s: not gated\n", g_absent, VFFT_IL_ISA_NAME);
-    if (g_absent && !g_fail)
-        printf("\nBLOCKED TAIL: correct at every count 1..9 on every blocked form present at %s\n",
-               VFFT_IL_ISA_NAME);
-    else
-        printf("\n%s\n", g_fail ? "*** BLOCKED TAIL: NOT CORRECT ***"
-                                : "BLOCKED TAIL: correct at every count 1..9, "
-                                  "r32 and r64, leaf and mid");
+    printf("\n%s\n", g_fail ? "*** BLOCKED TAIL: NOT CORRECT ***"
+                            : "BLOCKED TAIL: correct at every count 1..9, "
+                              "r32 and r64, leaf and mid");
     return g_fail;
 }

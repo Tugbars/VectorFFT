@@ -345,12 +345,12 @@ let emit
      whose load edge reads it (bwd). Cx_render.herm renders the edges. *)
   if herm && not (grouploop && ((dir = Fwd && not transposed) || (dir = Bwd && transposed)))
   then failwith "codelet_cil: --cil-t2csgh is the forward t2csgn, --cil-t2csght the backward t2csgnt, with the Hermitian edge";
-  (* the Hermitian edge renders at 256 and 128 bits (Cx_render.render_load /
+  (* the Hermitian edge renders at 512, 256 and 128 bits (Cx_render.render_load /
      render_store); a wider vector would take the plain column-stride edge,
      the legs above R/2 stored (fwd) or loaded (bwd) past the half spectrum
      with no mirror or conjugate *)
-  if herm && isa.Isa.vec_width > 4
-  then failwith "codelet_cil: --cil-t2csgh / --cil-t2csght render the Hermitian edge at 256 / 128 bits only";
+  if herm && isa.Isa.vec_width > 8
+  then failwith "codelet_cil: --cil-t2csgh / --cil-t2csght render the Hermitian edge at 512 / 256 / 128 bits only";
   (* the in-kernel ROW LOOP (2026-09-23): the lane loop (wide + tail) wrapped in
      a loop over rows. The row-loop ABI on the frozen 11-arg signature: count =
      TOTAL lanes = rows x Ls; Ls = the leg stride = the lanes per row (the
@@ -374,6 +374,7 @@ let emit
   Cx_render.store128 := st128 || Cx_render.store128_env;
   Cx_render.herm := (if herm then (if transposed then 2 else 1) else 0);
   Cx_render.herm_hl := radix / 2;
+  Cx_render.herm_main_vw := isa.Isa.vec_width;
   if kind = T2C && (turnst || turnst_gs)
   then
     failwith
@@ -1688,6 +1689,10 @@ let emit
      ymm rung would store two columns through a one-column turn address. The
      column-stride kinds take the plain "ladder" (3 -> ymm + xmm): their
      columns sit Gs apart, so a contiguous masked zmm access cannot reach them.
+     The real mono (RN1) runs each leftover column alone at VEX-128, as at
+     vw = 4: the monolithic DAG ("narrow"), and at 32 and 64 (rn1b48,
+     rn1b444) its blocked passes ("blk_narrow", here a loop over the 1..3
+     columns), so its tail is the avx2 kernel's, bit for bit.
      VFFT_TAIL512 overrides (recorded in the provenance Env line).
      At vw = 4 the leftover is at most ONE column, and it runs at VEX-128:
      the odd blocked kernels from radix 11 and the power-of-two blocked column
@@ -1725,7 +1730,7 @@ let emit
     else match Sys.getenv_opt "VFFT_TAIL512" with
       | Some s -> s
       | None ->
-        if kind = RN1 then "narrow"
+        if kind = RN1 then (if blocked then "blk_narrow" else "narrow")
         else if kind = N1T || ctx.st_turn then "narrowfix"
         else if ctx.colstride then "ladder"
         else "ladder_m3"
@@ -1875,7 +1880,11 @@ let emit
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
     Buffer.add_string buf "  /* conj at the mirror */\n";
     Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
-    Buffer.add_string buf "  /* tail twin */\n");
+    Buffer.add_string buf "  /* tail twin */\n";
+    if vw > 4
+    then (
+      Buffer.add_string buf (Isa.im_mask_decl Isa.avx2 "_M_IM_y");
+      Buffer.add_string buf "  /* conj at the mirror, ymm tail twin */\n"));
   if dir = Fwd
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
@@ -2131,6 +2140,14 @@ let emit
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* masked tail: the leftover column in ONE ymm pass */\n" cnt);
        Buffer.add_string buf ymm_mask;
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "blk_narrow" when vw > 4 && kind = RN1 ->
+       (* the real mono at vw = 8: up to 3 leftover columns, one pass each *)
+       Buffer.add_string buf
+         (Printf.sprintf
+            "    for (; k < %s; ++k) {  /* the leftover columns: the blocked passes at VEX-128, one complex per iteration */\n"
+            cnt);
        Buffer.add_buffer buf body_n;
        Buffer.add_string buf "    }\n"
      | "blk_narrow" ->

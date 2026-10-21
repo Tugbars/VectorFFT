@@ -305,15 +305,15 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 
 # Families that legitimately have NO tree for a given ISA, DECLARED per ISA.
 # This is deliberately a declaration and not a discovery: an absence nobody
-# wrote down is a hard error below. The zil avx512 tree holds 718 corpus cells
-# and the two mono64 kernels. The generator declares the other 242 corpus
-# cells absent at avx512 (Corpus.zil_isa_gap, with each reason): 238 are the
-# whole of shared/col/half and real/*, which therefore have no avx512 folder,
-# and 4 are the radix-4 t0tp/tld kernels of ztt. pair2p/tangent has no avx512
-# folder either: its 14 kernels exist only as env-knob/sed recipes outside the
-# corpus (docs/roadmap/zil_avx512_design.md, decision D3).
+# wrote down is a hard error below. The zil avx512 tree holds 862 corpus cells,
+# the two mono64 kernels, the 14 pair2p/tangent kernels and the 6 forward
+# pair2p/blocked kernels t2b*/n1tb* of radix 16 and 32 (built outside the
+# corpus from their recorded recipes, as at avx2). The generator declares
+# the other 98 corpus cells absent at avx512 (Corpus.zil_isa_gap, with each
+# reason): 94 are the whole of shared/col/half, real/pair and real/rows, which
+# therefore have no avx512 folder, and 4 are the radix-4 t0tp/tld kernels of ztt.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 zil/shared/col/half zil/pair2p/tangent zil/real/pair zil/real/mono zil/real/flat zil/real/flat/herm zil/real/rows)
+set(VFFT_ABSENT_avx512 zil/shared/col/half zil/real/pair zil/real/rows)
 
 set(VFFT_CODELET_SRCS)
 

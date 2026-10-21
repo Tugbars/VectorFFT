@@ -42,6 +42,7 @@ USAGE
   python src/tools/gates/run_gates.py [--out FILE] [--only SUBSTR] [--keep]
 Exit 0 when every gate passes.
 """
+import glob
 import os
 import shutil
 import subprocess
@@ -217,11 +218,8 @@ OWN_BUILD = {"twin_gate": "twin_gate_build.py"}
 
 # Gates that execute AVX-512 code. On a host without AVX-512 they run under Intel SDE
 # (exact AVX-512 semantics, 10-100x slower: correctness only, never a timing); with
-# neither, the gate FAILs, saying so.
+# neither, the gate FAILs, saying so. find_sde() says where SDE is looked for.
 NEEDS_AVX512 = {"twin_gate"}
-SDE_CANDIDATES = [
-    r"C:\sde\sde-external-10.13.1-2026-07-28-win\sde-external-10.13.1-2026-07-28-win\sde.exe",
-]
 
 
 def host_avx512():
@@ -240,7 +238,19 @@ def host_avx512():
 
 
 def find_sde():
-    for cand in SDE_CANDIDATES + [shutil.which("sde64"), shutil.which("sde")]:
+    """Intel SDE's launcher: VFFT_SDE when it is set (that file, or none);
+    else sde64 or sde on PATH; else, on Windows, a kit unpacked under C:\\sde
+    by the name Intel's archive carries (sde-external-<version>-win, the
+    folder once or nested in itself), the highest-named first. No path of
+    one machine is written here."""
+    named = os.environ.get("VFFT_SDE")
+    if named:
+        return named if os.path.isfile(named) else None
+    cands = [shutil.which("sde64"), shutil.which("sde")]
+    if os.name == "nt":
+        cands += sorted(glob.glob(r"C:\sde\sde-external-*\sde.exe")
+                        + glob.glob(r"C:\sde\sde-external-*\sde-external-*\sde.exe"), reverse=True)
+    for cand in cands:
         if cand and os.path.isfile(cand):
             return cand
     return None
@@ -254,7 +264,7 @@ BUDGET_OVERRIDE = {
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
     "flatdit_gate":            1800,   # cold flat-chain races at 8 odd N x 2 classes x 2 placements + T=8: 636-1000 s measured 2026-09-23; 900 killed it mid-cell
     "rader_gate":              1800,   # cold: the column cells under the pin (every create races the engine), the planner's picks, and section M's six cold T=8 creates at 2^17..2^18 points; 900 killed it in section M (2026-10-14)
-    "twin_gate":               1800,   # under SDE on the i9: the 718 kernels 123 s, the drivers to N = 65536 61 s; the 131072 and 262144 cells, estimated a few minutes more (2026-10-20)
+    "twin_gate":               1800,   # under SDE on the i9: the whole gate (720 kernels, 618 drivers to N = 262144, the finite-fill second runs) 382 s with its build (2026-10-21)
 }
 
 
@@ -263,7 +273,13 @@ def build(src, name):
     if name in OWN_BUILD:
         r = subprocess.run([sys.executable, os.path.join(HERE, OWN_BUILD[name])],
                            cwd=ROOT, capture_output=True, text=True)
-        return "own" if r.returncode == 0 else None
+        if r.returncode != 0:
+            # the build script's own last words (a compile error, twin_gate.c's check of its
+            # kernel table against the registry) ahead of the BUILD_FAIL line
+            tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-30:]
+            print("\n".join("  | " + l for l in tail), flush=True)
+            return None
+        return "own"
     modes = [("textual", ["--compile"])] if name in TEXTUAL else [
         ("standalone", ["--compile"]), ("vfft", ["--vfft", "--compile"])]
     for label, flags in modes:
@@ -293,7 +309,7 @@ def run(name, workdir):
     if name in NEEDS_AVX512 and not host_avx512():
         sde = find_sde()
         if not sde:
-            return False, "no AVX-512 on this host and no Intel SDE (run_gates.py SDE_CANDIDATES)"
+            return False, "no AVX-512 on this host and no Intel SDE (set VFFT_SDE to its launcher, or put sde on PATH)"
         argv = [sde, "-spr", "--"] + argv
 
     # 300s, not 900: with a SEEDED dir a gate replays banked wisdom and finishes

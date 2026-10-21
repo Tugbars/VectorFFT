@@ -133,6 +133,7 @@ static inline void _zttr_chains_rec(int rem, int pos, int ch[8], int out[][8], i
 static inline int vfft_zttr_chains(int m, int out[][8], int *nfs, int cap)
 {
     int n = 0, ch[8];
+    if (VFFT_IL_VW != 4) return 0;   /* no ZTT-r at 8 lanes (vfft_zttr_create): the sweeps build no arm */
     for (int r0 = 4; r0 <= 8 && n < cap; r0 += 4)
     {
         if (m % r0 || (m / r0) % 4) continue;
@@ -160,6 +161,15 @@ static inline void _zttr_records(double *rec, int R, long M, const long b[4])
 
 static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf, size_t tile)
 {
+    /* NO ZTT-r AT 8 LANES. Its own code is 4-lane hand code over a plane of 64-byte
+     * [re x4][im x4] blocks: the fused terminators (_zttr_tlfh, _zttr_tlfhb, _zttr_tlfhc),
+     * the c2r ingest (_zttr_t0h), the combines on __m256d, the 8-double records and the
+     * column-quad tables below. At 8 lanes the ZTT stages lay the plane out in 128-byte
+     * [re x8][im x8] blocks, so a plan built there computes wrong output. It refuses here,
+     * on every path: the VFFT_ZTTR pin, a banked eng=zttr row and the 2D zttr_ row token
+     * all see a plan that does not build. The 8-lane port waits on a Zen 4 measurement of
+     * what ZTT-r would win over zr2c there. */
+    if (VFFT_IL_VW != 4) return NULL;
     if (N < 64 || (N & 1)) return NULL;
     const int M = N / 2;
     vfft_ztt_plan_t *zt = vfft_ztt_create_chain(M, chain, nf);

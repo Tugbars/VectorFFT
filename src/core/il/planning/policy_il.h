@@ -140,6 +140,10 @@ static inline int vfft_policy_highn_borrow(void)
  *   with a split
  *   other N        nothing — the cell REFUSES       nothing
  *
+ * At 8 lanes ZTURN-T's rows start at 64 (VFFT_POLICY_ZTT_MIN_N: 16 and 32
+ * join the small engines' row) and its odd band keeps 2^a*odd with a >= 6
+ * (vfft_policy_ztt_odd_band: the 2^4 and 2^5 multiples join "other N").
+ *
  * Behind it: the pairs lost every pow2 cell at 2048 and above, so they are
  * out of that search; ZTURN-T is ALONE to its ceiling in both classes;
  * above the ceiling the four-step is alone, and AT the ceiling the natural
@@ -149,7 +153,7 @@ static inline int vfft_policy_highn_borrow(void)
  * for itself whether a kernel exists for this N — the mono forms, the pair
  * radices, the ZTURN-T registry cell, the flat compositions. Policy says who
  * may race; the family says what it has. (ZTURN-T's band and its registry
- * agree exactly — cells at every pow2 16..262144 — and policy_gate proves
+ * agree exactly — cells at every pow2 VFFT_POLICY_ZTT_MIN_N..262144 — and policy_gate proves
  * it over the whole domain.)
  *
  * PRIME fills the lengths NO CHAIN CAN CARRY (owner, 2026-10-02): Rader or
@@ -1032,6 +1036,10 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
  * transposed twins) take the ymm + xmm ladder at 3: their columns sit Gs
  * apart, not side by side, so one contiguous masked zmm access cannot reach
  * them (the ymm and xmm rungs gather each column through loadu2/storeu2).
+ * The real mono (rn1, rn1b48, rn1b444) takes the per-column xmm arm at every
+ * leftover, as at AVX2 -- the monolithic DAG, and at 32 and 64 its blocked
+ * passes -- so its tail, the code the library's one-row call runs, is the
+ * AVX2 kernel's bit for bit.
  * At AVX2 (per = 2) the leftover is at most one column: one xmm pass. The
  * odd blocked kernels from radix 11 run it as their blocked passes, the rest
  * as the monolithic DAG ("blk_narrow" / "narrow" in tail_policy). No 256-bit

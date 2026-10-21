@@ -54,8 +54,9 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * extern declarations for the corpus-covered IL cells, plus the radix
  * X-macro lists the resolvers below expand.  Derived from Corpus, so "the
  * codelet exists" and "a resolver can reach it" cannot drift apart.
- * NOT covered, declared by hand below: the tangent kernels and the blocked
- * forward pair variants (t2b*, n1tb*), which sit outside the corpus. */
+ * NOT covered, declared by hand below at the build's ISA (VFFT_IL_SYM): the
+ * tangent kernels and the radix-16/32 blocked forward pair variants (t2b,
+ * t2b48, n1tb, n1tb44, n1tb48), which sit outside the corpus. */
 #include "il_isa.h"
 #include "il_solo_registry.h" /* the K=1 solo tier: mono / n1c / n1ccs resolvers */
 
@@ -73,15 +74,17 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * The winner is NEVER hand-set — it is a raced per-cell il_kv verdict
  * (the variant registry below); create itself does no timing. The mid
  * twins are forward; the backward's blocked forms are the t2t twins
- * (t2t_bwd_v_fn). Blocked forms carry the inline VEX-128 narrow tail, so
- * an odd partner count is legal (src/tools/gates/blocked_tail_gate.c). */
+ * (t2t_bwd_v_fn). Blocked forms carry a narrow tail for the columns their
+ * wide loop leaves (the inline VEX-128 arm; at avx512 the mids step down a
+ * masked-zmm / ymm / xmm ladder), so any partner count is legal
+ * (src/tools/gates/blocked_tail_gate.c). */
 #define VFFT_IL2P_DECL_T2B(SYM) \
   extern void SYM( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_IL2P_DECL_T2B(radix16_z_t2b_fwd_avx2)
-VFFT_IL2P_DECL_T2B(radix32_z_t2b_fwd_avx2)
-VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_t2b_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2b_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2b48_fwd))
 /* R64: the forward twins of the backward t2bt88/t2bt416. Radix 64 is the
  * tree's worst spiller — the monolithic mid
  * burns 41.6% of its bulk loop on stack traffic — and blocking at 8.8 takes
@@ -107,12 +110,8 @@ VFFT_IL2P_DECL_T2B(radix64_z_t2b416_fwd_avx2)
  * mirroring the backward n1b88/n1b416): monolithic n1t spills 44.9% of its
  * bulk loop at radix 64, the worst in the tree; 8.8 cuts it to 20.3%. Both
  * are tolerance class (rel ~1e-16), not bitwise. */
-extern void radix32_z_n1tb_fwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-extern void radix32_z_n1tb48_fwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tb_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tb48_fwd))
 extern void radix64_z_n1tb88_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
@@ -715,50 +714,28 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * radix32_z_t2bw32 (canonical-angle combine + ROTFMA) and the leaf
  * radix32_z_n1tbw32 with the TURNED-128 store edge — the paired
  * permute2f128 store edge cost the leaf +32.4%, not the tangent interior. */
-extern void radix8_z_t2tan_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix8_z_n1ttan_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix16_z_t2tan_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix8_z_t2tan_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix8_z_n1ttan_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_t2tan_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_n1ttan_fwd))
 /* the tangent BACKWARD twins: the same recipe as the forward twins plus
  * --cil-bwd (the mid with --cil-turnst, the pair's backward stage-1 store
  * contract); radix 8 is BIT-IDENTICAL to the classic backward at every
  * count, radix 16 within 5e-17 (src/tools/gates/tangent_bwd_gate.c).
  * Backward variant 3 in the resolvers below; the backward forms race
  * (il_bkv) offers them and the cell decides. */
-extern void radix8_z_t2ttan_bwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix8_z_n1tan_bwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix16_z_t2ttan_bwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix16_z_n1tan_bwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix8_z_t2ttan_bwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix8_z_n1tan_bwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_t2ttan_bwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_n1tan_bwd))
 /* the radix-32 backward LEAF twin: n1btan216_bwd = the tangent interior on
  * the blocked 2.16 split, 5e-17 vs the classic blocked 2.16 backward leaf.
  * Not the WING combine: that sibling LOST to this one at both cells that
  * carry a radix-32 leaf (128: 71.4 vs 70.7 ns, 512: 347 vs 344) — the
  * forward wing's 3-5% does not transfer to the backward leaf. */
-extern void radix32_z_n1btan216_bwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix32_z_t2bw32_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1btan216_bwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2bw32_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tbw32_fwd))
 
 /* ── BLOCKED-KERNEL VARIANT REGISTRY ─────────────────────────────────────
  * Same role as vfft_il2p_leaf_fn / vfft_il2p_mid_fn above: a pure
@@ -784,32 +761,26 @@ extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
  *   cells (128: pair 4x32, 63.6 ns; 512: 16x32, 301.1 ns).
  *   mid = tangent + M-128 half stores: lost every raceable cell on this
  *   machine, kept in the pool (see mid_v_fn). */
-extern void radix32_z_n1tbw32t256_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix16_z_t2tanm128_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
-extern void radix32_z_t2bw32m128_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tbw32t256_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_t2tanm128_fwd))
+VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2bw32m128_fwd))
 
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
-        if (R1 == 8)  return VFFT_IL_AVX2_ONLY(radix8_z_t2tan_fwd);   /* monolithic: has  */
-        if (R1 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_t2tan_fwd);  /* the odd tail     */
-        if (R1 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_t2bw32_fwd); /* blocked wing32 */
+        if (R1 == 8)  return VFFT_IL_SYM(radix8_z_t2tan_fwd);   /* monolithic: has  */
+        if (R1 == 16) return VFFT_IL_SYM(radix16_z_t2tan_fwd);  /* the odd tail     */
+        if (R1 == 32) return VFFT_IL_SYM(radix32_z_t2bw32_fwd); /* blocked wing32 */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, M-128 edge.
         * Loses every raceable cell on the i9 but stays in the pool — a
         * distinct construction may win on other platforms; shared wisdom
         * re-races locally. */
-        if (R1 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_t2tanm128_fwd); /* mono, odd tail */
-        if (R1 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_t2bw32m128_fwd);
+        if (R1 == 16) return VFFT_IL_SYM(radix16_z_t2tanm128_fwd); /* mono, odd tail */
+        if (R1 == 32) return VFFT_IL_SYM(radix32_z_t2bw32m128_fwd);
         return 0;
     }
     if (variant == 5)
@@ -829,9 +800,9 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         default: return 0;
         }
     }
-    if (R1 == 16 && variant == 1) return VFFT_IL_AVX2_ONLY(radix16_z_t2b_fwd);
-    if (R1 == 32 && variant == 1) return VFFT_IL_AVX2_ONLY(radix32_z_t2b_fwd);
-    if (R1 == 32 && variant == 2) return VFFT_IL_AVX2_ONLY(radix32_z_t2b48_fwd);
+    if (R1 == 16 && variant == 1) return VFFT_IL_SYM(radix16_z_t2b_fwd);
+    if (R1 == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_t2b_fwd);
+    if (R1 == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_t2b48_fwd);
     /* R64: variant 1 = 4.16, variant 2 = 8.8 — the SAME mapping the
      * backward side uses at t2t_bwd_v_fn, so an il_kv nibble means one
      * thing in both directions. 8.8 won the mid in 3/3 runs. */
@@ -851,23 +822,21 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
  * so unlike R>=32 this is a wisdom-selected pool candidate and MONOLITHIC
  * n1t(16) remains the default. It also gives R=16 a blocked form in BOTH
  * slots, so the (16,32)-vs-(32,16) ordering race compares like with like. */
-extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
-    double *, double *, const double *, const double *,
-    size_t, size_t, size_t, size_t, size_t);
+VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_n1tb44_fwd))
 
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
-        if (R2 == 8)  return VFFT_IL_AVX2_ONLY(radix8_z_n1ttan_fwd);   /* monolithic   */
-        if (R2 == 16) return VFFT_IL_AVX2_ONLY(radix16_z_n1ttan_fwd);  /* (odd legal)  */
-        if (R2 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32_fwd); /* blocked
+        if (R2 == 8)  return VFFT_IL_SYM(radix8_z_n1ttan_fwd);   /* monolithic   */
+        if (R2 == 16) return VFFT_IL_SYM(radix16_z_n1ttan_fwd);  /* (odd legal)  */
+        if (R2 == 32) return VFFT_IL_SYM(radix32_z_n1tbw32_fwd); /* blocked
             wing32, TURNED-128 store — the old kill was the store edge */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, T256 edge */
-        if (R2 == 32) return VFFT_IL_AVX2_ONLY(radix32_z_n1tbw32t256_fwd);
+        if (R2 == 32) return VFFT_IL_SYM(radix32_z_n1tbw32t256_fwd);
         return 0;
     }
     if (variant == 5)
@@ -887,14 +856,14 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
         default: return 0;
         }
     }
-    if (R2 == 32 && variant == 1) return VFFT_IL_AVX2_ONLY(radix32_z_n1tb_fwd);
-    if (R2 == 32 && variant == 2) return VFFT_IL_AVX2_ONLY(radix32_z_n1tb48_fwd);
+    if (R2 == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_n1tb_fwd);
+    if (R2 == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_n1tb48_fwd);
     /* R64: same variant<->split mapping as the mid and as the bwd leaf.
      * The leaf verdict is genuinely per-cell — 4.16 won at count 8 and
      * 16, 8.8 won at count 32 — which is why both stay in the pool. */
     if (R2 == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_n1tb416_fwd);
     if (R2 == 64 && variant == 2) return VFFT_IL_SYM(radix64_z_n1tb88_fwd);
-    if (R2 == 16 && variant == 1) return VFFT_IL_AVX2_ONLY(radix16_z_n1tb44_fwd); /* 4·4 */
+    if (R2 == 16 && variant == 1) return VFFT_IL_SYM(radix16_z_n1tb44_fwd); /* 4·4 */
     return 0;
 }
 
@@ -930,8 +899,8 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
      * contract — a plain-store t2 tangent twin builds, fails the planner's
      * correctness gate and is silently not an arm. No radix-32 twin: the
      * wing32 construction is forward-only. */
-    if (R == 8  && variant == 3) return VFFT_IL_AVX2_ONLY(radix8_z_t2ttan_bwd);
-    if (R == 16 && variant == 3) return VFFT_IL_AVX2_ONLY(radix16_z_t2ttan_bwd);
+    if (R == 8  && variant == 3) return VFFT_IL_SYM(radix8_z_t2ttan_bwd);
+    if (R == 16 && variant == 3) return VFFT_IL_SYM(radix16_z_t2ttan_bwd);
     if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_t2bt216_bwd);
     if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_t2bt48_bwd);
     if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_t2bt416_bwd);
@@ -963,9 +932,9 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     if (!variant) return 0;
     /* variant 3 = the TANGENT interior, see t2t_bwd_v_fn; at radix 32 the
      * tangent 2.16 leaf (its wing-combine sibling lost the race) */
-    if (R == 8  && variant == 3) return VFFT_IL_AVX2_ONLY(radix8_z_n1tan_bwd);
-    if (R == 16 && variant == 3) return VFFT_IL_AVX2_ONLY(radix16_z_n1tan_bwd);
-    if (R == 32 && variant == 3) return VFFT_IL_AVX2_ONLY(radix32_z_n1btan216_bwd);
+    if (R == 8  && variant == 3) return VFFT_IL_SYM(radix8_z_n1tan_bwd);
+    if (R == 16 && variant == 3) return VFFT_IL_SYM(radix16_z_n1tan_bwd);
+    if (R == 32 && variant == 3) return VFFT_IL_SYM(radix32_z_n1btan216_bwd);
     if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_n1b216_bwd);
     if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_n1b48_bwd);
     if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_n1b416_bwd);

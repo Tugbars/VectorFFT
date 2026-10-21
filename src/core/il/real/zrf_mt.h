@@ -209,16 +209,17 @@ static inline int vfft_zrf_mt_bind(vfft_zrf_plan_t *p, int T, int arm)
     return 1;
 }
 
-/* column ranges in whole vectors of four: worker w takes [4*(q*w/T), 4*(q*(w+1)/T)),
- * the last one the remainder */
+/* column ranges in whole vectors of VW (the kernels' wide iteration): worker w takes
+ * [VW*(q*w/T), VW*(q*(w+1)/T)), the last one the remainder, so every range runs the
+ * serial plan's vectors and the threaded output stays bitwise the serial plan's */
 static inline void _zrf_mt_cols(_zrf_mt_arg *a, int T, size_t D)
 {
-    const size_t q = D / 4;
+    const size_t q = D / VFFT_IL_VW;
     int w;
     for (w = 0; w < T; w++)
     {
-        a[w].lo = 4 * (q * (size_t)w / (size_t)T);
-        a[w].hi = (w == T - 1) ? D : 4 * (q * (size_t)(w + 1) / (size_t)T);
+        a[w].lo = VFFT_IL_VW * (q * (size_t)w / (size_t)T);
+        a[w].hi = (w == T - 1) ? D : VFFT_IL_VW * (q * (size_t)(w + 1) / (size_t)T);
     }
 }
 

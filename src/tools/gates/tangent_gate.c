@@ -1,30 +1,31 @@
 /* tangent_gate.c — tolerance gate for every SHIPPED tangent codelet
- * (src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/). Conventions:
+ * (src/dag-fft-compiler/codelets/zil/<isa>/pair2p/tangent/). Conventions:
  *   MID fwd : Y[o] = sum_l W_R^{ol} . w512^{lk} . x_l      (pre-twiddle)
  *   LEAF    : Y[o] = sum_l W_R^{ol} x_l, stored corner-turned (no table)
- * The tangent codelets are built outside the corpus (design D3) and exist at
- * avx2 only: VFFT_IL_AVX2_ONLY names them (il_isa.h), 0 at avx512, where that
- * declaration makes each absent: reported, not gated. An absent codelet at
- * avx2 is WRONG. The records below are therefore avx2's VTW2.
+ * The tangent codelets are built outside the corpus (design D3) at both ISAs:
+ * VFFT_IL_SYM names them (il_isa.h) and il2p.h declares them. The twiddle
+ * records are the library's own at the build's ISA (_vfft_il3p_vtw2, il2p.h:
+ * VTW2 at avx2, vtw_avx512.h's records at avx512).
+ * Counts 1..9 reach the wide body and every leftover-column arm at both ISAs
+ * (2 columns per 256-bit vector, 4 per 512-bit), and one wide count (32 at
+ * radix 8 and 16, 16 at radix 32) the long loop. Every run is guarded: the
+ * output starts as a canary inside a canary band (every slot written, nothing
+ * outside it stored), and the input and the table sit between NaN bands (a
+ * read past either end poisons the result).
  * Build (from the repo root):
  *   python gauntlet/build.py --compile --src src/tools/gates/tangent_gate.c
- *   (VFFT_ISA=avx512 builds it at avx512)
+ *   (VFFT_ISA=avx512 builds it at avx512; without AVX-512 on the host it runs
+ *   under Intel SDE: sde.exe -spr -- src/tools/gates/tangent_gate.exe)
  */
 #include <immintrin.h>
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include <complex.h>
 #include <stdint.h>
-#include "il_isa.h"   /* the build's ISA: VFFT_IL_AVX2_ONLY, VFFT_IL_ISA_NAME */
+#include "il_isa.h"   /* the build's ISA: VFFT_IL_SYM, VFFT_IL_ISA_NAME, VFFT_IL_TWREC */
+#include "il2p.h"     /* the tangent declarations; _vfft_il3p_vtw2, the library's pair records */
 
-#define K(n) void n(const double*,const double*,double*,double*,const double*, \
-                    const double*,size_t,size_t,size_t,size_t,size_t)
-K(radix8_z_t2tan_fwd_avx2);
-K(radix8_z_n1ttan_fwd_avx2);
-K(radix16_z_t2tan_fwd_avx2);
-K(radix16_z_n1ttan_fwd_avx2);
-K(radix32_z_t2bw32_fwd_avx2);
-K(radix32_z_n1tbw32_fwd_avx2);
 /* the radix 6/10/12 tangent forms were deleted 2026-09-24 (no resolver arm) */
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
@@ -35,101 +36,96 @@ static uint64_t lcg = 0x9E3779B97F4A7C15ull;
 static double rnd(void){ lcg = lcg*6364136223846793005ull + 1442695040888963407ull;
     return ((double)(int64_t)(lcg>>11))/4503599627370496.0; }
 
-/* VTW2 records, our fold [-s,+s]; sg = -1 fwd */
-static void genT(double *T, int R, int kc, double sg){
-    for(int l=1;l<R;l++){
-        double *r = T + (size_t)(l-1)*8;
-        for(int c=0;c<2;c++){
-            int kk = kc + c;
-            cx d = cexp(sg*2.0*PI*I*(double)l*kk/512.0);
-            r[c*2] = creal(d); r[c*2+1] = creal(d);
-            r[4+c*2] = -cimag(d); r[4+c*2+1] = cimag(d);
-        }
-    }
+#define GUARD 64                   /* doubles of band on each side */
+static double CANARY, POISON;      /* two quiet NaNs no arithmetic makes */
+static int is(double v, double band){ return !memcmp(&v, &band, 8); }
+
+/* n doubles between two bands; *base is what to free */
+static double *banded(size_t n, double band, double **base){
+    double *b = _aligned_malloc((n + 2*GUARD)*sizeof(double), 64);
+    for(size_t i=0;i<n+2*GUARD;i++) b[i] = band;
+    *base = b;
+    return b + GUARD;
+}
+static size_t band_hits(const double *base, size_t n, double band){
+    size_t h = 0;
+    for(size_t i=0;i<GUARD;i++){ h += !is(base[i], band); h += !is(base[GUARD+n+i], band); }
+    return h;
 }
 
-static double gate_mid(krn fn, int R, int cols, double sg){
-    int rec = (R-1)*8, N2 = R*cols*2;
-    double *zin = _aligned_malloc((size_t)N2*8, 64);
-    double *zo  = _aligned_malloc((size_t)N2*8, 64);
-    double *T   = _aligned_malloc((size_t)(cols/2)*rec*8, 64);
-    for(int i=0;i<N2;i++) zin[i] = rnd();
-    for(int g=0; g<cols/2; g++) genT(T + (size_t)g*rec, R, 2*g, sg);
-    fn(zin,0,zo,0,T,0,cols,0,cols,0,cols);
+/* one run at `cols` columns: the worst |got - ref|, NaN if a slot is
+ * unwritten or non-finite or a band was touched (then *why says which) */
+static double gate_one(krn fn, int R, int cols, int mid, char *why, size_t whyn){
+    const size_t n = (size_t)2*R*cols;
+    double *ib, *ob, *tb = 0;
+    double *zin = banded(n, POISON, &ib);
+    double *zo  = banded(n, CANARY, &ob);
+    double *T = 0;
+    size_t nt = 0;
+    for(size_t i=0;i<n;i++) zin[i] = rnd();
+    if(mid){
+        double *t = _vfft_il3p_vtw2(R, 1, cols, 512, 0);   /* w = exp(-2 pi i l k / 512) */
+        nt = _vfft_il3p_vtw2_recs(cols)*(size_t)(R-1)*VFFT_IL_TWREC;
+        T = banded(nt, POISON, &tb);
+        memcpy(T, t, nt*sizeof(double));
+        vfft_aligned_free(t);
+        fn(zin,0,zo,0,T,0,cols,0,cols,0,cols);
+    } else {
+        fn(zin,0,zo,0,(double*)0,0,cols,0,R,0,cols);
+    }
+    size_t unw = 0, nonf = 0, hits = band_hits(ob, n, CANARY) + band_hits(ib, n, POISON)
+                                    + (mid ? band_hits(tb, nt, POISON) : 0);
     double w = 0;
     for(int k=0;k<cols;k++) for(int o=0;o<R;o++){
         cx ref = 0;
         for(int l=0;l<R;l++){
             cx xv = zin[2*((size_t)l*cols+k)] + I*zin[2*((size_t)l*cols+k)+1];
-            ref += cexp(sg*2.0*PI*I*(double)o*l/(double)R)
-                 * cexp(sg*2.0*PI*I*(double)l*k/512.0) * xv;
+            ref += cexp(-2.0*PI*I*(double)o*l/(double)R)
+                 * (mid ? cexp(-2.0*PI*I*(double)l*k/512.0) : 1.0) * xv;
         }
-        cx got = zo[2*((size_t)o*cols+k)] + I*zo[2*((size_t)o*cols+k)+1];
-        double e = cabs(got-ref); if(e>w) w = e;
+        size_t at = mid ? (size_t)o*cols+k : (size_t)k*R+o;
+        double re = zo[2*at], im = zo[2*at+1];
+        if(is(re, CANARY) || is(im, CANARY)) { unw++; continue; }
+        if(!isfinite(re) || !isfinite(im)) { nonf++; continue; }
+        double e = cabs(re + I*im - ref); if(e>w) w = e;
     }
-    _aligned_free(zin); _aligned_free(zo); _aligned_free(T);
-    return w;
-}
-
-static double gate_leaf(krn fn, int R, int cols){
-    int N2 = R*cols*2;
-    double *zin = _aligned_malloc((size_t)N2*8, 64);
-    double *zo  = _aligned_malloc((size_t)N2*8, 64);
-    for(int i=0;i<N2;i++) zin[i] = rnd();
-    fn(zin,0,zo,0,(double*)0,0,cols,0,R,0,cols);
-    double w = 0;
-    for(int k=0;k<cols;k++) for(int o=0;o<R;o++){
-        cx ref = 0;
-        for(int l=0;l<R;l++){
-            cx xv = zin[2*((size_t)l*cols+k)] + I*zin[2*((size_t)l*cols+k)+1];
-            ref += cexp(-2.0*PI*I*(double)o*l/(double)R) * xv;
-        }
-        cx got = zo[2*((size_t)k*R+o)] + I*zo[2*((size_t)k*R+o)+1];
-        double e = cabs(got-ref); if(e>w) w = e;
+    _aligned_free(ib); _aligned_free(ob); if(tb) _aligned_free(tb);
+    if(unw || nonf || hits){
+        snprintf(why, whyn, "%zu unwritten, %zu non-finite, %zu band doubles touched", unw, nonf, hits);
+        return NAN;
     }
-    _aligned_free(zin); _aligned_free(zo);
     return w;
 }
 
 int main(void){
-    struct { const char *nm; krn k; double e; } r[5];
-    r[0].nm = "radix8_z_t2tan_fwd       (R8  mid,  bit-identical)   ";
-    r[0].k  = VFFT_IL_AVX2_ONLY(radix8_z_t2tan_fwd);
-    r[0].e  = r[0].k ? gate_mid(r[0].k, 8, 32, -1.0) : 0.0;
-    r[1].nm = "radix8_z_n1ttan_fwd      (R8  leaf, bit-identical)   ";
-    r[1].k  = VFFT_IL_AVX2_ONLY(radix8_z_n1ttan_fwd);
-    r[1].e  = r[1].k ? gate_leaf(r[1].k, 8, 16) : 0.0;
-    r[2].nm = "radix16_z_t2tan_fwd      (R16 mid,  wing full-kernel)";
-    r[2].k  = VFFT_IL_AVX2_ONLY(radix16_z_t2tan_fwd);
-    r[2].e  = r[2].k ? gate_mid(r[2].k, 16, 32, -1.0) : 0.0;
-    r[3].nm = "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ";
-    r[3].k  = VFFT_IL_AVX2_ONLY(radix16_z_n1ttan_fwd);
-    r[3].e  = r[3].k ? gate_leaf(r[3].k, 16, 16) : 0.0;
-    r[4].nm = "radix32_z_t2bw32_fwd     (R32 mid,  wing32 2.16)     ";
-    r[4].k  = VFFT_IL_AVX2_ONLY(radix32_z_t2bw32_fwd);
-    r[4].e  = r[4].k ? gate_mid(r[4].k, 32, 16, -1.0) : 0.0;
-
-    int ok = 1, nabsent = 0;
+    uint64_t u = 0x7ff8dead0000beefull, v = 0x7ff8beef0000deadull;
+    memcpy(&CANARY, &u, 8); memcpy(&POISON, &v, 8);
+    struct { const char *nm; krn k; int R, mid, wide; } r[5] = {
+        { "radix8_z_t2tan_fwd       (R8  mid,  bit-identical)   ", VFFT_IL_SYM(radix8_z_t2tan_fwd),    8,  1, 32 },
+        { "radix8_z_n1ttan_fwd      (R8  leaf, bit-identical)   ", VFFT_IL_SYM(radix8_z_n1ttan_fwd),   8,  0, 16 },
+        { "radix16_z_t2tan_fwd      (R16 mid,  wing full-kernel)", VFFT_IL_SYM(radix16_z_t2tan_fwd),   16, 1, 32 },
+        { "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ", VFFT_IL_SYM(radix16_z_n1ttan_fwd),  16, 0, 16 },
+        { "radix32_z_t2bw32_fwd     (R32 mid,  wing32 2.16)     ", VFFT_IL_SYM(radix32_z_t2bw32_fwd),  32, 1, 16 },
+    };
+    int ok = 1;
     for(int i=0;i<5;i++){
-        if(!r[i].k){
-#if defined(VFFT_BUILD_ISA_AVX512)
-            printf("%s  declared absent at %s (VFFT_IL_AVX2_ONLY, design D3): not gated\n", r[i].nm, VFFT_IL_ISA_NAME);
-            nabsent++;
-#else
-            printf("%s  absent at %s  *** WRONG ***\n", r[i].nm, VFFT_IL_ISA_NAME);
-            ok = 0;
-#endif
-            continue;
+        double worst = 0;
+        int pass = 1;
+        for(int c=1;c<=10;c++){
+            const int cols = c <= 9 ? c : r[i].wide;
+            char why[96] = "";
+            double e = gate_one(r[i].k, r[i].R, cols, r[i].mid, why, sizeof why);
+            if(!(e < 1e-10)){
+                printf("%s  count %-2d %s  *** WRONG ***\n", r[i].nm, cols, why[0] ? why : "");
+                pass = 0;
+            }
+            if(e > worst) worst = e;
         }
-        int pass = r[i].e < 1e-10;
-        printf("%s  %.3e  %s\n", r[i].nm, r[i].e, pass ? "CORRECT" : "*** WRONG ***");
+        printf("%s  %.3e  %s\n", r[i].nm, worst, pass ? "CORRECT" : "*** WRONG ***");
         ok &= pass;
     }
-    if(nabsent == 5){
-        printf("\nno tangent codelet at %s: nothing gated, every codelet declared absent\n", VFFT_IL_ISA_NAME);
-        return 0;
-    }
-    printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT"
+    printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT (counts 1..9 and wide, "
+                          VFFT_IL_ISA_NAME ")"
                         : "GATE FAILURE - DO NOT SHIP");
     return ok ? 0 : 1;
 }
