@@ -53,8 +53,14 @@
  * pitch, in place, repeated to about 1 ms on st512. The plane is re-laid from
  * the race's seed before the sample, as the race does, and again, untimed,
  * every so many passes that the values stay finite (in place they grow by up
- * to R a pass). A cell is a real 2D r2c shape N1 x N2 whose column leaf is
- * radix R (N1 a multiple of R). Its arms, all timed in every round:
+ * to R a pass). A small plane runs as copies taken in turn, as many as fit in
+ * 16 KiB (the control's plane counted; 64 at most; each on a 64-byte
+ * boundary): the race times one pass after the re-lay, so no pass reloads its
+ * own stores, and back to back on one small plane every stage would load the
+ * stores of the stage just before it while they are still in flight. A cell
+ * is a real 2D r2c shape N1 x N2
+ * whose column leaf is radix R (N1 a multiple of R). Its arms, all timed in
+ * every round:
  *   st512, st256, st128  at the odd pitch hp1
  *   st512 again          st512 a second time at the odd pitch: an arm against
  *                        itself, the noise of a ratio
@@ -366,20 +372,26 @@ static void leaf_pass(leaf_fn fn, double *z, int N1, int R, size_t pitch, size_t
     }
 }
 
-/* one sample, ns per leaf stage: reps stages, timed; the plane re-laid from
- * its seed (_il2d_ip_reset) before every `chunk` of them, untimed */
-static double sample(leaf_fn fn, double *z, const double *seed, size_t n, const cell_t *c, size_t pitch, int reps,
-                     int chunk)
+/* a small plane runs as copies taken in turn: as many as fit in this many
+ * bytes, the control's (larger) plane counted, 64 at most */
+#define ROTATE_BYTES 16384.0
+
+/* one sample, ns per leaf stage: reps stages, timed, over the `copies` planes
+ * in turn (`stride` doubles apart); every copy re-laid from the seed
+ * (_il2d_ip_reset) before every `chunk` stages of it, untimed */
+static double sample(leaf_fn fn, double *z, size_t stride, int copies, const double *seed, size_t n, const cell_t *c,
+                     size_t pitch, int reps, int chunk)
 {
     double ns = 0.0, t0;
-    int done = 0, i, m;
+    int done = 0, i, j, m;
     while (done < reps)
     {
-        m = reps - done < chunk ? reps - done : chunk;
-        memcpy(z, seed, n * sizeof(double));
+        m = reps - done < chunk * copies ? reps - done : chunk * copies;
+        for (j = 0; j < copies; j++)
+            memcpy(z + (size_t)j * stride, seed, n * sizeof(double));
         t0 = vfft_now_ns();
-        for (i = 0; i < m; i++)
-            leaf_pass(fn, z, c->N1, c->k->R, pitch, c->hp1);
+        for (i = 0, j = 0; i < m; i++, j = j + 1 == copies ? 0 : j + 1)
+            leaf_pass(fn, z + (size_t)j * stride, c->N1, c->k->R, pitch, c->hp1);
         ns += vfft_now_ns() - t0;
         done += m;
     }
@@ -564,7 +576,7 @@ int main(int argc, char **argv)
             return 1;
         }
         fprintf(ft, "```text\n");
-        fprintf(fr, "leaf,R,N1,N2,pitch,count,arm,round,position,reps,ns\n");
+        fprintf(fr, "leaf,R,N1,N2,pitch,count,arm,round,position,reps,copies,ns\n");
     }
     snprintf(line, sizeof line,
              "# half_store_bench %s: the AVX-512 forward column leaf, its plane stores as one 512-bit store (st512,\n"
@@ -577,15 +589,17 @@ int main(int argc, char **argv)
     snprintf(line, sizeof line,
              "# a time: ns for one leaf stage of the 2D real r2c column pass (N1/R calls over all hp1 columns, in\n"
              "#   place), median [min..max] of %d rounds; the arms alternate within a round; before every round\n"
-             "#   %d ms idle, then 5 ms at least of untimed samples\n"
+             "#   %d ms idle, then 5 ms at least of untimed samples; copies: a small plane runs as that many\n"
+             "#   copies taken in turn (as many as fit in 16 KiB), so no stage loads the stores of the stage\n"
+             "#   just before it\n"
              "# st512, st256, st128 and st512 again (st512 timed a second time) at the odd pitch hp1 = N2/2 + 1;\n"
              "#   st512 even: the control, st512 at the even pitch hp1 rounded up to a multiple of 4 complex\n"
              "#   (64 bytes: every row starts on a cache line)\n"
              "# ratios of medians to st512's: 256/512, 128/512 (below 1.000: the split arm is faster);\n"
              "#   again/512 (st512 against itself: the noise of a ratio); even/512 (what the odd pitch costs\n"
              "#   the shipped leaf)\n"
-             "%-7s %-12s %5s %9s %8s  %-28s %-28s %-28s %-28s %-28s %7s %7s %9s %8s\n",
-             rounds, pace_ms, "leaf", "N1 x N2", "pitch", "plane", "reps", "st512", "st256", "st128",
+             "%-7s %-12s %5s %9s %8s %6s  %-28s %-28s %-28s %-28s %-28s %7s %7s %9s %8s\n",
+             rounds, pace_ms, "leaf", "N1 x N2", "pitch", "plane", "reps", "copies", "st512", "st256", "st128",
              "st512 again", "st512 even", "256/512", "128/512", "again/512", "even/512");
     printf("%s", line);
     if (ft)
@@ -600,9 +614,14 @@ int main(int argc, char **argv)
         const size_t pe = (c->hp1 + 3) & ~(size_t)3;          /* the control's pitch: a multiple of 64 bytes */
         const size_t pitch[NARMS] = {c->hp1, c->hp1, c->hp1, c->hp1, pe};
         const size_t n_odd = 2 * (size_t)c->N1 * c->hp1, n_even = 2 * (size_t)c->N1 * pe;
-        double *z = alloc_d(n_odd), *seed = alloc_d(n_odd), *ze = alloc_d(n_even), *seede = alloc_d(n_even);
+        /* the copies' stride, in doubles: every copy starts on a 64-byte line, as the one plane does */
+        const size_t s_odd = (n_odd + 7) & ~(size_t)7, s_even = (n_even + 7) & ~(size_t)7;
+        const double fit = floor(ROTATE_BYTES / ((double)s_even * sizeof(double)));
+        const int copies = fit > 64.0 ? 64 : fit < 1.0 ? 1 : (int)fit;   /* 1 from 8 KiB of control plane up */
+        double *z = alloc_d(copies * s_odd), *seed = alloc_d(n_odd), *ze = alloc_d(copies * s_even),
+               *seede = alloc_d(n_even);
         double *zb[NARMS], *sb[NARMS];
-        size_t nb[NARMS];
+        size_t nb[NARMS], stb[NARMS];
         leaf_fn fn[NARMS];
         double ns[NARMS][1024], med[NARMS], lo[NARMS], hi[NARMS], est = 0.0, t0;
         int reps, r, p, m;
@@ -629,13 +648,14 @@ int main(int argc, char **argv)
             zb[a] = a == ST512_EVEN ? ze : z;
             sb[a] = a == ST512_EVEN ? seede : seed;
             nb[a] = a == ST512_EVEN ? n_even : n_odd;
+            stb[a] = a == ST512_EVEN ? s_even : s_odd;
         }
         /* warm every arm once, then size the sample on st512 (the incumbent, as the race sizes it) */
         for (a = 0; a < NARMS; a++)
-            sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], 1, chunk);
+            sample(fn[a], zb[a], stb[a], copies, sb[a], nb[a], c, pitch[a], copies, chunk);
         for (m = 1; m <= (1 << 22); m *= 2)
         {   /* a stage's time from at least 0.2 ms of stages */
-            est = sample(fn[ST512], z, seed, n_odd, c, c->hp1, m, chunk);
+            est = sample(fn[ST512], z, s_odd, copies, seed, n_odd, c, c->hp1, m, chunk);
             if (est * m >= 2.0e5)
                 break;
         }
@@ -649,16 +669,16 @@ int main(int argc, char **argv)
                 for (p = 0; p < NARMS; p++)
                 {
                     a = (r & 1) ? NARMS - 1 - p : p;
-                    sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], reps, chunk);
+                    sample(fn[a], zb[a], stb[a], copies, sb[a], nb[a], c, pitch[a], reps, chunk);
                 }
             while (vfft_now_ns() - t0 < 5.0e6);
             for (p = 0; p < NARMS; p++)
             {
                 a = (r & 1) ? NARMS - 1 - p : p;   /* forward, then backward: no arm always first */
-                ns[a][r] = sample(fn[a], zb[a], sb[a], nb[a], c, pitch[a], reps, chunk);
+                ns[a][r] = sample(fn[a], zb[a], stb[a], copies, sb[a], nb[a], c, pitch[a], reps, chunk);
                 if (fr)
-                    fprintf(fr, "%s,%d,%d,%d,%zu,%zu,%s,%d,%d,%d,%.3f\n", c->k->name, R, c->N1, c->N2, pitch[a],
-                            c->hp1, ARM[a], r, p, reps, ns[a][r]);
+                    fprintf(fr, "%s,%d,%d,%d,%zu,%zu,%s,%d,%d,%d,%d,%.3f\n", c->k->name, R, c->N1, c->N2, pitch[a],
+                            c->hp1, ARM[a], r, p, reps, copies, ns[a][r]);
             }
         }
         for (a = 0; a < NARMS; a++)
@@ -671,8 +691,9 @@ int main(int argc, char **argv)
         }
         plane_size(ps, sizeof ps, (double)n_odd * sizeof(double));
         snprintf(cell, sizeof cell, "%d x %d", c->N1, c->N2);
-        snprintf(line, sizeof line, "%-7s %-12s %5zu %9s %8d  %-28s %-28s %-28s %-28s %-28s %7.3f %7.3f %9.3f %8.3f\n",
-                 c->k->name, cell, c->hp1, ps, reps, col[ST512], col[ST256], col[ST128], col[ST512_AGAIN],
+        snprintf(line, sizeof line,
+                 "%-7s %-12s %5zu %9s %8d %6d  %-28s %-28s %-28s %-28s %-28s %7.3f %7.3f %9.3f %8.3f\n",
+                 c->k->name, cell, c->hp1, ps, reps, copies, col[ST512], col[ST256], col[ST128], col[ST512_AGAIN],
                  col[ST512_EVEN], med[ST256] / med[ST512], med[ST128] / med[ST512], med[ST512_AGAIN] / med[ST512],
                  med[ST512_EVEN] / med[ST512]);
         printf("%s", line);

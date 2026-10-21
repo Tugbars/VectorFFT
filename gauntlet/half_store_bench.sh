@@ -126,7 +126,7 @@ def copy_and_prove(f5, sym, f2):
         raise ValueError('the copy differs from %s in more than its plane stores' % f5)
     return text, len(plane5), len(scr5)
 
-table = re.sub(r'\\\r?\n', ' ', SRC.read_text())                  # the macro's lines joined
+table = re.sub(r'\\\r?\n', ' ', SRC.read_text(encoding='utf-8'))  # the macro's lines joined
 kernels = re.findall(r'X\(\s*(\d+)\s*,\s*"(\w+)"\s*,\s*"([^"]+)"\s*,\s*(\w+)\s*,\s*"([^"]+)"\s*\)', table)
 if not kernels or len(kernels) != len(re.findall(r'\bX\(\s*\d', table)):
     sys.exit('[half_store] the kernel table in %s does not read as X(radix, "name", "file", symbol, "twin")' % SRC)
@@ -178,8 +178,10 @@ if not b.build_gcc(tc, out, cflags, [str(vfft_c)], [str(u[2]) for u in units] + 
 # and %rbp when the function realigns its stack (and $..,%rsp), which makes %rbp its frame pointer;
 # anywhere else %rbp is one more register a plane address may sit in.
 # st512 must keep its plane stores whole (unmasked 512-bit stores >= the kernel's plane stores);
-# st256 and st128 must keep no unmasked 512-bit store outside the stack, and add at least as many
-# stores of their width as the kernel has plane stores, over the st512 arm's own (its tail's).
+# st256 and st128 must keep no unmasked 512-bit store outside the stack, and add, over the st512
+# arm's own (its tail's), at least 2 (st256) or 4 (st128) stores of their width per plane store:
+# a plane store split only partly (a 256-bit half beside two 128-bit quarters) fails here, as the
+# bitwise check cannot see it.
 objdump = Path(tc['cc']).with_name('objdump' + exe)
 objdump = str(objdump) if objdump.is_file() else shutil.which('objdump')
 if not objdump:
@@ -215,10 +217,10 @@ else:
         if n[512][512] < P:
             wrong.append('%s st512: %d unmasked 512-bit stores outside the stack, %d plane stores' % (name, n[512][512], P))
         for w in (256, 128):
-            if n[w][512] or n[w][w] - n[512][w] < P:
+            if n[w][512] or n[w][w] - n[512][w] < (512 // w) * P:
                 wrong.append('%s st%d: %d unmasked 512-bit stores outside the stack (0 expected); %d %d-bit stores, '
-                             'st512 %d, so %d split stores for %d plane stores'
-                             % (name, w, n[w][512], n[w][w], w, n[512][w], n[w][w] - n[512][w], P))
+                             'st512 %d, so %d split stores for %d plane stores (at least %d)'
+                             % (name, w, n[w][512], n[w][w], w, n[512][w], n[w][w] - n[512][w], P, (512 // w) * P))
     (objdir / 'store_widths.log').write_text('\n'.join(report) + '\n', encoding='utf-8')
     if wrong:
         sys.exit('[half_store] an arm is not the store width it is named for (all counts: %s):\n  '
