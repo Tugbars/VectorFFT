@@ -138,10 +138,18 @@ static __thread int _thread_pool_self_slot = 0;
 #endif
 /* the calling thread's pin for one execute (thread_pool_caller_arm, below): state 0 = not inside an
  * execute of a plan created with more than one thread, 1 = inside one and not yet placed, 2 = its first
- * fork-join placed it; old = the affinity mask to put back (0 = the thread was not moved). One record:
- * MinGW's GCC reaches a thread-local through a call (__emutls_get_address), so an execute that never
- * forks makes one such call, not one per field. */
-typedef struct { int state; unsigned long long old; } thread_pool_pin_t;
+ * fork-join placed it; old = the affinity mask to put back (0 = the thread was not moved; on Linux 1 =
+ * moved, the mask in oldm). One record: MinGW's GCC reaches a thread-local through a call
+ * (__emutls_get_address), so an execute that never forks makes one such call, not one per field. */
+typedef struct
+{
+    int state;
+    unsigned long long old;
+#if defined(__linux__)
+    long nbytes;              /* the mask's bytes as sched_getaffinity returned them */
+    unsigned long oldm[16];   /* the mask to put back */
+#endif
+} thread_pool_pin_t;
 #if defined(_MSC_VER)
 static __declspec(thread) thread_pool_pin_t _thread_pool_pin = { 0, 0 };
 #else
@@ -378,10 +386,12 @@ static inline int thread_pool_caller_cpu(void) { return _thread_pool_reserved_cp
  * move immediate, once per execute and only in an execute that forks. A plan whose raced verdict at its
  * thread count is serial never forks and pays nothing (2 ns at N = 2, as at one thread; pinning at the
  * door cost it ~115 ns a call, measured 2026-10-20). A thread whose own mask does not hold that core (an
- * application's narrower pin, a pool worker) is left where it is; one already alone on it (the race
- * scope, a bench) is not moved. No lock is taken here: the fork-join takes the pool's own after it, so a
+ * application's narrower pin, a pool worker) is left where it is; one already running on that core (the
+ * race scope, a bench, a thread the OS put there) is not touched, without a system call. No lock is
+ * taken here: the fork-join takes the pool's own after it, so a
  * second thread executing a threaded plan waits there, placed on the same core for its own execute.
- * Windows; elsewhere the caller runs where it is (sched_setaffinity is the later twin). */
+ * Windows and Linux (the affinity calls by number, as cpu_cache.h makes them); elsewhere the caller
+ * runs where it is. */
 static inline thread_pool_pin_t *thread_pool_caller_arm(void)
 {   /* the record this call armed and must release; NULL = an outer execute holds it */
     thread_pool_pin_t *p = &_thread_pool_pin;
@@ -399,11 +409,37 @@ static inline void _thread_pool_caller_place(thread_pool_pin_t *p)
         GROUP_AFFINITY ga;
         if (cpu < 0 || cpu >= (int)(8 * sizeof(DWORD_PTR)))
             return;   /* no worker runs: no core is reserved */
+        if ((int)GetCurrentProcessorNumber() == cpu)
+            return;   /* on the reserved core already: no system call (reading the mask cost a forking
+                         execute ~1 us, 8192 T=8 4.9 -> 5.9 us, measured 2026-10-21) */
         if (!GetThreadGroupAffinity(GetCurrentThread(), &ga))
             return;
         if (!((ga.Mask >> cpu) & 1) || ga.Mask == ((KAFFINITY)1 << cpu))
             return;   /* the core is not this thread's to take, or the thread is there alone already */
         p->old = (unsigned long long)SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
+    }
+#elif defined(__linux__)
+    {   /* by number, as cpu_cache.h makes its affinity calls */
+        const int cpu = _thread_pool_reserved_cpu, bits = (int)(8 * sizeof(unsigned long));
+        unsigned long one[16];
+        unsigned int now = 0;
+        long c;
+        int other = 0;
+        if (cpu < 0 || cpu >= (int)(8 * sizeof one))
+            return;   /* no worker runs: no core is reserved */
+        if (syscall(SYS_getcpu, &now, NULL, NULL) == 0 && (int)now == cpu)
+            return;   /* on the reserved core already */
+        p->nbytes = syscall(SYS_sched_getaffinity, 0, sizeof p->oldm, p->oldm);
+        if (p->nbytes <= 0 || !((p->oldm[cpu / bits] >> (cpu % bits)) & 1ul))
+            return;   /* the core is not this thread's to take */
+        for (c = 0; c < 8 * p->nbytes && !other; c++)
+            other = c != cpu && ((p->oldm[c / bits] >> (c % bits)) & 1ul);
+        if (!other)
+            return;   /* the thread is there alone already */
+        memset(one, 0, sizeof one);
+        one[cpu / bits] = 1ul << (cpu % bits);
+        if (syscall(SYS_sched_setaffinity, 0, sizeof one, one) == 0)
+            p->old = 1;
     }
 #endif
 }
@@ -413,6 +449,8 @@ static inline void thread_pool_caller_release(thread_pool_pin_t *p)
     {
 #ifdef _WIN32
         SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)p->old);
+#elif defined(__linux__)
+        (void)syscall(SYS_sched_setaffinity, 0, (size_t)p->nbytes, p->oldm);
 #endif
         p->old = 0;
     }

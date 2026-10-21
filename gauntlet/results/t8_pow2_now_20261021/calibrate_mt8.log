@@ -1,0 +1,11 @@
+4096       banked       191ms replayed  ztt
+8192       banked       160ms replayed  ztt
+16384      banked       159ms replayed  ztt
+32768      banked       161ms replayed  ztt
+65536      banked       161ms replayed  ztt
+131072     banked       164ms replayed  ztt
+262144     banked       162ms replayed  ztt
+524288     banked       287ms raced     fs
+1048576    banked       287ms raced     fs
+2097152    banked       293ms raced     fs
+4194304    banked       297ms raced     fs
