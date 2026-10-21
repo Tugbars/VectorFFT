@@ -1,17 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 
-# Treat notebooks as binary (skip diff/merge noise)
-*.ipynb linguist-generated
-*.ipynb -diff
-
-# Auto-generated headers — collapse in GitHub diff views, do not hand-edit.
-# (the old `src/core/generated/*` rule was dead: that directory does not exist.)
-# The python-generated trig tables under src/core/transforms/trig/ ARE generated
-# (scripts/reference/gen_dct*.py) and self-declare it in their header comment.
-src/core/transforms/trig/dct2_n8_avx2.h linguist-generated
-src/core/transforms/trig/dct3_n8_avx2.h linguist-generated
-
 # DAG-compiler output: ~350k lines of machine-generated codelets.
 # Excluded from GitHub's language-percentage bar; files stay in the repo and
 # remain fully browsable/downloadable. The decision-making code (core/ + *.ml)
@@ -30,10 +19,6 @@ src/dag-fft-compiler/generator/generated/** linguist-generated
 # from the language bar whatever its extension.
 docs/roadmap/**        linguist-vendored
 docs/roadmap/**/*.c    linguist-vendored
-
-# DAG-compiler experiments — probe/sandbox campaigns, not shipped library
-# code. Excluded from the language bar.
-src/dag-fft-compiler/experiments/** linguist-vendored
 
 # Cost-model code (and its generated tables) — excluded from the language bar.
 src/dag-fft-compiler/generator/cost_model/** linguist-vendored
@@ -54,16 +39,11 @@ src/tools/gates/** linguist-vendored
 src/dag-fft-compiler/jit/generated/** linguist-generated
 
 # The language bar represents the shipped library = src/core. Everything else
-# C-shaped is scaffolding: build-system probes, the public-header shim,
-# generator-side tooling, and the JIT prelude/runtime C surface.
-cmake/**                                  linguist-vendored
+# C-shaped is scaffolding: the public-header shim, generator-side tooling,
+# and the JIT prelude/runtime C surface.
 include/**                                linguist-vendored
 src/dag-fft-compiler/generator/scripts/** linguist-vendored
 src/dag-fft-compiler/jit/**               linguist-vendored
-
-# Generator-level shell helpers (codelet regeneration / codegen comparison).
-# Tooling, not shipped library code — same rationale as generator/scripts/.
-src/dag-fft-compiler/generator/*.sh        linguist-vendored
 
 # HTML anywhere in this repo is a project page or a rendered report, never
 # library code — without this the site markup shows up in the language bar as
@@ -80,7 +60,6 @@ docs/** linguist-documentation
 # wisdom2 store: LF everywhere — in repo AND on disk (writers emit "wb"/LF;
 # this pin kills the Git-Bash-sed CRLF trap at the root). See
 # src/core/wisdom2/README.md §2.3.
-src/dag-fft-compiler/generator/generated/wisdom2_*.txt text eol=lf
 src/wisdom/**/*.txt text eol=lf
 # Refactor baseline artifacts are diffed byte-for-byte across the migration;
 # a CRLF conversion would make every line differ. Pin them the same way.
@@ -90,9 +69,8 @@ src/tools/baseline/reference/** text eol=lf
 # unreadable ("bad string table size") on the next checkout (found 2026-09-03).
 src/tools/baseline/reference/*.o binary
 
-# wisdom2 TRANSITIONAL tooling — the one-shot migrator and the writer
-# registry die with the legacy wisdom files (campaign wave 5 / v1.0).
-# Excluded from the language bar; the permanent module (wisdom2.h, the
-# reader, selftest, README) stays counted as shipped library code.
+# wisdom2 TRANSITIONAL tooling — the one-shot migrator dies with the legacy
+# wisdom files (campaign wave 5 / v1.0). Excluded from the language bar; the
+# permanent module (wisdom2.h, the reader, selftest, README) stays counted as
+# shipped library code.
 src/core/wisdom2/wisdom2_migrate.h linguist-vendored
-tools/wisdom_migrate/**           linguist-vendored
