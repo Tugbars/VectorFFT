@@ -490,7 +490,11 @@ def find_kfr():
 
 
 def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
-              split=False, kfr=False):
+              split=False, kfr=False, lib_cflags=None):
+    """The compile flags, sources and link input of one driver build. A list passed as
+    lib_cflags is filled with the LIBRARY TU's flags (gcc-style path): cflags without
+    the comparator switches (--mkl/--fftw/--kfr's defines and include dirs), which only
+    the drivers read, so every tool built from one tree shares one library object."""
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     kfr_inc, kfr_lib = (None, None)
@@ -609,6 +613,11 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
         flags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     if os.environ.get('VFFT_DEBUG_SYMS'):   # line numbers for a debugger, the optimization untouched
         flags += ['-g']
+    if lib_cflags is not None:
+        # the library TU's flags stop here: the comparator switches below are read by the
+        # drivers only (src/core never tests VFFT_HAS_MKL/FFTW/KFR), so src/core/vfft.c
+        # compiles to the same object with or without them
+        lib_cflags[:] = flags + build_includes()
     if mkl:
         # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
         # strides array -> "Inconsistent configuration parameters" at DftiCommit.
@@ -661,7 +670,7 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
     return [tc['cc']] + cflags + base_srcs + ['-o', str(out_bin)] + link_args
 
 
-def build_gcc(tc, out_bin, cflags, base_srcs, link_args) -> bool:
+def build_gcc(tc, out_bin, cflags, base_srcs, link_args, lib_srcs=(), lib_cflags=None) -> bool:
     """Compile each driver TU to a CACHED object, in parallel, then link.
 
     The old path handed gcc every source in one command, so the driver TUs --
@@ -673,23 +682,35 @@ def build_gcc(tc, out_bin, cflags, base_srcs, link_args) -> bool:
 
     Objects live under a dir named by a hash of compiler+flags+includes, so a
     --mkl build and a --fftw build (or an ASAN one) can never reuse each
-    other's objects."""
-    objdir = HERE / '.obj' / _flags_key([tc['cc']] + cflags)
-    objdir.mkdir(parents=True, exist_ok=True)
+    other's objects. The library TUs (lib_srcs, with lib_cflags from build_cmd:
+    the flags without the comparator switches) are the exception: they compile
+    under the library's own key, so the --mkl bench, the calibrator built
+    without MKL and every gate share one src/core/vfft.c object instead of
+    compiling it once per flag set."""
+    lib_set = {str(Path(s)) for s in lib_srcs} if lib_cflags is not None else set()
+    objdirs = {}
+
+    def objdir_of(flags):
+        key = _flags_key([tc['cc']] + flags)
+        if key not in objdirs:
+            objdirs[key] = HERE / '.obj' / key
+            objdirs[key].mkdir(parents=True, exist_ok=True)
+        return objdirs[key]
 
     pairs = []
     for s in base_srcs:
         sp = Path(s)
+        fl = lib_cflags if str(sp) in lib_set else cflags
         # Sources CAN share a stem across trees, so disambiguate the object
         # name with a short hash of the full path.
-        pairs.append((sp, objdir / f'{sp.stem}-{_flags_key([str(sp)])[:6]}.o'))
+        pairs.append((sp, objdir_of(fl) / f'{sp.stem}-{_flags_key([str(sp)])[:6]}.o', fl))
 
-    stale = [(s, o) for (s, o) in pairs if _is_stale(s, o)]
+    stale = [(s, o, fl) for (s, o, fl) in pairs if _is_stale(s, o)]
     if stale:
         print(f'  [driver] compiling {len(stale)} of {len(pairs)} TUs on '
-              f'{_jobs()} jobs: {", ".join(s.name for (s, _) in stale)}', flush=True)
+              f'{_jobs()} jobs: {", ".join(s.name for (s, _, _) in stale)}', flush=True)
         t0 = time.time()
-        if not _compile_many([_compile_cmd(tc, s, o, cflags) for (s, o) in stale],
+        if not _compile_many([_compile_cmd(tc, s, o, fl) for (s, o, fl) in stale],
                              build_env(tc), 'driver'):
             return False
         print(f'  [driver] compiled {len(stale)} in {time.time() - t0:.1f}s')
@@ -699,7 +720,7 @@ def build_gcc(tc, out_bin, cflags, base_srcs, link_args) -> bool:
     # cflags go on the link line too: that is what the old single-command form
     # did, and it is what carries -fsanitize=address (VFFT_ASAN) through to the
     # link. The compile-only flags among them are inert here.
-    link = ([tc.get('link_cc', tc['cc'])] + cflags + [str(o) for (_, o) in pairs]
+    link = ([tc.get('link_cc', tc['cc'])] + cflags + [str(o) for (_, o, _) in pairs]
             + ['-o', str(out_bin)] + link_args)
     r = subprocess.run(link, capture_output=True, text=True,
                        encoding='utf-8', errors='replace', env=build_env(tc))
@@ -839,10 +860,13 @@ def main():
             if head:
                 print(f'[compile] warnings:\n{head}')
     else:
+        lib_cflags = []
         cflags, base_srcs, link_args = build_cmd(
             tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
-            extra_srcs=extra_srcs, split=True)
-        if not build_gcc(tc, out_bin, cflags, base_srcs, link_args):
+            extra_srcs=extra_srcs, split=True, lib_cflags=lib_cflags)
+        # src/core/vfft.c (--vfft) compiles under the library's own key: one object for every tool
+        if not build_gcc(tc, out_bin, cflags, base_srcs, link_args,
+                         lib_srcs=extra_srcs, lib_cflags=lib_cflags):
             print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
             return 1
 

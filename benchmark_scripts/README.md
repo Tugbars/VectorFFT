@@ -25,7 +25,7 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 `vectorfft-fftw-pow2-gflops.svg`:
 
 ```sh
-./benchmark_scripts/build.sh          # once
+./benchmark_scripts/build_avx512.sh   # once; build_avx2.sh on a CPU without AVX-512
 ./benchmark_scripts/run_pow2.sh       # FFTW; run_pow2.sh mkl for MKL
 ```
 
@@ -35,7 +35,7 @@ It is not one of the five pictures and the full runs never include it.
 
 | You need | Notes |
 |---|---|
-| an x86-64 CPU with AVX2 and FMA | and AVX-512 for an AVX-512 build (`--isa avx512`, below) |
+| an x86-64 CPU with AVX-512 | the default build is the AVX-512 tree; on a CPU with AVX2 and FMA only, build with `--isa avx2` (below) |
 | GCC or Clang | on Windows the MinGW-w64 build of GCC: the WinLibs UCRT build, or MSYS2's UCRT64 environment (`pacman -S mingw-w64-ucrt-x86_64-gcc`); Microsoft's compilers (`cl`, `clang-cl`) are not supported. The build looks in the usual MinGW-w64 and MSYS2 folders; `--cc` names another compiler |
 | Python 3 | with `matplotlib` for the pictures (`pip install matplotlib`) |
 | FFTW 3 as a shared library | for `--cmp fftw`. On Windows it comes with the repository (`gauntlet/fftw/libfftw3-3.dll`); on Linux the distribution's `libfftw3`; see "Which FFTW" |
@@ -106,17 +106,17 @@ library a run will use. With `mkl` none of this runs.
 ### 1. Build the tools
 
 ```sh
-./benchmark_scripts/build.sh                    # Windows: the FFTW in gauntlet/fftw/ is used
-./benchmark_scripts/build.sh --isa avx512       # the AVX-512 tree, on a CPU with AVX-512
-./benchmark_scripts/build.sh --fftw-dll <path>  # Linux, or an FFTW of your own
+./benchmark_scripts/build_avx512.sh                    # the AVX-512 tree, on a CPU with AVX-512; Windows: the FFTW in gauntlet/fftw/ is used
+./benchmark_scripts/build_avx2.sh                      # the AVX2 tree, on a CPU without AVX-512
+./benchmark_scripts/build_avx512.sh --fftw-dll <path>  # Linux, or an FFTW of your own
 ```
 
-`build.sh` calls `python benchmark_scripts/build_tools.py` with the same arguments
-(`python3` when that is a working Python, else `python`):
+Each script calls `python benchmark_scripts/build_tools.py` with its ISA (`--isa avx512` or
+`--isa avx2`) and your arguments (`python3` when that is a working Python, else `python`):
 
 | Option | Meaning |
 |---|---|
-| `--isa avx2` or `--isa avx512` | which of the library's two codelet trees to compile (default `avx2`; see "AVX-512" below) |
+| `--isa avx2` or `--isa avx512` | which of the library's two codelet trees to compile (set by the script you run; `build_tools.py` alone defaults to `avx512`; see "AVX-512" below) |
 | `--mkl` / `--no-mkl` | build the MKL arm in, or leave it out; by default it is in when MKL is found |
 | `--fftw-dll PATH` | the FFTW shared library for `--cmp fftw` runs, recorded for `run_suite.py` |
 | `--cc NAME` | the compiler (default `gcc`) |
@@ -128,8 +128,8 @@ library's codelets (about 1,600 files) once; that takes a few minutes, and later
 reuse them until a codelet or the ISA changes. The binaries land in `gauntlet/`. What was
 chosen (the ISA, whether MKL is in, the FFTW path and its version string, the compiler) is
 recorded in `benchmark_scripts/.config.json`, which `run_suite.py` reads; the file is per
-machine and not tracked by git. Build again with the other `--isa` to switch trees: the
-record changes with it.
+machine and not tracked by git. Run the other script to switch trees: the record changes
+with it.
 
 ### 2. Run the benchmarks
 
@@ -230,19 +230,19 @@ undo a busy machine.
 ## AVX-512
 
 The library has two codelet trees, one per instruction set, and a build compiles one of
-them (`--isa`). The interleaved library's AVX-512 tree is incomplete today: 716 kernels
-against 982 for AVX2. Absent on AVX-512 are every real-transform engine (the real mono, real
-pair, real flat with its Hermitian stage, and real rows engines; `codelets/zil/avx512/` under
-`src/dag-fft-compiler/` has no `real/` folder), the tangent pair (`pair2p/tangent`), the
-half column kernels (`shared/col/half`), 6 of the 18 blocked pair kernels, 6 of the 18
-blocked column kernels and 4 of the 39 ZTT kernels (the radix-4 `t0tp` and `tld` forms,
-which is why N = 16 and 32 have no ZTT route on AVX-512). The library never falls back from
-AVX-512 to AVX2 for a kernel it lacks: such a kernel is simply absent, and the planner races
-the routes that exist or refuses the cell. So on an AVX-512 build the five pictures here,
-all complex-to-complex, are meaningful, while a real-transform cell may be refused. The
-release will ship both ISAs.
+them (`--isa`). The interleaved library's AVX-512 tree holds 884 kernels against 982 for
+AVX2, and every complex and real transform tested on it is served and correct (checked under
+Intel's Software Development Emulator, which runs AVX-512 code on any CPU). What AVX-512
+lacks are engines that AVX2 races beside others: the real pair and real rows engines
+(`real/pair`, `real/rows` under `src/dag-fft-compiler/codelets/zil/avx2/`), the half-store
+column kernels (`shared/col/half`), and 4 of the 39 ZTT kernels (the radix-4 `t0tp` and `tld`
+forms: on AVX-512 the ZTT route starts at N = 64, and N = 16 and 32 are served by the other
+routes); the threaded real ZTT engine is not used at AVX-512's eight lanes either. The
+library never falls back from AVX-512 to AVX2 for a kernel it lacks: the planner races the
+routes that exist. The AVX-512 tree has not been timed on AVX-512 hardware yet; these
+scripts are how that is done. The release will ship both ISAs.
 
-To measure the AVX-512 tree, build the tools with `--isa avx512` on a CPU that has AVX-512,
+`build_avx512.sh` builds the AVX-512 tree; measure it on a CPU that has AVX-512,
 against an FFTW with its AVX-512 code paths: on Windows the one in `gauntlet/fftw/`, on Linux
 a build from source (above); `build_tools.py` prints what the
 FFTW file was built with, and `SUMMARY.md` records both.
@@ -254,7 +254,7 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 
 ## Files
 
-- `build.sh` -- builds the tools: calls `build_tools.py` with its arguments
+- `build_avx512.sh`, `build_avx2.sh` -- build the tools with the AVX-512 or the AVX2 tree: call `build_tools.py` with that ISA and your arguments
 - `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
 - `run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
 - `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`

@@ -2,7 +2,7 @@
 """build_tools.py -- build the gauntlet's three tools for the benchmark scripts (benchmark_scripts/README.md).
 
     python benchmark_scripts/build_tools.py --fftw-dll <path to fftw3.dll or libfftw3.so>
-    python benchmark_scripts/build_tools.py --isa avx512 --fftw-dll <path>     # the AVX-512 codelet tree
+    python benchmark_scripts/build_tools.py --isa avx2 --fftw-dll <path>       # the AVX2 codelet tree, on a CPU without AVX-512
     python benchmark_scripts/build_tools.py --no-mkl                            # without MKL, even when it is installed
 
 Builds bench_1d_vs_mkl, recal_1d_probe and k1_fwd_ref_probe through gauntlet/build.py, one
@@ -11,7 +11,7 @@ probe) when MKL is on. The binaries land in gauntlet/, where gauntlet.py looks f
 What was chosen is written to benchmark_scripts/.config.json, which run_suite.py reads: the
 ISA, whether MKL is built in, the FFTW library's path and its version string, the compiler.
 
-    --isa avx2|avx512   the codelet tree to compile (VFFT_ISA for build.py; default avx2)
+    --isa avx2|avx512   the codelet tree to compile (VFFT_ISA for build.py; default avx512)
     --mkl / --no-mkl    build the MKL arm in; default: on when MKL is found (MKLROOT or the oneAPI default install)
     --fftw-dll PATH     an FFTW shared library of your own for --cmp fftw runs (VFFT_FFTW_DLL); without it a run uses
                         the FFTW shipped with the repository on Windows (gauntlet/fftw/), the distribution's on Linux
@@ -139,7 +139,7 @@ def harness():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--isa", choices=["avx2", "avx512"], default="avx2", help="the codelet tree to compile (default avx2)")
+    ap.add_argument("--isa", choices=["avx2", "avx512"], default="avx512", help="the codelet tree to compile (default avx512)")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--mkl", dest="mkl", action="store_true", default=None, help="build the MKL arm in (default: when MKL is found)")
     g.add_argument("--no-mkl", dest="mkl", action="store_false", help="leave MKL out")
