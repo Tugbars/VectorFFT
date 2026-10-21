@@ -1,0 +1,6 @@
+2026-10-21 11:01:32 run: 3 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-21 11:01:32 calibrate: 3 cells (0 already done)
+2026-10-21 11:01:33   calibrated 3/3 (32768), 0 s elapsed
+2026-10-21 11:01:33 bench: 3 cells (0 already benched, 0 not banked -> not benched)
+2026-10-21 11:01:39   benched 3/3 (32768), 5 s elapsed
+2026-10-21 11:01:40 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\gcc_pow2_mkl_retime_20261021\report.md

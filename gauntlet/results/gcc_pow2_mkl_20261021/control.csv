@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+4096,1,z:ilp,nat-oop,3555,3827,69.128,1.076,3.902e-16,ztt,0
+4096,1,z:ilp,nat-oop,3558,3835,69.081,1.078,3.902e-16,ztt,1
+4096,1,z:ilp,nat-oop,3550,3842,69.228,1.082,3.902e-16,ztt,0
+4096,1,z:ilp,nat-oop,3575,3845,68.752,1.076,3.902e-16,ztt,1

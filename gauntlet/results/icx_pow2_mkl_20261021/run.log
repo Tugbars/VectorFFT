@@ -1,0 +1,7 @@
+2026-10-21 10:27:11 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\AppData\Local\Temp\claude\c--Users-Tugbars-Desktop-highSpeedFFT\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\icx\wt\src\wisdom\14900KF)
+2026-10-21 10:27:11 run: 23 cells, contract out of place, bin C:\Users\Tugbars\AppData\Local\Temp\claude\c--Users-Tugbars-Desktop-highSpeedFFT\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\icx\wt\gauntlet
+2026-10-21 10:27:11 calibrate: 23 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-10-21 10:42:56   calibrated 23/23 (8388608), 944 s elapsed
+2026-10-21 10:42:56 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-10-21 10:44:12   benched 23/23 (8388608), 75 s elapsed
+2026-10-21 10:44:14 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\icx_pow2_mkl_20261021\report.md
