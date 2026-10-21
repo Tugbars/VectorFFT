@@ -35,9 +35,10 @@ half-store form name resolves to the full-store twin.
 `generator/lib/gen/c2c_il.ml` (`gen_radix R --cil-n1c --cil-st128`, blocked:
 `--cil-blocked --cil-split A.B --cil-form-tag --cil-st128`; the generator
 refuses `--cil-bwd` with it), the store edge in `lib/cx/cx_render.ml`
-(`store128`, the `AZoutLeg` halves); rows in `corpus.ml`. AVX2 only (the twin
-is the halves of a 256-bit column pair). Regeneration: through `gen_set` to a
-temporary root (`--root`), never in place; the folder a file lands in follows
-its kind (`Corpus.dir_of_file`), and the law is byte identity against the
-shipped file. The map of the whole tree, the two layouts and the rules are in
-[`../../../../README.md`](../../../../README.md).
+(`store128`, the `AZoutLeg` halves); rows in `corpus.ml`. Emitted at AVX2
+only; whether the 512-bit leaf wants its plane stores split is open, pending a
+Zen 4 measurement (`gauntlet/half_store_bench.sh`). Regeneration: through
+`gen_set` to a temporary root (`--root`), never in place; the folder a file
+lands in follows its kind (`Corpus.dir_of_file`), and the law is byte identity
+against the shipped file. The map of the whole tree, the two layouts and the
+rules are in [`../../../../README.md`](../../../../README.md).

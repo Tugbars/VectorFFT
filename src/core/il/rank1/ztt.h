@@ -558,7 +558,8 @@ static inline void vfft_ztt_bind(vfft_ztt_plan_t *p, int inplace)
 }
 
 /* THE PURE-POW2 BAND: every power of two in 16..VFFT_ZTT_MAX_N. Which
- * families race inside it is planning/policy.h's band map. */
+ * families race inside it is planning/policy.h's band map.
+ * At 8 lanes the policy's floor narrows it to 64 up (policy_il.h VFFT_POLICY_ZTT_MIN_N). */
 static inline int vfft_ztt_band(int N)
 {
     return N >= 16 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
@@ -569,7 +570,8 @@ static inline int vfft_ztt_band(int N)
  * ends), 2048 <= N <= the ceiling. The chain grammar is the planner's
  * (_il_dp_enumerate_ztt_odd): the odd part decomposed greedily
  * largest-first, its mids at every interior position, the pow2 slots over
- * ordered {4, 8}. */
+ * ordered {4, 8}.
+ * At 8 lanes the policy keeps a >= 6 only (policy_il.h vfft_policy_ztt_odd_band). */
 static inline int vfft_ztt_odd_band(int N)
 {
     static const int OP[5] = { 15, 9, 7, 5, 3 };

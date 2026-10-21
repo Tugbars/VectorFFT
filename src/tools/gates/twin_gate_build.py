@@ -8,9 +8,15 @@ builds: the driver flags with its -I set, and its cached codelet library
 (src/dag-fft-compiler/.obj/<isa>/libdagcodelets.a, compiled where stale):
 
   the gate         gcc <avx2 flags>                    -c twin_gate.c
-  the avx2 side    gcc <avx2 flags>   -DVFFT_TWIN_SIDE -c twin_gate.c   (twin_side_avx2)
-  the avx512 side  gcc <avx512 flags> -DVFFT_TWIN_SIDE -c twin_gate.c   (twin_side_avx512)
+  the avx2 side    gcc <avx2 flags>   -DVFFT_TWIN_SIDE -DTWIN_REG_NKERN=n2 -c twin_gate.c   (twin_side_avx2)
+  the avx512 side  gcc <avx512 flags> -DVFFT_TWIN_SIDE -DTWIN_REG_NKERN=n5 -c twin_gate.c   (twin_side_avx512)
   link             the three objects + the avx2 library + the avx512 library
+
+TWIN_REG_NKERN is the number of kernels the registry's FWD and BWD radix lists
+hold at that side's flags (registry_kernels: the preprocessor's own view of
+il_isa.h, so the registry counted is the one the side includes). The side's
+kernel table must expand exactly that many: a kind the registry gains and the
+table does not name stops the compile (twin_gate.c's _Static_assert).
 
 The gate's own object carries no AVX-512 code: on a host without it, it says so
 and exits 2 (run it under Intel SDE there). run_gates.py calls this for
@@ -20,6 +26,7 @@ twin_gate; by hand, from the repo root:
 """
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import time
@@ -47,6 +54,25 @@ def load_build(isa):
     return mod
 
 
+def registry_kernels(tc, cflags, env):
+    """The kernels the IL registry's FWD and BWD radix lists hold at cflags'
+    ISA: the X(R) entries of every VFFT_IL_<KIND>_{FWD,BWD}_RADICES(X) macro
+    il_isa.h defines there (the _PAIR_ lists repeat them). None if the
+    preprocessor fails."""
+    r = subprocess.run([tc['cc']] + cflags + ['-E', '-dM', '-x', 'c', '-'],
+                       input='#include "il_isa.h"\n', capture_output=True, text=True,
+                       encoding='utf-8', errors='replace', env=env)
+    if r.returncode != 0:
+        print(f'[twin] the registry count failed:\n{r.stderr[:4000]}', file=sys.stderr)
+        return None
+    n = 0
+    for line in r.stdout.splitlines():
+        m = re.match(r'#define VFFT_IL_\w+_(?:FWD|BWD)_RADICES\(X\)(.*)', line)
+        if m:
+            n += len(re.findall(r'\bX\(', m.group(1)))
+    return n
+
+
 def main():
     t0 = time.time()
     b2, b5 = load_build('avx2'), load_build('avx512')
@@ -69,10 +95,13 @@ def main():
             cf5 = cf5 + [f]
     objdir = b2.HERE / '.obj' / 'twin_gate'
     objdir.mkdir(parents=True, exist_ok=True)
-    units = [(cf2, [], objdir / 'main.o'),
-             (cf2, ['-DVFFT_TWIN_SIDE'], objdir / 'side_avx2.o'),
-             (cf5, ['-DVFFT_TWIN_SIDE'], objdir / 'side_avx512.o')]
     env = b2.build_env(tc)
+    n2, n5 = registry_kernels(tc, cf2, env), registry_kernels(tc, cf5, env)
+    if n2 is None or n5 is None:
+        return 1
+    units = [(cf2, [], objdir / 'main.o'),
+             (cf2, ['-DVFFT_TWIN_SIDE', f'-DTWIN_REG_NKERN={n2}'], objdir / 'side_avx2.o'),
+             (cf5, ['-DVFFT_TWIN_SIDE', f'-DTWIN_REG_NKERN={n5}'], objdir / 'side_avx512.o')]
     procs = [subprocess.Popen([tc['cc']] + cf + extra + ['-c', str(SRC), '-o', str(obj)],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                               encoding='utf-8', errors='replace', env=env)

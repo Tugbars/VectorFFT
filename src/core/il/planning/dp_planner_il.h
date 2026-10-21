@@ -797,18 +797,26 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
              * INDEPENDENT re-derivation, as this gate demands:
              * frequency k lands at the in-place Sande-Tukey position
              * ic = digitrev(k) over the chain, then inside the last stage's
-             * 4-column span at tld's unpack-only lane order, so position
-             *   idx = R*(col & ~3) + 4*p + [0,2,1,3][col & 3], col = ic/R, p = ic%R.
-             * Invert: span = idx/(4R), j = idx%4, p = (idx%(4R))/4, col = 4*span +
-             * [0,2,1,3][j] (the lane order is its own inverse), ic = col*R + p,
-             * and digitrev over the REVERSED chain undoes digitrev over the
-             * chain (the digits read in the opposite radix system). */
-            static const long sig[4] = { 0, 2, 1, 3 };
+             * VW-column span (VW = VFFT_IL_VW) at tld's unpack-only lane
+             * order, the span's even columns first, then its odd ones, so
+             *   idx = R*(col & ~(VW-1)) + VW*p + (lane of column col & (VW-1)),
+             *   col = ic/R, p = ic%R.
+             * Invert: span = idx/(VW*R), j = idx%VW, p = (idx%(VW*R))/VW,
+             * col = VW*span + colat[j] (colat[j] = the column lane j holds),
+             * ic = col*R + p, and digitrev over the REVERSED chain undoes
+             * digitrev over the chain (the digits read in the opposite radix
+             * system). */
+#if VFFT_IL_VW == 8
+            static const long colat[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
+#else
+            static const long colat[4] = { 0, 2, 1, 3 };
+#endif
+            const long VW = VFFT_IL_VW;
             const int K = c->il_zt_n;
             const long R = c->il_zt[K - 1];
-            const long span = idx / (4 * R), within = idx % (4 * R);
-            const long p = within / 4, j = within % 4;
-            const long col = 4 * span + sig[j];
+            const long span = idx / (VW * R), within = idx % (VW * R);
+            const long p = within / VW, j = within % VW;
+            const long col = VW * span + colat[j];
             const long ic = col * R + p;
             int rch[VFFT_ZTT_MAX_NF], i;
             if (K < 2 || K > VFFT_ZTT_MAX_NF) return -1;

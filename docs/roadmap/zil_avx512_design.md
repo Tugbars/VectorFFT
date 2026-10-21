@@ -638,13 +638,14 @@ policy, ZTURN-T at VW=8, k1 mono, corpus/registry ISA) are merged into
 - `codelets/zil/avx512/`: **720 files**: 718 from the derived quadrants
   `zil-pure-avx512` (668) and `zil-boundary-avx512` (50), and the two IL monos in
   `oop-edges-avx512`. Absent, each with its reason in `Corpus.zil_isa_gap` (printed
-  in `il_registry_avx512.h`): 242 cells. By design: t0tp/tld at radix 4 (4 cells,
-  the R % VW law) and the half stores n1ch / n1cb48h / n1cb84h / n1cb88h (32 cells,
-  AVX2 only: the halves of a 256-bit column pair). With no 512-bit edge yet: the
-  Hermitian last stage t2csgh / t2csght (38), the real mono rn1 / rn1b48 / rn1b444
-  (68), and the real pair, flat leaf and rows kinds r2z / t2h / t2m / r1c / r2zr
-  (100). Not in the corpus, so not generated: the 20 env-knob/sed kernels
-  (pair2p/tangent, pair2p/blocked t2b/t2b48/n1tb/n1tb48/n1tb44; D3).
+  in `il_registry_avx512.h`): 242 cells. By law: t0tp/tld at radix 4 (4 cells,
+  the R % VW law). With no 512-bit edge yet: the half stores n1ch / n1cb48h /
+  n1cb84h / n1cb88h (32 cells, pending a Zen 4 measurement of split stores at 512
+  bits, the bench `gauntlet/half_store_bench.sh`), the Hermitian last stage
+  t2csgh / t2csght (38), the real mono rn1 / rn1b48 / rn1b444 (68), and the real
+  pair, flat leaf and rows kinds r2z / t2h / t2m / r1c / r2zr (100). Not in the
+  corpus, so not generated: the 20 env-knob/sed kernels (pair2p/tangent,
+  pair2p/blocked t2b/t2b48/n1tb/n1tb48/n1tb44; D3).
 - `generated/il_registry_avx512.h`, `ztt_registry_avx512.h` (159 cells),
   `generated/fused_codelets/avx512/` (30 fused drivers, kept in a subfolder so
   neither build globs them into an avx2 library). `il_registry_avx2.h` gains only

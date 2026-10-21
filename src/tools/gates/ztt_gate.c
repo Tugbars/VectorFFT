@@ -15,11 +15,16 @@
  *   5. the create built no trig: its streams come from the baked quarter-wave,
  *      so the forward error above IS the accuracy verdict of that table.
  * FRONT-DOOR pass (COLD scratch store, run_gates: ("flag", False)): the K=1
- *   OOP NATURAL create at every pow2 N in 16..VFFT_ZTT_MAX_N races the tier (the pairs,
+ *   OOP NATURAL create at every pow2 N of ZTURN-T's band (below) races the tier (the pairs,
  *   mono, ZTURN-T) and banks; this gate PRINTS the banked route and, for every
  *   cell whose route is ztt, asserts that vfft_execute's forward and backward
  *   are BITWISE the direct engine's on the banked chain (the replay serves
- *   exactly the raced plan). Which engine wins a cell is never asserted.
+ *   exactly the raced plan). The in-place request on the same N is its own
+ *   cell (one contract per request): it races and banks its own place=ip row,
+ *   and its handle is asserted against THAT row — forward and backward z -> z
+ *   BITWISE the direct engine on the row's chain and tile, bound in place, or,
+ *   where its race banked another engine, correct against the OOP forward.
+ *   Which engine wins a cell is never asserted.
  *
  * PLAIN pass (2026-09-14, the scrambled order class, ztt_scrambled_design.md):
  *   every registry cell as vfft_ztt_create_chain_ord(scr = 1) — the plan's
@@ -29,20 +34,24 @@
  * FRONT-DOOR SCRAMBLED pass: the OOP SCRAMBLED create at every pow2 N replays
  *   the ord=scr row the natural race banked beside its own; a cell whose
  *   scrambled route is not ztt FAILS (the band's scrambled writer is the plain
- *   ZTURN-T, design_contracts.md 8b), and vfft_execute's forward, backward and
- *   in-place forward are asserted BITWISE the direct plain engine.
+ *   ZTURN-T, design_contracts.md 8b), and vfft_execute's forward and backward
+ *   are asserted BITWISE the direct plain engine; the in-place handle, BITWISE
+ *   the direct plain engine on its own place=ip row (which must be ztt too).
+ * SEEDED pass: one ztt row per pow2 N for each placement (the registry's first
+ *   chain at N), replayed BITWISE the direct engine out of place and in place.
  *
  * THE BUILD'S ISA. The cells are ztt.h's (vfft_ztt_cells). An avx512 row may
  * carry ONE order class (the other's drivers are 0) where the 8-lane laws
  * refuse the other for its chain: that class is reported and not gated, and
  * on a plain-only row G1's reference is the natural plan on another chain at
  * N. A class missing where the laws admit it FAILS, so at avx2, where every
- * row carries both classes, any missing class FAILS. A pow2 N where the laws
- * admit no chain of a class (16 and 32 at avx512, zil_avx512_design.md D8)
- * is a KNOWN GAP of that class's front-door or seeded pass: printed where met,
- * listed again before the verdict and counted apart from the failures; the
- * exit status is 1 for a failure only. A pow2 N with no cell of a class the
- * laws admit there FAILS.
+ * row carries both classes, any missing class FAILS. The pow2 passes run
+ * VFFT_POLICY_ZTT_MIN_N..VFFT_ZTT_MAX_N, ZTURN-T's band at this ISA
+ * (policy_il.h: 64 up at avx512, where 16 and 32 are not its sizes). A pow2 N in the band where the laws
+ * admit no chain of a class is a KNOWN GAP of that class's front-door or
+ * seeded pass: printed where met, listed again before the verdict and counted
+ * apart from the failures; the exit status is 1 for a failure only. A pow2 N
+ * with no cell of a class the laws admit there FAILS.
  *
  * Run:   ztt_gate.exe --wisdir <scratch dir>
  * Build: python gauntlet/build.py --compile --src src/tools/gates/ztt_gate.c --vfft */
@@ -53,6 +62,9 @@
 #include <direct.h>
 #include "vfft.h"
 #include "ztt.h"
+#include "wisdom2.h"
+#include "il/rank1/k1_fourstep_band.h"
+#include "il/planning/policy_il.h"   /* ZTURN-T's band at this ISA (VFFT_POLICY_ZTT_MIN_N) */
 
 #define TOL 1e-11
 
@@ -140,10 +152,9 @@ static int law_admits_a_chain(long N, int scr)
     return 0;
 }
 
-/* THE KNOWN GAPS: a pow2 N where the lane laws admit no chain of a class, so
- * ZTURN-T has no plan of that class there at this ISA (16 and 32 at avx512:
- * zil_avx512_design.md D8, open until ZTURN-T serves them). Printed where met,
- * listed again before the verdict, and never in the exit status. */
+/* THE KNOWN GAPS: a pow2 N in the band where the lane laws admit no chain of
+ * a class, so ZTURN-T has no plan of that class there at this ISA. Printed
+ * where met, listed again before the verdict, and never in the exit status. */
 #define MAX_GAPS 16
 static char g_gap[MAX_GAPS][256];
 static int g_ngap = 0;
@@ -359,15 +370,19 @@ static vfft_plan mk_ord(const char *W, int N, int ip, int order)
     return vfft_create(&cfg);
 }
 static vfft_plan mk(const char *W, int N, int ip) { return mk_ord(W, N, ip, VFFT_ORDER_NATURAL); }
-/* the banked ord=scr K=1 IL row of N (the scrambled pool's verdict): route
- * token, chain and tile — the store carries the OOP comp rows in
- * wisdom2_oop.txt and the in-place mode rows in wisdom2_scr.txt */
-static int scr_route_of_store(const char *wisdir, int N, char *route, size_t rn, int *chain, int *nf, int *tile)
+/* the banked one-thread K=1 IL forward row of a cell (N, order class,
+ * placement): route token, chain and tile. The store carries the OOP rows of
+ * both classes and the in-place natural rows in wisdom2_oop.txt, the in-place
+ * scrambled rows in wisdom2_scr.txt; the key's ord= and place= name the cell,
+ * so both shards are read and the cell's own row alone matches (" lay=il | "
+ * ends a one-thread key: a threaded row carries nthreads= after lay=il). */
+static int cell_row_of_store(const char *wisdir, int N, int scr, int ip, char *route, size_t rn, int *chain, int *nf, int *tile)
 {
     static const char *files[] = { "wisdom2_oop.txt", "wisdom2_scr.txt" };
-    char path[1024], line[4096], key[64];
+    char path[1024], line[4096], key[64], cell[48];
     snprintf(route, rn, "NOROW"); *nf = 0; *tile = 0;
     snprintf(key, sizeof key, "n=%d ", N);
+    snprintf(cell, sizeof cell, "ord=%s place=%s ", scr ? "scr" : "nat", ip ? "ip" : "oop");
     for (int fi = 0; fi < 2; fi++)
     {
         FILE *f;
@@ -377,8 +392,8 @@ static int scr_route_of_store(const char *wisdir, int N, char *route, size_t rn,
         while (fgets(line, sizeof line, f))
         {
             const char *r, *q;
-            if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, "ord=scr ")) continue;
-            if (!strstr(line, " lay=il ") || strstr(line, "dir=bwd")) continue;
+            if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, cell)) continue;
+            if (!strstr(line, " lay=il | ") || strstr(line, "dir=bwd")) continue;
             if ((r = strstr(line, "il_route=")) == NULL) continue;
             sscanf(r + 9, "%15s", route);
             if ((q = strstr(line, "il_ztt=")) != NULL)
@@ -448,13 +463,87 @@ static int ip_door_is_zcasc(const char *wisdir, int N)
     return z;
 }
 
+/* THE IN-PLACE CELL is its own contract (one per request, c2c_ip_create_il.h,
+ * k1_commit.h): an in-place create races and serves its OWN place=ip row,
+ * never the out-of-place cell's. On the chain and tile of that row, the
+ * in-place handle's forward (x) and backward (yin) z -> z must be BITWISE the
+ * direct engine bound in place (the natural class's plane drivers; the plain
+ * class is one function for both placements). 1 = both bitwise, 0 = a
+ * difference (*rel = the larger relative error), -1 = the direct engine
+ * refuses the chain or the tile. */
+static int inplace_bitwise(vfft_plan hi, int N, int scr, const int *chain, int nf, int tile,
+                           const double *x, const double *yin, double *rel)
+{
+    const size_t nb = 2 * (size_t)N * 8;
+    vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
+    double *z, *zd;
+    int fbit, bbit;
+    double ef, eb;
+    *rel = 0.0;
+    if (!p || (tile > 0 && !vfft_ztt_set_tile(p, (size_t)tile)))
+    {
+        if (p) vfft_ztt_destroy(p);
+        return -1;
+    }
+    vfft_ztt_bind(p, 1);
+    z = calloc(2 * (size_t)N, 8); zd = calloc(2 * (size_t)N, 8);
+    memcpy(z, x, nb);   vfft_execute(hi, VFFT_FORWARD, z, z);
+    memcpy(zd, x, nb);  vfft_ztt_execute_fwd(p, zd, zd);
+    fbit = memcmp(z, zd, nb) == 0;
+    ef = relerr(z, zd, N, 1.0);
+    memcpy(z, yin, nb); vfft_execute(hi, VFFT_BACKWARD, z, z);
+    memcpy(zd, yin, nb); vfft_ztt_execute_bwd(p, zd, zd);
+    bbit = memcmp(z, zd, nb) == 0;
+    eb = relerr(z, zd, N, 1.0);
+    *rel = ef > eb ? ef : eb;
+    vfft_ztt_destroy(p);
+    free(z); free(zd);
+    return fbit && bbit;
+}
+/* the in-place handle against its own banked place=ip row (cell_row_of_store):
+ * a ztt row BITWISE the direct engine on its chain and tile (inplace_bitwise);
+ * another engine's row, which the natural in-place race may bank, correct
+ * against the out-of-place forward yref within TOL (not ZTURN-T's to assert
+ * bitwise); the scrambled pow2 cell's in-place row is the plain ZTURN-T's or
+ * FAILS (design_contracts.md 8b), as is a cell with no row. 1 = pass. */
+static int inplace_vs_own_row(const char *wisdir, vfft_plan hi, int N, int scr,
+                              const double *x, const double *yref, char *desc, size_t dn)
+{
+    char route[24], chs[48] = "";
+    int chain[7], nf = 0, tile = 0, off = 0, r;
+    double rel = 0.0;
+    cell_row_of_store(wisdir, N, scr, 1, route, sizeof route, chain, &nf, &tile);
+    for (int i = 0; i < nf; i++) off += snprintf(chs + off, sizeof chs - off, "%s%d", i ? "." : "", chain[i]);
+    if (strcmp(route, "ztt") == 0 && nf >= 2)
+    {
+        r = inplace_bitwise(hi, N, scr, chain, nf, tile, x, yref, &rel);
+        snprintf(desc, dn, "in place: own row ztt %s tile=%d, fwd+bwd %s (rel %.1e)", chs, tile,
+                 r == 1 ? "bits" : r == 0 ? "DIFF" : "engine REFUSED", rel);
+        return r == 1;
+    }
+    if (!scr && strcmp(route, "NOROW") != 0)
+    {
+        const size_t nb = 2 * (size_t)N * 8;
+        double *z = calloc(2 * (size_t)N, 8);
+        memcpy(z, x, nb);
+        vfft_execute(hi, VFFT_FORWARD, z, z);
+        rel = relerr(z, yref, N, 1.0);
+        free(z);
+        snprintf(desc, dn, "in place: own row %s (its race's engine, not ZTURN-T's), fwd vs oop rel %.1e", route, rel);
+        return rel < TOL;
+    }
+    snprintf(desc, dn, "in place: own row %s -- %s", route,
+             scr ? "the scrambled pow2 cell's in-place writer is the plain ZTURN-T's" : "no place=ip row banked");
+    return 0;
+}
+
 static int frontdoor_pass(const char *wisdir)
 {
     int fails = 0;
     const char *W = (wisdir);
     printf("\n=== FRONT DOOR (cold): K=1 OOP NATURAL at pow2 N; ztt cells replay BITWISE the direct engine ===\n");
     printf("%-6s %-22s %s\n", "N", "banked route", "verdict");
-    for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
+    for (int N = VFFT_POLICY_ZTT_MIN_N; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         char route[24]; int chain[7], nf = 0;
         vfft_plan h = mk(W, N, 0);
@@ -470,7 +559,7 @@ static int frontdoor_pass(const char *wisdir)
             char chs[48]; int off = 0;
             for (int i = 0; i < nf; i++) off += snprintf(chs + off, sizeof chs - off, "%s%d", i ? "." : "", chain[i]);
             double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *yd = calloc(2 * (size_t)N, 8);
-            double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
+            double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8);
             vfft_ztt_plan_t *p = vfft_ztt_create_chain(N, chain, nf);
             int ok = p != NULL;
             if (p)
@@ -483,35 +572,36 @@ static int frontdoor_pass(const char *wisdir)
                 const int fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
                 const int bbit = memcmp(r, rd, 2 * (size_t)N * 8) == 0;
                 int ibit = -1;
+                char idesc[160] = "in place: no handle";
                 if (ip_door_is_zcasc(wisdir, N))
                     ibit = 2;   /* the IN-PLACE door banked the cascade for this cell: its own
                                  * race, its own verdict (a mode=zcasc place=ip lay=il row) —
                                  * in place is not ZTURN-T's to assert here; under
                                  * VFFT_NO_NAT_ZCASC that create would have no engine at all */
                 else
-                {   /* the in-place handle on the same cell: bitwise the OOP forward */
+                {   /* the in-place handle on the same N: its own cell, raced and banked
+                     * on its own place=ip row, asserted against that row */
                     vfft_plan hi = mk(W, N, 1);
                     if (hi)
                     {
-                        memcpy(z, x, 2 * (size_t)N * 8);
-                        vfft_execute(hi, VFFT_FORWARD, z, z);
-                        ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
+                        ibit = inplace_vs_own_row(wisdir, hi, N, 0, x, y, idesc, sizeof idesc);
                         vfft_destroy(hi);
                     }
                 }
                 ok = fbit && bbit && (ibit == 1 || ibit == 2);
                 if (!ok)
-                    printf("       fwd %s (rel %.1e)  bwd %s (rel %.1e)  in-place %s (rel %.1e)\n",
+                    printf("       fwd %s (rel %.1e)  bwd %s (rel %.1e)  %s\n",
                            fbit ? "bits" : "DIFF", relerr(y, yd, N, 1.0),
-                           bbit ? "bits" : "DIFF", relerr(r, rd, N, 1.0),
-                           ibit == 1 ? "bits" : ibit == 0 ? "DIFF" : "no handle", ibit == 0 || ibit == 1 ? relerr(z, y, N, 1.0) : 0.0);
+                           bbit ? "bits" : "DIFF", relerr(r, rd, N, 1.0), idesc);
                 else if (ibit == 2)
                     printf("       (in place: the cascade by the in-place door's own verdict — not asserted)\n");
+                else
+                    printf("       (%s)\n", idesc);
                 vfft_ztt_destroy(p);
             }
-            printf("%-6d ztt %-18s %s\n", N, chs, ok ? "PASS (fwd, bwd, in place bitwise the direct engine)" : "FAIL");
+            printf("%-6d ztt %-18s %s\n", N, chs, ok ? "PASS (fwd, bwd bitwise the direct engine; in place on its own row)" : "FAIL");
             if (!ok) fails++;
-            free(x); free(y); free(yd); free(r); free(rd); free(z);
+            free(x); free(y); free(yd); free(r); free(rd);
         }
         vfft_destroy(h);
     }
@@ -519,11 +609,12 @@ static int frontdoor_pass(const char *wisdir)
      * order classes in one race, so this create REPLAYS the ord=scr row; for
      * every cell whose scrambled route is ztt, vfft_execute's forward and
      * backward must be BITWISE the direct PLAIN plan on the banked chain and
-     * tile, and the in-place handle bitwise the out-of-place forward (one
-     * function, either placement). Which chain won is never asserted. */
+     * tile, and the in-place handle, its own cell, BITWISE the direct plain
+     * plan on its own place=ip row's chain and tile (inplace_vs_own_row).
+     * Which chain won is never asserted. */
     printf("\n=== FRONT DOOR: K=1 OOP SCRAMBLED at pow2 N; ztt cells replay BITWISE the direct PLAIN engine ===\n");
     printf("%-6s %-22s %s\n", "N", "banked route (ord=scr)", "verdict");
-    for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
+    for (int N = VFFT_POLICY_ZTT_MIN_N; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         char route[24]; int chain[7], nf = 0, tile = 0;
         if (!first_cell(N, 1))
@@ -538,7 +629,7 @@ static int frontdoor_pass(const char *wisdir)
             }
             char what[224];
             vfft_plan h = mk_ord(W, N, 0, VFFT_ORDER_SCRAMBLED);
-            if (h) scr_route_of_store(wisdir, N, route, sizeof route, chain, &nf, &tile);
+            if (h) cell_row_of_store(wisdir, N, 1, 0, route, sizeof route, chain, &nf, &tile);
             snprintf(what, sizeof what, "scrambled front door: no plain ZTURN-T cell at %s, no chain meets the %d-lane laws "
                      "(design_contracts.md 8b, zil_avx512_design.md D8); the door %s%s%s",
                      VFFT_IL_ISA_NAME, VFFT_IL_VW, h ? "builds a plan (banked ord=scr route " : "builds no plan",
@@ -549,7 +640,7 @@ static int frontdoor_pass(const char *wisdir)
         }
         vfft_plan h = mk_ord(W, N, 0, VFFT_ORDER_SCRAMBLED);
         if (!h) { printf("%-6d create FAILED  FAIL\n", N); fails++; continue; }
-        scr_route_of_store(wisdir, N, route, sizeof route, chain, &nf, &tile);
+        cell_row_of_store(wisdir, N, 1, 0, route, sizeof route, chain, &nf, &tile);
         if (strcmp(route, "ztt") != 0 || nf < 2)
         {
             printf("%-6d %-22s FAIL (a scrambled pow2 cell in the band is the plain ZTURN-T's, design_contracts.md 8b)\n", N, route);
@@ -561,12 +652,13 @@ static int frontdoor_pass(const char *wisdir)
             char chs[48]; int off = 0;
             for (int i = 0; i < nf; i++) off += snprintf(chs + off, sizeof chs - off, "%s%d", i ? "." : "", chain[i]);
             double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *yd = calloc(2 * (size_t)N, 8);
-            double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
+            double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8);
             vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, 1);
             int ok = p != NULL && (tile == 0 || vfft_ztt_set_tile(p, (size_t)tile));
             if (ok)
             {
                 vfft_plan hi = mk_ord(W, N, 1, VFFT_ORDER_SCRAMBLED);
+                char idesc[160] = "in place: no handle";
                 fill(x, N, 77u + (unsigned)N);
                 vfft_execute(h, VFFT_FORWARD, x, y);
                 vfft_execute(h, VFFT_BACKWARD, y, r);
@@ -576,23 +668,22 @@ static int frontdoor_pass(const char *wisdir)
                 const int bbit = memcmp(r, rd, 2 * (size_t)N * 8) == 0;
                 int ibit = 0;
                 if (hi)
-                {
-                    memcpy(z, x, 2 * (size_t)N * 8);
-                    vfft_execute(hi, VFFT_FORWARD, z, z);
-                    ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
+                {   /* the in-place handle: its own cell, its own place=ip row */
+                    ibit = inplace_vs_own_row(wisdir, hi, N, 1, x, y, idesc, sizeof idesc);
                     vfft_destroy(hi);
                 }
                 ok = fbit && bbit && ibit;
                 if (!ok)
-                    printf("       fwd %s (rel %.1e)  bwd %s (rel %.1e)  in-place %s (rel %.1e)\n",
+                    printf("       fwd %s (rel %.1e)  bwd %s (rel %.1e)  %s\n",
                            fbit ? "bits" : "DIFF", relerr(y, yd, N, 1.0),
-                           bbit ? "bits" : "DIFF", relerr(r, rd, N, 1.0),
-                           hi ? (ibit ? "bits" : "DIFF") : "no handle", relerr(z, y, N, 1.0));
+                           bbit ? "bits" : "DIFF", relerr(r, rd, N, 1.0), idesc);
+                else
+                    printf("       (%s)\n", idesc);
             }
             if (p) vfft_ztt_destroy(p);
-            printf("%-6d ztt %-12s tile=%-4d %s\n", N, chs, tile, ok ? "PASS (fwd, bwd, in place bitwise the direct plain engine)" : "FAIL");
+            printf("%-6d ztt %-12s tile=%-4d %s\n", N, chs, tile, ok ? "PASS (fwd, bwd bitwise the direct plain engine; in place on its own row)" : "FAIL");
             if (!ok) fails++;
-            free(x); free(y); free(yd); free(r); free(rd); free(z);
+            free(x); free(y); free(yd); free(r); free(rd);
         }
         vfft_destroy(h);
     }
@@ -600,10 +691,13 @@ static int frontdoor_pass(const char *wisdir)
 }
 
 /* ── the SEEDED replay: deterministic, independent of who wins a race.
- * A sub-store <wisdir>/seed carries one banked ztt row per pow2 N (the
- * registry's first chain at N); the front door must REPLAY it — the OOP
- * forward and backward and the in-place forward are asserted BITWISE the
- * direct engine on that chain, which no other engine can satisfy. ── */
+ * A sub-store <wisdir>/seed carries, per pow2 N, one banked ztt row for the
+ * out-of-place cell and one for the in-place cell (place=ip: an in-place
+ * request is served by its own row, one contract per request), both on the
+ * registry's first chain at N; the front door must REPLAY them — the OOP
+ * forward and backward, and the in-place forward and backward z -> z, are
+ * asserted BITWISE the direct engine on that chain (bound in place for the
+ * in-place handle), which no other engine can satisfy. ── */
 static int seeded_pass(const char *wisdir)
 {
     char dir[1024], path[1200];
@@ -615,25 +709,28 @@ static int seeded_pass(const char *wisdir)
         FILE *f = fopen(path, "w");
         if (!f) { printf("seeded: cannot write %s  FAIL\n", path); return 1; }
         fprintf(f, "@vw2 1.2\n");
-        for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
+        for (int N = VFFT_POLICY_ZTT_MIN_N; N <= VFFT_ZTT_MAX_N; N *= 2)
         {
             const vfft_ztt_cell_t *c = first_cell(N, 0);
             if (!c) continue;
-            fprintf(f, "@cell t=c2c n=%d q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=ztt il_ztt=", N);
-            for (int i = 0; i < c->nf; i++) fprintf(f, "%s%d", i ? "." : "", c->chain[i]);
-            /* a TILED row where the cell admits it (N >= 4096: 16 KB tiles), so
-             * the replay path parses/applies il_tw= (bitwise the untiled engine) */
-            if (vfft_ztt_tile_legal(N, c->chain, c->nf, 1024)) fprintf(f, " il_tw=1024");
-            /* src=race, not src=seed: the kind-3 scan skips seed rows by law
-             * (vw2__is_seed) — a seed is a hint, never a verdict to replay */
-            fprintf(f, " il_kv=0 | ran=1 ns=100.0 metric=fwd1 units=ns src=race date=2026-09-09\n");
+            for (int ip = 0; ip < 2; ip++)
+            {
+                fprintf(f, "@cell t=c2c n=%d q=1 ord=nat place=%s role=comp lay=il | eng=k1 il_route=ztt il_ztt=", N, ip ? "ip" : "oop");
+                for (int i = 0; i < c->nf; i++) fprintf(f, "%s%d", i ? "." : "", c->chain[i]);
+                /* a TILED row where the cell admits it (N >= 4096: 16 KB tiles), so
+                 * the replay path parses/applies il_tw= (bitwise the untiled engine) */
+                if (vfft_ztt_tile_legal(N, c->chain, c->nf, 1024)) fprintf(f, " il_tw=1024");
+                /* src=race, not src=seed: the kind-3 scan skips seed rows by law
+                 * (vw2__is_seed) — a seed is a hint, never a verdict to replay */
+                fprintf(f, " il_kv=0 | ran=1 ns=100.0 metric=fwd1 units=ns src=race date=2026-09-09\n");
+            }
         }
         fclose(f);
     }
     const char *W = (dir);
     printf("\n=== SEEDED REPLAY: one il_route=ztt row per pow2 N; the front door must serve it BITWISE ===\n");
     printf("%-6s %-14s %s\n", "N", "seeded chain", "verdict");
-    for (int N = 16; N <= VFFT_ZTT_MAX_N; N *= 2)
+    for (int N = VFFT_POLICY_ZTT_MIN_N; N <= VFFT_ZTT_MAX_N; N *= 2)
     {
         const vfft_ztt_cell_t *c = first_cell(N, 0);
         if (!c)
@@ -658,8 +755,10 @@ static int seeded_pass(const char *wisdir)
         vfft_ztt_plan_t *p = vfft_ztt_create_chain(N, c->chain, c->nf);
         vfft_plan h = mk(W, N, 0), hi = mk(W, N, 1);
         double *x = calloc(2 * (size_t)N, 8), *y = calloc(2 * (size_t)N, 8), *yd = calloc(2 * (size_t)N, 8);
-        double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
+        double *r = calloc(2 * (size_t)N, 8), *rd = calloc(2 * (size_t)N, 8);
+        const int itile = vfft_ztt_tile_legal(N, c->chain, c->nf, 1024) ? 1024 : 0;   /* the seeded place=ip row's */
         int fbit = 0, bbit = 0, ibit = 0;
+        double irel = 0.0;
         if (p && h && hi)
         {
             fill(x, N, 7u + (unsigned)N);
@@ -667,28 +766,28 @@ static int seeded_pass(const char *wisdir)
             vfft_execute(h, VFFT_BACKWARD, y, r);
             vfft_ztt_execute_fwd(p, x, yd);
             vfft_ztt_execute_bwd(p, y, rd);
-            memcpy(z, x, 2 * (size_t)N * 8);
-            vfft_execute(hi, VFFT_FORWARD, z, z);
             fbit = memcmp(y, yd, 2 * (size_t)N * 8) == 0;
             bbit = memcmp(r, rd, 2 * (size_t)N * 8) == 0;
-            ibit = memcmp(z, y, 2 * (size_t)N * 8) == 0;
+            /* the in-place handle replays its own seeded place=ip row: forward and
+             * backward z -> z BITWISE the direct engine on the seeded chain and tile */
+            ibit = inplace_bitwise(hi, N, 0, c->chain, c->nf, itile, x, y, &irel);
         }
         {
-            const int ok = p && h && hi && fbit && bbit && ibit;
+            const int ok = p && h && hi && fbit && bbit && ibit == 1;
             printf("%-6d %-14s %s", N, chs, ok ? "PASS" : "FAIL");
             if (!ok)
-                printf("  [engine %s, oop %s, ip %s; fwd %s (rel %.1e) bwd %s (rel %.1e) in-place %s (rel %.1e)]",
+                printf("  [engine %s, oop %s, ip %s; fwd %s (rel %.1e) bwd %s (rel %.1e) in-place fwd+bwd %s (rel %.1e)]",
                        p ? "ok" : "REFUSED", h ? "ok" : "NULL", hi ? "ok" : "NULL",
                        fbit ? "bits" : "DIFF", (p && h) ? relerr(y, yd, N, 1.0) : 0.0,
                        bbit ? "bits" : "DIFF", (p && h) ? relerr(r, rd, N, 1.0) : 0.0,
-                       ibit ? "bits" : "DIFF", (p && h && hi) ? relerr(z, y, N, 1.0) : 0.0);
+                       ibit == 1 ? "bits" : ibit == 0 ? "DIFF" : "engine REFUSED", irel);
             printf("\n");
             if (!ok) fails++;
         }
         if (p) vfft_ztt_destroy(p);
         if (h) vfft_destroy(h);
         if (hi) vfft_destroy(hi);
-        free(x); free(y); free(yd); free(r); free(rd); free(z);
+        free(x); free(y); free(yd); free(r); free(rd);
     }
     return fails;
 }

@@ -55,6 +55,38 @@
                                           * 8 and 16, the 16384 cap was the planes') */
 #endif
 
+/* ZTURN-T's FLOOR (owner, 2026-10-21): the smallest power of two ZTURN-T
+ * serves. At 4 lanes it is the engine's own, 16 (4.4). At 8 lanes it is 64:
+ * the 8-lane laws (ztt.h) admit no chain below 64 = 8.8, and 16 and 32 are
+ * not ZTURN-T's sizes there -- the solo kernels and the pairs serve them, in
+ * both order classes. The band map below asks this, never vfft_ztt_band. */
+#if VFFT_IL_VW == 8
+#define VFFT_POLICY_ZTT_MIN_N 64
+#else
+#define VFFT_POLICY_ZTT_MIN_N 16
+#endif
+static inline int vfft_policy_ztt_band(int N)
+{
+    return N >= VFFT_POLICY_ZTT_MIN_N && vfft_ztt_band(N);
+}
+
+/* ZTURN-T's ODD BAND at this ISA (owner, 2026-10-21: ZTURN-T's size range
+ * follows what the build has): the engine's odd band (ztt.h) keeps the N
+ * whose power-of-two part is VFFT_POLICY_ZTT_MIN_N or more. At 8 lanes every
+ * chain needs it in both classes -- the natural R0 = 8 with (N / R0) % 8 == 0,
+ * the plain R_last = 8 with (N / R_last) % 8 == 0 -- so the 2^4 * odd and
+ * 2^5 * odd lengths (121 of them, 2160..252000) have no ZTURN-T plan there:
+ * they are no band of ZTURN-T's, the flat DIT and the small engines race them
+ * in both order classes, and a scrambled request there is no writer band's.
+ * Every odd-band N it keeps has a lawful chain in both classes. At 4 lanes
+ * the engine's band already starts at 2^4, the floor: nothing narrows. The
+ * band map, the ceilings and the writer-band law ask this, never
+ * vfft_ztt_odd_band. */
+static inline int vfft_policy_ztt_odd_band(int N)
+{
+    return (N & -N) >= VFFT_POLICY_ZTT_MIN_N && vfft_ztt_odd_band(N);
+}
+
 /* The largest N the K=1 interleaved planner races for this N's band:
  * pow2 -> the four-step's ceiling; any N in the four-step's non-pow2 band
  * (a split in its side range, 2026-10-12) -> the same ceiling; 2^a*odd in
@@ -64,7 +96,7 @@
 static inline long vfft_policy_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
-    const int oddband = vfft_ztt_odd_band(N);
+    const int oddband = vfft_policy_ztt_odd_band(N);
     if (pow2 || vfft_k1fs_band(N))
         return (long)VFFT_K1FS_MAX_N;
     if (oddband)
@@ -331,7 +363,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
     if (c->ord == VW2_ORD_SCR)
     { /* ORDER IS A CONTRACT: the scrambled pool races SCRAMBLED WRITERS
        * only — one family per band, never the natural engines */
-        if (vfft_ztt_band(N))
+        if (vfft_policy_ztt_band(N))
         {
             VFFT__POOL_PUSH(VFFT_FAM_ZTT);
             return n;
@@ -341,7 +373,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_FS);
             return n;
         }
-        if (vfft_ztt_odd_band(N))
+        if (vfft_policy_ztt_odd_band(N))
         {
             VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
             return n;
@@ -364,7 +396,7 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_MONO);
             VFFT__POOL_PUSH(VFFT_FAM_PAIR);
             VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-            if (vfft_ztt_band(N))
+            if (vfft_policy_ztt_band(N))
                 VFFT__POOL_PUSH(VFFT_FAM_ZTT);
             if (!pow2)
                 VFFT__POOL_PUSH(VFFT_FAM_FLAT);
@@ -392,14 +424,14 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
         return n;
     }
     /* the competition band and everything below/beside it */
-    if (vfft_ztt_odd_band(N))
+    if (vfft_policy_ztt_odd_band(N))
         VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
     VFFT__POOL_PUSH(VFFT_FAM_MONO);
     VFFT__POOL_PUSH(VFFT_FAM_PAIR);
     VFFT__POOL_PUSH(VFFT_FAM_CHAIN3);
-    if (!pow2 && !vfft_ztt_odd_band(N))
+    if (!pow2 && !vfft_policy_ztt_odd_band(N))
         VFFT__POOL_PUSH(VFFT_FAM_FLAT); /* every non-pow2 cell but the odd band's */
-    if (vfft_ztt_band(N))
+    if (vfft_policy_ztt_band(N))
         VFFT__POOL_PUSH(VFFT_FAM_ZTT);
     if (vfft_policy_prime_cell(N))
         VFFT__POOL_PUSH(VFFT_FAM_PRIME); /* the lengths no chain carries */
@@ -419,7 +451,7 @@ static inline int vfft_policy_k1_direct_cell(const vfft_cell_t *c)
 {
     const int N = c->N;
     return N > 0 && (N < 2048 || (N & (N - 1)) != 0 ||
-                     vfft_ztt_band(N) || vfft_k1fs_band(N));
+                     vfft_policy_ztt_band(N) || vfft_k1fs_band(N));
 }
 
 /* Does the SCRAMBLED class of this cell belong to a WRITER BAND — a band
@@ -436,7 +468,7 @@ static inline int vfft_policy_k1_direct_cell(const vfft_cell_t *c)
  * predicate would change those cells. */
 static inline int vfft_policy_scr_writer_band(const vfft_cell_t *c)
 {
-    return ((c->N & (c->N - 1)) == 0) || vfft_ztt_odd_band(c->N);
+    return ((c->N & (c->N - 1)) == 0) || vfft_policy_ztt_odd_band(c->N);
 }
 
 /* MAY THIS CELL RACE AT ALL? The K=1 interleaved planner's own gate. ONE
@@ -448,7 +480,7 @@ static inline int vfft_policy_races(const vfft_cell_t *c)
 {
     const int N = c->N;
     const int pow2 = (N & (N - 1)) == 0;
-    const int oddband = vfft_ztt_odd_band(N);
+    const int oddband = vfft_policy_ztt_odd_band(N);
     if (vfft_policy_prime_cell_unservable(N))
         return 0; /* nothing could win: no race (the door refuses, naming the ceiling) */
     if (pow2 || vfft_k1fs_band(N))

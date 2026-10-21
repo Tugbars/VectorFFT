@@ -53,13 +53,35 @@ static int _ref_rankn_ord(const vfft_cfg_t *cfg)
     if (cfg->order == VFI_ORDER_NATURAL) return VW2_ORD_NAT;
     return (cfg->layout == VFI_LAYOUT_IL) ? VW2_ORD_NAT : VW2_ORD_SCR;
 }
+/* ── ZTURN-T's two bands at this ISA (owner, 2026-10-21: its size range
+ * follows what the build has), spelled apart from the module: the pow2 band
+ * from its floor, 16 (4.4) at 4 lanes and 64 (8.8) at 8, where no chain below
+ * meets the 8-lane laws; the odd band the engine's, at 8 lanes its multiples
+ * of 64 only (a 2^4 or 2^5 multiple has no chain the 8-lane laws admit in
+ * either class). Every reference below asks these. */
+static int _ref_ztt_band(int N)
+{
+#if VFFT_IL_VW == 8
+    const int floor = 64;
+#else
+    const int floor = 16;
+#endif
+    return N >= floor && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
+}
+static int _ref_ztt_odd_band(int N)
+{
+#if VFFT_IL_VW == 8
+    if (N % 64) return 0;
+#endif
+    return vfft_ztt_odd_band(N);
+}
 /* ── L9 reference, verbatim from oop/k1_commit.h's race gate ─────────── */
 #define REF_K1_IL_PLAN_MAX_N 16384
 #define REF_K1_IL_PLAN_ODD_MAX_N 262144
 static long _ref_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
-    const int oddband = vfft_ztt_odd_band(N);
+    const int oddband = _ref_ztt_odd_band(N);
     return (long)((pow2 || vfft_k1fs_band(N)) ? VFFT_K1FS_MAX_N : oddband ? VFFT_ZTT_MAX_N   /* 2026-10-12: the non-pow2 four-step band races to the same ceiling */
                        : REF_K1_IL_PLAN_ODD_MAX_N);   /* 2026-10-12 (V17): the factor-of-4 cells race to the flat's ceiling too */
 }
@@ -68,13 +90,13 @@ static long _ref_race_max_n(int N)
 /* ── the scrambled NO-FALLBACK line, as k1_commit.h spelled it ───────── */
 static int _ref_scr_writer_band(int N)
 {
-    return ((N & (N - 1)) == 0 || vfft_ztt_odd_band(N));
+    return ((N & (N - 1)) == 0 || _ref_ztt_odd_band(N));
 }
 /* ── the BENCH's own copy of the admission (bench_1d_vs_mkl.c:5643) ───── */
 static int _ref_bench_direct_cell(int N)
 {
     return (N < 2048 || (N & (N - 1)) != 0 ||   /* 2026-09-22: every non-pow2 N is served */
-            vfft_ztt_band(N) || vfft_k1fs_band(N));
+            _ref_ztt_band(N) || vfft_k1fs_band(N));
 }
 /* ── L1/L2 reference: the two pools as dp_planner_il.h spelled them on
  * 2026-09-16, before the band map moved into policy.h. Copied structure for
@@ -95,7 +117,7 @@ static int _ref_ztt_registry_has(int N)
 static int _ref_races(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
-    const int oddband = vfft_ztt_odd_band(N);
+    const int oddband = _ref_ztt_odd_band(N);
     (void)pow2; (void)oddband;   /* the ownership refusal was lifted 2026-09-22 (the cascade it named is gone) */
     if ((long)N > _ref_race_max_n(N)) return 0;
     return 1;
@@ -246,11 +268,11 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
         if (_ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);
         return n;
     }
-    if (vfft_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_ZTT_ODD);
+    if (_ref_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_ZTT_ODD);
     REF_PUSH(VFFT_FAM_MONO);
     REF_PUSH(VFFT_FAM_PAIR);
     REF_PUSH(VFFT_FAM_CHAIN3);
-    if (with_flat && !pow2 && !vfft_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
+    if (with_flat && !pow2 && !_ref_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
     if (_ref_ztt_registry_has(N)) REF_PUSH(VFFT_FAM_ZTT);
     if (with_flat && _ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell: the lengths no chain carries (owner, 2026-10-02) */
     return n;
@@ -261,9 +283,9 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     int n = 0;
     if (ord == VW2_ORD_NAT)
         return _ref_pool_natural(N, 1, out, max);
-    if (vfft_ztt_band(N))          { REF_PUSH(VFFT_FAM_ZTT);     return n; }
+    if (_ref_ztt_band(N))          { REF_PUSH(VFFT_FAM_ZTT);     return n; }
     if (pow2 && vfft_k1fs_band(N)) { REF_PUSH(VFFT_FAM_FS);      return n; }
-    if (vfft_ztt_odd_band(N))      { REF_PUSH(VFFT_FAM_ZTT_ODD); return n; }
+    if (_ref_ztt_odd_band(N))      { REF_PUSH(VFFT_FAM_ZTT_ODD); return n; }
     if (!pow2 && vfft_k1fs_band(N))
     {   /* 2026-10-12: the non-pow2 upper band's scrambled writers */
         REF_PUSH(VFFT_FAM_FS); REF_PUSH(VFFT_FAM_FLAT);
@@ -535,7 +557,7 @@ int main(void)
         /* L1/L2: the BAND MAP equals the two pools it replaces, for every N
          * and both order classes — as SETS of admitted families. */
         {
-            long bad_pool = 0, bad_reg = 0, bad_races = 0, bad_wb = 0, bad_bench = 0, bad_rader = 0;
+            long bad_pool = 0, bad_reg = 0, bad_races = 0, bad_wb = 0, bad_bench = 0, bad_rader = 0, bad_odd = 0;
             for (n = 2; n <= NMAX; n++)
             {
                 const int Nx = (int)n;
@@ -543,11 +565,18 @@ int main(void)
                 int oi;
                 /* ZTURN-T's band IS its registry — the equivalence the map
                  * relies on to gate the family by the band */
-                if ((vfft_ztt_band(Nx) != 0) != (_ref_ztt_registry_has(Nx) != 0))
+                if ((vfft_policy_ztt_band(Nx) != 0) != (_ref_ztt_registry_has(Nx) != 0))
                 {
                     if (!bad_reg) printf("  *** FAIL: ztt band != registry at N=%d (band %d, registry %d)\n",
-                                         Nx, vfft_ztt_band(Nx), _ref_ztt_registry_has(Nx));
+                                         Nx, vfft_policy_ztt_band(Nx), _ref_ztt_registry_has(Nx));
                     bad_reg++;
+                }
+                /* ZTURN-T's odd band at this ISA: the module vs its restatement */
+                if ((vfft_policy_ztt_odd_band(Nx) != 0) != (_ref_ztt_odd_band(Nx) != 0))
+                {
+                    if (!bad_odd) printf("  *** FAIL: first ztt odd-band disagreement at N=%d: policy %d != ref %d\n",
+                                         Nx, vfft_policy_ztt_odd_band(Nx), _ref_ztt_odd_band(Nx));
+                    bad_odd++;
                 }
                 if (vfft_policy_il2d_rader_prime(Nx) != _ref_rader_prime(Nx))
                 {   /* the column Rader stage's prime (section 13): the policy vs its Miller-Rabin twin */
@@ -616,16 +645,16 @@ int main(void)
                     }
                 }
             }
-            if (bad_pool || bad_reg || bad_races || bad_wb || bad_bench || bad_rader) g_fail++;
+            if (bad_pool || bad_reg || bad_races || bad_wb || bad_bench || bad_rader || bad_odd) g_fail++;
             printf("exhaustive N=2..%d: band map vs the two pools %s (%ld differ), "
-                   "ztt band==registry %s, race gate %s\n", NMAX,
+                   "ztt band==registry %s, ztt odd band %s, race gate %s\n", NMAX,
                    bad_pool ? "DIFFERS" : "equal", bad_pool, bad_reg ? "DIFFERS" : "equal",
-                   bad_races ? "DIFFERS" : "equal");
+                   bad_odd ? "DIFFERS" : "equal", bad_races ? "DIFFERS" : "equal");
             printf("exhaustive N=2..%d: scrambled writer band %s, the bench's admission %s, "
                    "the column Rader prime %s (%ld differ)\n",
                    NMAX, bad_wb ? "DIFFERS" : "equal", bad_bench ? "DIFFERS" : "equal",
                    bad_rader ? "DIFFERS" : "equal", bad_rader);
-            nchk += (NMAX - 1) * 7;
+            nchk += (NMAX - 1) * 8;
         }
         if (bad_ceil || bad_ip || bad_oop || bad_rankn) g_fail++;
         printf("exhaustive N=2..%d x 3 orders: ceiling %s, rank1-ip %s, rank1-oop %s, rankN %s\n",

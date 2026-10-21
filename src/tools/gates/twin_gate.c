@@ -10,12 +10,20 @@
  *     67 (the per-column-group kinds up to the columns their table holds); the
  *     ZTURN-T stage kernels, whose contract is whole 8-column iterations, at
  *     8, 16, 24, 32, 40, 56, 64, 72;
+ *   - the solo tier's mono-64 IL twins (il_solo_registry.h:
+ *     vfft_k1_mono64_8x8_il_fwd / _bwd, kind mono64_8x8_il), which no radix
+ *     list names: the whole 64-point transform, one call;
  *   - every ZTURN-T fused driver BOTH ztt registries list (the same N and
  *     chain, the slot non-null at both): natural dest and plane (in place),
  *     plain scrambled, forward and backward, untiled and at the smallest tile
  *     both ISAs admit.
- * A kind one ISA lists and the other does not is reported, not gated. A kind
- * both list that has no case here is a FAIL: the gate never skips silently.
+ * A kind one ISA lists and the other does not is reported, not gated (an
+ * empty avx512 list is the registry declaring the kind absent there). A kind
+ * both list that has no case here is a FAIL, and so is a radix of such a kind
+ * that avx2 lists and avx512 does not, unless il_registry_avx512.h declares
+ * it absent (ABSENT512): the gate never skips silently. Each side's kernel
+ * table is checked at compile time against the kernels its registry's lists
+ * hold (TWIN_REG_NKERN), so a new kind cannot go ungated either.
  *
  * ONE SOURCE, THREE TRANSLATION UNITS. Compiled with -DVFFT_TWIN_SIDE at the
  * avx2 flags and again at the avx512 flags, this file is one ISA's SIDE: it
@@ -55,10 +63,20 @@
  *      and twiddle table hold a second NaN, so a missed store reads the
  *      canary and a read outside the input or a table yields a NaN;
  *   2. nothing outside the footprint is stored: the gaps the strides leave
- *      between columns, legs, rows and groups, and GUARD doubles on both
- *      sides of the buffer, still hold the canary;
+ *      between columns, legs, rows and groups, and the bands on both sides
+ *      of the buffer (as long as the buffer, at least 4 KB: t_band), still
+ *      hold the canary;
  *   3. an out-of-place kernel leaves its input as it was;
- *   4. avx512 == avx2: max |y512 - y2| / max |y2| over the footprint, at most
+ *   4. a ZTURN-T driver's plane is the gate's own (2N doubles, banded the
+ *      same way, POISON): a plane driver may use those 2N doubles and leaves
+ *      the bands as they were (ztt.h's 4 KB of slack is where the plan
+ *      places the plane, not room to store); a dest driver leaves all of it;
+ *   5. an in-place case runs a second time with every double outside the
+ *      footprint, and the plane, holding a finite value of its own (t_pat):
+ *      there a store of arithmetic on a NaN would carry the NaN through bit
+ *      for bit and pass check 2, here it changes the value. That run's
+ *      output must equal the first's bitwise, and those doubles must hold;
+ *   6. avx512 == avx2: max |y512 - y2| / max |y2| over the footprint, at most
  *      TWIN_TOL. The comparison is bitwise first; a case that is not bitwise
  *      counts toward the kind's worst error.
  *
@@ -86,10 +104,11 @@
  *
  * Build (from the repo root; run_gates.py runs the same script):
  *   python src/tools/gates/twin_gate_build.py
- * which is, with gauntlet/build.py's driver flags and -I set:
+ * which is, with gauntlet/build.py's driver flags and -I set, and n2 / n5 the
+ * kernels each registry's FWD and BWD lists hold (the script counts them):
  *   gcc <avx2 flags>   -c twin_gate.c -o main.o              (the gate)
- *   gcc <avx2 flags>   -DVFFT_TWIN_SIDE -c twin_gate.c -o side_avx2.o
- *   gcc <avx512 flags> -DVFFT_TWIN_SIDE -c twin_gate.c -o side_avx512.o
+ *   gcc <avx2 flags>   -DVFFT_TWIN_SIDE -DTWIN_REG_NKERN=n2 -c twin_gate.c -o side_avx2.o
+ *   gcc <avx512 flags> -DVFFT_TWIN_SIDE -DTWIN_REG_NKERN=n5 -c twin_gate.c -o side_avx512.o
  *   gcc main.o side_avx2.o side_avx512.o \
  *       src/dag-fft-compiler/.obj/avx2/libdagcodelets.a \
  *       src/dag-fft-compiler/.obj/avx512/libdagcodelets.a -lm -o twin_gate.exe
@@ -124,13 +143,12 @@ typedef struct {
     int nb, G, ngrp, nbase;
 } twin_flat_t;
 
-/* a ZTURN-T plan's tables and its cell's drivers */
+/* a ZTURN-T plan's tables and its cell's drivers (the plane is the gate's own) */
 typedef struct {
     void *plan;
     const double *tw, *twb;
     size_t ntw;
     const size_t *rb, *perm;
-    double *plane;
     twin_ztt_fn fwd_dest, fwd_plane, bwd_dest, bwd_plane;
     twin_zttp_fn fwd_scr, bwd_scr;
 } twin_ztt_t;
@@ -158,13 +176,23 @@ typedef struct {
 #include <stdlib.h>
 #include <string.h>
 #include "il_isa.h"
+#include "il_solo_registry.h"
 #include "il2p.h"
 #include "il_flatdit.h"
 #include "ztt.h"
 
 /* every kernel the registry lists, from its radix lists: the emitter defines
  * the same lists at every ISA, empty where the ISA has no kernel
- * (emit_il_registry.ml), so this table is the registry's, whole */
+ * (emit_il_registry.ml), so this table is the registry's, whole; then the
+ * solo tier's mono-64 IL twins (il_solo_registry.h), which no list names.
+ * TWIN_REG_NKERN, the kernels the registry's FWD and BWD lists hold at this
+ * side's ISA, comes from twin_gate_build.py: the table must expand exactly
+ * those, so a kind the registry gains and the table does not name stops the
+ * compile instead of going ungated. */
+#ifndef TWIN_REG_NKERN
+#error "TWIN_REG_NKERN (the kernels the registry's FWD and BWD lists hold) is unset: build with twin_gate_build.py"
+#endif
+#define TWIN_NSOLO 2
 #define _TWIN_K2(kind, dir, bwd, R) \
     { #kind, R, bwd, (twin_kfn)VFFT_IL_SYM(radix##R##_z_##kind##_##dir) },
 #define _TWIN_K(kind, dir, bwd, R) _TWIN_K2(kind, dir, bwd, R)
@@ -381,8 +409,13 @@ static const twin_kernel_t _twin_kern[] = {
 #define TWIN_KIND tmgd
     VFFT_IL_TMGD_FWD_RADICES(TWIN_FX)
 #undef TWIN_KIND
+    { "mono64_8x8_il", 64, 0, (twin_kfn)VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd) },
+    { "mono64_8x8_il", 64, 1, (twin_kfn)VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd) },
     { NULL, 0, 0, NULL }
 };
+_Static_assert(sizeof _twin_kern / sizeof _twin_kern[0] == (size_t)TWIN_REG_NKERN + TWIN_NSOLO + 1,
+               "the kernel table does not expand every kernel the registry's FWD and BWD lists hold: "
+               "a kind is missing from it (or listed twice)");
 
 static twin_cell_t _twin_cells[VFFT_ZTT_NCELLS];
 
@@ -453,7 +486,6 @@ static int _twin_ztt(int N, const int *chain, int nf, int scr, int staged, twin_
     z->ntw = p->twdoubles;
     z->rb = p->rb;
     z->perm = p->perm;
-    z->plane = p->plane;
     if (p->cell) {
         z->fwd_dest = (twin_ztt_fn)p->cell->fwd_dest;
         z->fwd_plane = (twin_ztt_fn)p->cell->fwd_plane;
@@ -544,7 +576,8 @@ extern const twin_side_t *twin_side_avx2(void);
 extern const twin_side_t *twin_side_avx512(void);
 
 #define TWIN_TOL (8.0 * DBL_EPSILON)
-#define GUARD 64                      /* doubles of guard band on each side */
+#define GUARD 512                     /* doubles (4 KB): the least band around a buffer (t_band), and
+                                       * the band before a table */
 #define TGUARD 2048                   /* doubles of POISON after a table: a whole record set past
                                        * its end (radix 64: 63 x 16) reads NaN, not unmapped memory */
 #define CANARY_BITS 0x7ff8dead5eedbeefULL   /* output prefill */
@@ -571,6 +604,37 @@ static void t_fill(double *p, size_t n, uint64_t bits)
     for (i = 0; i < n; i++) memcpy(&p[i], &bits, 8);
 }
 static int t_is(double v, uint64_t bits) { uint64_t u; memcpy(&u, &v, 8); return u == bits; }
+
+/* the band on each side of a buffer the kernel reads or stores (and of a
+ * driver's plane): as long as the buffer, at least GUARD, whole 64-B lines.
+ * GUARD is the 4 KB of slack ztt.h gives the plane: a store into slack
+ * corrupts nothing a test through the plan sees, so the band must hold it;
+ * and a store past either end by up to the buffer's own length (one more
+ * column, leg, row, group, digit or run, a doubled stride) lands in it */
+static size_t t_band(size_t nd)
+{
+    const size_t b = (nd + 7) & ~(size_t)7;
+    return b > GUARD ? b : GUARD;
+}
+
+/* an in-place case's second fill: a finite value of its own at every double
+ * outside the footprint (and in the plane). A store there of arithmetic on
+ * what it held cannot leave it as it was, where a NaN carries through bit
+ * for bit; a read of it moves the output. */
+static double t_pat(size_t j) { return 1.25 + (double)((j * 2654435761u) % 65521u) / 65521.0; }
+static void t_prefill(double *p, size_t n, int fill, uint64_t bits)
+{
+    size_t j;
+    if (fill) for (j = 0; j < n; j++) p[j] = t_pat(j);
+    else t_fill(p, n, bits);
+}
+static int t_kept(const double *p, size_t j, int fill, uint64_t bits)
+{
+    double v;
+    if (!fill) return t_is(p[j], bits);
+    v = t_pat(j);
+    return !memcmp(&p[j], &v, 8);
+}
 
 /* a table copied between two POISON bands: a read past either end is a NaN */
 typedef struct { double *base; const double *p; } t_table_t;
@@ -628,32 +692,39 @@ typedef struct {
     const double *tw[2], *t2[2];
     const void *a1, *a3;          /* t2csgn's base table and group order */
     const size_t *rb[2];          /* a driver's run-base table (t0tp's rides in t2) */
-    double *plane[2];
+    size_t plane;                 /* CALL_ZTT: the plane's complex slots (the gate's own, banded) */
+    int inplane;                  /* 1: the driver works in the plane (the plane slots); 0: it
+                                   * leaves all of it as it was (dest: the pipeline runs in zout) */
     size_t Ls, Gs, OLs, OGs, count, tile;
 } t_case_t;
 
 /* per ISA: run, check, extract the footprint's values into y (2 per slot).
- * Returns 0, or 1 with the first problem in why. */
-static int run_isa(const t_case_t *c, int isa, const double *x, double *y, char *why, size_t whyn)
+ * fill 0, every case's run: the bands and the slots outside the footprint
+ * hold NaNs (the canary where the kernel stores, POISON where it only reads;
+ * the plane POISON). fill 1, an in-place case's second run: those places hold
+ * t_pat. Returns 0, or 1 with the first problem in why. */
+static int run_isa(const t_case_t *c, int isa, int fill, const double *x, double *y, char *why, size_t whyn)
 {
-    const size_t nin2 = 2 * c->in.n, nout2 = 2 * c->out.n;
-    const size_t tot = nin2 > nout2 ? nin2 : nout2;
-    double *ib, *ob = NULL, *icopy = NULL, *ibase, *obase = NULL, *cbase = NULL, *in, *out;
-    size_t i, nunw = 0, nnan = 0, nstray = 0, nguard = 0, nwrote = 0;
+    const size_t nin2 = 2 * c->in.n, nout2 = 2 * c->out.n, np2 = 2 * c->plane;
+    const size_t len = c->inplace && nin2 > nout2 ? nin2 : nout2;   /* the buffer it stores into */
+    const size_t gin = t_band(nin2), gout = t_band(len), gp = t_band(np2);
+    const size_t ntot = gout + len + gout, itot = gin + nin2 + gin, ptot = gp + np2 + gp;
+    double *ob, *ib = NULL, *pb = NULL, *icopy = NULL, *obase, *ibase = NULL, *pbase = NULL, *cbase = NULL;
+    double *in, *out;
+    unsigned char *om = (unsigned char *)calloc(len ? len : 1, 1);   /* the output footprint, per double */
+    size_t i, j, nunw = 0, nnan = 0, nstray = 0, nguard = 0, nplane = 0, nwrote = 0;
     const size_t imi = b_im(&c->in, isa), imo = b_im(&c->out, isa);
     int bad = 0;
 
+    ob = t_alloc(ntot, &obase);
+    t_prefill(ob, ntot, fill, CANARY_BITS);
+    out = ob + gout;
     if (c->inplace) {
-        ib = t_alloc(tot + 2 * GUARD, &ibase);
-        t_fill(ib, tot + 2 * GUARD, CANARY_BITS);
-        in = out = ib + GUARD;
+        in = out;
     } else {
-        ib = t_alloc(nin2 + 2 * GUARD, &ibase);
-        t_fill(ib, nin2 + 2 * GUARD, POISON_BITS);
-        in = ib + GUARD;
-        ob = t_alloc(nout2 + 2 * GUARD, &obase);
-        t_fill(ob, nout2 + 2 * GUARD, CANARY_BITS);
-        out = ob + GUARD;
+        ib = t_alloc(itot, &ibase);
+        t_fill(ib, itot, POISON_BITS);
+        in = ib + gin;
     }
     for (i = 0; i < c->in.n; i++)
         if (c->in.fp[i]) {
@@ -662,51 +733,60 @@ static int run_isa(const t_case_t *c, int isa, const double *x, double *y, char 
             in[r + imi] = x[2 * i + 1];
         }
     if (!c->inplace) {
-        icopy = t_alloc(nin2 + 2 * GUARD, &cbase);
-        memcpy(icopy, ib, (nin2 + 2 * GUARD) * sizeof(double));
+        icopy = t_alloc(itot, &cbase);
+        memcpy(icopy, ib, itot * sizeof(double));
     }
+    if (np2) {
+        pb = t_alloc(ptot, &pbase);
+        t_prefill(pb, ptot, fill, POISON_BITS);
+    }
+    for (i = 0; i < c->out.n; i++)
+        if (c->out.fp[i]) {
+            const size_t r = b_re(&c->out, isa, i);
+            om[r] = om[r + imo] = 1;
+        }
 
     if (c->call == CALL_K)
         c->k[isa](in, (const double *)c->a1, out, (double *)c->a3, c->tw[isa], c->t2[isa],
                   c->Ls, c->Gs, c->OLs, c->OGs, c->count);
     else if (c->call == CALL_ZTT)
-        c->zf[isa](in, out, c->plane[isa], c->tw[isa], c->rb[isa], c->tile);
+        c->zf[isa](in, out, pb + gp, c->tw[isa], c->rb[isa], c->tile);
     else
         c->zp[isa](in, out, c->tw[isa], c->tile);
 
-    /* the guards, and the input of an out-of-place call */
-    {
-        double *g = c->inplace ? ib : ob;
-        const size_t len = c->inplace ? tot : nout2;
-        for (i = 0; i < GUARD; i++) {
-            nguard += !t_is(g[i], CANARY_BITS);
-            nguard += !t_is(g[GUARD + len + i], CANARY_BITS);
+    /* every double of the buffer it stores into, and of its bands, that is not
+     * an output still holds its fill; the plane's bands (a plane driver) or all
+     * of it (a dest driver) too; an out-of-place call's input is as it was */
+    for (j = 0; j < ntot; j++) {
+        const int band = j < gout || j >= gout + len;
+        if ((band || !om[j - gout]) && !t_kept(ob, j, fill, CANARY_BITS)) {
+            if (band) nguard++;
+            else nstray++;
         }
-        if (c->inplace)
-            for (i = nout2; i < tot; i++) nguard += !t_is(out[i], CANARY_BITS);
     }
+    for (j = 0; j < (np2 ? ptot : 0); j++)
+        if ((!c->inplane || j < gp || j >= gp + np2) && !t_kept(pb, j, fill, POISON_BITS)) nplane++;
     if (!c->inplace)
-        nwrote = memcmp(icopy, ib, (nin2 + 2 * GUARD) * sizeof(double)) != 0;
-    for (i = 0; i < c->out.n; i++) {
-        const size_t r = b_re(&c->out, isa, i);
-        const double re = out[r], im = out[r + imo];
+        nwrote = memcmp(icopy, ib, itot * sizeof(double)) != 0;
+    for (i = 0; i < c->out.n; i++)
         if (c->out.fp[i]) {
+            const size_t r = b_re(&c->out, isa, i);
+            const double re = out[r], im = out[r + imo];
             if (t_is(re, CANARY_BITS) || t_is(im, CANARY_BITS)) nunw++;
             else if (!isfinite(re) || !isfinite(im)) nnan++;
             y[2 * i] = re;
             y[2 * i + 1] = im;
-        } else if (!t_is(re, CANARY_BITS) || !t_is(im, CANARY_BITS)) {
-            nstray++;
         }
-    }
-    if (nunw || nnan || nstray || nguard || nwrote) {
-        snprintf(why, whyn, "%s: %zu unwritten, %zu non-finite, %zu stored outside the footprint, "
-                 "%zu in the guards%s", S[isa]->isa, nunw, nnan, nstray, nguard,
-                 nwrote ? ", wrote its input" : "");
+    if (nunw || nnan || nstray || nguard || nplane || nwrote) {
+        snprintf(why, whyn, "%s%s: %zu unwritten, %zu non-finite, %zu doubles stored outside the footprint, "
+                 "%zu in its bands, %zu in the plane%s", S[isa]->isa, fill ? " (finite fill)" : "",
+                 nunw, nnan, nstray, nguard, nplane, nwrote ? ", wrote its input" : "");
         bad = 1;
     }
-    t_free(ibase);
+    free(om);
     t_free(obase);
+    t_free(ibase);
+    t_free(pbase);
     t_free(cbase);
     return bad;
 }
@@ -739,12 +819,14 @@ static void seed(const char *s, int a, int b, int c)
     g_rs = h ? h : 88172645463325252ULL;
 }
 
-/* run one case at both ISAs and judge it; label names it in a FAIL line */
+/* run one case at both ISAs and judge it; label names it in a FAIL line. An
+ * in-place case runs twice per ISA, the second time on the finite fill: its
+ * output must not move (it reads nothing outside its footprint) */
 static int run_case(const t_case_t *c, t_stat_t *st, const char *label)
 {
     double *x = (double *)malloc((2 * c->in.n + 1) * sizeof(double));
     double *y[2];
-    char why[2][160];
+    char why[2][256];
     int bad[2], isa, fail = 0, bitwise = 1;
     double emax = 0, amax = 0, rel;
     size_t i;
@@ -752,7 +834,17 @@ static int run_case(const t_case_t *c, t_stat_t *st, const char *label)
     for (isa = 0; isa < 2; isa++) {
         y[isa] = (double *)calloc(2 * c->out.n + 1, sizeof(double));
         why[isa][0] = 0;
-        bad[isa] = run_isa(c, isa, x, y[isa], why[isa], sizeof why[isa]);
+        bad[isa] = run_isa(c, isa, 0, x, y[isa], why[isa], sizeof why[isa]);
+        if (!bad[isa] && c->inplace) {
+            double *y1 = (double *)calloc(2 * c->out.n + 1, sizeof(double));
+            bad[isa] = run_isa(c, isa, 1, x, y1, why[isa], sizeof why[isa]);
+            if (!bad[isa] && memcmp(y1, y[isa], 2 * c->out.n * sizeof(double))) {
+                snprintf(why[isa], sizeof why[isa], "%s: in place, its output moves with what the doubles "
+                         "outside its footprint hold (it reads them)", S[isa]->isa);
+                bad[isa] = 1;
+            }
+            free(y1);
+        }
     }
     for (i = 0; i < c->out.n; i++)
         if (c->out.fp[i]) {
@@ -800,6 +892,7 @@ enum {
     C_ROWST,   /* the row loop with the corner turn */
     C_DIGIT,   /* the digit loop: OGs digits at pitch Gs, broadcast records (t2c, t2cp) */
     C_SPLAT,   /* in place, Gs groups of R legs, splat records (msz, mszt) */
+    C_MONO,    /* the whole R-point transform, natural in and out, one call (mono64_8x8_il) */
     C_T0TP,    /* ZTURN-T ingest: natural legs in, runs of R0 at rb[c] out (block split) */
     C_TMG,     /* ZTURN-T mid, in place on the block split plane */
     C_TLF,     /* ZTURN-T last: block split in, natural out */
@@ -829,9 +922,20 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "msz", C_SPLAT, TW_SPLAT },    { "mszt", C_SPLAT, TW_SPLAT },
     { "t0tp", C_T0TP, TW_NONE },     { "tmg", C_TMG, TW_LANE },       { "tmgd", C_TMG, TW_LANE },
     { "tlf", C_TLF, TW_LANE },       { "tlfi", C_TLF, TW_LANE },      { "t0d", C_T0D, TW_LANE },
-    { "tld", C_TLD, TW_NONE },
+    { "tld", C_TLD, TW_NONE },       { "mono64_8x8_il", C_MONO, TW_NONE },
 };
 #define NKINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
+
+/* the cells il_registry_avx512.h DECLARES ABSENT inside a kind both ISAs list
+ * (its DECLARED ABSENT block, corpus.ml zil_isa_gap): the codelet_zsplit law,
+ * t0tp/tld write or read R-runs as whole 8-lane blocks (R % VW == 0). A radix
+ * the avx2 list of such a kind carries and the avx512 list does not is a FAIL
+ * unless it is here; an entry the registries contradict is a FAIL too. A kind
+ * whose avx512 lists are empty is declared absent whole. */
+static const struct { const char *kind; int R, bwd; } ABSENT512[] = {
+    { "t0tp", 4, 0 }, { "t0tp", 4, 1 }, { "tld", 4, 0 }, { "tld", 4, 1 },
+};
+#define NABSENT512 ((int)(sizeof ABSENT512 / sizeof ABSENT512[0]))
 
 static const int COUNTS[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
                               31, 32, 33, 63, 64, 65, 66, 67 };
@@ -992,6 +1096,12 @@ static int case_geom(int cls, int R, int C, t_case_t *c, size_t **a1, size_t **a
         }
         return 1;
     }
+    case C_MONO:
+        b_init(&c->in, RR, L_NAT);
+        b_init(&c->out, RR, L_NAT);
+        b_all(&c->in);
+        b_all(&c->out);
+        return 1;
     case C_T0TP: {
         /* the run-base table (tw_im): column c's run at rb[c] * R0, a bijection */
         size_t *rbt = (size_t *)malloc(CC * sizeof(size_t));
@@ -1117,9 +1227,9 @@ static void gate_kernel(int ki, int R, int bwd, twin_kfn f2, twin_kfn f5, t_stat
             g_fail_kernels++;
             return;
         }
-    ncount = (cls >= C_T0TP) ? NZCOUNTS : NCOUNTS;
+    ncount = cls == C_MONO ? 1 : (cls >= C_T0TP) ? NZCOUNTS : NCOUNTS;
     for (ci = 0; ci < ncount; ci++) {
-        const int C = (cls >= C_T0TP) ? ZCOUNTS[ci].count : COUNTS[ci];
+        const int C = cls == C_MONO ? 1 : (cls >= C_T0TP) ? ZCOUNTS[ci].count : COUNTS[ci];
         t_case_t c;
         size_t *a1 = NULL, *a3 = NULL;
         t_table_t ptab[2];
@@ -1183,9 +1293,28 @@ static int count_kind(int isa, const char *kind)
     return n;
 }
 
+static int declared_absent512(const char *kind, int R, int bwd)
+{
+    int i;
+    for (i = 0; i < NABSENT512; i++)
+        if (ABSENT512[i].R == R && ABSENT512[i].bwd == bwd && !strcmp(ABSENT512[i].kind, kind)) return 1;
+    return 0;
+}
+
 static void kernel_pass(const char *only)
 {
     int ki, isa, i, j;
+    /* a declared absence the registries contradict */
+    for (i = 0; i < NABSENT512; i++) {
+        const char *kind = ABSENT512[i].kind;
+        const int R = ABSENT512[i].R, bwd = ABSENT512[i].bwd;
+        if (!want(kind, only)) continue;
+        if (find_kernel(1, kind, R, bwd) || !find_kernel(0, kind, R, bwd)) {
+            printf("%-8s FAIL: radix %d %s is declared absent at avx512 (ABSENT512), but %s\n", kind, R,
+                   bwd ? "bwd" : "fwd", find_kernel(1, kind, R, bwd) ? "avx512 lists it" : "avx2 does not list it");
+            g_fail_kernels++;
+        }
+    }
     /* the kinds the gate has no case for: listed by one ISA, reported; by both, a FAIL */
     for (isa = 0; isa < 2; isa++)
         for (i = 0; i < S[isa]->nkern; i++) {
@@ -1211,20 +1340,33 @@ static void kernel_pass(const char *only)
         }
     for (ki = 0; ki < NKINDS; ki++) {
         t_stat_t st;
-        int n2 = 0, n5 = 0;
+        int n2 = 0, n5 = 0, nabs = 0;
         if (!want(KINDS[ki].kind, only)) continue;
         memset(&st, 0, sizeof st);
+        for (i = 0; i < S[1]->nkern; i++) n5 += !strcmp(S[1]->kern[i].kind, KINDS[ki].kind);
         for (i = 0; i < S[0]->nkern; i++) {
             const twin_kernel_t *k = &S[0]->kern[i];
             const twin_kernel_t *t;
             if (strcmp(k->kind, KINDS[ki].kind)) continue;
             n2++;
             t = find_kernel(1, k->kind, k->R, k->bwd);
-            if (!t) continue;
+            if (!t) {
+                /* a kind avx512 lists: a radix it lacks is declared absent, or a FAIL */
+                if (!n5) continue;
+                if (declared_absent512(k->kind, k->R, k->bwd)) {
+                    nabs++;
+                    continue;
+                }
+                st.fails++;
+                g_fail_kernels++;
+                if (st.printed++ < TWIN_MAXFAIL)
+                    printf("  FAIL %s radix %d %s: avx2 lists it, avx512 does not, and il_registry_avx512.h "
+                           "does not declare it absent\n", k->kind, k->R, k->bwd ? "bwd" : "fwd");
+                continue;
+            }
             st.kernels++;
             gate_kernel(ki, k->R, k->bwd, k->fn, t->fn, &st);
         }
-        for (i = 0; i < S[1]->nkern; i++) n5 += !strcmp(S[1]->kern[i].kind, KINDS[ki].kind);
         g_kernels += st.kernels;
         g_cases += st.cases;
         g_bitwise += st.bitwise;
@@ -1232,8 +1374,11 @@ static void kernel_pass(const char *only)
         if (!n2 && !n5) continue;
         printf("%-8s %3d kernels %5d cases  bitwise %5d  worst %.2e%s%s", KINDS[ki].kind, st.kernels,
                st.cases, st.bitwise, st.worst, st.worst > 0 ? " at " : "", st.worst > 0 ? st.where : "");
-        if (n2 != st.kernels || n5 != st.kernels)
-            printf("  (avx2 lists %d, avx512 %d)", n2, n5);
+        if (n2 != st.kernels || n5 != st.kernels) {
+            printf("  (avx2 lists %d, avx512 %d", n2, n5);
+            if (nabs) printf("; %d declared absent at avx512", nabs);
+            printf(")");
+        }
         printf("  %s\n", st.fails ? "FAIL" : "ok");
         fflush(stdout);
     }
@@ -1331,12 +1476,13 @@ static void driver_pass(int ztt_max)
                         if (slot < 4 ? !c.zf[isa] : !c.zp[isa]) ok2 = 0;
                         c.tw[isa] = tw[isa][bwd].p;
                         c.rb[isa] = z[isa].rb;
-                        c.plane[isa] = z[isa].plane;
                     }
                     if (!ok2) continue;
                     c.call = slot < 4 ? CALL_ZTT : CALL_ZTTP;
                     c.tile = tiles[ti];
                     c.inplace = (slot == 1 || slot == 3);
+                    c.plane = slot < 4 ? N : 0;
+                    c.inplane = c.inplace;
                     b_init(&c.in, N, slot == 5 ? L_MAP : L_NAT);
                     b_init(&c.out, N, slot == 4 ? L_MAP : L_NAT);
                     b_all(&c.in);
