@@ -1,6 +1,6 @@
 /* estimate_tool.c -- the 1D estimate's tool: print the recipes, build and check the plans, compare
  * the recipes with the stored winners. Tracked, not wired into the library. The c2c recipes and plans are the LIBRARY's
- * (VFFT_FLAG_ESTIMATE: src/core/il/planning/estimate_il.h, src/core/il/rank1/c2c_estimate_il.h); the
+ * (VFFT_FLAG_ESTIMATE: src/core/il/estimate/estimate_il.h, src/core/il/estimate/c2c_estimate_il.h); the
  * real ones are this folder's (estimate_1d.h, estimate_build.h).
  *
  *   estimate_tool show    N... [options]   the recipe of each cell, in the store's own text

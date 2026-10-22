@@ -1,5 +1,5 @@
 /* c2c_estimate_il.h — the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built
- * from the formulas' recipe (il/planning/estimate_il.h) through the door's own replay, with
+ * from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with
  * nothing measured.
  *
  * vfft_create (vfft_api.h) calls _vfft_create_estimate for a request the front door admitted under
@@ -41,7 +41,7 @@
 #ifndef VFFT_IL_C2C_ESTIMATE_IL_H
 #define VFFT_IL_C2C_ESTIMATE_IL_H
 
-#include "il/planning/estimate_il.h"
+#include "il/estimate/estimate_il.h"
 
 /* the outcome of a build */
 enum

@@ -1,5 +1,5 @@
-/* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/planning/estimate_il.h,
- * il/rank1/c2c_estimate_il.h): one 1D interleaved c2c transform planned by formulas, nothing measured.
+/* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/estimate/estimate_il.h,
+ * il/estimate/c2c_estimate_il.h): one 1D interleaved c2c transform planned by formulas, nothing measured.
  *
  * Every create goes through the public API with the flag and names the gate's scratch store:
  *   A  correct against a long-double DFT: every bin up to N = 4096 (scrambled: the sorted multiset of the

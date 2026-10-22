@@ -2,7 +2,7 @@
  *
  * For every N in [lo, hi]: est_plan_1d, then est_put_rows -- the rows a race would bank, through the
  * library's own writers (the same call the library's est_build_c2c makes into its private store,
- * il/rank1/c2c_estimate_il.h) --
+ * il/estimate/c2c_estimate_il.h) --
  * into an EMPTY store directory, saved once at the end. A canonical tool then replays exactly these
  * plans: python gauntlet/gauntlet.py run --cells lo..hi --store <dir>  (never --merge).
  * One cell: 1D c2c, natural order, out of place, one thread (the gauntlet's default contract).
@@ -16,7 +16,7 @@
 static long est_clock_reads;
 static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
-#include "vfft.c"   /* carries the library's estimate (il/planning/estimate_il.h): est_plan_1d, est_put_rows */
+#include "vfft.c"   /* carries the library's estimate (il/estimate/estimate_il.h): est_plan_1d, est_put_rows */
 static void est_clock_probe(void) { est_clock_reads++; }
 
 int main(int argc, char **argv)

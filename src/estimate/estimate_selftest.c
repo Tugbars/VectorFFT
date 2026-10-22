@@ -1,7 +1,7 @@
 /* estimate_selftest.c -- print the 1D estimate's recipes for a list of N, and an independent law pass
  * over a sweep (tracked, not wired into the library). No plan is built, nothing is timed.
  *
- * The c2c formulas are the LIBRARY's (src/core/il/planning/estimate_il.h), and they read the library's
+ * The c2c formulas are the LIBRARY's (src/core/il/estimate/estimate_il.h), and they read the library's
  * own facts (the IL registry's radix lists, the bands of ztt.h, k1_fourstep_band.h and policy_il.h), so
  * this program is a library TU: it includes vfft.c, like the other tools here. It calls no create.
  *

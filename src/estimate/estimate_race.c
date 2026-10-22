@@ -23,7 +23,7 @@ static long est_clock_reads;
 static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
 #include "vfft.c"                    /* FIRST: the whole library in its own order (form_slot_gate.c:23); it
-                                      * carries the library's estimate (il/planning/estimate_il.h) */
+                                      * carries the library's estimate (il/estimate/estimate_il.h) */
 static void est_clock_probe(void) { est_clock_reads++; }
 
 #define NARM 3

@@ -2,12 +2,12 @@
  * (tracked, not wired into the library).
  *
  * THE COMPLEX PART IS THE LIBRARY'S (released 2026-10-22 as VFFT_FLAG_ESTIMATE, 1D c2c only):
- *   src/core/il/planning/estimate_il.h  the machine (est_machine_t), the request (est_request_t), the
+ *   src/core/il/estimate/estimate_il.h  the machine (est_machine_t), the request (est_request_t), the
  *                                       c2c recipe (est_recipe_t), the c2c formulas (est_plan_1d) and
  *                                       the c2c row writer (est_put_rows), plus every helper the real
  *                                       formulas below share (est_c2c, the ZTURN-T / pair / four-step
  *                                       / prime-inner helpers, est_fs_child, est__fs_text ...);
- *   src/core/il/rank1/c2c_estimate_il.h the c2c build (est_build_c2c: pre-flight, private store, the
+ *   src/core/il/estimate/c2c_estimate_il.h the c2c build (est_build_c2c: pre-flight, private store, the
  *                                       door's replay, the detectors est__meter_read / est__replay,
  *                                       est__fs_preflight) and the front door's _vfft_create_estimate.
  * This folder adds r2c / c2r on top of it -- the real formulas (estimate_1d.h), the real build
@@ -26,7 +26,7 @@
 #define EST_RECIPE_H
 
 #ifndef VFFT_IL_C2C_ESTIMATE_IL_H
-#error "src/estimate needs the library's estimate (il/rank1/c2c_estimate_il.h): #include \"vfft.c\" first"
+#error "src/estimate needs the library's estimate (il/estimate/c2c_estimate_il.h): #include \"vfft.c\" first"
 #endif
 
 #include <stddef.h>

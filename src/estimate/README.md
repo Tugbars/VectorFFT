@@ -13,8 +13,8 @@ replay code.
 
 | tracked file | what it holds |
 |---|---|
-| `src/core/il/planning/estimate_il.h` | the machine `est_machine_t`, the request `est_request_t`, the c2c recipe `est_recipe_t`; the c2c formulas `est_plan_1d` and every helper they use; the c2c row writer `est_put_rows` |
-| `src/core/il/rank1/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check) and the front door's `_vfft_create_estimate` |
+| `src/core/il/estimate/estimate_il.h` | the machine `est_machine_t`, the request `est_request_t`, the c2c recipe `est_recipe_t`; the c2c formulas `est_plan_1d` and every helper they use; the c2c row writer `est_put_rows` |
+| `src/core/il/estimate/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check) and the front door's `_vfft_create_estimate` |
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
 
@@ -44,7 +44,7 @@ tracked c2c part, and the tools.
 
 ## How a plan is built
 
-**c2c (the library, `src/core/il/rank1/c2c_estimate_il.h`):**
+**c2c (the library, `src/core/il/estimate/c2c_estimate_il.h`):**
 
 1. **Refuse what estimate does not serve.** The front door refuses the requests the flag does not cover.
    The formulas refuse the in-place scrambled prime cell at T = 1: its route row and its prime method

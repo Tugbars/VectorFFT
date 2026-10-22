@@ -4,7 +4,7 @@
  * A planning method the caller selects, never a fallback. From N, the request and this machine's
  * cache sizes, est_plan_1d computes the row a race would have banked for the cell: the route and
  * every parameter of it (the recipe). est_put_rows writes that recipe as rows, with the store's own
- * writers, into a store the build holds in memory (il/rank1/c2c_estimate_il.h); the door's replay of
+ * writers, into a store the build holds in memory (il/estimate/c2c_estimate_il.h); the door's replay of
  * a banked verdict then builds the plan. No wisdom store is read or written.
  *
  * SCOPE: one 1D interleaved c2c transform (howmany 1), either order, either placement, any thread

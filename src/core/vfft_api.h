@@ -19,7 +19,7 @@
  *   - every create plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
  *     VFFT_FLAG_EXHAUSTIVE is refused;
  *   - VFFT_FLAG_ESTIMATE plans one 1D INTERLEAVED C2C transform by formulas, measuring nothing
- *     (il/rank1/c2c_estimate_il.h): every other request under it is refused, as is the flag beside
+ *     (il/estimate/c2c_estimate_il.h): every other request under it is refused, as is the flag beside
  *     VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE, and wisdom_dir is not opened;
  *   - the other flags become recalibrate, destroy_input and owned_buffers;
  *   - wisdom_dir becomes the store for that directory, loaded once per process and kept
@@ -95,7 +95,7 @@ int vfft_wisdom_reread(const char *dir)
 }
 
 /* the ESTIMATE create (VFFT_FLAG_ESTIMATE): after the table above, which its detectors read */
-#include "il/rank1/c2c_estimate_il.h"
+#include "il/estimate/c2c_estimate_il.h"
 
 /* ── the public configuration into the request ── */
 static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
@@ -152,7 +152,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         return 0;
     }
     if (p->flags & VFFT_FLAG_ESTIMATE)
-    {   /* one 1D INTERLEAVED C2C transform (il/rank1/c2c_estimate_il.h); any other request under the
+    {   /* one 1D INTERLEAVED C2C transform (il/estimate/c2c_estimate_il.h); any other request under the
          * flag is refused here, never planned by measuring instead */
         if (p->flags & VFFT_FLAG_RECALIBRATE)
         {
