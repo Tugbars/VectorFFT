@@ -1,6 +1,7 @@
 /* c2c_estimate_il.h — the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built
  * from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with
- * nothing measured.
+ * nothing measured. Rank 2 and 3 are il/estimate/c2c_estimate_nd_il.h's, included at the end on
+ * this file's pre-flight, replay and detectors.
  *
  * vfft_create (vfft_api.h) calls _vfft_create_estimate for a request the front door admitted under
  * the flag (_vfft_api_translate). It reads this machine, computes the recipe (est_plan_1d) and
@@ -617,8 +618,55 @@ out:
     return h;
 }
 
-/* THE FRONT DOOR'S ESTIMATE CREATE (vfft_create, under VFFT_FLAG_ESTIMATE): this machine's facts,
- * the request, the recipe, the build. NULL with the reason on the error record (vfft_error). */
+/* rank 2 and 3: the formulas and the build one rank up, on this file's pieces */
+#include "il/estimate/c2c_estimate_nd_il.h"
+
+/* ── the environment guard ──────────────────────────────────────────────── */
+
+/* THE VARIABLES THAT STEER A PLAN the estimate builds (the owner's ruling, 2026-10-22): a door that
+ * reads one of them pins, drops or re-races what the row says, so an estimate create refuses while
+ * any is set (est_env_steers, one getenv sweep at create, never at execute). Each is read on a path
+ * an estimate create runs:
+ *   - the 1D c2c doors: VFFT_NO_IL2P (c2c_oop_create_il.h:171-254, k1_commit.h), VFFT_NO_ILBLK
+ *     (il2p.h:972, 1000, 1614), VFFT_NO_T2B (k1_commit.h:1211), VFFT_IL_KV / VFFT_IL_BKV
+ *     (k1_commit.h:85-90, 146-151), VFFT_ILFD_NO_MSZ / _NO_GL / _NO_GORD / _NO_GEN2
+ *     (il_flatdit.h:283-482), VFFT_ILFD_MT and VFFT_ZTT_MT (k1_commit.h:1298, 1383), VFFT_K1_FS and
+ *     VFFT_K1_FSSB (k1_fourstep.h:75, k1_commit.h:1513, 1589), VFFT_ILPR_METHOD (k1_commit.h:576),
+ *     VFFT_RD_ONE_LEVEL (il_rader_stage.h:359, k1_commit.h:468), VFFT_NO_K1PLAN (k1_commit.h:833),
+ *     VFFT_NO_NAT_ILP (c2c_ip_create_il.h:88);
+ *   - the 2D door (fft2d_create_il.h, il2d_tier.h, il2d_cols.h), also inside a 1D four-step:
+ *     VFFT_IL2D_CHAIN, _FORMS, _BLU, _TPC, _WL, _TFUSE, _WC, _ROWOOP, _CSK, _RB2_KB, _STAGED,
+ *     _NO_COLMT, _MTARM;
+ *   - the 3D door (fftnd_il.h:1427-1428, 1563-1564): VFFT_ILND_ARM, _WL, _NF, _SW.
+ * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
+ * VFFT_RACE_LOG, VFFT_VERBOSE, ...), the execute-time profiling (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the
+ * stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate opens none), the real, split and
+ * transform-contiguous batch doors' names (the flag refuses those requests), the names no estimate
+ * create or execute reads (VFFT_PQ_NO_MT, the batch queues'; VFFT_IL2D_DENSE), the 3D door's threaded
+ * pins (VFFT_ILND_MT, VFFT_ILND_PT: inert at the one thread estimate plans rank 3 at), and
+ * VFFT_HIGHN_PLAN, read only inside a race (k1_commit.h:777, 1651). */
+static const char *const est_env_names[] = {
+    "VFFT_NO_IL2P", "VFFT_NO_ILBLK", "VFFT_NO_T2B", "VFFT_IL_KV", "VFFT_IL_BKV", "VFFT_ILFD_NO_MSZ",
+    "VFFT_ILFD_NO_GL", "VFFT_ILFD_NO_GORD", "VFFT_ILFD_NO_GEN2", "VFFT_ILFD_MT", "VFFT_ZTT_MT", "VFFT_K1_FS",
+    "VFFT_K1_FSSB", "VFFT_ILPR_METHOD", "VFFT_RD_ONE_LEVEL", "VFFT_NO_K1PLAN", "VFFT_NO_NAT_ILP",
+    "VFFT_IL2D_CHAIN", "VFFT_IL2D_FORMS", "VFFT_IL2D_BLU", "VFFT_IL2D_TPC", "VFFT_IL2D_WL", "VFFT_IL2D_TFUSE",
+    "VFFT_IL2D_WC", "VFFT_IL2D_ROWOOP", "VFFT_IL2D_CSK", "VFFT_IL2D_RB2_KB", "VFFT_IL2D_STAGED",
+    "VFFT_IL2D_NO_COLMT", "VFFT_IL2D_MTARM",
+    "VFFT_ILND_ARM", "VFFT_ILND_WL", "VFFT_ILND_NF", "VFFT_ILND_SW",
+};
+/* the first steering variable set in this process's environment, NULL when none is */
+static inline const char *est_env_steers(void)
+{
+    int i;
+    for (i = 0; i < EST_NELEM(est_env_names); i++)
+        if (getenv(est_env_names[i]))
+            return est_env_names[i];
+    return NULL;
+}
+
+/* THE FRONT DOOR'S ESTIMATE CREATE (vfft_create, under VFFT_FLAG_ESTIMATE): the environment guard,
+ * this machine's facts, the request, the recipe, the build; rank 2 and 3 through
+ * _vfft_create_estimate_nd. NULL with the reason on the error record (vfft_error). */
 static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
 {
     est_machine_t m;
@@ -626,12 +674,21 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     est_recipe_t rc;
     char why[640];
     struct vfft_plan_s *h;
+    const char *env = est_env_steers();
+    if (env)
+    {
+        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: the environment variable %s steers the plan; unset it (estimate "
+                   "plans from formulas only)", env);
+        return NULL;
+    }
     memset(&m, 0, sizeof m);
     m.lanes = VFFT_IL_VW;
     m.l1d = vfft_cpu_l1d_bytes();
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
+    if (cfg->dims >= 2)
+        return _vfft_create_estimate_nd(&m, cfg);
     memset(&rq, 0, sizeof rq);
     rq.N = cfg->n[0];
     rq.transform = cfg->transform;

@@ -14,13 +14,21 @@ replay code.
 | tracked file | what it holds |
 |---|---|
 | `src/core/il/estimate/estimate_il.h` | the machine `est_machine_t`, the request `est_request_t`, the c2c recipe `est_recipe_t`; the c2c formulas `est_plan_1d` and every helper they use; the c2c row writer `est_put_rows` |
-| `src/core/il/estimate/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check) and the front door's `_vfft_create_estimate` |
+| `src/core/il/estimate/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check), the environment guard `est_env_names` / `est_env_steers`, and the front door's `_vfft_create_estimate` |
+| `src/core/il/estimate/estimate_nd_il.h` | rank 2 and 3: the recipes `est_plan2d_t` / `est_plan3d_t`, the formulas `est_plan_2d` / `est_plan_3d` (the column chain from the door's pool, the N-arm, the bands, the 2D row route, the 3D natural form; the 1D children by `est_plan_1d`), the row writers `est_put_rows_2d` / `est_put_rows_3d` |
+| `src/core/il/estimate/c2c_estimate_nd_il.h` | rank 2 and 3: the build `est_build_nd` (pre-flight, rows, the door's replay, the plan check) and `_vfft_create_estimate_nd` |
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
 
-The flag serves one 1D interleaved c2c transform (howmany 1), any order, placement and thread count.
-It refuses real, real-to-real, rank >= 2, howmany > 1, SPLIT, the flag with `VFFT_FLAG_RECALIBRATE` or
-`VFFT_FLAG_PATIENT`, and the in-place scrambled prime cell at one thread. It never opens `wisdom_dir`.
+The flag serves one interleaved c2c transform (howmany 1): 1D in any order, placement and thread count;
+rank 2 and 3 (2026-10-22, `docs/design/estimate_2d3d_sketch.md`) in natural order on one thread, either
+placement. It refuses real, real-to-real, rank 4, howmany > 1, SPLIT, scrambled order or nthreads > 1 at
+rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or `VFFT_FLAG_PATIENT`, the in-place scrambled prime
+cell at one thread, and any create while an environment variable that steers a plan is set
+(`est_env_names`). At rank 2 and 3 the formulas also refuse an axis of length 1, a last axis with no
+1D engine, a column with no chain whose Bluestein length the column pool cannot chain (above 2^24),
+and a column whose Rader prime has no inner chain the request rebuilds (12289, 18433, 23041, 32257,
+40961, 61441, 63361, 64513, 65537: sketch sections 6 and 14). It never opens `wisdom_dir`.
 
 **This folder keeps what is not released:** the r2c / c2r formulas and build, built on top of the
 tracked c2c part, and the tools.
@@ -39,6 +47,7 @@ tracked c2c part, and the tools.
 | `estimate_tool.c` | The tool: `show`, `check`, `compare` (below). The TU includes `src/core/vfft.c` itself. |
 | `estimate_selftest.c` | The recipe printer with its own law pass. Now a library TU too: the c2c formulas read the library's facts. |
 | `estimate_race.c` | Timed: the banked plans against the estimate plans (E through the public flag). |
+| `estimate_race_nd.c` | The same at rank 2 and 3: 2D and 3D power-of-two cells, the same protocol. Built, never run by its author: the owner times on a quiet machine. |
 | `estimate_store.c` | Writes the c2c estimate plans as a store on disk, for the gauntlet. |
 | `TEST_LOG.md` | Every test sweep before the release, every bug found, and the review fixes. |
 

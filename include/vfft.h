@@ -141,13 +141,17 @@ extern "C"
     VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch or lane stride;
                                             the caller reads it with vfft_info() */
     VFFT_FLAG_VERBOSE = 1u << 5,       /**< print refusals and warnings to stderr as well */
-    VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from N and this machine's caches:
-                                            nothing is measured at create, no wisdom is read
-                                            or written, and wisdom_dir is not opened. One 1D
-                                            VFFT_C2C transform, INTERLEAVED, any order,
-                                            placement and nthreads; vfft_create() refuses the
-                                            flag on any other request, and with
-                                            VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE */
+    VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths and this
+                                            machine's caches: nothing is measured at create,
+                                            no wisdom is read or written, and wisdom_dir is
+                                            not opened. One VFFT_C2C transform, INTERLEAVED:
+                                            1D in any order, placement and nthreads; rank 2
+                                            and 3 in natural order on one thread, either
+                                            placement. vfft_create() refuses the flag on any
+                                            other request, with VFFT_FLAG_PATIENT or
+                                            VFFT_FLAG_RECALIBRATE, and while an environment
+                                            variable that steers a plan (VFFT_IL2D_WL, ...)
+                                            is set */
   };
 
   /* ── the configuration ──────────────────────────────────────────────── */

@@ -18,9 +18,11 @@
  *   - nthreads 0 or 1 is one thread (no process-wide setting);
  *   - every create plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
  *     VFFT_FLAG_EXHAUSTIVE is refused;
- *   - VFFT_FLAG_ESTIMATE plans one 1D INTERLEAVED C2C transform by formulas, measuring nothing
- *     (il/estimate/c2c_estimate_il.h): every other request under it is refused, as is the flag beside
- *     VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE, and wisdom_dir is not opened;
+ *   - VFFT_FLAG_ESTIMATE plans one INTERLEAVED C2C transform by formulas, measuring nothing
+ *     (il/estimate/c2c_estimate_il.h): 1D in any order on any thread count, rank 2 and 3 in natural
+ *     order on one thread (il/estimate/c2c_estimate_nd_il.h); every other request under it is
+ *     refused, as is the flag beside VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE or while an
+ *     environment variable that steers a plan is set (est_env_names), and wisdom_dir is not opened;
  *   - the other flags become recalibrate, destroy_input and owned_buffers;
  *   - wisdom_dir becomes the store for that directory, loaded once per process and kept
  *     (a create saves its winners into it before returning).
@@ -152,8 +154,9 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         return 0;
     }
     if (p->flags & VFFT_FLAG_ESTIMATE)
-    {   /* one 1D INTERLEAVED C2C transform (il/estimate/c2c_estimate_il.h); any other request under the
-         * flag is refused here, never planned by measuring instead */
+    {   /* one INTERLEAVED C2C transform: 1D in any order on any thread count, rank 2 and 3 in natural
+         * order on one thread (il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h); any other request
+         * under the flag is refused here, never planned by measuring instead */
         if (p->flags & VFFT_FLAG_RECALIBRATE)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE: estimate measures nothing and "
@@ -171,10 +174,22 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
                        "measuring)", _vfft_tname(p->transform));
             return 0;
         }
-        if (p->rank > 1)
+        if (p->rank > 3)
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans 1D transforms only, not rank %d (drop the flag to plan it "
-                       "by measuring)", p->rank);
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank %d (drop the flag to plan it by "
+                       "measuring)", p->rank);
+            return 0;
+        }
+        if (p->rank > 1 && p->order == VFFT_ORDER_SCRAMBLED)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not "
+                       "VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)");
+            return 0;
+        }
+        if (p->rank > 1 && p->nthreads > 1)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 on one thread only, not nthreads %d (drop "
+                       "the flag to plan it by measuring)", p->nthreads);
             return 0;
         }
         if (p->howmany > 1)
