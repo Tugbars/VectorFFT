@@ -1,7 +1,8 @@
 /* estimate_store.c -- write the estimate method's plans as a wisdom store on disk (git-ignored, unreleased).
  *
- * For every N in [lo, hi]: est_plan_1d, then est__put_rows -- the rows a race would bank, through the
- * library's own writers (the same call est_build_1d makes into its private store, estimate_build.h) --
+ * For every N in [lo, hi]: est_plan_1d, then est_put_rows -- the rows a race would bank, through the
+ * library's own writers (the same call the library's est_build_c2c makes into its private store,
+ * il/rank1/c2c_estimate_il.h) --
  * into an EMPTY store directory, saved once at the end. A canonical tool then replays exactly these
  * plans: python gauntlet/gauntlet.py run --cells lo..hi --store <dir>  (never --merge).
  * One cell: 1D c2c, natural order, out of place, one thread (the gauntlet's default contract).
@@ -15,9 +16,7 @@
 static long est_clock_reads;
 static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
-#include "vfft.c"
-#include "estimate_1d.h"
-#include "estimate_build.h"
+#include "vfft.c"   /* carries the library's estimate (il/planning/estimate_il.h): est_plan_1d, est_put_rows */
 static void est_clock_probe(void) { est_clock_reads++; }
 
 int main(int argc, char **argv)
@@ -44,7 +43,7 @@ int main(int argc, char **argv)
         est_recipe_t rc;
         char why[768];
         if (est_plan_1d(&m, &rq, &rc, why, sizeof why)) { printf("N=%d refused (formula): %s\n", N, why); refused++; continue; }
-        if (est__put_rows(&st, &rc, &rq, 1, why, sizeof why)) { printf("N=%d refused (rows): %s\n", N, why); refused++; continue; }
+        if (est_put_rows(&st, &rc, &rq, 1, why, sizeof why)) { printf("N=%d refused (rows): %s\n", N, why); refused++; continue; }
         ok++;
     }
     const int rows = (int)st.nrec;

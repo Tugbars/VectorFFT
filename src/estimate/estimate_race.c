@@ -2,7 +2,8 @@
  *
  * For each length N (1D c2c, natural order, out of place, one thread) three plans in one process:
  *   B   the banked plan: vfft_create from a scratch copy of the store (a store hit replays its row)
- *   E   the estimate plan: est_plan_1d + est_build_1d (formulas, a private in-memory store, no measuring)
+ *   E   the estimate plan: vfft_create with VFFT_FLAG_ESTIMATE (the library's formulas and build: a
+ *       private in-memory store, no measuring, no store read)
  *   B2  the banked plan created a second time: the control (B against itself = the noise floor)
  * Neither create may read the library's clock (VFFT_CLOCK_PROBE counts every read): a create that read it
  * measured, and its N is reported and skipped. The three outputs must agree.
@@ -21,9 +22,8 @@
 static long est_clock_reads;
 static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
-#include "vfft.c"                    /* FIRST: the whole library in its own order (form_slot_gate.c:23) */
-#include "estimate_1d.h"
-#include "estimate_build.h"
+#include "vfft.c"                    /* FIRST: the whole library in its own order (form_slot_gate.c:23); it
+                                      * carries the library's estimate (il/planning/estimate_il.h) */
 static void est_clock_probe(void) { est_clock_reads++; }
 
 #define NARM 3
@@ -136,17 +136,19 @@ int main(int argc, char **argv)
             if (est_clock_reads != r0) { printf("N=%-8d banked create MEASURED (clock read %ld times): skipped\n", N, est_clock_reads - r0); goto next; }
             if (!p[a]) { printf("N=%-8d banked create refused: %s\n", N, vfft_error()); goto next; }
         }
-        /* E: the estimate */
+        /* E: the estimate, through the public flag; the recipe is printed from the library's formulas */
         {
             est_request_t rq = { N, VFFT_C2C, VFFT_ORDER_NATURAL, VFFT_PLACEMENT_OUT, 1 };
             est_recipe_t rc;
-            est_build_report_t rep;
+            vfft_config_t c;
             if (est_plan_1d(&m, &rq, &rc, why, sizeof why)) { printf("N=%-8d estimate refused (formula): %s\n", N, why); goto next; }
             est_tokens(&rc, et, sizeof et);
+            memset(&c, 0, sizeof c);
+            c.n[0] = N; c.nthreads = 1; c.flags = VFFT_FLAG_ESTIMATE;
             const long r0 = est_clock_reads;
-            p[1] = (vfft_plan)est_build_1d_ex(&rc, &rq, why, sizeof why, &rep);
-            if (est_clock_reads != r0) { printf("N=%-8d estimate build MEASURED: skipped\n", N); goto next; }
-            if (!p[1]) { printf("N=%-8d estimate build refused: %s\n", N, why); goto next; }
+            p[1] = vfft_create(&c);
+            if (est_clock_reads != r0) { printf("N=%-8d estimate create MEASURED: skipped\n", N); goto next; }
+            if (!p[1]) { printf("N=%-8d estimate create refused: %s\n", N, vfft_error()); goto next; }
         }
         {
             const size_t bytes = (size_t)N * 16;

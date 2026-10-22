@@ -1,8 +1,10 @@
 /* estimate_tool.c -- the 1D estimate's tool: print the recipes, build and check the plans, compare
- * the recipes with the stored winners. Unreleased, git-ignored (.gitignore:87).
+ * the recipes with the stored winners. Git-ignored. The c2c recipes and plans are the LIBRARY's
+ * (VFFT_FLAG_ESTIMATE: src/core/il/planning/estimate_il.h, src/core/il/rank1/c2c_estimate_il.h); the
+ * real ones are this folder's (estimate_1d.h, estimate_build.h).
  *
  *   estimate_tool show    N... [options]   the recipe of each cell, in the store's own text
- *   estimate_tool check   N... [options]   build every cell through est_build_1d and check it:
+ *   estimate_tool check   N... [options]   build every cell through est_build_any and check it:
  *                                          built / refused(reason) / measured(FAIL) /
  *                                          rewritten(FAIL) / wrong(FAIL)
  *   estimate_tool compare [N...] [options] the recipes against the stored winner rows of this CPU's
@@ -11,7 +13,8 @@
  *
  * N: 1024 | 2^20 | A-B (every N) | A-B:pow2 | A-B:sK (step K) | A-B:rK (K random N, fixed seed)
  * options: -t c2c,r2c,c2r   -o nat,scr   -p oop,ip   -T 1,8   --tol 1e-11   --isolate   -q   -v
- *          --store DIR (compare)   --l1d B --l2 B --l3 B --lanes 4|8 (show, compare: another machine)
+ *          --store DIR (compare)   --l1d B --l2 B --l3 B (show, compare: another machine's caches; the
+ *          formulas follow this build's lanes, so --lanes must name VFFT_IL_VW)
  *
  * The correctness check (no timing anywhere): the forward against a long-double DFT -- every bin for
  * N <= 4096 (scrambled: the sorted multiset of the outputs), 32 bins by direct long-double sums
@@ -41,8 +44,8 @@ static int est_clock_trap;           /* 1 around an estimate build: the first cl
 static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
 #include "vfft.c"                    /* FIRST: the whole library in its own order (form_slot_gate.c:23) */
-#include "estimate_1d.h"             /* the formulas: est_plan_1d, est_recipe_print */
-#include "estimate_build.h"          /* the glue: est_build_1d */
+#include "estimate_1d.h"             /* the formulas: est_plan_any (c2c: the library's est_plan_1d), est_recipe_print */
+#include "estimate_build.h"          /* the build: est_build_any (c2c: the library's est_build_c2c) */
 
 #define EST_FULL_N 4096   /* every bin against the long-double DFT up to here */
 #define EST_NBINS 32      /* sampled bins above */
@@ -99,7 +102,8 @@ static void est_usage(void)
            "  --isolate  every check cell in its own process (nested creates always are)\n"
            "  -q / -v  only failures and refusals / more detail\n"
            "  --store DIR  compare against this store folder (default: this CPU's under src/wisdom)\n"
-           "  --l1d B --l2 B --l3 B --lanes 4|8  plan for another machine (show, compare)\n");
+           "  --l1d B --l2 B --l3 B  plan for another machine's caches (show, compare)\n"
+           "  --lanes 4|8  must name this build's lanes: the formulas follow its laws\n");
 }
 
 static long est_num(const char *s, const char **end)
@@ -310,13 +314,13 @@ static void est_brief_c2c(char *b, size_t n, const est_recipe_t *rc, int T)
     default: snprintf(b, n, "%s", nm); return;
     }
 }
-static void est_brief(char *b, size_t n, const est_recipe_t *rc, const est_request_t *rq)
+static void est_brief(char *b, size_t n, const est_any_recipe_t *rc, const est_request_t *rq)
 {
     char s[160];
     const int T = rq->nthreads > 1 ? rq->nthreads : 1;
     switch (est__eng(rc, rq))
     {
-    case EST_ENG_K1: est_brief_c2c(b, n, rc, T); return;
+    case EST_ENG_K1: est_brief_c2c(b, n, &rc->c, T); return;
     case EST_ENG_ZRM: snprintf(b, n, "zrm"); return;
     case EST_ENG_ZRP: snprintf(b, n, "zrp %d.%d %s", rc->zrp.R1, rc->zrp.R2, rc->zrp.form ? "r2z" : "n1t"); return;
     case EST_ENG_ZTTR:
@@ -324,7 +328,7 @@ static void est_brief(char *b, size_t n, const est_recipe_t *rc, const est_reque
         snprintf(b, n, "zttr %s tile=%zu stk=%d mt=%d", s, rc->zttr.tile, rc->zttr.stk, rc->zttr.mt);
         return;
     case EST_ENG_ZR2C:
-        est_brief_c2c(s, sizeof s, rc, T > 1 && rc->k1_il_route == VFFT_K1_IL_PRIME ? T : 1);
+        est_brief_c2c(s, sizeof s, &rc->c, T > 1 && rc->c.k1_il_route == VFFT_K1_IL_PRIME ? T : 1);
         snprintf(b, n, "zr2c %s [%s]%s", rc->zr2c.route ? "child_nat_ip" : "child_oop_il", s,
                  T > 1 ? (rc->zr2c.fold_mt ? " fold=mt" : " fold=st") : "");
         return;
@@ -782,7 +786,7 @@ static void est_check_c2r(vfft_plan h, vfft_plan hs, const est_request_t *rq, es
 }
 
 /* the recipe in the store's own text (est_recipe_print, snprintf's contract), one row per line */
-static void est_print_recipe(const est_recipe_t *rc, const est_request_t *rq)
+static void est_print_recipe(const est_any_recipe_t *rc, const est_request_t *rq)
 {
     char small[4096], *buf = small;
     const int n = est_recipe_print(rc, rq, small, sizeof small);
@@ -843,16 +847,16 @@ static void est_fmt_err(char *b, size_t n, const est_err_t *e)
 static vfft_plan est_sibling(const est_machine_t *m, const est_request_t *rq)
 {
     est_request_t sq = *rq;
-    est_recipe_t sr;
+    est_any_recipe_t sr;
     char why[512];
     vfft_plan h;
     sq.transform = VFFT_R2C;
-    if (est_plan_1d(m, &sq, &sr, why, sizeof why) || est_recipe_nested(&sr, &sq))
+    if (est_plan_any(m, &sq, &sr, why, sizeof why) || est_recipe_nested(&sr, &sq))
         return NULL;
     est_cell_name(est_cell, sizeof est_cell, &sq);
     strncat(est_cell, " (sibling)", sizeof est_cell - strlen(est_cell) - 1);
     est_clock_trap = 1;
-    h = (vfft_plan)est_build_1d(&sr, &sq, why, sizeof why);
+    h = (vfft_plan)est_build_any(&sr, &sq, why, sizeof why);
     est_clock_trap = 0;
     return h;
 }
@@ -861,7 +865,7 @@ static vfft_plan est_sibling(const est_machine_t *m, const est_request_t *rq)
 static int est_check_one(const est_opt_t *o, const est_machine_t *m, const est_request_t *rq, est_ref_t *ref,
                          double *worst)
 {
-    est_recipe_t rc;
+    est_any_recipe_t rc;
     est_build_report_t rep;
     char why[768], cell[192], brief[256], eb[128];
     vfft_plan h;
@@ -869,7 +873,7 @@ static int est_check_one(const est_opt_t *o, const est_machine_t *m, const est_r
     int res;
     *worst = 0.0;
     est_cell_name(cell, sizeof cell, rq);
-    if (est_plan_1d(m, rq, &rc, why, sizeof why))
+    if (est_plan_any(m, rq, &rc, why, sizeof why))
     {
         if (!o->quiet || o->verbose)
             printf("%-30s refused(formula: %s)\n", cell, why);
@@ -878,7 +882,7 @@ static int est_check_one(const est_opt_t *o, const est_machine_t *m, const est_r
     est_brief(brief, sizeof brief, &rc, rq);
     snprintf(est_cell, sizeof est_cell, "%s", cell);
     est_clock_trap = 1;
-    h = (vfft_plan)est_build_1d_ex(&rc, rq, why, sizeof why, &rep);
+    h = (vfft_plan)est_build_any_ex(&rc, rq, why, sizeof why, &rep);
     est_clock_trap = 0;
     if (!h)
     {
@@ -1019,13 +1023,13 @@ static int est_check(const est_opt_t *o, const est_machine_t *m)
                 est_requests_of(o, o->Ns[i], o->Ts[ti], pl, rqs, &nq);
                 for (q = 0; q < nq; q++)
                 {
-                    est_recipe_t rc;
+                    est_any_recipe_t rc;
                     char why[512], cell[192];
                     double w = 0.0;
                     int res;
                     est_cell_name(cell, sizeof cell, &rqs[q]);
                     if (o->mode != 'x' && (o->isolate ||
-                        (!est_plan_1d(m, &rqs[q], &rc, why, sizeof why) && est_recipe_nested(&rc, &rqs[q]))))
+                        (!est_plan_any(m, &rqs[q], &rc, why, sizeof why) && est_recipe_nested(&rc, &rqs[q]))))
                         res = est_check_isolated(o, &rqs[q], &w);
                     else
                         res = est_check_one(o, m, &rqs[q], &ref, &w);
@@ -1061,10 +1065,10 @@ static int est_show(const est_opt_t *o, const est_machine_t *m)
                 est_requests_of(o, o->Ns[i], o->Ts[ti], pl, rqs, &nq);
                 for (q = 0; q < nq; q++)
                 {
-                    est_recipe_t rc;
+                    est_any_recipe_t rc;
                     char why[512], cell[192];
                     est_cell_name(cell, sizeof cell, &rqs[q]);
-                    if (est_plan_1d(m, &rqs[q], &rc, why, sizeof why))
+                    if (est_plan_any(m, &rqs[q], &rc, why, sizeof why))
                     {
                         printf("%s: refused: %s\n", cell, why);
                         continue;
@@ -1330,7 +1334,7 @@ static int est_compare(const est_opt_t *o, est_machine_t m)
     for (i = 0; i < nc; i++)
     {
         const est_request_t *rq = &cells[i];
-        est_recipe_t rc;
+        est_any_recipe_t rc;
         struct vfft_wisdom_s *E;
         char why[512], cell[192], diff[600];
         vw2_key_t mk;
@@ -1338,14 +1342,14 @@ static int est_compare(const est_opt_t *o, est_machine_t m)
         const char *rn_e, *rn_s;
         int j, route_ok, recipe_ok = 1;
         est_cell_name(cell, sizeof cell, rq);
-        if (est_plan_1d(&m, rq, &rc, why, sizeof why))
+        if (est_plan_any(&m, rq, &rc, why, sizeof why))
         {
             n_ref++;
             if (o->verbose) printf("%-30s refused: %s\n", cell, why);
             continue;
         }
         E = vfft_child_store_new();   /* memory only: the rows the glue would bank, in the recipe's spelling */
-        if (!E || est__put_rows(&E->vw2, &rc, rq, 0, why, sizeof why))
+        if (!E || est__put_rows_any(&E->vw2, &rc, rq, 0, why, sizeof why))
         {
             n_unw++;
             if (o->verbose || !o->quiet) printf("%-30s unwritable: %s\n", cell, why);

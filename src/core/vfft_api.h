@@ -18,6 +18,9 @@
  *   - nthreads 0 or 1 is one thread (no process-wide setting);
  *   - every create plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
  *     VFFT_FLAG_EXHAUSTIVE is refused;
+ *   - VFFT_FLAG_ESTIMATE plans one 1D INTERLEAVED C2C transform by formulas, measuring nothing
+ *     (il/rank1/c2c_estimate_il.h): every other request under it is refused, as is the flag beside
+ *     VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE, and wisdom_dir is not opened;
  *   - the other flags become recalibrate, destroy_input and owned_buffers;
  *   - wisdom_dir becomes the store for that directory, loaded once per process and kept
  *     (a create saves its winners into it before returning).
@@ -91,11 +94,15 @@ int vfft_wisdom_reread(const char *dir)
     return 0;
 }
 
+/* the ESTIMATE create (VFFT_FLAG_ESTIMATE): after the table above, which its detectors read */
+#include "il/rank1/c2c_estimate_il.h"
+
 /* ── the public configuration into the request ── */
 static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
 {
     const unsigned known = VFFT_FLAG_PATIENT | VFFT_FLAG_EXHAUSTIVE | VFFT_FLAG_RECALIBRATE |
-                           VFFT_FLAG_DESTROY_INPUT | VFFT_FLAG_OWN_PITCH | VFFT_FLAG_VERBOSE;
+                           VFFT_FLAG_DESTROY_INPUT | VFFT_FLAG_OWN_PITCH | VFFT_FLAG_VERBOSE |
+                           VFFT_FLAG_ESTIMATE;
     int trig, rank;
     memset(c, 0, sizeof *c);
     if ((unsigned)p->transform > (unsigned)VFFT_DHT)
@@ -144,6 +151,45 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         _vfft_warn("vfft_create: nthreads %d is negative (0 or 1 is one thread)", p->nthreads);
         return 0;
     }
+    if (p->flags & VFFT_FLAG_ESTIMATE)
+    {   /* one 1D INTERLEAVED C2C transform (il/rank1/c2c_estimate_il.h); any other request under the
+         * flag is refused here, never planned by measuring instead */
+        if (p->flags & VFFT_FLAG_RECALIBRATE)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE: estimate measures nothing and "
+                       "recalibrate measures the cell (drop one of the two)");
+            return 0;
+        }
+        if (p->flags & VFFT_FLAG_PATIENT)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_PATIENT: two ways of planning (drop one of the two)");
+            return 0;
+        }
+        if (p->transform != VFFT_C2C)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C only, not VFFT_%s (drop the flag to plan it by "
+                       "measuring)", _vfft_tname(p->transform));
+            return 0;
+        }
+        if (p->rank > 1)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans 1D transforms only, not rank %d (drop the flag to plan it "
+                       "by measuring)", p->rank);
+            return 0;
+        }
+        if (p->howmany > 1)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one transform, not a batch of %zu (drop the flag to plan "
+                       "it by measuring)", p->howmany);
+            return 0;
+        }
+        if (p->layout != VFFT_LAYOUT_INTERLEAVED)
+        {
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans the INTERLEAVED layout only, not SPLIT (drop the flag to "
+                       "plan it by measuring)");
+            return 0;
+        }
+    }
     trig = _VFFT_IS_TRIG(p->transform);
     rank = p->rank < 1 ? 1 : p->rank;
     c->transform = p->transform;
@@ -166,7 +212,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     c->recalibrate = (p->flags & VFFT_FLAG_RECALIBRATE) != 0;
     c->destroy_input = (p->flags & VFFT_FLAG_DESTROY_INPUT) != 0;
     c->owned_buffers = (p->flags & VFFT_FLAG_OWN_PITCH) != 0;
-    if (p->wisdom_dir)
+    if (p->wisdom_dir && !(p->flags & VFFT_FLAG_ESTIMATE))   /* estimate reads no store: none is opened */
     {
         c->wisdom = _vfft_store_for_dir(p->wisdom_dir);
         if (!c->wisdom)
@@ -203,7 +249,7 @@ vfft_plan vfft_create(const vfft_config_t *config)
     _vfft_create_lock();   /* the store table is the lock's too (recursive: the create takes it again) */
     if (_vfft_api_translate(config, &c))
     {
-        h = _vfft_create_cfg(&c);
+        h = (config->flags & VFFT_FLAG_ESTIMATE) ? _vfft_create_estimate(&c) : _vfft_create_cfg(&c);
         if (h && h->nthreads > 1)   /* the lean entry arms the caller's pin around the executor */
             for (int d = VFFT_FORWARD; d <= VFFT_BACKWARD; d++)
                 if (h->k1_go[d])
