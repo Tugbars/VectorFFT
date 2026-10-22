@@ -1,7 +1,8 @@
 # src/estimate -- the 1D estimate planning method: the real transforms and the tools
 
-This folder is git-ignored (`.gitignore`, `/src/estimate/`). Nothing in it is part of the library, the
-build, the gates or the gauntlet.
+This folder is tracked but not wired: nothing in the library, the build, the gates or the gauntlet
+includes or builds it. The library refuses `VFFT_FLAG_ESTIMATE` on R2C and C2R (`_vfft_api_translate`,
+`src/core/vfft_api.h`). Lifting that refusal and wiring this folder's real build is left to the user.
 
 Estimate is a planning method the user selects. It is never a fallback. From N, the request and
 the machine's cache sizes it computes the recipe a race would have banked: the route and every
@@ -26,9 +27,7 @@ tracked c2c part, and the tools.
 
 - Estimate never reads the user's wisdom store. The raced rows are only the evidence the formulas
   were fitted to.
-- Specification: `docs/design/estimate_1d_sketch.md`. Where its text and the Python model under
-  `docs/research/estimate_1d/synth/` differ, the text wins.
-- Build reference: `docs/research/estimate_1d/impl/REPLAY_API.md`.
+- Specification: `docs/design/estimate_1d_sketch.md`.
 
 ## Files
 

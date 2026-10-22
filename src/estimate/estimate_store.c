@@ -1,4 +1,4 @@
-/* estimate_store.c -- write the estimate method's plans as a wisdom store on disk (git-ignored, unreleased).
+/* estimate_store.c -- write the estimate method's plans as a wisdom store on disk (tracked, not wired into the library).
  *
  * For every N in [lo, hi]: est_plan_1d, then est_put_rows -- the rows a race would bank, through the
  * library's own writers (the same call the library's est_build_c2c makes into its private store,

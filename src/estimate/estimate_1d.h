@@ -1,5 +1,5 @@
 /* estimate_1d.h -- the 1D estimate's REAL-TRANSFORM formulas (r2c / c2r), on top of the library's c2c
- * formulas (src/core/il/planning/estimate_il.h), and the recipe printer. Git-ignored, unreleased.
+ * formulas (src/core/il/planning/estimate_il.h), and the recipe printer. Tracked, not wired into the library.
  *
  * Implements est_plan_any and est_recipe_print (the contracts are in estimate_recipe.h) as the sketch
  * docs/design/estimate_1d_sketch.md specifies them (section 6 real, section 7 threads). The c2c

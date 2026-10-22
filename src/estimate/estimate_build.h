@@ -1,5 +1,5 @@
 /* estimate_build.h -- the 1D estimate's build for ANY request: c2c through the LIBRARY's build, r2c / c2r
- * through this folder's real build. Git-ignored, unreleased.
+ * through this folder's real build. Tracked, not wired into the library.
  *
  * THE C2C BUILD IS THE LIBRARY'S (src/core/il/rank1/c2c_estimate_il.h, est_build_c2c): the pre-flight,
  * the rows into a private store held in memory, the door's replay with wisdom_write = 0, the

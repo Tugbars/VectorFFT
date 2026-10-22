@@ -1,4 +1,4 @@
-/* estimate_race.c -- the estimate method's plans against the banked plans, TIMED (git-ignored, unreleased).
+/* estimate_race.c -- the estimate method's plans against the banked plans, TIMED (tracked, not wired into the library).
  *
  * For each length N (1D c2c, natural order, out of place, one thread) three plans in one process:
  *   B   the banked plan: vfft_create from a scratch copy of the store (a store hit replays its row)

@@ -1,5 +1,5 @@
 /* estimate_recipe.h -- the 1D estimate's REAL-TRANSFORM recipe and this folder's contracts
- * (git-ignored, unreleased: .gitignore, /src/estimate/).
+ * (tracked, not wired into the library).
  *
  * THE COMPLEX PART IS THE LIBRARY'S (released 2026-10-22 as VFFT_FLAG_ESTIMATE, 1D c2c only):
  *   src/core/il/planning/estimate_il.h  the machine (est_machine_t), the request (est_request_t), the
@@ -17,9 +17,8 @@
  * `c`, plus the real engines' fields. For a c2c request `c` is the whole recipe; for a zr2c real
  * request it is the c2c child at N/2; zfsr's split child and zrb's four-step inner use `c.fs`.
  *
- * Specification: docs/design/estimate_1d_sketch.md (git-ignored). Build reference:
- * docs/research/estimate_1d/impl/REPLAY_API.md. Paths are relative to src/core/ unless they start
- * with include/ or docs/. Zero means "absent" unless a comment says otherwise.
+ * Specification: docs/design/estimate_1d_sketch.md. Paths are relative to src/core/ unless they
+ * start with include/ or docs/. Zero means "absent" unless a comment says otherwise.
  *
  * NEEDS THE LIBRARY'S TYPES: include only after #include "vfft.c" (the tools) -- the TU then has the
  * tracked headers above in scope. */

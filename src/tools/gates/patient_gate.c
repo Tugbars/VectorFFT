@@ -154,7 +154,7 @@ static void forward(const char *label, vfft_plan p)
 
 int main(int argc, char **argv)
 {
-    const unsigned unnamed = (unsigned)VFFT_FLAG_VERBOSE << 1;   /* the first bit no flag names */
+    const unsigned unnamed = (unsigned)VFFT_FLAG_ESTIMATE << 1;   /* the first bit no flag names */
     char want[64], r0[64], r1[64], err[256];
     vfft_plan p, p0, p1;
     int a, i, measured, m0, m1;
