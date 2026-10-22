@@ -2,7 +2,7 @@
  * @file vfft.h
  * @brief The VectorFFT public API: eight functions.
  *
- *   vfft_create         commit a configuration to one measured plan
+ *   vfft_create         commit a configuration to one plan
  *   vfft_execute        run an INTERLEAVED or a real-to-real plan
  *   vfft_execute_split  run a SPLIT plan
  *   vfft_destroy        free a plan
@@ -14,7 +14,8 @@
  * A cell is served natively or refused: vfft_create() returns NULL and
  * vfft_error() says why. Nothing converts a layout, reorders a spectrum or
  * falls back silently. A create that misses wisdom measures the cell's
- * candidates and saves the winner before it returns; execute is pure (no
+ * candidates and saves the winner before it returns (VFFT_FLAG_ESTIMATE
+ * plans from formulas instead and measures nothing); execute is pure (no
  * allocation, no measurement, no decision). Which cells are served is the
  * front door's table: docs/design/vfft_front_door.md.
  */
@@ -185,11 +186,12 @@ extern "C"
   typedef struct vfft_plan_s *vfft_plan; /**< opaque, execute-ready */
 
   /**
-   * @brief Commit a configuration to one measured plan.
+   * @brief Commit a configuration to one plan.
    *
    * Validates the contract, serves the cell's verdict from wisdom or measures
    * its candidates on a miss (seconds at a small cell, minutes at the
-   * largest) and saves the winner, then builds the plan: kernels, tables,
+   * largest) and saves the winner (VFFT_FLAG_ESTIMATE: planned from formulas
+   * instead, nothing measured or saved), then builds the plan: kernels, tables,
    * scratch and threads are bound here. The plan owns what it allocated.
    * Creates take turns on one lock and may run beside executes. A create
    * leaves flush-to-zero and denormals-are-zero enabled on the calling thread,

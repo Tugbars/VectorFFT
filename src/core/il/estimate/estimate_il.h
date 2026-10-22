@@ -42,7 +42,7 @@ typedef struct est_machine_s
     long l1d;   /* bytes, vfft_cpu_l1d_bytes() (cpu_cache.h:560): the P-core's L1d */
     long l2;    /* bytes, vfft_cpu_l2_bytes() (cpu_cache.h:564): the four-step's band width */
     long l3;    /* bytes, vfft_cpu_l3_bytes() (cpu_cache.h:569), shared, 0 = not reported: the
-                 * threaded four-step's super-band */
+                 * threaded four-step's super-band and the 3D strips rule (estimate_nd_il.h) */
     int cores;  /* vfft_topology()->ncores: reported, no rule reads it */
 } est_machine_t;
 

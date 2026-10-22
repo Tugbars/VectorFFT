@@ -19,7 +19,7 @@ the banked rows, **[I]** interpretation.
 | order | natural (the default) | scrambled at rank 2 and 3 |
 | threads | one | nthreads > 1 at rank 2 and 3 |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
-| lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5); a column whose Rader prime has no inner chain the request rebuilds (the ten listed inners all lead with radix 64: 12289, 18433, 23041, 32257, 40961, 61441, 63361, 64513, 65537; §6, §14) |
+| lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5); a column whose Rader prime's ten listed candidate inners all lead with radix 64, which a request cannot rebuild (12289, 18433, 23041, 32257, 40961, 61441, 63361, 64513, 65537; §6, §14) |
 | rank-3 structure | always `s=1`: the 2D plan per plane, then axis 0 | the flat structure is never planned |
 
 The 1D plans inside a 2D or 3D plan (the children `rp_`, `turn_`, `csk_`, `tpc_`, and the `plane_`
@@ -92,8 +92,7 @@ names always exists and resolves (the pre-flight checks it with the door's resol
 4. **Otherwise** the pool's chains of two stages or more, the first by:
    - the stage count nearest k* = ceil(n / 4) on narrow rows (the radix-16 regime), ceil(n / 3) on
      wide ones (the radix-8 regime); on a tie the fewer;
-   - then the most balanced: the least sum over the stages of (log2 R)^2 (MKL's own closed rule
-     for its column factorization);
+   - then the most balanced: the least sum over the stages of (log2 R)^2;
    - then the order: the largest radix last (ascending), except the natural pass on wide rows,
      which closes on its smallest radix (descending); a closing-only radix stays last;
    - then the pool's own order.
@@ -162,8 +161,8 @@ to M = 4096 (4.4 at 16 ... 8.8.8.8 at 4096); from M = 8192 four stages that take
 64.64.64.64 at 2^24). `bluforms` = the race's spelling of that chain's forms, written whenever the
 chain carries a radix-32 stage (M = 2^17 to 2^23). The pool chains no M above 2^24, four stages of at
 most 64: a column with no chain at N above 2^23 is refused. The estimate computes M in 64 bits; the
-door's own loop computes it in an int (il2d_cols.h:937-938): past N = 2^29 it never ends, and from
-N = 2^30 the int 2N - 1 itself overflows. The estimate refuses all of these before the door.
+door's own loop computes it in an int (il2d_cols.h:937-938): for N between 2^29 and 2^30 it never ends, and
+from N = 2^30 the int 2N - 1 itself overflows, M stays 16 and the chirp writes out of bounds. The estimate refuses all of these before the door.
 
 [M] Against the six banked Bluestein rows (all from before the Rader stage: 127x64 nat 4.8.8,
 101x129 nat 8.32, and the scrambled 127x100 8.4.8, 131x64 4.4.4.8, 509x1024 4.8.4.8, 1021x512
@@ -231,7 +230,7 @@ route. The count above includes this: with `ro=3` at 16 it would be 146 / 920.
 | `s` | 1: the 2D plan per plane (the owner's ruling) | 1,008 (78%) |
 | axis-0 `chain` | §4 on the scrambled pass at (N1, w = N2 N3), with the table | 1,039 (81%) |
 | axis-0 `wl`, `tf` | with the cycle walk: 0 on a one-stage or Bluestein axis 0; otherwise the widest legal width below N1 (`_ilnd_wl_pool`, fftnd_il.h:1133) whose band fits the L2, 16 wl N2 N3 <= L2, else the narrowest legal width; `tf` = (wl > 0). With the strips: not written (below) | given the banked chain: 607 of 1,201 rows that carry a width (51%); banded or not: 1,014 (84%). The race's own repeatability of this width: 41% |
-| `nf`, `nsw` | the owner's rule (2026-10-23). The strips, `nf=2`, when the volume passes the L3, 16 N1 N2 N3 > L3 (no L3 reported counts as past, as at rank 1), and axis 0 is short, 16 N1 <= L1d / 4 (N1 <= 768 at a 48 KiB L1d: 512 among the powers of two); `nsw` = the widest of the door's strip widths (`_ilnd_sw_pool`, fftnd_il.h:826-836: 8 to 1024 columns, powers of two, the strip scratch 16 N1 w within the L2, w within the plane) whose scratch fits half the L2, 16 N1 nsw <= L2 / 2. The strips serve axis 0 unbanded (the door applies no band beside them, fftnd_il.h:1619), and `wl`, `tf` are not written: the race banks the band only where the cycle form won (fftnd_il.h:1733). Otherwise the cycle walk, `nf=1`, no `nsw` -- also on a one-stage or Bluestein axis 0 (the door's strip pool is empty there) and where no width fits | against the 796 rows that carry the race's `nf`: 739 (92.8%); the cycle walk always: 709 (89.1%). The misses: 43 rows where the strips won at volumes up to 32 MiB (19 at 32 MiB), and 14 at 64 MiB where the cycle walk won. The strip width: exact at 41 of the 87 strip rows |
+| `nf`, `nsw` | the owner's rule (2026-10-23). The strips, `nf=2`, when the volume passes the L3, 16 N1 N2 N3 > L3 (no L3 reported counts as past, as at rank 1), and axis 0 is short, 16 N1 <= L1d / 4 (N1 <= 768 at a 48 KiB L1d: 512 among the powers of two); `nsw` = the widest of the door's strip widths (`_ilnd_sw_pool`, fftnd_il.h:826-836: 8 to 1024 columns, powers of two, the strip scratch 16 N1 w within the L2, w within the plane) whose scratch fits half the L2, 16 N1 nsw <= L2 / 2. The strips serve axis 0 unbanded (the door applies no band beside them, fftnd_il.h:1619), and `wl`, `tf` are not written: the race banks the band only where the cycle form won (fftnd_il.h:1733). Otherwise the cycle walk, `nf=1`, no `nsw` -- also on a one-stage or Bluestein axis 0 (the door's strip pool is empty there) and where no width fits | against the 796 rows that carry the race's `nf`: 739 (92.8%); the cycle walk always: 709 (89.1%). The misses: 43 rows where the strips won at volumes up to 32 MiB (19 at 32 MiB), and 14 at 64 MiB where the cycle walk won. The strip width: exact at 43 of the 87 strip rows (41 without the door's w <= plane bound) |
 | `plane_` | the 2D plan at N2 x N3, natural, by §3-§8 | see the 2D rows |
 
 At one thread with `s` and `nf` banked, and `wl` beside the cycle walk or `nsw` beside the strips,
@@ -290,13 +289,13 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
 | rank 2 or 3, scrambled | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)` |
 | rank 2 or 3, nthreads > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 on one thread only, not nthreads %d (drop the flag to plan it by measuring)` |
 | howmany > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans one transform, not a batch of %zu (drop the flag to plan it by measuring)` (as before) |
-| any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the environment variable %s steers the plan; unset it (estimate plans from formulas only)` |
+| any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a plan-steering switch is set (unset it: estimate plans from formulas only)` |
 
 The formulas refuse, with the reason, an axis of length 1, a last axis the row guard refuses, a
 column with no chain whose Bluestein length the column pool cannot chain (M above 2^24; the length
 is computed in 64 bits, so a column whose M passes an int is refused at once, where the door's own
 loop would never end: `N = 819724288 has no column chain and its Bluestein length 2147483648 none
-either`), and a column whose Rader prime has no inner chain the request rebuilds (§6, §14).
+either`), and a column whose Rader prime's ten listed candidate inners all lead with radix 64 (§6, §14).
 
 **The steering variables** (`est_env_names`, `src/core/il/estimate/c2c_estimate_il.h`; one `getenv`
 sweep at create, never at execute), each read on a path an estimate create runs:
@@ -349,8 +348,8 @@ three open from the review (8-10). One library defect is open below them.
    the L3 on a short axis 0, the widest door width within L2 / 2) replaces "`nf=1` always": 739 of
    796 raced rows against 709.
 8. **The scrambled pass's one-stage bound** (§4 step 1, open). The code bounds every radix above 16
-   by 16 N w <= L1d / 4; the alternative bounds only the blocked radix-32 and radix-64 kernels so
-   and every other radix by the L1d. The two differ where a pool radix above 16 other than 32 and 64
+   by 16 N w <= L1d / 4; the alternative bounds only the blocked radix-32 and radix-64 kernels that way,
+   and every other radix by the whole L1d. The two differ where a pool radix above 16 other than 32 and 64
    has another chain, on mid planes at a 48 KiB L1d: axis 0 = 21 (the code 3.7, the alternative
    [21], at N2 N3 = 37..146), 22 (11.2, 35..139), 25 (5.5, 31..122), 26 (13.2, 30..118), 27 (3.9,
    29..113). Every radix above 16, or only 32 and 64?

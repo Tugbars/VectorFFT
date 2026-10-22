@@ -645,7 +645,7 @@ static inline void est__colkey(vw2_ilcol_key_t *ck, int rank, int n0, int n1, in
 /* the column pass's tokens: chain wl tf ro blu with the chain bank (reader.h:189), then forms or
  * bluforms, rd rdw, tpc as the door's own banks write them (il2d_tier.h:3253, 2425, 3082-3083, 3386);
  * ro < 0 = not written (rank 3); wlw = 0: wl and tf not written (the 3D strips: the door banks the
- * band only where the cycle walk won, fftnd_il.h:1729-1731) */
+ * band only where the cycle walk won, fftnd_il.h:1733) */
 static inline int est__put_col(vw2_store_t *st, const vw2_ilcol_key_t *ck, const est_col_t *c, int ro, int wlw)
 {
     char b[64];

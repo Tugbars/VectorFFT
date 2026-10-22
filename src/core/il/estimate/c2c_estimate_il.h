@@ -267,8 +267,9 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
         return 0;
     }
     case VFFT_K1_IL_ZTT:
-    {   /* vfft_ztt_create_chain_ord and set_tile (c2c_oop_create_il.h:253-271); the create does not
-         * enforce the policy's floor (policy_il.h:63-67), so it is checked here */
+    {   /* vfft_ztt_create_chain_ord and set_tile (c2c_oop_create_il.h:253-271); the create treats a
+         * row below the policy's floor (policy_il.h:63-67) as unusable and races the cell, so the
+         * floor is refused here first */
         vfft_ztt_plan_t *p;
         if (N < VFFT_POLICY_ZTT_MIN_N)
             return est_refuse(why, whylen, "ZTURN-T below its floor %d at %d lanes", VFFT_POLICY_ZTT_MIN_N, VFFT_IL_VW);
@@ -677,8 +678,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     const char *env = est_env_steers();
     if (env)
     {
-        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: the environment variable %s steers the plan; unset it (estimate "
-                   "plans from formulas only)", env);
+        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a "
+                   "plan-steering switch is set (unset it: estimate plans from formulas only)", env);
         return NULL;
     }
     memset(&m, 0, sizeof m);

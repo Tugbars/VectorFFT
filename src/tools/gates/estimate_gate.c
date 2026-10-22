@@ -893,15 +893,15 @@ int main(int argc, char **argv)
         int measured;
         env_set("VFFT_IL_KV", "51");
         memset(&c, 0, sizeof c); c.n[0] = 64;
-        refused("1D with VFFT_IL_KV", &c, "the environment variable VFFT_IL_KV steers the plan");
+        refused("1D with VFFT_IL_KV", &c, "the developer switch VFFT_IL_KV is set");
         env_set("VFFT_IL_KV", NULL);
         env_set("VFFT_IL2D_WL", "8");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64;
-        refused("2D with VFFT_IL2D_WL", &c, "the environment variable VFFT_IL2D_WL steers the plan");
+        refused("2D with VFFT_IL2D_WL", &c, "the developer switch VFFT_IL2D_WL is set");
         env_set("VFFT_IL2D_WL", NULL);
         env_set("VFFT_ILND_NF", "2");   /* would pin the strips over the cycle walk the estimate plans here */
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 64; c.n[1] = 64; c.n[2] = 64;
-        refused("3D with VFFT_ILND_NF", &c, "the environment variable VFFT_ILND_NF steers the plan");
+        refused("3D with VFFT_ILND_NF", &c, "the developer switch VFFT_ILND_NF is set");
         env_set("VFFT_ILND_NF", NULL);
         env_set("VFFT_IL2D_LOG", "1");   /* logging only: served */
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 16; c.n[1] = 16;

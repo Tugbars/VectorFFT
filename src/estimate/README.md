@@ -27,7 +27,7 @@ rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or `VFFT_FLAG_PATIENT`, the 
 cell at one thread, and any create while an environment variable that steers a plan is set
 (`est_env_names`). At rank 2 and 3 the formulas also refuse an axis of length 1, a last axis with no
 1D engine, a column with no chain whose Bluestein length the column pool cannot chain (above 2^24),
-and a column whose Rader prime has no inner chain the request rebuilds (12289, 18433, 23041, 32257,
+and a column whose Rader prime's ten listed candidate inners all lead with radix 64 (12289, 18433, 23041, 32257,
 40961, 61441, 63361, 64513, 65537: sketch sections 6 and 14). It never opens `wisdom_dir`.
 
 **This folder keeps what is not released:** the r2c / c2r formulas and build, built on top of the
@@ -262,9 +262,8 @@ A compromise to confirm:
   moves.
 - **Env pins beat banked rows silently.** `VFFT_IL_KV` and the engine pins (`k1_commit.h:85, 146`,
   `zrp_build.h:971-1027`, `odd_build.h:678-697`) override a replayed row without marking it stale.
-  This is why this folder's build refuses every steering `VFFT_*` name. The released
-  `VFFT_FLAG_ESTIMATE` has no such guard (none was asked): a pin in the caller's environment steers an
-  estimate plan as it steers any replay; a pin that makes the door race is caught by its detectors.
+  This is why the estimate refuses while a steering `VFFT_*` name is set: this folder's build, and
+  the released `VFFT_FLAG_ESTIMATE` since 2026-10-22 (`est_env_names`, c2c_estimate_il.h).
 
 ## What is unfitted
 
