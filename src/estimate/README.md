@@ -1,12 +1,28 @@
-# src/estimate -- the 1D estimate planning method (UNRELEASED)
+# src/estimate -- the 1D estimate planning method: the real transforms and the tools
 
-This folder is git-ignored (`.gitignore:87`, `/src/estimate/`). Nothing in it is part of the
-library, the build, the gates or the gauntlet.
+This folder is git-ignored (`.gitignore`, `/src/estimate/`). Nothing in it is part of the library, the
+build, the gates or the gauntlet.
 
 Estimate is a planning method the user selects. It is never a fallback. From N, the request and
 the machine's cache sizes it computes the recipe a race would have banked: the route and every
 parameter. It does this without measuring. The plan is then built through the library's own
 replay code.
+
+**The 1D complex part is released (2026-10-22) as `VFFT_FLAG_ESTIMATE` (`include/vfft.h`):**
+
+| tracked file | what it holds |
+|---|---|
+| `src/core/il/planning/estimate_il.h` | the machine `est_machine_t`, the request `est_request_t`, the c2c recipe `est_recipe_t`; the c2c formulas `est_plan_1d` and every helper they use; the c2c row writer `est_put_rows` |
+| `src/core/il/rank1/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check) and the front door's `_vfft_create_estimate` |
+| `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
+| `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
+
+The flag serves one 1D interleaved c2c transform (howmany 1), any order, placement and thread count.
+It refuses real, real-to-real, rank >= 2, howmany > 1, SPLIT, the flag with `VFFT_FLAG_RECALIBRATE` or
+`VFFT_FLAG_PATIENT`, and the in-place scrambled prime cell at one thread. It never opens `wisdom_dir`.
+
+**This folder keeps what is not released:** the r2c / c2r formulas and build, built on top of the
+tracked c2c part, and the tools.
 
 - Estimate never reads the user's wisdom store. The raced rows are only the evidence the formulas
   were fitted to.
@@ -18,94 +34,74 @@ replay code.
 
 | file | what it is |
 |---|---|
-| `estimate_recipe.h` | The interface. It defines the machine (`est_machine_t`), the request (`est_request_t`, the row's key) and the recipe (`est_recipe_t`, the row's payload). It declares the three contracts. Plain C, with no library type. |
-| `estimate_1d.h` | The formulas: `est_plan_1d` and `est_recipe_print`. They are pure: no library, no clock, no store, no allocation. |
-| `estimate_build.h` | The glue: `est_build_1d`, and `est_build_1d_ex`, which also returns a report. It turns a recipe into a public `vfft_plan` with no measurement, or refuses with the reason. It compiles only inside a TU that includes `vfft.c`. |
+| `estimate_recipe.h` | The recipe of any request, `est_any_recipe_t`: the library's c2c recipe as its member `c`, plus the real engines' fields. It declares this folder's contracts. It needs the library's types: include it only after `vfft.c`. |
+| `estimate_1d.h` | The real formulas and the contracts `est_plan_any` (c2c: the library's `est_plan_1d`) and `est_recipe_print`. Pure: no clock, no store, no allocation. |
+| `estimate_build.h` | The build of any request: `est_build_any`, and `est_build_any_ex`, which also returns a report. c2c goes through the library's `est_build_c2c`; real through the real build here, on the library's detectors. It compiles only inside a TU that includes `vfft.c`. |
 | `estimate_tool.c` | The tool: `show`, `check`, `compare` (below). The TU includes `src/core/vfft.c` itself. |
-| `estimate_selftest.c` | A library-free printer for the formulas (`estimate_1d.h`), with its own law pass. |
-| `TEST_LOG.md` | Every test sweep, every bug found, and the review fixes. |
+| `estimate_selftest.c` | The recipe printer with its own law pass. Now a library TU too: the c2c formulas read the library's facts. |
+| `estimate_race.c` | Timed: the banked plans against the estimate plans (E through the public flag). |
+| `estimate_store.c` | Writes the c2c estimate plans as a store on disk, for the gauntlet. |
+| `TEST_LOG.md` | Every test sweep before the release, every bug found, and the review fixes. |
 
-## How the glue builds a plan (`estimate_build.h`)
+## How a plan is built
 
-1. **Refuse what estimate does not serve.** This covers a transform other than c2c/r2c/c2r, a
-   scrambled real request, and the in-place scrambled prime cell at T = 1. That cell's route row
-   and prime method row share one key (`wisdom2_oop_il.h:515-527,545-551`), so the library would
-   race it. The glue also refuses whenever any `VFFT_*` environment variable other than the
-   logging ones or the store-directory ones is set (REPLAY_API 1.3). On Windows the names are
-   matched without case, because `getenv` there ignores case (`vfft_il_kv` is `VFFT_IL_KV`).
-2. **Pre-flight.** The door's own constructor sequence runs at T = 1, with no clock, and what it
-   built is destroyed. A recipe the door would mark stale, and then race, is refused here instead.
-   - A four-step child (the c2c four-step, zfsr, a four-step inner of the prime cell or of zrb, a
-     zr2c four-step child) is a nested create, so it is not built here. It is still checked
-     without a create:
-     - the outer engine's inner-length law: Rader M = N - 1 (`il_prime.h:299-318`,
-       `k1_commit.h:288-289`), Bluestein an even M >= 2N - 1 (`il_prime.h:249`), zrb
-       M >= (3N - 1)/2 (`zrb.h:59,87`);
-     - its column chain, with the 2D tier's own resolver;
-     - for a chain with an odd radix, the N1-arm verdict `fs_blu=0`;
-     - for a stage with several column forms, `fs_forms`;
-     - its row plan at N2, by this same pre-flight.
-3. **Rows into a private store.** The recipe is written as the rows a race would bank, into a
-   private store held in memory (`vfft_child_store_new`), using the library's own writers. Those
-   rows are:
-   - the c2c route row;
-   - the T row's `il_mt` / `il_mt_tw` / `il_mtsb`;
-   - the prime method row;
-   - the `dir=bwd` row;
-   - the real row.
+**c2c (the library, `src/core/il/rank1/c2c_estimate_il.h`):**
 
-   A four-step child is written the way a race banks it today. Its row plan rides inside the 2D
-   row as `fs_rp_*` (`wisdom2_child.h:5-21`). The recipe's `fs_row_*` spelling is converted to
-   that form. Without the conversion, zfsr would re-race its own replay (`zrp_build.h:330-334`).
-4. **The library's own create.** `_vfft_create_cfg` (`vfft.c:2509`) runs against that store, with
-   howmany = 1. It runs nested (the create depth is raised) and with `wisdom_write = 0`. The user's
-   store is never opened, read or written.
-5. **No-measurement proof.** These are read before the pre-flight and after the create:
-   - every library clock read (`VFFT_CLOCK_PROBE`);
-   - `_vfft_create_race_count`;
-   - `vfft_measure_scopes()`;
-   - the private store's row count;
-   - whether the library's default store or a directory store was opened.
+1. **Refuse what estimate does not serve.** The front door refuses the requests the flag does not cover.
+   The formulas refuse the in-place scrambled prime cell at T = 1: its route row and its prime method
+   row share one key (`wisdom2_oop_il.h:515-527,545-551`), so the library would race it.
+2. **Pre-flight.** The door's own constructor sequence runs at T = 1, and what it built is destroyed.
+   A recipe the door would mark stale, and then race, is refused here instead. A four-step child (the
+   four-step, a four-step inner of the prime cell) is a nested create, so it is not built here: its
+   column chain is checked with the 2D tier's resolver (with `fs_blu=0` / `fs_forms` where the tier
+   needs them) and its row plan at N2 by this same pre-flight.
+3. **Rows into a private store.** The recipe is written as the rows a race would bank, into a private
+   store held in memory (`vfft_child_store_new`), with the library's own writers (`est_put_rows`): the
+   prime method row, the c2c route row, the T row's `il_mt` / `il_mt_tw` / `il_mtsb`, the four-step's
+   child in the `fs_rp_*` spelling a race banks today, the `dir=bwd` row.
+4. **The library's own create.** `_vfft_create_cfg` runs against that store, nested (the whole build
+   runs inside a create) and with `wisdom_write = 0`.
+5. **No-measurement proof.** Read before the pre-flight and after the create: `_vfft_create_race_count`,
+   `vfft_measure_scopes()` (the build runs inside a create, so any clock read enters a scope), the
+   private store's row count, `_def_loaded` and `_vfft_api_nstores`. Any change: the plan is destroyed
+   (`EST_MEASURED`). A row the door re-banked with another payload: destroyed (`EST_REWRITTEN`).
+6. **The recipe's engine and threaded arm.** Else the plan is destroyed (`EST_SERIAL` / `EST_NOPLAN`).
+   `vfft_create` arms the caller's pin of a T > 1 plan.
 
-   If any of them changed, the plan is destroyed and the status is `EST_MEASURED`.
+**This folder's additions (`estimate_build.h`), for c2c and real alike:** the clock probe (every library
+clock read, `VFFT_CLOCK_PROBE`: a read during a build is `EST_MEASURED`), the environment guard (any
+create-steering `VFFT_*` variable refuses the build; REPLAY_API 1.3), and the caller's pin.
 
-   A row the door re-banked at an existing key (an "own" row, `wisdom2.h:189`) is compared with
-   the row the glue wrote. The same payload is only reported. A changed payload means the plan is
-   no longer the recipe, even though nothing measured: the plan is destroyed and the status is
-   `EST_REWRITTEN`. The door can re-bank without a clock read in two places
-   (`k1_commit.h:1558-1564`; `il2d_tier.h:4413-4424`, cmt=0 when the 2D MT arm cannot engage).
-6. **The recipe's engine and threaded arms.** The handle must be the recipe's engine. Every
-   threaded arm the recipe asked for must have taken. A silently serial plan is refused
-   (`EST_SERIAL`). A T > 1 plan gets the caller pin that `vfft_create` gives it
-   (`vfft_api.h:207-213`).
+**Real** follows the same steps on the library's pieces (`est__meter_read`, `est__replay`,
+`est__fs_preflight`, `est__fs_text`): the real pre-flight builds the door's real builders at T = 1 against
+an empty private store; the rows are the real writers' (`vw2_real_il_bank_*`); a four-step child (zfsr,
+zrb's four-step inner, a zr2c four-step child) is checked without a create, as above.
 
 ## Build and run
 
-Build from the repository root. Do not pass `--vfft`: the TU includes `vfft.c` itself. It takes
-about 90 s.
+Build from the repository root. Do not pass `--vfft`: each TU includes `vfft.c` itself. Each build
+takes about two minutes.
 
 ```
 python gauntlet/build.py --compile --src src/estimate/estimate_tool.c
-```
-
-The formulas' self-test needs no library:
-
-```
-gcc -std=c11 -Wall -Wextra -pedantic -O2 -o <scratch>/estimate_selftest.exe src/estimate/estimate_selftest.c -lm
-<scratch>/estimate_selftest.exe -all 1024 4099 2^20
-<scratch>/estimate_selftest.exe -o scr -T 8 -sweep 2 300000
+python gauntlet/build.py --compile --src src/estimate/estimate_selftest.c
 ```
 
 The exe lands beside the source. Run it from the Bash tool, where the mingw DLLs are on `PATH`.
 
 ```
+src/estimate/estimate_selftest.exe -all 1024 4099 2^20
+src/estimate/estimate_selftest.exe -o scr -T 8 -sweep 2 300000
 src/estimate/estimate_tool.exe show 1024 1009 2^20 -p oop -o nat
-src/estimate/estimate_tool.exe check 2-4096 -q
+src/estimate/estimate_tool.exe check 2-4096 -t c2c -o nat -p oop -q
+src/estimate/estimate_tool.exe check 2-2048 -t r2c,c2r -q
 src/estimate/estimate_tool.exe check 262144-16777216:pow2 -T 1,8
-src/estimate/estimate_tool.exe check 2049-262144:r400 -t r2c,c2r -q
 src/estimate/estimate_tool.exe compare -q
-src/estimate/estimate_tool.exe compare 2-4096 -t c2c -o nat -p oop -v
 ```
+
+The formulas follow the build's lanes (`est_plan_1d` refuses a machine of another count), so the selftest's
+`-vw` and the tool's `--lanes` must name the build's: an 8-lane law pass needs an AVX-512 build
+(`VFFT_ISA=avx512`) and an AVX-512 host or Intel SDE.
 
 **N:** `1024`, `2^20`, `A-B` (every N), `A-B:pow2`, `A-B:sK` (step K), or `A-B:rK` (K values drawn
 with a fixed seed).
@@ -119,11 +115,11 @@ with a fixed seed).
 - `--isolate`: run every cell in its own process.
 - `-q` / `-v`: quieter / louder output.
 - `--store DIR`: the store folder for `compare`.
-- `--l1d B --l2 B --l3 B --lanes 4|8`: plan for another machine (`show` and `compare` only).
+- `--l1d B --l2 B --l3 B`: plan for another machine's caches (`show` and `compare` only).
 
 ### `check`
 
-Each cell is built through `est_build_1d` and reported as one of:
+Each cell is built through `est_build_any` and reported as one of:
 - built, with its errors;
 - `refused(formula: ...)` or `refused(glue: ...)`;
 - `measured(FAIL)`;
@@ -167,7 +163,12 @@ It reports:
 
 With no N given, every stored winner row of the asked transforms is a cell.
 
-## What passed (2026-10-22, after the review fixes; re-verified in the third pass)
+## What passed before the release (2026-10-22, after the review fixes; re-verified in the third pass)
+
+These runs were made on the pre-release code. The release moved the c2c part into the library with
+no change of recipe: a dump of every recipe (c2c four cells and real, T = 1 and 8, N = 2..20000, the
+powers of two and their neighbours to 2^25, 3000 random N) at L1d 16, 48 and 64 KiB is identical
+before and after (2,606,190 lines).
 
 On the final binary every check cell is built and correct, or refused with an intended reason:
 **0 measured, 0 rewritten, 0 wrong, 0 crashed, 0 glue refusals.** The full tables are in
@@ -246,14 +247,16 @@ A compromise to confirm:
 - **The default-store detector sees a first load only.** Once a process has loaded its default
   store (`vfft.c:495-506`), a nested create that fell to `_default_wisdom()` (`vfft.c:2276`) would
   read it unseen. No IL nested create does today (each sets `.wisdom`), and the tool never loads
-  the default store. A library caller of `est_build_1d` relies on that code fact.
+  the default store. The library's est_build_c2c relies on that code fact (stated in c2c_estimate_il.h).
 - **What the store banks for real rows.** Every stored r2c row has `il_bkv=0` and every stored c2r
   row `il_kv=0`: a race banks only the forms its direction runs (`wisdom2_real_il.h:378-386`).
   Estimate writes both slots (sketch section 6). Plans are unaffected; only the recipe match rate
   moves.
 - **Env pins beat banked rows silently.** `VFFT_IL_KV` and the engine pins (`k1_commit.h:85, 146`,
   `zrp_build.h:971-1027`, `odd_build.h:678-697`) override a replayed row without marking it stale.
-  This is why the glue refuses every steering `VFFT_*` name.
+  This is why this folder's build refuses every steering `VFFT_*` name. The released
+  `VFFT_FLAG_ESTIMATE` has no such guard (none was asked): a pin in the caller's environment steers an
+  estimate plan as it steers any replay; a pin that makes the door race is caught by its detectors.
 
 ## What is unfitted
 

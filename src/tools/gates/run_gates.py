@@ -189,6 +189,7 @@ ARGSTYLE = {
     "lmbatch_gate":            ("flag", False),   # the lane-major 1D batch's own regression (2026-10-14): cold, --wisdir
     "dfti_shim_gate":          ("flag", False),   # the DFTI interface (src/shims/dfti, 2026-10-16): cold, --wisdir (it points VFFT_WISDOM_DIR there)
     "patient_gate":            ("flag", False),   # every create plans PATIENT (include/vfft.h's flags, 2026-10-17): cold, --wisdir: a refused create must leave the dir as it was
+    "estimate_gate":           ("flag", False),   # VFFT_FLAG_ESTIMATE (include/vfft.h): 1D c2c planned by formulas, correct against a long-double DFT, nothing measured, its refusals named; cold, --wisdir: the dir and the library's own store get no file
     "caller_pin_gate":         ("flag", False),   # a threaded execute pins its caller to the pool's reserved core and puts the mask back (vfft_execute.h, 2026-10-19): cold, --wisdir; Windows
     "il2d_real_gate":          ("bare", True),
     "il2d_real_ip_gate":       ("bare", False),   # COLD: the in-place 2D r2c cells race their own pl=ip rows, vs FFTW in place (2026-10-08)
