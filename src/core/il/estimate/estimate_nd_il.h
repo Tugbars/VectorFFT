@@ -94,9 +94,10 @@ typedef struct est_plan3d_s
 /* the leading stage of a power of two from 2^s1: 32 on narrow rows, 16 on wide ones (sketch §4 step 3) */
 #define EST_ND_LEAD_NARROW 32
 #define EST_ND_LEAD_WIDE 16
-/* the 2D band: none while the plane fits L2 / EST_ND_2D_PLANE_DIV; the band within L2 /
- * EST_ND_2D_BAND_DIV (sketch §7) */
-#define EST_ND_2D_PLANE_DIV 2
+/* the 2D band: none while the plane fits L2 / EST_ND_2D_PLANE_DIV (the 3D plan's plane child:
+ * L2 / EST_ND_3D_PLANE_DIV); the band within L2 / EST_ND_2D_BAND_DIV (sketch §7) */
+#define EST_ND_2D_PLANE_DIV 4
+#define EST_ND_3D_PLANE_DIV 2
 #define EST_ND_2D_BAND_DIV 4
 /* the 2D row route (sketch §8): the skewed pass up to N1 = 16; the turn from N1 = 128 at N2 <= 8; the
  * batched rows up to N2 = 16, the batched two-pass rows up to N2 = 64; the two-pass tile 8 KB */
@@ -433,11 +434,12 @@ static inline int est_col_plan(const est_machine_t *m, int N, long long w, int n
     return 0;
 }
 /* the 2D band (sketch §7): none beside the skew or the turn, on a one-stage or Bluestein chain, or
- * while the plane fits L2 / 2; else the widest pool width whose band fits L2 / 4, 0 when none does */
-static inline int est_wl_2d(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn)
+ * while the plane fits L2 / plane_div (EST_ND_2D_PLANE_DIV, or EST_ND_3D_PLANE_DIV for the 3D plan's plane
+ * child); else the widest pool width whose band fits L2 / 4, 0 when none does */
+static inline int est_wl_2d(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn, int plane_div)
 {
     int pool[16], n, i, best = 0;
-    if (csk || turn || c->blu > 0 || c->nst < 2 || 16LL * c->N * N2 <= (long long)m->l2 / EST_ND_2D_PLANE_DIV)
+    if (csk || turn || c->blu > 0 || c->nst < 2 || 16LL * c->N * N2 <= (long long)m->l2 / plane_div)
         return 0;
     n = est__wl_pool(m, c, pool);
     for (i = 0; i < n; i++)
@@ -590,7 +592,7 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
         out->ro = 0;
     out->rbk = EST_ND_RBK;
     out->sw = 0;
-    out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn);
+    out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
     return 0;
 }
 /* est_plan_3d: the 3D c2c plan at N1 x N2 x N3, natural, one thread (sketch §9): the 2D plan per plane
@@ -618,6 +620,7 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
     out->N3 = N3;
     if (est_plan_2d(m, N2, N3, &out->plane, why, whylen))
         return -1;
+    out->plane.col.wl = est_wl_2d(m, &out->plane.col, N3, out->plane.csk, out->plane.turn, EST_ND_3D_PLANE_DIV);
     if (est_col_plan(m, N1, (long long)N2 * N3, 0, &out->col, why, whylen))
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))

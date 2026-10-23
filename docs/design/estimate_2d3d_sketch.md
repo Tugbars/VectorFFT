@@ -193,8 +193,9 @@ The candidates are the door's axis-race pool (il2d_tier.h:4009-4046): the ladder
 L[s], s >= 1, of eight rows or more. The formula:
 
 - `wl=0` when the skewed pass or the turn serves (the race never crosses them with a band,
-  il2d_tier.h:4082, 4091), on a one-stage or Bluestein chain, or while the plane fits half the L2:
-  16 N1 N2 <= L2 / 2;
+  il2d_tier.h:4082, 4091), on a one-stage or Bluestein chain, or while the plane fits a quarter of
+  the L2: 16 N1 N2 <= L2 / 4 (the owner's rule, 2026-10-23; it was L2 / 2); the 3D plan's plane
+  child keeps half the L2, 16 N2 N3 <= L2 / 2 (the owner's rule, 2026-10-23, below);
 - otherwise the widest legal width below N1 whose band fits a quarter of the L2:
   16 wl N2 <= L2 / 4; 0 when none does.
 - `tf` = (wl > 0), as the race banks it (il2d_tier.h:4199).
@@ -205,6 +206,26 @@ the band bound at L2/16..L2) the standalone rows score highest here; the `plane_
 higher with the band within L2/2: 941 (942 with the plane bound at L2/4), against 120 (119) of the
 standalone rows, 1,061 together (open decision 10). The race's own repeatability for the `plane_`
 width: 95%.
+
+[M] The plane bound at L2 / 4 (2026-10-23): banded or not, 154 of 159 standalone rows against 147 at
+L2 / 2; the exact width in 124 against 125. Timed (estimate against the banked plan, one thread, 15
+rounds): at 256x256 (the plane exactly L2 / 2) the unbanded plan of the L2 / 2 bound ran 1.12 times the
+banked banded plan.
+
+[M] The 3D plan's plane child at L2 / 2: in the 3D rows that carry a plane child, the 1 MiB planes
+(L2 / 2) banked 18 banded and 20 unbanded, the 2 MiB planes 20 and 10, from 4 MiB every one banded,
+up to 512 KiB 19 of 884 banded. Timed: with the plane banded at 1 MiB, 4x256x256, 16x256x256 and
+8x512x128 ran 1.115, 1.086 and 1.089 times the banked plans (control 1.00-1.01); unbanded, 4x256x256
+ran 0.97. With the plane child at L2 / 2 (unbanded at 1 MiB): 4x256x256 0.923, 16x256x256 1.018,
+8x512x128 0.929.
+
+Why the band does not pay inside the 3D plan: the 3D natural walk runs the plane child in place on
+every plane its permutation leaves where it is (fftnd_il.h:244-260), and on a one-stage axis 0 (4, 8)
+that is every plane. The 2D natural banded walk always goes through the full-plane natural scratch
+(il_execute.h:654-725), while the unbanded walk runs in place without it. Measured on the 256x256
+plane child alone (banded wl=128 over unbanded, one thread, 15 rounds): out of place 0.91 (one plane
+reused) and 0.84 (16 planes, each once); in place 1.29 and 1.15. Not explained by this: 16x256x256
+(axis 0 4.4, 4 of 16 planes in place) prefers the unbanded plane as well.
 
 ## 8. The 2D row route (`ro`, `rbk`, `turn`, `csk`, `sw`)
 
