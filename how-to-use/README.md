@@ -1,6 +1,6 @@
 # VectorFFT User Guide
 
-This folder holds the user guide of VectorFFT v0.6 beta. The guide shows you how to build and
+This folder holds the user guide of VectorFFT v0.7 beta. The guide shows you how to build and
 install the library, how to call it from C and C++ through `vfft.h`, and how to move a program
 written for Intel MKL's DFTI interface to it. Every program in the guide was compiled against
 the installed library and run before the guide quotes what it printed.

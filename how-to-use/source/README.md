@@ -1,6 +1,6 @@
 # The sources of the VectorFFT User Guide
 
-This folder builds the guide, v0.6 beta, into two files one folder up:
+This folder builds the guide, v0.7 beta, into two files one folder up:
 
 - `how-to-use/VectorFFT-Guide.html`: the whole guide on one self-contained page (fonts,
   formulas and figures inside it, no JavaScript), with the contents in a sidebar;

@@ -34,7 +34,7 @@ A chapter file never states its own number. Each file name starts with the file'
 | appa | `appA_windows.md` | Notes for Windows and MinGW | V (Appendix A) |
 | appb | `appB_troubleshooting.md` | Troubleshooting | V (Appendix B) |
 
-The title page ("VectorFFT", "User Guide", "v0.6 beta") and the contents come from
+The title page ("VectorFFT", "User Guide", "v0.7 beta") and the contents come from
 `book.yml`; nobody writes them. Names a chapter owns, all lower case:
 
 - **labels**: `<key>-<kind>-<name>`, kind one of `sec`, `eq`, `fig`, `tbl`:
@@ -74,7 +74,8 @@ another chapter's files; report what you need instead.
 - **Planning.** Every create plans PATIENT: `VFFT_FLAG_PATIENT` names the default,
   `VFFT_FLAG_EXHAUSTIVE` is refused, `VFFT_FLAG_RECALIBRATE` measures again. A create that
   misses wisdom measures for seconds, up to about a minute for some configurations, and saves
-  the winner; later creates are served at once.
+  the winner; later creates are served at once. `VFFT_FLAG_ESTIMATE` is the one other way: it
+  plans a `VFFT_C2C` transform by formulas and measures nothing (`ch10-sec-estimate`).
 - **Wisdom folder.** The library comes with its own wisdom folder, one folder per CPU
   (`src/wisdom/`; `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it
   picks the folder of this CPU by itself, serves from it and saves into it. A program is run
@@ -82,7 +83,7 @@ another chapter's files; report what you need instead.
   `VFFT_WISDOM_DIR` in order to run a program. Naming a store (`wisdom_dir`,
   `VFFT_WISDOM_DIR`) is a special case that Chapter 10 explains once
   (`ch10-sec-own-store`); other chapters say it in one sentence and refer there.
-- **Version.** Write "v0.6 beta". No listing prints `vfft_info().version`.
+- **Version.** Write "v0.7 beta". No listing prints `vfft_info().version`.
 - **Building.** The route is the library target: CMake `find_package(VectorFFT)`,
   `add_subdirectory`, `FetchContent`, or one compiler line against an installed package.
   `gauntlet/build.py` is never a user's route; at most one plain line says the gauntlet is the

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VectorFFT User Guide</title>
-<meta name="description" content="VectorFFT User Guide, v0.6 beta">
+<meta name="description" content="VectorFFT User Guide, v0.7 beta">
 <meta name="generator" content="how-to-use/source/tools/build.py (markdown-it-py 4.0.0); KaTeX 0.16.21 at build time">
 <style>
 /* Computer Modern Unicode fonts 0.7.0 by Andrey V. Panov and the authors named in OFL.txt, SIL Open Font License 1.1 (https://openfontlicense.org): the upstream TrueType files wrapped in WOFF 1.0, every table unchanged */
@@ -359,7 +359,7 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
 <li><a href="#ch07"><span class="num">7</span> Real transforms</a><ol><li><a href="#ch07-sec-half"><span class="num">7.1</span> Read the half spectrum</a></li><li><a href="#ch07-sec-pair"><span class="num">7.2</span> Filter real samples out of place</a></li><li><a href="#ch07-sec-c2r-input"><span class="num">7.3</span> Give a C2R plan a half spectrum</a></li><li><a href="#ch07-sec-in-place-1d"><span class="num">7.4</span> Transform real samples in place</a></li><li><a href="#ch07-sec-arrays"><span class="num">7.5</span> Transform a real array in 2D or 3D</a></li><li><a href="#ch07-sec-in-place"><span class="num">7.6</span> Transform a real array in place with padded rows</a></li><li><a href="#ch07-sec-own-pitch"><span class="num">7.7</span> Let the plans choose the row pitch</a></li></ol></li>
 <li><a href="#ch08"><span class="num">8</span> Batches</a><ol><li><a href="#ch08-sec-geometry"><span class="num">8.1</span> Choose where the transforms lie</a></li><li><a href="#ch08-sec-complex"><span class="num">8.2</span> Run a batch of complex transforms</a></li><li><a href="#ch08-sec-real"><span class="num">8.3</span> Run a batch of real transforms</a></li><li><a href="#ch08-sec-arrays"><span class="num">8.4</span> Run a batch of 2D or 3D arrays</a></li><li><a href="#ch08-sec-refused"><span class="num">8.5</span> Fix a refused batch</a></li></ol></li>
 <li><a href="#ch09"><span class="num">9</span> Threads</a><ol><li><a href="#ch09-sec-nthreads"><span class="num">9.1</span> Run a plan on several threads</a></li><li><a href="#ch09-sec-results"><span class="num">9.2</span> Compare results across thread counts</a></li><li><a href="#ch09-sec-own-threads"><span class="num">9.3</span> Call plans from threads of your own</a></li></ol></li>
-<li><a href="#ch10"><span class="num">10</span> Planning and wisdom</a><ol><li><a href="#ch10-sec-cost"><span class="num">10.1</span> Know what a create costs</a></li><li><a href="#ch10-sec-store"><span class="num">10.2</span> Find the wisdom of your CPU</a></li><li><a href="#ch10-sec-own-store"><span class="num">10.3</span> Name a store of your own</a></li><li><a href="#ch10-sec-ship"><span class="num">10.4</span> Ship wisdom with an application</a></li><li><a href="#ch10-sec-recalibrate"><span class="num">10.5</span> Measure a configuration again</a></li></ol></li>
+<li><a href="#ch10"><span class="num">10</span> Planning and wisdom</a><ol><li><a href="#ch10-sec-cost"><span class="num">10.1</span> Know what a create costs</a></li><li><a href="#ch10-sec-store"><span class="num">10.2</span> Find the wisdom of your CPU</a></li><li><a href="#ch10-sec-own-store"><span class="num">10.3</span> Name a store of your own</a></li><li><a href="#ch10-sec-ship"><span class="num">10.4</span> Ship wisdom with an application</a></li><li><a href="#ch10-sec-recalibrate"><span class="num">10.5</span> Measure a configuration again</a></li><li><a href="#ch10-sec-estimate"><span class="num">10.6</span> Plan without measuring</a></li></ol></li>
 <li><a href="#ch11"><span class="num">11</span> Errors and messages</a><ol><li><a href="#ch11-sec-create"><span class="num">11.1</span> Read why a create was refused</a></li><li><a href="#ch11-sec-execute"><span class="num">11.2</span> Read why an execute was refused</a></li><li><a href="#ch11-sec-verbose"><span class="num">11.3</span> Print the reasons as they happen</a></li><li><a href="#ch11-sec-unasked"><span class="num">11.4</span> Read the lines the library prints unasked</a></li></ol></li>
 <li class="part-label"><a href="#part3"><span class="num">III</span> Worked examples</a></li>
 <li><a href="#ch12"><span class="num">12</span> Solving a periodic Poisson equation</a><ol><li><a href="#ch12-sec-build"><span class="num">12.1</span> Build and run the examples</a></li><li><a href="#ch12-sec-plans"><span class="num">12.2</span> Create the two plans</a></li><li><a href="#ch12-sec-divide"><span class="num">12.3</span> Divide in the half spectrum</a></li><li><a href="#ch12-sec-adapt"><span class="num">12.4</span> Adapt the program</a></li></ol></li>
@@ -380,15 +380,15 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
 <header class="titleblock">
 <p class="wordmark">VectorFFT</p>
 <p class="booktitle">User Guide</p>
-<p class="edition">v0.6 beta&ensp;&middot;&ensp;October 2026</p>
+<p class="edition">v0.7 beta&ensp;&middot;&ensp;October 2026</p>
 <p class="colophon">Set in CMU Serif and CMU Typewriter Text (Computer Modern Unicode 0.7.0, SIL Open Font License 1.1). Mathematics set by KaTeX 0.16.21 (MIT licence) in the KaTeX fonts (SIL Open Font License 1.1).</p>
 </header>
 <section class="front" id="fm1">
 <h2 class="front-title">How to use this guide</h2>
-<p>This guide shows you how to build VectorFFT v0.6 beta, call it from your C and C++ programs, and move a program written for Intel MKL’s DFTI interface to it. Each chapter of Parts I to IV starts from something you do and ends in a program that does it, with what the program printed.</p>
+<p>This guide shows you how to build VectorFFT v0.7 beta, call it from your C and C++ programs, and move a program written for Intel MKL’s DFTI interface to it. Each chapter of Parts I to IV starts from something you do and ends in a program that does it, with what the program printed.</p>
 <h3 id="fm1-s1">What the guide covers</h3>
 <ul>
-<li><strong>The API of <code class="nw">vfft.h</code>.</strong> Complex and real transforms in one, two and three dimensions, in double precision, with complex data stored as interleaved pairs; batches of transforms; threads; and the wisdom the library measures and keeps.</li>
+<li><strong>The API of <code class="nw">vfft.h</code>.</strong> Complex and real transforms in one, two and three dimensions, in double precision, with complex data stored as interleaved pairs; batches of transforms; threads; the wisdom the library measures and keeps; and planning a complex transform without measuring (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>).</li>
 <li><strong>The DFTI interface</strong> in <code class="nw">src/shims/dfti/</code>, which builds a program written for Intel MKL’s DFTI interface against VectorFFT.</li>
 <li><strong>Four example programs</strong> in <code class="nw">how-to-use/examples/</code>, each of which solves a problem on three-dimensional data.</li>
 </ul>
@@ -1026,7 +1026,7 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
 </span><span class="ln" style="--i:0">zeroed and written-out configurations: PASS</span></code></pre>
 <h3 id="ch03-sec-flags"><span class="num">3.2</span> Add flags</h3>
 <p><code class="nw">flags</code> holds <code class="nw">VFFT_FLAG_*</code> bits; combine several with the <code class="nw">|</code> operator. <a class="ref" href="#ch03-tbl-flags">Table&nbsp;3.2</a> lists them. A bit that is not one of these makes the create refuse the configuration.</p>
-<div class="table" id="ch03-tbl-flags"><table><caption><span class="label">Table 3.2</span> The flags of a configuration.</caption>
+<div class="table long" id="ch03-tbl-flags"><table><caption><span class="label">Table 3.2</span> The flags of a configuration.</caption>
 <thead>
 <tr>
 <th>Flag</th>
@@ -1036,7 +1036,7 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
 <tbody>
 <tr>
 <td><code class="nw">VFFT_FLAG_PATIENT</code></td>
-<td>names the default: every create plans PATIENT, measuring a wide set of candidates on a miss, so setting the flag changes nothing (<a class="ref" href="#ch10">Chapter&nbsp;10</a>)</td>
+<td>names the default: every create without <code class="nw">VFFT_FLAG_ESTIMATE</code> plans PATIENT, measuring a wide set of candidates on a miss, so setting the flag changes nothing (<a class="ref" href="#ch10">Chapter&nbsp;10</a>)</td>
 </tr>
 <tr>
 <td><code class="nw">VFFT_<wbr>FLAG_<wbr>RECALIBRATE</code></td>
@@ -1053,6 +1053,10 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
 <tr>
 <td><code class="nw">VFFT_FLAG_VERBOSE</code></td>
 <td>prints the refusals and warnings of this create to standard error as well (<a class="ref" href="#ch11">Chapter&nbsp;11</a>)</td>
+</tr>
+<tr>
+<td><code class="nw">VFFT_FLAG_ESTIMATE</code></td>
+<td>plans a <code class="nw">VFFT_C2C</code> transform by formulas, measuring nothing and reading no wisdom: one transform, and in 2D and 3D natural order on one thread (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>)</td>
 </tr>
 </tbody>
 </table>
@@ -2526,9 +2530,9 @@ x[n_1,n_2,n_3] &amp;\ \text{at double } (n_1 N_2 + n_2)\, s + n_3, \\
 </section>
 <section class="chapter" id="ch10">
 <h2 class="chapter-title"><span class="num">10</span> Planning and wisdom</h2>
-<p>Every <code class="nw">vfft_create()</code> takes its plan from wisdom: the record of the plan that ran its configuration fastest on your CPU. The library comes with wisdom for the CPUs it has seen and picks the folder of your CPU by itself; a create whose configuration that folder lacks measures the candidates and saves the winner there. In this chapter you see what a create costs with and without wisdom, find the wisdom of your CPU, name a store of your own for the cases that need one, ship wisdom with an application, and measure a configuration again.</p>
+<p>Every <code class="nw">vfft_create()</code> takes its plan from wisdom: the record of the plan that ran its configuration fastest on your CPU. The library comes with wisdom for the CPUs it has seen and picks the folder of your CPU by itself; a create whose configuration that folder lacks measures the candidates and saves the winner there. In this chapter you see what a create costs with and without wisdom, find the wisdom of your CPU, name a store of your own for the cases that need one, ship wisdom with an application, measure a configuration again, and plan a complex transform without measuring at all.</p>
 <h3 id="ch10-sec-cost"><span class="num">10.1</span> Know what a create costs</h3>
-<p>Every create plans PATIENT: <code class="nw">VFFT_FLAG_PATIENT</code> names this default, so setting it changes nothing. The create looks its configuration up in the store, the directory it reads wisdom from and saves winners into (<a class="ref" href="#ch10-sec-store">Section&nbsp;10.2</a>). On a hit, the store holds wisdom for the configuration, and the create builds the plan from the recorded winner at once. On a miss, it measures the candidate plans of the configuration on this machine, saves the winner in the store and then builds the plan, which takes seconds, up to about a minute for some configurations; every later create of the configuration, in this process or in a later one, is a hit. The first create that uses a store also reads it, once per process. <a class="ref" href="#ch04-fig-life">Figure&nbsp;4.1</a> draws the two paths; <a class="ref" href="#ch10-tbl-cost">Table&nbsp;10.1</a> and <a class="ref" href="#ch10-fig-cost">Figure&nbsp;10.1</a> give what creates took on the machine that built this guide.</p>
+<p>Every create plans PATIENT unless it sets <code class="nw">VFFT_FLAG_ESTIMATE</code> (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>): <code class="nw">VFFT_FLAG_PATIENT</code> names this default, so setting it changes nothing. The create looks its configuration up in the store, the directory it reads wisdom from and saves winners into (<a class="ref" href="#ch10-sec-store">Section&nbsp;10.2</a>). On a hit, the store holds wisdom for the configuration, and the create builds the plan from the recorded winner at once. On a miss, it measures the candidate plans of the configuration on this machine, saves the winner in the store and then builds the plan, which takes seconds, up to about a minute for some configurations; every later create of the configuration, in this process or in a later one, is a hit. The first create that uses a store also reads it, once per process. <a class="ref" href="#ch04-fig-life">Figure&nbsp;4.1</a> draws the two paths; <a class="ref" href="#ch10-tbl-cost">Table&nbsp;10.1</a> and <a class="ref" href="#ch10-fig-cost">Figure&nbsp;10.1</a> give what creates took on the machine that built this guide.</p>
 <div class="table" id="ch10-tbl-cost"><table><caption><span class="label">Table 10.1</span> What creates took on the Intel Core i9-14900KF that built this guide.</caption>
 <thead>
 <tr>
@@ -2641,6 +2645,35 @@ x[n_1,n_2,n_3] &amp;\ \text{at double } (n_1 N_2 + n_2)\, s + n_3, \\
 <pre class="output"><code><span class="ln" style="--i:0">plan created with VFFT_FLAG_RECALIBRATE
 </span><span class="ln" style="--i:0">roundtrip of 64 points: max |y/N - x| = 4.4e-16, tolerance 1e-12: PASS</span></code></pre>
 <p>Its create took 3.6 s here (<a class="ref" href="#ch10-tbl-cost">Table&nbsp;10.1</a>). Every create with the flag measures, so set it in a run made for planning, and leave it out of the configurations of your program’s ordinary runs.</p>
+<h3 id="ch10-sec-estimate"><span class="num">10.6</span> Plan without measuring</h3>
+<p><code class="nw">VFFT_FLAG_ESTIMATE</code> makes a create choose the plan by formulas from the lengths of the transform and the cache sizes of this machine, instead of from wisdom. It measures nothing, reads no wisdom and saves none, so the create is fast on any CPU, with shipped wisdom or without: on the machine that built this guide, under a millisecond for most configurations, and up to a tenth of a second where the tables of the transform take longer to build, as for a prime length near a million. Every run of a program on the same machine gets the same plan. Use the flag when a program cannot wait for a create to measure, or runs on CPUs you have not measured.</p>
+<p>The flag plans <code class="nw">VFFT_C2C</code> transforms, one transform per plan:</p>
+<ul>
+<li>in one dimension, in either order, in either placement and on any number of threads;</li>
+<li>in two and three dimensions, in natural order on one thread, in either placement.</li>
+</ul>
+<p>A create refuses the flag on any other configuration and says why (<a class="ref" href="#ch11-sec-create">Section&nbsp;11.1</a>); drop the flag to plan such a configuration by measuring. A create also refuses it together with <code class="nw">VFFT_FLAG_PATIENT</code> or <code class="nw">VFFT_FLAG_RECALIBRATE</code>, and while one of the library’s variables that change plans is set (<a class="ref" href="#ch19">Chapter&nbsp;19</a>). The program <code class="nw">ch10_estimate.c</code> plans a 1D, a 2D and a 3D transform with the flag:</p>
+<div class="listing short"><p class="file">From <code class="nw">ch10_estimate.c</code></p><pre class="code"><code><span class="ln" style="--i:8">        vfft_config_t cfg = {0};
+</span><span class="ln" style="--i:8">        cfg.rank = rank[p];
+</span><span class="ln" style="--i:8">        cfg.n[0] = ext[p][0];
+</span><span class="ln" style="--i:8">        cfg.n[1] = ext[p][1];
+</span><span class="ln" style="--i:8">        cfg.n[2] = ext[p][2];
+</span><span class="ln" style="--i:8">        cfg.flags = VFFT_FLAG_ESTIMATE; <span class="c">/* plan by formulas, measure nothing */</span>
+</span><span class="ln" style="--i:8">        vfft_plan plan = vfft_create(&amp;cfg);</span></code></pre></div>
+<p>It runs each plan forward and back, then asks for a real transform with the flag, which the create refuses:</p>
+<div class="listing short"><p class="file">From <code class="nw">ch10_estimate.c</code></p><pre class="code"><code><span class="ln" style="--i:4">    vfft_config_t real = {0};
+</span><span class="ln" style="--i:4">    real.transform = VFFT_R2C;
+</span><span class="ln" style="--i:4">    real.n[0] = 4096;
+</span><span class="ln" style="--i:4">    real.flags = VFFT_FLAG_ESTIMATE;
+</span><span class="ln" style="--i:4">    vfft_plan none = vfft_create(&amp;real);
+</span><span class="ln" style="--i:4">    if (!none)
+</span><span class="ln" style="--i:8">        printf("R2C with VFFT_FLAG_ESTIMATE refused: %s\n", vfft_error());</span></code></pre></div>
+<pre class="output"><code><span class="ln" style="--i:0">rank 1, 4096 points: max |y/scale - x| = 9.4e-16: ok
+</span><span class="ln" style="--i:0">rank 2, 65536 points: max |y/scale - x| = 1.6e-15: ok
+</span><span class="ln" style="--i:0">rank 3, 32768 points: max |y/scale - x| = 1.1e-15: ok
+</span><span class="ln" style="--i:0">R2C with VFFT_FLAG_ESTIMATE refused: vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C only, not VFFT_R2C (drop the flag to plan it by measuring)
+</span><span class="ln" style="--i:0">tolerance 1e-12: PASS</span></code></pre>
+<p>A formula does not know your machine as a measurement does. On the machine that built this guide, two thirds of the power-of-two configurations tried ran within 5% of the time of the plan a create measures, and the rest between 19% faster and 22% slower. When the fastest plan matters, let the create measure once and keep the wisdom (<a class="ref" href="#ch10-sec-cost">Section&nbsp;10.1</a>).</p>
 </section>
 <section class="chapter" id="ch11">
 <h2 class="chapter-title"><span class="num">11</span> Errors and messages</h2>
@@ -2739,6 +2772,16 @@ x[n_1,n_2,n_3] &amp;\ \text{at double } (n_1 N_2 + n_2)\, s + n_3, \\
 <td>a value outside its enumeration in <code class="nw">placement</code>, <code class="nw">order</code> or <code class="nw">batch</code></td>
 <td><code><span class="nw">vfft_create:</span> <span class="nw">invalid</span> <span class="nw">batch</span> <span class="nw">&lt;value&gt;</span> <span class="nw">(valid:</span> <span class="nw">VFFT_BATCH_DEFAULT,</span> <span class="nw">VFFT_BATCH_CONTIGUOUS,</span> <span class="nw">VFFT_BATCH_LANE_MAJOR)</span></code>, and the same for <code class="nw">placement</code> and <code class="nw">order</code></td>
 <td>one of the names listed</td>
+</tr>
+<tr>
+<td>a configuration <code class="nw">VFFT_FLAG_ESTIMATE</code> does not plan</td>
+<td><code><span class="nw">vfft_create:</span> <span class="nw">VFFT_FLAG_ESTIMATE</span> <span class="nw">plans</span> <span class="nw">VFFT_C2C</span> <span class="nw">only,</span> <span class="nw">not</span> <span class="nw">VFFT_&lt;transform&gt;</span> <span class="nw">(drop</span> <span class="nw">the</span> <span class="nw">flag</span> <span class="nw">to</span> <span class="nw">plan</span> <span class="nw">it</span> <span class="nw">by</span> <span class="nw">measuring)</span></code>, and the same form for a batch and for a 2D or 3D transform in scrambled order or on several threads</td>
+<td>drop the flag (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>)</td>
+</tr>
+<tr>
+<td><code class="nw">VFFT_FLAG_ESTIMATE</code> while a variable of the library that changes plans is set</td>
+<td><code><span class="nw">vfft_create:</span> <span class="nw">VFFT_FLAG_ESTIMATE:</span> <span class="nw">the</span> <span class="nw">developer</span> <span class="nw">switch</span> <span class="nw">&lt;name&gt;</span> <span class="nw">is</span> <span class="nw">set;</span> <span class="nw">estimate</span> <span class="nw">refuses</span> <span class="nw">while</span> <span class="nw">a</span> <span class="nw">plan-steering</span> <span class="nw">switch</span> <span class="nw">is</span> <span class="nw">set</span> <span class="nw">(unset</span> <span class="nw">it:</span> <span class="nw">estimate</span> <span class="nw">plans</span> <span class="nw">from</span> <span class="nw">formulas</span> <span class="nw">only)</span></code></td>
+<td>unset the variable (<a class="ref" href="#ch19">Chapter&nbsp;19</a>)</td>
 </tr>
 <tr>
 <td>a lane-major batch of 2D real arrays at an odd <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>N</mi><mn>2</mn></msub></mrow><annotation encoding="application/x-tex">N_2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8333em;vertical-align:-0.15em;"></span><span class="mord"><span class="mord mathnormal" style="margin-right:0.10903em;">N</span><span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:0.3011em;"><span style="top:-2.55em;margin-left:-0.109em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.15em;"><span></span></span></span></span></span></span></span></span></span>, out of place</td>
@@ -3410,8 +3453,8 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 </span><span class="ln" style="--i:0">}</span></code></pre></div>
 <p>Built and run the same way, it prints:</p>
 <pre class="output"><code><span class="ln" style="--i:0">3D real DFT of 16 x 32 x 64 points, one descriptor per direction
-</span><span class="ln" style="--i:0">forward:  max |X - X_ref| / (N1 N2 N3) = 1.1e-16
-</span><span class="ln" style="--i:0">backward: max |y - x| = 1.1e-15
+</span><span class="ln" style="--i:0">forward:  max |X - X_ref| / (N1 N2 N3) = 7.0e-17
+</span><span class="ln" style="--i:0">backward: max |y - x| = 8.9e-16
 </span><span class="ln" style="--i:0">tolerance 1e-12: PASS</span></code></pre>
 <p>A real descriptor of rank 2 or 3 serves the one direction its strides describe: <code class="nw">DftiComputeBackward()</code> on <code class="nw">fwd</code> returns 3, <code class="nw">DFTI_INCONSISTENT_CONFIGURATION</code>. Keep one descriptor for each direction, as here, and commit each once. A program that runs both directions on one descriptor swaps the strides and commits again before each change of direction, and each such commit creates a plan again. <a class="ref" href="#ch17-sec-real">Section&nbsp;17.4</a> gives every layout of real data.</p>
 <h3 id="ch16-sec-types"><span class="num">16.4</span> Pass the values at DFTI’s types</h3>
@@ -3902,8 +3945,8 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 </span><span class="ln" style="--i:0">}</span></code></pre></div>
 <p>Built and run as in <a class="ref" href="#ch16-sec-run">Section&nbsp;16.2</a>, it prints:</p>
 <pre class="output"><code><span class="ln" style="--i:0">2D real DFT of 24 x 30 points in place, rows of 32 doubles
-</span><span class="ln" style="--i:0">forward:  max |X - X_ref| / max |X_ref| = 3.8e-16
-</span><span class="ln" style="--i:0">backward: max |y - x| = 1.6e-15
+</span><span class="ln" style="--i:0">forward:  max |X - X_ref| / max |X_ref| = 3.4e-16
+</span><span class="ln" style="--i:0">backward: max |y - x| = 1.4e-15
 </span><span class="ln" style="--i:0">tolerance 1e-12: PASS</span></code></pre>
 <h3 id="ch17-sec-threads"><span class="num">17.5</span> Compute on several threads</h3>
 <p>A VectorFFT plan runs one compute at a time. A committed descriptor holds <code class="nw">DFTI_NUMBER_OF_USER_THREADS</code> plans, so that as many threads of your program can compute with it at once: for complex data the plans serve both directions, and real data has that many for each direction its strides serve. Each plan is created for the number of threads <a class="ref" href="#ch17-tbl-threads">Table&nbsp;17.5</a> gives (<code class="nw">nthreads</code>, <a class="ref" href="#ch09">Chapter&nbsp;9</a>).</p>
@@ -4053,7 +4096,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 <tbody>
 <tr>
 <td><code class="nw">vfft_create()</code></td>
-<td>commits a configuration to one measured plan</td>
+<td>commits a configuration to one plan</td>
 <td><a class="ref" href="#ch18-sec-create">Section&nbsp;18.2.1</a></td>
 </tr>
 <tr>
@@ -4102,7 +4145,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 <td><a class="ref" href="#ch18-sec-data">Section&nbsp;18.5</a></td>
 </tr>
 <tr>
-<td><code class="nw">VFFT_FLAG_PATIENT</code> to <code class="nw">VFFT_FLAG_VERBOSE</code></td>
+<td><code class="nw">VFFT_FLAG_*</code></td>
 <td>the flags of a configuration</td>
 <td><a class="ref" href="#ch18-sec-flags">Section&nbsp;18.6</a></td>
 </tr>
@@ -4123,7 +4166,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 <dl><dt><code class="nw">config</code></dt><dd>The configuration, <a class="ref" href="#ch18-tbl-config">Table&nbsp;18.2</a>.</dd></dl>
 <p>Returns the plan, or <code class="nw">NULL</code> when the configuration is refused; <code class="nw">vfft_error()</code> then says why. A <code class="nw">vfft_plan</code> is an opaque pointer, ready to execute.</p>
 
-<p>The create checks the configuration and takes its plan from wisdom. On a miss it measures the candidates and saves the winner in the store before it returns: this takes seconds, up to about a minute for some configurations, and later creates of the same configuration are served from the store at once. Every create plans PATIENT. The create then builds the plan: its tables, its scratch memory and its threads are set up here, and the plan owns what it allocated until <code class="nw">vfft_destroy()</code>.</p>
+<p>The create checks the configuration and takes its plan from wisdom. On a miss it measures the candidates and saves the winner in the store before it returns: this takes seconds, up to about a minute for some configurations, and later creates of the same configuration are served from the store at once. Every create plans PATIENT, except one with <code class="nw">VFFT_FLAG_ESTIMATE</code>, which plans by formulas and measures nothing (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>). The create then builds the plan: its tables, its scratch memory and its threads are set up here, and the plan owns what it allocated until <code class="nw">vfft_destroy()</code>.</p>
 
 <p>Creates on several threads take turns on one lock, and a create may run while other threads execute plans. A create leaves flush-to-zero and denormals-are-zero enabled on the calling thread.</p>
 
@@ -4401,7 +4444,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 </div>
 <h3 id="ch18-sec-flags"><span class="num">18.6</span> Flags</h3>
 <p><code class="nw">flags</code> is the bitwise OR of the values in <a class="ref" href="#ch18-tbl-flags">Table&nbsp;18.6</a>; 0 sets none. A create refuses any other bit.</p>
-<div class="table" id="ch18-tbl-flags"><table><caption><span class="label">Table 18.6</span> The flags of this release.</caption>
+<div class="table long" id="ch18-tbl-flags"><table><caption><span class="label">Table 18.6</span> The flags of this release.</caption>
 <thead>
 <tr>
 <th>Flag</th>
@@ -4413,7 +4456,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 <tr>
 <td><code class="nw">VFFT_FLAG_PATIENT</code></td>
 <td><code class="nw">1u &lt;&lt; 0</code></td>
-<td>names the default: every create plans PATIENT, the wide search on a miss, whether this flag is set or not</td>
+<td>names the default: every create without <code class="nw">VFFT_FLAG_ESTIMATE</code> plans PATIENT, the wide search on a miss, whether this flag is set or not</td>
 </tr>
 <tr>
 <td><code class="nw">VFFT_<wbr>FLAG_<wbr>RECALIBRATE</code></td>
@@ -4434,6 +4477,11 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 <td><code class="nw">VFFT_FLAG_VERBOSE</code></td>
 <td><code class="nw">1u &lt;&lt; 5</code></td>
 <td>print this create’s refusals and warnings on standard error as well</td>
+</tr>
+<tr>
+<td><code class="nw">VFFT_FLAG_ESTIMATE</code></td>
+<td><code class="nw">1u &lt;&lt; 6</code></td>
+<td>plan a <code class="nw">VFFT_C2C</code> transform by formulas from its lengths and this machine’s cache sizes: nothing is measured, no wisdom is read or saved, and <code class="nw">wisdom_dir</code> is not opened. One transform; in 2D and 3D, natural order on one thread. A create refuses it on any other configuration, together with <code class="nw">VFFT_FLAG_PATIENT</code> or <code class="nw">VFFT_<wbr>FLAG_<wbr>RECALIBRATE</code>, and while a variable of the library that changes plans is set</td>
 </tr>
 </tbody>
 </table>
@@ -4641,7 +4689,7 @@ Y[k_1,k_2,k_3] &amp;= \frac{1}{N^3}\, e^{-jt\lvert\kappa\rvert^2/2}\\
 </tbody>
 </table>
 </div>
-<p>The library reads each variable once, the first time it needs it, so set them before the program starts. The library also reads other variables whose names start with <code class="nw">VFFT_</code>; they exist for testing the library. Leave them unset.</p>
+<p>The library reads each variable once, the first time it needs it, so set them before the program starts. The library also reads other variables whose names start with <code class="nw">VFFT_</code>; they exist for testing the library. Leave them unset: a create with <code class="nw">VFFT_FLAG_ESTIMATE</code> refuses while one of them that changes plans is set (<a class="ref" href="#ch10-sec-estimate">Section&nbsp;10.6</a>).</p>
 <h3 id="ch19-sec-set"><span class="num">19.1</span> Set a variable for a program</h3>
 <p>In Git Bash, or in a Linux shell, put the assignment in front of the command. It holds for that run only:</p>
 <div class="listing short"><pre class="code"><code><span class="ln" style="--i:0">VFFT_VERBOSE=1 ./app</span></code></pre></div>
