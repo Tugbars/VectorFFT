@@ -555,6 +555,15 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
  * ladders are NOT here on purpose: the 2D tier's {16..256} and the 3D
  * tier's {8..1024} are different lists by design. */
 static const int VFFT_IL2D_WL_LADDER[] = {8, 16, 32, 64, 128, 256};
+/* The ZTURN-T tile widths (in points) the planner races beside untiled at a power of two
+ * (dp_planner_il.h); the estimate keeps its tile within the same range. */
+static const int VFFT_ZTT_TILE_LADDER[] = {1024, 2048};
+#define VFFT_ZTT_TILE_LADDER_N \
+    ((int)(sizeof VFFT_ZTT_TILE_LADDER / sizeof VFFT_ZTT_TILE_LADDER[0]))
+/* The 2D tier's odd column radices in the column enumerator's order (il2d_cols.h), as a list:
+ * X(r) for each. The estimate reads the same list. */
+#define VFFT_IL2D_COL_ODD_RADICES(X) \
+    X(47) X(43) X(41) X(37) X(31) X(29) X(27) X(25) X(23) X(21) X(19) X(17) X(15) X(13) X(11) X(9) X(7) X(5) X(3)
 #define VFFT_IL2D_WL_LADDER_N \
     ((int)(sizeof VFFT_IL2D_WL_LADDER / sizeof VFFT_IL2D_WL_LADDER[0]))
 

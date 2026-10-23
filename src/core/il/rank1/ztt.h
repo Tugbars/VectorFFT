@@ -565,6 +565,11 @@ static inline int vfft_ztt_band(int N)
     return N >= 16 && N <= VFFT_ZTT_MAX_N && (N & (N - 1)) == 0;
 }
 
+/* ZTURN-T's odd mids in the greedy order of its odd band: the engine's list, which the planner's odd
+ * enumerator (dp_planner_il.h) and the estimate (il/estimate/estimate_il.h) read as well */
+static const int VFFT_ZTT_ODD_MIDS[] = { 15, 9, 7, 5, 3 };
+#define VFFT_ZTT_ODD_MIDS_N ((int)(sizeof VFFT_ZTT_ODD_MIDS / sizeof VFFT_ZTT_ODD_MIDS[0]))
+
 /* THE ODD BAND (ztt_odd_design.md): N = 2^a * m, a >= 4, m > 1 a product
  * over {3, 5, 7, 9, 15} with at most five odd mids (nf <= 7 with the two pow2
  * ends), 2048 <= N <= the ceiling. The chain grammar is the planner's
@@ -574,13 +579,12 @@ static inline int vfft_ztt_band(int N)
  * At 8 lanes the policy keeps a >= 6 only (policy_il.h vfft_policy_ztt_odd_band). */
 static inline int vfft_ztt_odd_band(int N)
 {
-    static const int OP[5] = { 15, 9, 7, 5, 3 };
     int m = N, a = 0, nm = 0, i;
     if (N < 2048 || N > VFFT_ZTT_MAX_N) return 0;
     while ((m & 1) == 0) { m >>= 1; a++; }
     if (m == 1 || a < 4) return 0;
-    for (i = 0; i < 5; i++)
-        while (m % OP[i] == 0) { m /= OP[i]; nm++; }
+    for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
+        while (m % VFFT_ZTT_ODD_MIDS[i] == 0) { m /= VFFT_ZTT_ODD_MIDS[i]; nm++; }
     return m == 1 && nm <= VFFT_ZTT_MAX_NF - 2;
 }
 

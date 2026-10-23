@@ -1452,11 +1452,10 @@ static void _il_dp_enumerate_ztt_ord(int N, vfft_il_cand_sink_t *s, int scr)
          * tied on losing chains; 64 KB never won). Untiled stays the datum
          * (the 2048 winner: its 32 KB plane is L1-resident). */
         {
-            static const int ladder[] = { 1024, 2048 };
-            for (q = 0; q < (int)(sizeof ladder / sizeof ladder[0]); q++)
-                if (vfft_ztt_tile_legal_ord(N, cell->chain, cell->nf, (size_t)ladder[q], scr))
+            for (q = 0; q < VFFT_ZTT_TILE_LADDER_N; q++)
+                if (vfft_ztt_tile_legal_ord(N, cell->chain, cell->nf, (size_t)VFFT_ZTT_TILE_LADDER[q], scr))
                 {
-                    c.il_tw = ladder[q];
+                    c.il_tw = VFFT_ZTT_TILE_LADDER[q];
                     _il_dp_push(s, &c);
                 }
         }
@@ -1481,14 +1480,13 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
  * create would refuse (the same grammar, checked twice, as at pow2). */
 static void _il_dp_enumerate_ztt_odd(int N, vfft_il_cand_sink_t *s, int scr)
 {
-    static const int OP[] = { 15, 9, 7, 5, 3 };
     static const int ladder[] = { 512, 1024, 2048, 3072 };
     int mids[VFFT_ZTT_MAX_NF], nm = 0, m = N, i, nf;
     long pw;
     if (!vfft_ztt_odd_band(N)) return;
     while ((m & 1) == 0) m >>= 1;
-    for (i = 0; i < 5; i++)
-        while (m % OP[i] == 0) { mids[nm++] = OP[i]; m /= OP[i]; }
+    for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
+        while (m % VFFT_ZTT_ODD_MIDS[i] == 0) { mids[nm++] = VFFT_ZTT_ODD_MIDS[i]; m /= VFFT_ZTT_ODD_MIDS[i]; }
     pw = N;
     for (i = 0; i < nm; i++) pw /= mids[i];
     for (nf = nm + 2; nf <= VFFT_ZTT_MAX_NF; nf++)

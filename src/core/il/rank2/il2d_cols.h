@@ -164,18 +164,19 @@ static int _il2d_pool_closing_only(int R)
 static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
                                 int *lens, int *n, int *dropped)
 {
+#define _IL2D_POOL_R(r) r,
     static const int POOL[] = { 64, 32, 16, 8, 4,
                                 /* odd radices: odd-N1 chains —
                                  * emitted t2c/n1c kinds (t2c + n1c at
-                                 * every one) */
-                                47, 43, 41, 37, 31, 29, 27, 25, 23, 21,
-                                19, 17, 15, 13, 11, 9, 7, 5, 3,
+                                 * every one); policy_il.h names the list */
+                                VFFT_IL2D_COL_ODD_RADICES(_IL2D_POOL_R)
                                 /* n1c-ONLY radices (no t2c kind): legal
                                  * as the CLOSING stage alone -- the flat
                                  * DIT's lone-2 leaf rule for columns
                                  * (without them a 2 x prime column
                                  * length has no chain: Bluestein) */
                                 26, 22, 14, 12, 10, 6, 2 };
+#undef _IL2D_POOL_R
     int p;
     if (L == 1)
     {
@@ -924,19 +925,24 @@ static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
 
 /* build the M-chain + tables + chirps + comb-order kernels + scratch
  * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
- * width in complex (N2 for c2c, hp1 for real). */
+ * width in complex (N2 for c2c, hp1 for real). M is found in 64 bits: an M
+ * past an int is no M chain (the column pool chains none that long). */
 static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
                            vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                            double **tf, double **tb, int *nst,
                            double **chf, double **chb, double **kf,
                            double **kb, double **scr)
 {
-    int M = 16, s2, ok = 0, served = 0;
+    int M, s2, ok = 0, served = 0;
+    long long Mll = 16;
     double *za = NULL, *zb2 = NULL;
     char forms[64] = "";
-    while (M < 2 * N1 - 1)
-        M <<= 1;
     *chf = *chb = *kf = *kb = *scr = NULL;
+    while (Mll < 2LL * N1 - 1)
+        Mll <<= 1;
+    if (Mll > INT_MAX)
+        return 0;
+    M = (int)Mll;
     if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst, forms, sizeof forms))
         served = _il2d_resolve(Rs, *nst, ff, fb) &&      /* the validator is the law */
                  _il2d_apply_forms(Rs, *nst, forms, ff, fb);

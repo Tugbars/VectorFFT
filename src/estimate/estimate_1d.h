@@ -53,8 +53,8 @@ static inline int est_zttr_grammar(long long M)
     int i;
     if (M < 32 || M > VFFT_ZTT_MAX_N || est_v2(M) < 5) return 0;
     o = M >> est_v2(M);
-    for (i = 0; i < EST_NELEM(est_odd_mids); i++)
-        while (o % est_odd_mids[i] == 0) o /= est_odd_mids[i];
+    for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
+        while (o % VFFT_ZTT_ODD_MIDS[i] == 0) o /= VFFT_ZTT_ODD_MIDS[i];
     return o == 1;
 }
 /* section 6 even rule 4, the zttr chain at M = N/2. Power-of-two M: c2r 4, then 8s, then 4s; r2c 8,

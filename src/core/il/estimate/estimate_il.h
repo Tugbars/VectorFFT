@@ -114,13 +114,13 @@ static const int est_ct_leaf_bwd[] = { VFFT_IL_N1_CT_BWD_RADICES(EST__R) };
 #undef EST__R
 /* the pair list's primes from 23 up: a pair or chain3 keeps such a radix out of the leaf */
 static const int est_large_list[] = { 23, 29, 31, 37, 41, 43, 47 };
-/* ZTURN-T's odd mids in the greedy order of its odd band (ztt.h:577; dp_planner_il.h:1482) */
-static const int est_odd_mids[] = { 15, 9, 7, 5, 3 };
-/* the 2D tier's column pool, its odd radices in the enumerator's order (il2d_cols.h:166-178) */
-static const int est_odd2d[] = { 47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
-/* the ZTURN-T tile widths the planner races beside untiled (dp_planner_il.h:1455) */
-#define EST_ZTT_TILE_LO 1024
-#define EST_ZTT_TILE_HI 2048
+/* the 2D tier's column pool, its odd radices in the enumerator's order (policy_il.h) */
+#define EST__R(R) R,
+static const int est_odd2d[] = { VFFT_IL2D_COL_ODD_RADICES(EST__R) };
+#undef EST__R
+/* the ZTURN-T tile range: the planner's tile widths (policy_il.h VFFT_ZTT_TILE_LADDER) */
+#define EST_ZTT_TILE_LO VFFT_ZTT_TILE_LADDER[0]
+#define EST_ZTT_TILE_HI VFFT_ZTT_TILE_LADDER[VFFT_ZTT_TILE_LADDER_N - 1]
 
 #define EST_NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
@@ -425,8 +425,8 @@ static inline int est_ztt_odd(long long N, int scr, int *c)
 {
     int mids[8], nm = 0, a = est_v2(N), k, i, r, head, rest[16], nr;
     long long o = N >> est_v2(N);
-    for (i = 0; i < EST_NELEM(est_odd_mids); i++)
-        while (o % est_odd_mids[i] == 0 && nm < 8) { mids[nm++] = est_odd_mids[i]; o /= est_odd_mids[i]; }
+    for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
+        while (o % VFFT_ZTT_ODD_MIDS[i] == 0 && nm < 8) { mids[nm++] = VFFT_ZTT_ODD_MIDS[i]; o /= VFFT_ZTT_ODD_MIDS[i]; }
     if (o != 1) return 0;
     if (VFFT_IL_VW == 8 && scr)
     {
