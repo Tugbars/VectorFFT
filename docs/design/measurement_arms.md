@@ -538,7 +538,7 @@ B3.4 nat-tape opportunistic PSWAP                                    STRUCTURAL
 
 ```
 STATUS     RACED, BANKED (2026-09-02): a component row in the PRIME shard,
-           t=c2c n=N q=1 ord=scr place=ip role=comp lay=il | eng=rader|bluestein;
+           t=c2c n=N q=1 ord=scr place=ip role=method lay=il | eng=rader|bluestein;
            every ilprime create goes through _ilprime_create_banked (replay on a
            hit, race + bank on a miss); VFFT_ILPR_METHOD pins, never banks.
 ARMS       _ilprime_create_rader(N) vs _ilprime_create_bluestein(N), both fully

@@ -210,9 +210,11 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
         ilr = il3p ? VFFT_K1_IL_CHAIN3 : VFFT_K1_IL_NONE;
     }
     /* FLAT DIT (route 8): the odd-N flat mixed-radix DIT
-     * (oop/il_flatdit.h). A banked verdict replays its chain and
-     * per-stage forms; there is NO default build here — the K=1 plan
-     * race above is the only source of a flat plan (never a rule). */
+     * (oop/il_flatdit.h). A banked verdict replays its chain, per-stage
+     * forms, tile and its Rader stage's inner and width (natural class
+     * only: vfft_ilfd_create_scr_of refuses a Rader chain); there is NO
+     * default build here — the K=1 plan race above is the only source of
+     * a flat plan (never a rule). */
     vfft_ilfd_plan_t *ilfd = NULL;
     if (ilr == VFFT_K1_IL_FLAT && !il2p && !il3p && !getenv("VFFT_NO_IL2P") &&
         cfg->layout == VFI_LAYOUT_IL && ki && ki->il_fl_n >= 2)
@@ -228,6 +230,16 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
             {
                 vfft_ilfd_destroy(ilfd);
                 ilfd = NULL;
+            }
+            if (ilfd && ki->il_rd_n > 0 && ilfd->has_rd)
+            {   /* the Rader stage's banked inner and width */
+                int rs = 0;
+                if (!vfft_ilrd_get_inner(ilfd, &rs, NULL, NULL, NULL) ||
+                    !vfft_ilrd_set_inner(ilfd, rs, ki->il_rd, ki->il_rd_n, (size_t)(ki->il_rdw > 0 ? ki->il_rdw : 0)))
+                {
+                    vfft_ilfd_destroy(ilfd);
+                    ilfd = NULL;
+                }
             }
         }
         if (ilfd && getenv("VFFT_NAT_LOG"))

@@ -19,7 +19,7 @@ the banked rows, **[I]** interpretation.
 | order | natural (the default) | scrambled at rank 2 and 3 |
 | threads | one | nthreads > 1 at rank 2 and 3 |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
-| lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5); a column whose Rader prime's ten listed candidate inners all lead with radix 64, which a request cannot rebuild (12289, 18433, 23041, 32257, 40961, 61441, 63361, 64513, 65537; §6, §14) |
+| lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5) |
 | rank-3 structure | always `s=1`: the 2D plan per plane, then axis 0 | the flat structure is never planned |
 
 The 1D plans inside a 2D or 3D plan (the children `rp_`, `turn_`, `csk_`, `tpc_`, and the `plane_`
@@ -178,7 +178,7 @@ and `tpc=` on the row replay the verdict. The rules, from the code and the polic
 |---|---|---|
 | a power of two | the chain; no `blu` (the door banks none, il2d_tier.h:4200) | — |
 | every prime factor <= 47 | the chain, `blu=0` | [V] 63x63 `blu=0`, 135x64 scrambled `blu=0`, 9x15x27 `blu=0` and `blu1=0`: 3 of 3 |
-| one prime p above 47 whose p - 1 chains (`vfft_policy_il2d_rader_prime`, policy_il.h:280) | the Rader chain [p] + the rest (§4 step 2), `blu=0`; `rd` = the engine's own inner pick (`_ilrd_pick_chain`, il_rader_stage.h:135) -- where that pick leads with radix 64 (p - 1 a multiple of 64: 193, 257, 449, ...) the first candidate of the engine's own inner pool (`_ilrd_enum_inners`, :658) that leads with a radix up to 47 or a prime, since a requested inner whose leading radix is above 47 and not prime is refused -- only a prime there is taken as a nested stage (`_ilrd_build_inner`, :355; the library defect of §14) -- so `rd=64.x` cannot replay; where all ten candidates the pool lists lead with 64 (12289, 18433, 23041, 32257, 40961, 61441, 63361, 64513, 65537) none stands in and the column is refused; `rdw` = four times the engine's default window (`_ilrd_default_W`, :375) within the column space (N1 / p) w, even | [M] the phase-A2 race records (10 cells raced with the stage in the pool): the planner picked the Rader chain at 10 of 10, `rd` = the greedy pick at 10 of 10 (13.10, 19.10, 4.13, 53.2), `rdw` = 4 x default at 5 of 10 (all five the 2D 131 cells; the others took the column space, 2 x, 1 x and 1/2 x) |
+| one prime p above 47 whose p - 1 chains (`vfft_policy_il2d_rader_prime`, policy_il.h:280) | the Rader chain [p] + the rest (§4 step 2), `blu=0`; `rd` = the engine's own inner pick (`_ilrd_pick_chain`, il_rader_stage.h:184), which never leads with radix 64 (p - 1 a multiple of 64 puts a smaller radix first: 193 -> 3.64, 12289 -> 3.64.64), so a request rebuilds it (`_ilrd_build_inner`, :392); `rdw` = four times the engine's default window (`_ilrd_default_W`, :412) within the column space (N1 / p) w, even | [M] the phase-A2 race records (10 cells raced with the stage in the pool): the planner picked the Rader chain at 10 of 10, `rd` = the greedy pick at 10 of 10 (13.10, 19.10, 4.13, 53.2), `rdw` = 4 x default at 5 of 10 (all five the 2D 131 cells; the others took the column space, 2 x, 1 x and 1/2 x) |
 | a factor above 47 and no Rader chain (two primes above 47, p^2, or p - 1 that does not chain: 643, 2809, 3127) | the column Bluestein, `blu=M` with the M chain (§5) and `tpc=1`: the turned prime pass, the in-place natural 1D plan at N1 per lane, its recipe `tpc_` = `est_plan_1d` at N1 | [V] before the Rader stage the turned pass was the route the library served at the six c2c cells of `docs/roadmap/rader_leaf_design.md` §13 (524x64, 262x64, 131x256, 1048x32, 2101x16, 524x8x8) and is banked at 101x129 (`tpc=1`); 127x64 banked `tpc=0`: 7 of 8 |
 
 The turned pass serves c2c axis 0 only (`_il2d_tpc_admits`, il2d_tier.h:3267): the 2D plan, the
@@ -316,7 +316,7 @@ The formulas refuse, with the reason, an axis of length 1, a last axis the row g
 column with no chain whose Bluestein length the column pool cannot chain (M above 2^24; the length
 is computed in 64 bits, so a column whose M passes an int is refused at once, where the door's own
 loop would never end: `N = 819724288 has no column chain and its Bluestein length 2147483648 none
-either`), and a column whose Rader prime's ten listed candidate inners all lead with radix 64 (§6, §14).
+either`).
 
 **The steering variables** (`est_env_names`, `src/core/il/estimate/c2c_estimate_il.h`; one `getenv`
 sweep at create, never at execute), each read on a path an estimate create runs:
@@ -381,14 +381,8 @@ three open from the review (8-10). One library defect is open below them.
     1,008 `plane_` children, 1,051 together. Within L2 / 2: 120 and 941, 1,061 together (119 and
     942 with the plane bound at L2 / 4). Keep L2 / 4, or take L2 / 2?
 
-**Open library defect: a requested Rader inner chain that leads with radix 64 is refused.**
-`_ilrd_build_inner` (il_rader_stage.h:355) refuses a requested inner whose leading radix is above 47
-and not prime, while the engine's own pick (`_ilrd_pick_chain`) and its candidate list
-(`_ilrd_enum_inners`) lead with 64 wherever p - 1 is a multiple of 64 (193, 257, 449, ...: 130 of
-the 4,627 admitted primes from 49 to 70,000). The measuring door's race drops those arms, so it never
-banks the engine's own pick there; where every listed candidate leads with 64 (12289, 18433, 23041,
-32257, 40961, 61441, 63361, 64513, 65537) it banks that pick, which cannot replay. The estimate
-stands in the first candidate that does not lead with 64 (§6) and refuses the column where none
-does; its message there ("no inner chain of p - 1 that the engine rebuilds as written") overstates
-it, since reorders such as 3.64.64 at 12289 rebuild. No shipped row is affected: the stores hold no
-`rd`, `il_rd` or `rdw` token.
+**Closed library defect (2026-10-23): a Rader inner chain led by radix 64.** The engine's pick and
+its candidate list led with 64 wherever p - 1 is a multiple of 64, and a requested inner led by a
+composite above 47 cannot be rebuilt (il_rader_stage.h:392), so such rows could not replay. The engine
+now never leads with 64 (the first smaller radix moves to stage 0; 641, 769, 1409 and 40961 take a
+greedy with 64 barred from stage 0), and the estimate takes the engine's pick as it is.

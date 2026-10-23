@@ -1528,7 +1528,11 @@ static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, i
  * private store. A row without its child (a threaded row before its split
  * race; a pinned split) builds on an empty private store: the child races
  * into it. A banked child that did not replay is said loudly; the plan is
- * still the row's split. NULL = the split does not build. */
+ * still the row's split. Said only when the child MEASURED (a race counted
+ * or a measuring scope entered across its build): a child store that
+ * changed without it -- the 2D row put its row plan's recipe on itself
+ * (rp_, wisdom2_child.h) where the row carried the older fs_row_ tokens --
+ * is re-banked in silence. NULL = the split does not build. */
 static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr, int ip,
                                       const vfft_oop_il_entry_t *ke)
 {
@@ -1539,6 +1543,7 @@ static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t 
     int pn1 = ke->il_R1, pn2 = ke->il_R2, sbc[8], sbn = 0, form = 0, grew = 0;
     const int pinned = _k1fs_pin(N, &pn1, &pn2);
     const int child = !pinned && _k1fs_row_has_child(r);
+    long races0, scopes0;
     vfft_k1fs_plan_t *fp;
     if (!pinned && T > 1 && child && vw2_rec_get(r, "il_mt"))
     {   /* the threaded row's own split and form: its split race's verdict, the child its own */
@@ -1554,11 +1559,14 @@ static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t 
     }
     else if (!scr)
         sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
+    races0 = _vfft_create_race_count;   /* did the child measure: every race counts (race.h), an outermost */
+    scopes0 = vfft_measure_scopes();    /* clock read enters a scope (race_scope.h); c2c_estimate_il.h's detectors */
     fp = _k1fs_build_own(N, pn1, pn2, scr, cfg, ip, T, form, sbc, sbn, child ? r : NULL, &grew);
     if (fp && grew)
     {
-        fprintf(stderr, "vfft: the four-step's banked child at N=%d (%dx%d) did not replay -- it raced in the plan's "
-                        "private store (the row's fs_ tokens are incomplete)\n", N, pn1, pn2);
+        if (_vfft_create_race_count != races0 || vfft_measure_scopes() != scopes0)
+            fprintf(stderr, "vfft: the four-step's banked child at N=%d (%dx%d) did not replay -- it raced in the plan's "
+                            "private store (the row's fs_ tokens are incomplete)\n", N, pn1, pn2);
         /* the completed child back onto the row (re-banks it; r is stale after), so the cell does not race again */
         if (r && W && !W->vw2_off_oop && _k1fs_row_put_child(&W->vw2, r, fp->own, fp->N1, fp->N2, ip, T) == VW2_OK)
             _vw2_persist(W, cfg);

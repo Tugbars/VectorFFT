@@ -10,9 +10,8 @@
  *        A2 the four order x placement cells at every N in 2..256 and every power of two to 2^20;
  *        A3 the four cells at 100 lengths to 2^20 drawn with a fixed seed, 70 any N and 30 primes;
  *        A4 the four cells at T = 8, 30 lengths of every route.
- *      A cell with a prime factor above 47, in place, scrambled, one thread is the one refusal the four
- *      cells meet (its route row and its prime method row share one wisdom key): it must be refused with
- *      its reason; a smooth N past 262144 may meet it too (the unraced Bluestein). Every other cell builds.
+ *      Every cell builds, the in-place scrambled cell at one thread with a prime factor above 47
+ *      included (its prime method row has its own key, role=method, so the cell replays).
  *   D2 rank 2, natural, one thread, both placements (docs/design/estimate_2d3d_sketch.md): every
  *      power-of-two N1 x N2 with sides 2..8192 and at most 2^18 points, the larger ones the rules branch on (the
  *      leading stage from 2048, the band, the turn, a row plan that is a four-step), odd and composite
@@ -28,7 +27,7 @@
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
  *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, howmany 4, SPLIT, the flag with
- *      VFFT_FLAG_RECALIBRATE, with VFFT_FLAG_PATIENT, and the in-place scrambled prime cell at one thread;
+ *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order, more than one thread, a batch, an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
@@ -59,7 +58,7 @@ extern long _vfft_create_race_count;   /* vfft.c:255: every race a create starts
 #define TOL 1e-11     /* the error a cell accepts, relative to the rms of the bins */
 
 static int g_checks = 0, g_fail = 0, g_shown = 0;
-static long g_built = 0, g_known = 0;
+static long g_built = 0;
 static const char *g_W = NULL;
 static char g_D[1024];   /* the library's own store, pointed here */
 #define CHECK(c, ...) do { g_checks++; if (!(c)) { g_fail++; if (g_shown++ < 40) { printf("  *** FAIL: " __VA_ARGS__); printf("\n"); } } } while (0)
@@ -323,15 +322,6 @@ static void errors(vfft_plan p, const ref_t *r, int scr, int ip, double *ebin, d
     if (!ip) { vfft_free(out); vfft_free(z); }
 }
 
-/* the largest prime factor */
-static long lpf(long n)
-{
-    long d, best = 1;
-    for (d = 2; d * d <= n; d++)
-        while (n % d == 0) { best = d; n /= d; }
-    return n > 1 ? n : best;
-}
-
 /* an estimate create on the gate's store; *measured: a race or a race scope moved across it */
 static vfft_plan est_create(const vfft_config_t *c0, int *measured)
 {
@@ -345,12 +335,10 @@ static vfft_plan est_create(const vfft_config_t *c0, int *measured)
     return p;
 }
 
-/* one cell: built and correct, or the one refusal of the four cells */
+/* one cell: built and correct */
 static void cell(const ref_t *r, int scr, int ip, int T)
 {
     const long N = r->N;
-    const int must_refuse = ip && scr && T == 1 && lpf(N) > 47;
-    const int may_refuse = must_refuse || (ip && scr && T == 1 && N > 262144);
     char name[96];
     vfft_config_t c;
     vfft_plan p;
@@ -365,13 +353,9 @@ static void cell(const ref_t *r, int scr, int ip, int T)
     CHECK(!measured, "M  %s: the create MEASURED", name);
     if (!p)
     {
-        const int known = may_refuse && strstr(vfft_error(), "in place, scrambled, one thread") != NULL;
-        CHECK(known, "A  %s: refused: %s", name, vfft_error());
-        g_known += known;
+        CHECK(0, "A  %s: refused: %s", name, vfft_error());
         return;
     }
-    CHECK(!must_refuse, "A  %s: the in-place scrambled prime cell at one thread was served (route %s)", name,
-          vfft_plan_route(p));
     {
         double eb, er;
         errors(p, r, scr, ip, &eb, &er);
@@ -391,14 +375,13 @@ static void four(const ref_t *r, int T)
 
 /* ── the sections ── */
 static int s_checks, s_fail;
-static long s_built, s_known;
-static void sec_begin(void) { s_checks = g_checks; s_fail = g_fail; s_built = g_built; s_known = g_known; }
+static long s_built;
+static void sec_begin(void) { s_checks = g_checks; s_fail = g_fail; s_built = g_built; }
 static void sec_end(const char *name)
 {
     const int f = g_fail - s_fail;
-    printf("SECTION %-3s: %d checks, %d failed; %ld plans built and correct, %ld refused as the in-place scrambled "
-           "prime cell at one thread -> %s\n", name, g_checks - s_checks, f, g_built - s_built, g_known - s_known,
-           f ? "FAIL" : "PASS");
+    printf("SECTION %-3s: %d checks, %d failed; %ld plans built and correct -> %s\n", name, g_checks - s_checks, f,
+           g_built - s_built, f ? "FAIL" : "PASS");
 }
 
 /* R: NULL with the reason named, nothing measured */
@@ -755,8 +738,6 @@ int main(int argc, char **argv)
         refused("with VFFT_FLAG_RECALIBRATE", &c, "VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.flags = VFFT_FLAG_PATIENT;
         refused("with VFFT_FLAG_PATIENT", &c, "VFFT_FLAG_ESTIMATE with VFFT_FLAG_PATIENT");
-        memset(&c, 0, sizeof c); c.n[0] = 1009; c.order = VFFT_ORDER_SCRAMBLED; c.placement = VFFT_PLACEMENT_IN;
-        refused("N=1009 in place, scrambled, one thread", &c, "in place, scrambled, one thread");
     }
     sec_end("R");
 
@@ -825,8 +806,9 @@ int main(int argc, char **argv)
             /* Rader columns: a prime above 47 whose p - 1 chains, alone, with a rest, nested (107: 53.2) */
             { 53, 64 }, { 131, 16 }, { 107, 8 }, { 191, 4 }, { 262, 32 }, { 524, 64 }, { 2101, 16 }, { 101, 129 },
             { 53, 53 }, { 127, 64 }, { 139, 48 },
-            /* Rader primes whose engine pick leads with radix 64 (192 = 64.3, 256 = 64.4): another inner of its pool */
-            { 193, 8 }, { 257, 4 }, { 771, 2 },
+            /* Rader primes whose p - 1 is a multiple of 64 (192, 256, 12288): the engine's pick puts a smaller radix
+             * first (3.64, 4.64, 3.64.64) */
+            { 193, 8 }, { 257, 4 }, { 771, 2 }, { 12289, 2 },
             /* Bluestein columns, the turned prime pass: 643 (642 = 2.3.107, 106 = 2.53 does not chain), 53^2, 53.59 */
             { 643, 8 }, { 2809, 4 }, { 3127, 2 }, { 643, 100 },
             /* prime rows */
@@ -925,8 +907,7 @@ int main(int argc, char **argv)
     CHECK(d0n == 0 && d1n == 0 && e0 == e1, "W  the library's own store (VFFT_WISDOM_DIR): %d file(s) after", d1n);
     sec_end("W");
 
-    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld refused as the in-place scrambled "
-           "prime cell at one thread\n%s\n", g_checks, g_fail, g_built, g_nd_built, g_known,
-           g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
+    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct\n%s\n", g_checks, g_fail, g_built,
+           g_nd_built, g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

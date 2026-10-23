@@ -355,14 +355,9 @@ static inline int est__wl_pool(const est_machine_t *m, const est_col_t *c, int *
 /* ── the N-arm and the column pass's verdicts ──────────────────────────── */
 
 /* the Rader stage at stage 0 (sketch §6): the engine's own inner pick at p - 1 (_ilrd_pick_chain,
- * il_rader_stage.h:135), the window EST_ND_RD_WIN_MUL times its default (_ilrd_default_W, :375) over
- * the column space (N / p) w, as the engine takes a requested width (_ilrd_create, :396-401). A pick
- * that leads with radix 64 (p - 1 a multiple of 64: 193, 257, 449) cannot be requested: a requested
- * inner whose leading radix is above 47 and not prime is refused, only a prime there is taken as a
- * nested stage (_ilrd_build_inner, :355; a library defect, sketch §14) -- so the first candidate of
- * the engine's own inner pool that the request rebuilds (_ilrd_enum_inners, :658) stands in. Where
- * every candidate the pool lists leads with 64 (12289, 18433, 23041, 32257, 40961, 61441, 63361,
- * 64513, 65537) none stands in and the column is refused. */
+ * il_rader_stage.h:184; never led by radix 64, so the request rebuilds it, :392), the window
+ * EST_ND_RD_WIN_MUL times its default (_ilrd_default_W, :412) over the column space (N / p) w, as the
+ * engine takes a requested width (_ilrd_create, :433-438). */
 static inline int est__rader(est_col_t *c, int p)
 {
     const size_t ncol = (size_t)(c->N / p) * (size_t)c->w;
@@ -370,21 +365,6 @@ static inline int est__rader(est_col_t *c, int p)
     int nestp = 0;
     if (!_ilrd_pick_chain(p - 1, c->rd, &c->rd_n, &nestp))
         return -1;
-    if (c->rd[0] > VFFT_ILRD_POOL_MAX && !vfft_is_prime(c->rd[0]))
-    {
-        _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
-        const int n = _ilrd_enum_inners(p - 1, cand, VFFT_ILRD_MAX_INNERS);
-        int i;
-        c->rd_n = 0;
-        for (i = 0; i < n && !c->rd_n; i++)
-            if (cand[i].Rs[0] <= VFFT_ILRD_POOL_MAX || vfft_is_prime(cand[i].Rs[0]))
-            {
-                memcpy(c->rd, cand[i].Rs, sizeof(int) * (size_t)cand[i].nst);
-                c->rd_n = cand[i].nst;
-            }
-        if (!c->rd_n)
-            return -1;
-    }
     W = (size_t)EST_ND_RD_WIN_MUL * _ilrd_default_W(p, ncol);
     W &= ~(size_t)1;
     if (W > ncol)
@@ -417,8 +397,8 @@ static inline int est_col_plan(const est_machine_t *m, int N, long long w, int n
     {
         c->blu = est_is_pow2(N) ? -1 : 0;
         if (VFFT_IL2D_RADER_RADIX(c->R[0]) && est__rader(c, c->R[0]))
-            return est_refuse(why, whylen, "N = %d: the Rader stage at %d has no inner chain of %d that the engine rebuilds "
-                              "as written", N, c->R[0], c->R[0] - 1);
+            return est_refuse(why, whylen, "N = %d: the Rader stage at %d has no inner chain of %d", N, c->R[0],
+                              c->R[0] - 1);
     }
     else
     {

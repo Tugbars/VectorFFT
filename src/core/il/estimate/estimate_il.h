@@ -94,7 +94,7 @@ typedef struct est_recipe_s
         char in_shape[64];         /* [in_sh] R1.R2 | R2.A.B | the ZTURN-T chain | N1.N2 */
         int in_tw;                 /* [in_tw] the ZTURN-T inner's tile, 0 = untiled */
     } prime;                       /* the prime cell's method row (vw2_prime_method_bank,
-                                    * wisdom2_oop_il.h:570); its route row says il_route=prime il_kv=0 */
+                                    * wisdom2_oop_il.h:554); its route row says il_route=prime il_kv=0 */
 } est_recipe_t;
 
 /* ── code facts ─────────────────────────────────────────────────────────── */
@@ -1204,12 +1204,8 @@ ztt:
 
 /* est_plan_1d: the machine and the request -> the recipe. Returns 0 with *out filled, or -1 with
  * the reason in why (cut to whylen; why may be NULL when whylen is 0). Pure. Refused besides the
- * lengths est_c2c refuses: a transform other than VFFT_C2C, a machine of another lane count than
- * this build's, and the IN-PLACE SCRAMBLED PRIME CELL AT ONE THREAD. That cell cannot replay: its
- * route row and its prime method row share one key (vw2__prime_method_key, wisdom2_oop_il.h:545-551),
- * the method row is kept over the route row (vw2_oop_bank_k1_il, :515-527) and the door's scan
- * takes eng=k1 rows only (wisdom2_oop_rows.h:103), so it finds no route row and races the cell
- * (k1_commit.h:993-1004). */
+ * lengths est_c2c refuses: a transform other than VFFT_C2C and a machine of another lane count than
+ * this build's. */
 static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, est_recipe_t *out, char *why,
                               size_t whylen)
 {
@@ -1232,12 +1228,6 @@ static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, e
     T = rq->nthreads > 1 ? rq->nthreads : 1;
     if (est_c2c(m, rq->N, rq->order == VFFT_ORDER_SCRAMBLED, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen) != 0)
         return -1;
-    if (out->k1_il_route == VFFT_K1_IL_PRIME && rq->order == VFFT_ORDER_SCRAMBLED && rq->placement == VFFT_PLACEMENT_IN &&
-        T == 1)
-        return est_refuse(why, whylen, "N = %d in place, scrambled, one thread: a length with a prime factor above %d "
-                          "cannot be planned here without measuring (its route row and its prime method row share "
-                          "one wisdom key, so the library would race the cell); out of place, natural order or "
-                          "more than one thread is served", rq->N, VFFT_POLICY_CHAIN_MAX_PRIME);
     return 0;
 }
 
@@ -1422,8 +1412,8 @@ static inline int est__fs_split(const est_recipe_t *rc, int n, int T, int *n1, i
 
 /* est_put_rows: the rows a race would bank for the request, into st, with the store's own writers --
  * never the planner's vfft_il_dp_emit_wisdom, which banks a four-step's child from a race context
- * (dp_planner_il.h:2191-2197). In this order: the prime METHOD row before the route row (the route
- * row's writer keeps a method row, wisdom2_oop_il.h:515-527); the route row as the planner fills it
+ * (dp_planner_il.h:2191-2197). In this order: the prime METHOD row (its own key, role=method) before the route row; the
+ * route row as the planner fills it
  * (dp_planner_il.h:2207-2240), il_kv always written (il_kv_raced = 1, else the door races,
  * c2c_oop_create_il.h:85-98); the T row's threaded tokens; the four-step's child; the dir=bwd row.
  * to_rp: the four-step's child in the spelling a race banks today (1) or as the recipe spells it
@@ -1446,7 +1436,7 @@ static inline int est_put_rows(vw2_store_t *st, const est_recipe_t *rc, const es
     if (est__fs_split(rc, N, T, &n1, &n2) && est__fs_text(rc->fs, n1, n2, to_rp, fsb, sizeof fsb))
         return est_refuse(why, whylen, "the four-step child's tokens do not parse");
     if (route == VFFT_K1_IL_PRIME)
-    {   /* the method row: ord=scr place=ip role=comp lay=il, one thread (wisdom2_oop_il.h:545-551, :570) */
+    {   /* the method row: ord=scr place=ip role=method lay=il, one thread (wisdom2_oop_il.h:529-535, :554) */
         if (vw2_prime_method_bank(st, N, rc->prime.method, rc->prime.in_kind, rc->prime.in_shape, rc->prime.in_tw) != VW2_OK)
             return est_refuse(why, whylen, "the prime method row was refused by its writer");
         if (!strcmp(rc->prime.in_kind, "fs"))

@@ -581,14 +581,6 @@ static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const es
         est_refuse(why, whylen, "estimate builds one 1D interleaved c2c transform");
         return NULL;
     }
-    /* the in-place scrambled prime cell at one thread cannot replay (est_plan_1d) */
-    if (rc->k1_il_route == VFFT_K1_IL_PRIME && rq->placement == VFFT_PLACEMENT_IN && rq->order == VFFT_ORDER_SCRAMBLED &&
-        rq->nthreads <= 1)
-    {
-        est_refuse(why, whylen, "the in-place scrambled prime cell at one thread cannot replay: its route row and its "
-                   "prime method row share one key");
-        return NULL;
-    }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
     _vfft_create_lock();      /* vfft.c:2485, recursive: the pre-flight touches the create's process statics */
     _vfft_create_depth++;     /* the whole build inside a create: a clock read enters a scope */
@@ -633,7 +625,7 @@ out:
  *     (k1_commit.h:85-90, 146-151), VFFT_ILFD_NO_MSZ / _NO_GL / _NO_GORD / _NO_GEN2
  *     (il_flatdit.h:283-482), VFFT_ILFD_MT and VFFT_ZTT_MT (k1_commit.h:1298, 1383), VFFT_K1_FS and
  *     VFFT_K1_FSSB (k1_fourstep.h:75, k1_commit.h:1513, 1589), VFFT_ILPR_METHOD (k1_commit.h:576),
- *     VFFT_RD_ONE_LEVEL (il_rader_stage.h:359, k1_commit.h:468), VFFT_NO_K1PLAN (k1_commit.h:833),
+ *     VFFT_RD_ONE_LEVEL (il_rader_stage.h:396, k1_commit.h:468), VFFT_NO_K1PLAN (k1_commit.h:833),
  *     VFFT_NO_NAT_ILP (c2c_ip_create_il.h:88);
  *   - the 2D door (fft2d_create_il.h, il2d_tier.h, il2d_cols.h), also inside a 1D four-step:
  *     VFFT_IL2D_CHAIN, _FORMS, _BLU, _TPC, _WL, _TFUSE, _WC, _ROWOOP, _CSK, _RB2_KB, _STAGED,

@@ -398,8 +398,8 @@ static inline void est_print_c2c(est_sb_t *s, const est_recipe_t *rc, const est_
 {
     const char *pl = rq->placement == VFFT_PLACEMENT_IN ? "ip" : "oop";
     if (rc->k1_il_route == VFFT_K1_IL_PRIME)
-    {   /* the method row first: vw2_prime_method_bank's key and tokens (wisdom2_oop_il.h:545-596) */
-        est_sb_add(s, "t=c2c n=%d q=1 ord=scr place=ip role=comp lay=il | eng=%s in=%s in_sh=%s in_tw=%d",
+    {   /* the method row first: vw2_prime_method_bank's key and tokens (wisdom2_oop_il.h:529-582) */
+        est_sb_add(s, "t=c2c n=%d q=1 ord=scr place=ip role=method lay=il | eng=%s in=%s in_sh=%s in_tw=%d",
                    rq->N, rc->prime.method == 1 ? "rader" : "bluestein", rc->prime.in_kind, rc->prime.in_shape,
                    rc->prime.in_tw);
         if (!strcmp(rc->prime.in_kind, "fs") && rc->fs[0]) est_sb_add(s, " %s", rc->fs);

@@ -512,24 +512,6 @@ static inline int vw2_oop_bank_k1_il(vw2_store_t *s,
                 "lay=il", why ? why : "?");
         return -1;
     }
-    if (e->k1_il_route == VFFT_K1_IL_PRIME) {
-        /* THE PRIME CELL'S ROW IS ITS METHOD VERDICT: the prime engine
-         * banks eng=rader|bluestein + the raced inner at this very key
-         * (vw2__prime_method_key: ord=scr place=ip role=comp lay=il), and
-         * vw2_bank replaces on an equal key. A route row (eng=k1
-         * il_route=prime) banked over it would leave the next create without
-         * a method (the lookup reads eng): the inner re-races and the method
-         * row is re-banked over the route row, so every other create races
-         * -- and under load picks a different inner (il2d_blu_row_gate's
-         * 53x64 cold-vs-warm bitwise flap). The method row stays and the
-         * route row is not written. */
-        const vw2_rec_t *old = vw2_lookup(s, &r.key);
-        const char *eng = old ? vw2_rec_get(old, "eng") : NULL;
-        if (eng && (!strcmp(eng, "rader") || !strcmp(eng, "bluestein"))) {
-            vw2_rec_free(&r);
-            return VW2_OK;
-        }
-    }
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
@@ -538,16 +520,18 @@ static inline int vw2_oop_bank_k1_il(vw2_store_t *s,
 
 /* ── the IL prime METHOD verdict ─────────────────────────────────────────
  * Rader vs Bluestein for a prime N, raced once per cell instead of on every
- * create. A COMPONENT row (the ilprime plan is a component of both the
- * in-place ilp mode and the OOP k1 PRIME route), homed in the PRIME shard
- * by its eng= token: t=c2c n=N q=1 ord=scr place=ip role=comp lay=il |
- * eng=rader|bluestein. 0 = no verdict, 1 = Rader, 2 = Bluestein. */
+ * create. The ilprime plan is a component of both the in-place ilp mode and
+ * the OOP k1 PRIME route; its row is keyed role=method, apart from the K=1
+ * route row of the in-place scrambled cell (ord=scr place=ip role=comp
+ * lay=il) that shares every other key component, and is homed in the PRIME
+ * shard by its eng= token: t=c2c n=N q=1 ord=scr place=ip role=method
+ * lay=il | eng=rader|bluestein. 0 = no verdict, 1 = Rader, 2 = Bluestein. */
 static inline void vw2__prime_method_key(int N, vw2_key_t *k)
 {
     memset(k, 0, sizeof *k);
     k->t = VW2_T_C2C; k->rank = 1; k->n[0] = N;
     k->q = 1; k->ord = VW2_ORD_SCR; k->pl = VW2_PL_IP;
-    k->role = VW2_ROLE_COMP; k->lay = VW2_LAY_IL;
+    k->role = VW2_ROLE_METHOD; k->lay = VW2_LAY_IL;
 }
 static inline int vw2_prime_method_lookup(const vw2_store_t *s, int N)
 {

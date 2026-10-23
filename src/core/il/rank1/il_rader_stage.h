@@ -33,7 +33,8 @@
  * n1c-only radices legal as the closing stage); when p-1 carries its own prime
  * factor above the pool, that prime takes stage 0 of the inner chain as a nested
  * Rader leaf over the scratch plane (ONE level: its own inner must chain from the
- * pool). The chain here is the pool's greedy pick; the planner's race over inner
+ * pool). The chain here is the pool's greedy pick, never led by radix 64
+ * (_ilrd_unlead64); the planner's race over inner
  * chains, forms and widths comes with the planner admission (phase 2).
  *
  * The backward direction (the natural class's conjugate pipeline) is the same
@@ -130,26 +131,43 @@ static int _ilrd_largest_prime_factor(int n)
     }
     return n > 1 ? n : m;
 }
-/* Rs[0..nst) for M = p-1; *nestp = the prime that takes stage 0 as a nested
- * leaf (0 = none). 0 = no chain. */
-static int _ilrd_pick_chain(int M, int *Rs, int *nst, int *nestp)
+/* NEVER 64 FIRST (the owner, 2026-10-23): radix 64 spills as an inner chain's
+ * first stage, and a requested inner led by a radix above the pool is a nested
+ * prime or nothing (_ilrd_build_inner), so a 64-led inner never replays. A
+ * chain led by 64 (no nested leaf) takes its first other radix to stage 0, the
+ * 64s before it one stage on: the same radices, the same stage count
+ * (64.64.3 -> 3.64.64, 64.32.9 -> 32.64.9). 1 = the chain does not lead with
+ * 64 (as given, or reordered); 0 = it cannot be reordered so (the radix that
+ * would lead has no mid kernel -- a closing-only radix -- or the 64 would close
+ * the chain without its leaf kernel), the chain unchanged. */
+static int _ilrd_unlead64(int *Rs, int n)
+{
+    int j = 1, k, r;
+    if (n < 1) return 0;
+    if (Rs[0] != 64) return 1;
+    while (j < n && Rs[j] == 64) j++;
+    if (j == n) return 0;
+    r = Rs[j];
+    if (!vfft_il2p_t2c_fn(r, 0) || !vfft_il2p_t2c_fn(r, 1)) return 0;
+    if (j == n - 1 && (!vfft_il2p_n1c_fn(64, 0) || !vfft_il2p_n1c_fn(64, 1))) return 0;
+    for (k = j; k > 0; k--) Rs[k] = Rs[k - 1];
+    Rs[0] = r;
+    return 1;
+}
+/* the greedy over the pool from stage n on: the closing radix where the rest is
+ * one, else the largest radix with its kernel pair; bar64 = no 64 at stage 0.
+ * Returns the stage count, 0 = the rest does not chain. */
+static int _ilrd_pick_greedy(int rem, int *Rs, int n, int bar64)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4, 47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
     const int npool = (int)(sizeof POOL / sizeof POOL[0]);
-    int rem = M, n = 0, i, q;
-    *nestp = 0;
-    if (M < 2) return 0;
-    q = _ilrd_largest_prime_factor(M);
-    if (q > VFFT_ILRD_POOL_MAX) {   /* the nested leaf takes stage 0 */
-        if (!vfft_is_prime(q)) return 0;
-        Rs[n++] = q; rem /= q; *nestp = q;
-    }
+    int i;
     while (rem > 1 && n < VFFT_ILRD_MAX_NST) {
         int hit = 0;
         if (_ilrd_closing_ok(rem)) { Rs[n++] = rem; rem = 1; break; }
         for (i = 0; i < npool; i++) {
             const int r = POOL[i];
-            if (rem % r) continue;
+            if (rem % r || (bar64 && n == 0 && r == 64)) continue;
             if (rem == r) {
                 if (!vfft_il2p_n1c_fn(r, 0) || !vfft_il2p_n1c_fn(r, 1)) continue;
             } else if (!vfft_il2p_t2c_fn(r, 0) || !vfft_il2p_t2c_fn(r, 1)) continue;
@@ -157,7 +175,26 @@ static int _ilrd_pick_chain(int M, int *Rs, int *nst, int *nestp)
         }
         if (!hit) break;
     }
-    if (rem != 1 || n < 1) return 0;
+    return rem == 1 ? n : 0;
+}
+/* Rs[0..nst) for M = p-1; *nestp = the prime that takes stage 0 as a nested
+ * leaf (0 = none). 0 = no chain. The greedy, never led by 64: its pick
+ * reordered (_ilrd_unlead64), or where that cannot be, the greedy again with
+ * 64 barred from stage 0. */
+static int _ilrd_pick_chain(int M, int *Rs, int *nst, int *nestp)
+{
+    int n = 0, q;
+    *nestp = 0;
+    if (M < 2) return 0;
+    q = _ilrd_largest_prime_factor(M);
+    if (q > VFFT_ILRD_POOL_MAX) {   /* the nested leaf takes stage 0 */
+        if (!vfft_is_prime(q)) return 0;
+        Rs[n++] = q; *nestp = q;
+    }
+    n = _ilrd_pick_greedy(*nestp ? M / q : M, Rs, n, 0);
+    if (n >= 1 && !_ilrd_unlead64(Rs, n))
+        n = _ilrd_pick_greedy(M, Rs, 0, 1);
+    if (n < 1) return 0;
     *nst = n;
     return 1;
 }
@@ -623,13 +660,23 @@ static void _ilrd_last_hook_fn(vfft_ilfd_plan_t *p, int s)
 /* ── THE INNER RACE IN ROLE (the planner's bench) ──────────────────────
  * The candidates: every column chain of p-1 over the pool, a nested prime
  * fixed at stage 0, each radix set in two orders (large first, small first,
- * a closing radix kept last), at most VFFT_ILRD_MAX_INNERS; then the window
+ * a closing radix kept last), never led by 64 (_ilrd_unlead64: the large-first
+ * order of a 64 set takes its first other radix to the front; a set that
+ * cannot be so led is no candidate), at most VFFT_ILRD_MAX_INNERS; then the window
  * widths around the default. Every arm is a live engine (its own tables and
  * scratch) swapped into the stage between samples — the whole forward is
  * the sample, as the chain race's. The plan leaves with the best installed. */
 #define VFFT_ILRD_MAX_INNERS 10
 typedef struct { int Rs[VFFT_ILRD_MAX_NST]; int nst; } _ilrd_inner_t;
 
+/* a set into out[], never led by 64 (a set that cannot be so led is skipped) */
+static void _ilrd_enum_put(const int *cur, int nst, _ilrd_inner_t *out, int *n)
+{
+    _ilrd_inner_t o;
+    memcpy(o.Rs, cur, sizeof(int) * (size_t)nst); o.nst = nst;
+    if (!_ilrd_unlead64(o.Rs, o.nst)) return;
+    out[(*n)++] = o;
+}
 static void _ilrd_enum_rec(int rem, int i0, int *cur, int depth, int fixed, _ilrd_inner_t *out, int *n, int max)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4, 47, 43, 41, 37, 31, 29, 27, 25, 23, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
@@ -638,12 +685,12 @@ static void _ilrd_enum_rec(int rem, int i0, int *cur, int depth, int fixed, _ilr
     if (*n >= max || depth >= VFFT_ILRD_MAX_NST) return;
     if (rem == 1) {
         if (depth - fixed < 1) return;
-        memcpy(out[*n].Rs, cur, sizeof(int) * (size_t)depth); out[*n].nst = depth; (*n)++;
+        _ilrd_enum_put(cur, depth, out, n);
         return;
     }
     if (depth >= 1 && _ilrd_closing_ok(rem)) {   /* the closing radix ends the set (right after the nested leaf too: p - 1 = q * 2) */
         cur[depth] = rem;
-        memcpy(out[*n].Rs, cur, sizeof(int) * (size_t)(depth + 1)); out[*n].nst = depth + 1; (*n)++;
+        _ilrd_enum_put(cur, depth + 1, out, n);
         if (*n >= max) return;
     }
     for (i = i0; i < npool; i++) {
@@ -675,7 +722,7 @@ static int _ilrd_enum_inners(int M, _ilrd_inner_t *out, int max)
         for (j = fixed; j < hi; j++)
             for (k = j + 1; k < hi; k++)
                 if (o.Rs[k] < o.Rs[j]) { const int t = o.Rs[j]; o.Rs[j] = o.Rs[k]; o.Rs[k] = t; }
-        if (memcmp(o.Rs, out[i].Rs, sizeof(int) * (size_t)o.nst)) out[n++] = o;
+        if (o.Rs[0] != 64 && memcmp(o.Rs, out[i].Rs, sizeof(int) * (size_t)o.nst)) out[n++] = o;
     }
     return n;
 }

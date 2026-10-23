@@ -245,8 +245,9 @@ static void _k1fs_child_rows(const struct vfft_wisdom_s *S, int N1, int N2, int 
 /* THE BORROWED ROW CELLS (owner, 2026-10-12, VFFT_HIGHN_PLAN=borrow): every
  * K=1 interleaved c2c row at N2 at one thread in W (the in-place natural
  * cell the child's row plan replays, its backward twin; the others ride
- * along) copied into the private store S as seeds. W is only read: the
- * 1D rows are never written by a four-step. Returns the rows copied. */
+ * along, the prime cell's role=method row among them) copied into the
+ * private store S as seeds. W is only read: the 1D rows are never written
+ * by a four-step. Returns the rows copied. */
 static int _k1fs_seed(struct vfft_wisdom_s *S, const vw2_key_t *k, const vw2_rec_t *src);
 static struct vfft_wisdom_s *_k1fs_store_new(void);
 static int _k1fs_borrow_rows(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, int N2)
@@ -258,7 +259,8 @@ static int _k1fs_borrow_rows(struct vfft_wisdom_s *S, const struct vfft_wisdom_s
     {
         const vw2_rec_t *r = &W->vw2.rec[i];
         if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.n[0] != N2 || r->key.lay != VW2_LAY_IL ||
-            r->key.nthreads != 0 || r->key.role != VW2_ROLE_COMP || vw2__is_seed(r))
+            r->key.nthreads != 0 || (r->key.role != VW2_ROLE_COMP && r->key.role != VW2_ROLE_METHOD) ||
+            vw2__is_seed(r))
             continue;
         if (_k1fs_seed(S, &r->key, r) == 0)
             n++;

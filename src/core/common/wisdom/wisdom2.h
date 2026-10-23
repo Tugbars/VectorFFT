@@ -99,8 +99,14 @@ typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
  * engine's kind-3 rows) from colliding with the PROBLEM verdict at the
  * same (t,n,q,ord,place) (the @natoop pick). Absent = problem verdict
  * (the default, every pre-1.1 row); matches by EQUALITY everywhere, like
- * dir. Signpost ref= targets are problem-space unless they carry role=. */
-typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
+ * dir. Signpost ref= targets are problem-space unless they carry role=.
+ * role=method: the IL prime engine's METHOD verdict (Rader or Bluestein and
+ * its raced inner, vw2__prime_method_key), keyed apart from the K=1 route
+ * row at the same (t,n,q,ord,place,lay) -- the in-place scrambled cell's.
+ * A new value of an existing axis, as lay=lm was: no version bump (the
+ * header check reads the major only, and a 1.3 reader carries a row with
+ * an unknown role value opaque). */
+typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1, VW2_ROLE_METHOD = 2 } vw2_role_t;
 /* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the
  * interleaved-vs-split axis — keyed like its sibling placement. Layout
  * is a caller integration property (AoS/SoA), NEVER a strategy output:
@@ -545,18 +551,6 @@ static inline int vw2__is_seed(const vw2_rec_t *r)
 static inline int vw2__merge_allows(const vw2_rec_t *inc, const vw2_rec_t *nw)
 {
     int ri = vw2__src_rank(inc), rn = vw2__src_rank(nw);
-    {   /* the prime method row owns its key against a PRIME-route row
-         * (README 3.3): a K=1 row that says il_route=prime restates what the
-         * rader/bluestein row already is and never displaces it -- the law
-         * the route bank applies at bank time, applied to every replacement
-         * (a merge, a load-time dedup). Any other route row
-         * (the pair, chain3, flat, mono) is a verdict the prime engine LOST
-         * and competes on rank and date like every row. */
-        const char *ie = vw2_rec_get(inc, "eng"), *ne = vw2_rec_get(nw, "eng");
-        const char *nr = vw2_rec_get(nw, "il_route");
-        const int im = ie && (!strcmp(ie, "rader") || !strcmp(ie, "bluestein"));
-        if (im && ne && !strcmp(ne, "k1") && nr && !strcmp(nr, "prime")) return VW2_EOWNED;
-    }
     if (rn < ri) return VW2_ERANK;
     if (rn > ri) return VW2_OK;      /* higher rank replaces unconditionally */
     {
@@ -627,6 +621,7 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 else return -1;
             } else if (!strcmp(tok, "role")) {
                 if (!strcmp(v, "comp")) k->role = VW2_ROLE_COMP;
+                else if (!strcmp(v, "method")) k->role = VW2_ROLE_METHOD;
                 else return 0;  /* future role values: opaque carry          */
             } else if (!strcmp(tok, "lay")) {
                 if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
@@ -661,7 +656,7 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
     if (k->dir != VW2_DIR_NONE)
         VW2__CAT(" dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
     if (k->role != VW2_ROLE_NONE)
-        VW2__CAT(" role=comp");
+        VW2__CAT(" role=%s", k->role == VW2_ROLE_METHOD ? "method" : "comp");
     if (k->lay != VW2_LAY_ANY)
         VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : k->lay == VW2_LAY_LM ? "lm" : "il");
     if (k->nthreads > 1)

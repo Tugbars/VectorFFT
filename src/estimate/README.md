@@ -23,12 +23,10 @@ replay code.
 The flag serves one interleaved c2c transform (howmany 1): 1D in any order, placement and thread count;
 rank 2 and 3 (2026-10-22, `docs/design/estimate_2d3d_sketch.md`) in natural order on one thread, either
 placement. It refuses real, real-to-real, rank 4, howmany > 1, SPLIT, scrambled order or nthreads > 1 at
-rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or `VFFT_FLAG_PATIENT`, the in-place scrambled prime
-cell at one thread, and any create while an environment variable that steers a plan is set
-(`est_env_names`). At rank 2 and 3 the formulas also refuse an axis of length 1, a last axis with no
-1D engine, a column with no chain whose Bluestein length the column pool cannot chain (above 2^24),
-and a column whose Rader prime's ten listed candidate inners all lead with radix 64 (12289, 18433, 23041, 32257,
-40961, 61441, 63361, 64513, 65537: sketch sections 6 and 14). It never opens `wisdom_dir`.
+rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or `VFFT_FLAG_PATIENT`, and any create while an
+environment variable that steers a plan is set (`est_env_names`). At rank 2 and 3 the formulas also
+refuse an axis of length 1, a last axis with no 1D engine, and a column with no chain whose Bluestein
+length the column pool cannot chain (above 2^24). It never opens `wisdom_dir`.
 
 **This folder keeps what is not released:** the r2c / c2r formulas and build, built on top of the
 tracked c2c part, and the tools.
@@ -56,8 +54,6 @@ tracked c2c part, and the tools.
 **c2c (the library, `src/core/il/estimate/c2c_estimate_il.h`):**
 
 1. **Refuse what estimate does not serve.** The front door refuses the requests the flag does not cover.
-   The formulas refuse the in-place scrambled prime cell at T = 1: its route row and its prime method
-   row share one key (`wisdom2_oop_il.h:515-527,545-551`), so the library would race it.
 2. **Pre-flight.** The door's own constructor sequence runs at T = 1, and what it built is destroyed.
    A recipe the door would mark stale, and then race, is refused here instead. A four-step child (the
    four-step, a four-step inner of the prime cell) is a nested create, so it is not built here: its
@@ -245,10 +241,6 @@ A compromise to confirm:
 
 ## Known library limitations (reported, not patched)
 
-- **The in-place scrambled prime cell at T = 1 cannot replay.** Its route row and its prime
-  method row share one key: `vw2_oop_bank_k1_il` keeps the method row
-  (`wisdom2_oop_il.h:515-527`, key `:545-551`), and the door's scan takes only eng=k1 rows
-  (`wisdom2_oop_rows.h:103`). So the door races it (`k1_commit.h:993-1004`). Estimate refuses it.
 - **A misleading message.** The four-step replay prints "did not replay -- it raced" whenever its
   2D child re-wrote its own row, even when nothing raced (`k1_commit.h:1558-1564`,
   `k1_fourstep.h:600-612`). The glue's `rp_` spelling avoids that path.
