@@ -674,6 +674,37 @@ static inline int est_flat_chain(long long N, int *c)
     k = est_merge10(c, k);
     return k < 2 ? 0 : k;
 }
+/* THE RADER-STAGE CHAIN (the owner's rule, 2026-10-23): a composite N whose one prime factor p above
+ * 47 appears once, whose p - 1 has no prime factor above 47, and whose rest N / p is at least 4 runs
+ * as a flat chain with the Rader stage p (il_rader_stage.h) at stage 0, or at stage 1 after a lone 2
+ * when N = 2 (mod 4); the rest is the flat chain above. Natural class only: a Rader stage serves no
+ * scrambled walk (il_rader_stage.h:497). Over the 2,146 composites of the 2026-10-13 race record the
+ * planner chose the flat chain exactly where this holds in 2,064. 0 = not this class. */
+static inline int est_rader_flat_chain(long long N, int *c)
+{
+    const long long p = est_lpf(N), rest = N / p;
+    int r[64], k, i, j = 0;
+    if (p == N || p <= VFFT_POLICY_CHAIN_MAX_PRIME || rest < 4 || rest % p == 0 ||
+        est_lpf(rest) > VFFT_POLICY_CHAIN_MAX_PRIME || est_lpf(p - 1) > VFFT_POLICY_CHAIN_MAX_PRIME)
+        return 0;
+    k = est_flat_chain(rest, r);
+    if (!k)
+    {   /* a rest of one stage */
+        if (!(rest == 4 || rest == 8 || rest == 16 ||
+              (rest % 2 && rest <= VFFT_POLICY_CHAIN_MAX_PRIME && (vfft_policy_is_prime((int)rest) || rest == 9))))
+            return 0;
+        r[0] = (int)rest;
+        k = 1;
+    }
+    if (k + 1 > VFFT_ILFD_MAX_K)
+        return 0;
+    if (r[0] == 2)
+        c[j++] = 2;
+    c[j++] = (int)p;
+    for (i = (r[0] == 2); i < k; i++)
+        c[j++] = r[i];
+    return j;
+}
 /* the forms: t on every middle stage; the last stage t at K = 2, otherwise n, o in the natural
  * class from K = 5. Every pool radix has the t2csgn tail (il_flatdit.h:286-289). */
 static inline void est_flat_forms(int K, int scr, char *f, size_t cap)
@@ -1059,8 +1090,24 @@ static inline int est_prime_route(const est_machine_t *m, long long N, int T, es
         if (r == 0) return est_refuse(why, whylen, "N = %lld: no inner for Rader at N - 1 = %d", N, M);
     }
     else
-    {
-        (void)vfft_policy_ilprime_blue_m((int)N, &M, 1);
+    {   /* Bluestein's length (the owner's rule, 2026-10-23): the smallest of the policy's smooth sizes
+         * when it is at most 0.9 of the power of two and has an inner, else the power of two. Over
+         * the 2,103 Bluestein cells of the 2026-10-13 race record the planner chose a smooth size
+         * exactly where this holds in 1,745; above 0.9 it never did. */
+        int Ms[1 + VFFT_POLICY_ILPRIME_SMOOTH_M], nm, s;
+        nm = vfft_policy_ilprime_blue_m((int)N, Ms, 1 + VFFT_POLICY_ILPRIME_SMOOTH_M);
+        M = Ms[0];
+        for (s = 2; s < nm; s++)
+            if (Ms[s] < Ms[1]) { const int t = Ms[1]; Ms[1] = Ms[s]; Ms[s] = t; }
+        if (nm > 1 && 10LL * Ms[1] <= 9LL * Ms[0] && Ms[1] <= VFFT_POLICY_INNER_MAX_N)
+        {
+            r = est_rader_inner(m, Ms[1], &in, o->fs, sizeof o->fs, why, whylen);
+            if (r < 0) return -1;
+            if (r == 1) M = Ms[1];
+            else memset(&in, 0, sizeof in);
+        }
+        if (M != Ms[0])
+            goto inner_done;
         if (M > VFFT_POLICY_INNER_MAX_N)
             return est_refuse(why, whylen, "N = %lld is prime and Rader has no inner at N - 1 within these rules; "
                               "Bluestein's inner (%d) passes %d", N, M, VFFT_POLICY_INNER_MAX_N);
@@ -1068,6 +1115,7 @@ static inline int est_prime_route(const est_machine_t *m, long long N, int T, es
         if (r < 0) return -1;
         if (r == 0) return est_refuse(why, whylen, "N = %lld: no inner for Bluestein at %d", N, M);
     }
+inner_done:
     o->k1_il_route = VFFT_K1_IL_PRIME;
     o->il_kv = 0;
     o->prime.method = rader ? 1 : 2;
@@ -1101,6 +1149,8 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
      * inner passes the ceiling has no engine (policy_il.h:299-302) */
     if (vfft_policy_prime_cell((int)N))
     {
+        if (!scr && N <= VFFT_ZTT_MAX_N && (k = est_rader_flat_chain(N, c)) > 0)
+            goto flat_chain;   /* the Rader-stage chain (est_rader_flat_chain) */
         if (vfft_policy_prime_cell_unservable((int)N))
             return est_refuse(why, whylen, "N = %lld has a prime factor above %d and is not prime: its Bluestein "
                               "inner (2N - 1) passes %d", N, VFFT_POLICY_CHAIN_MAX_PRIME, VFFT_POLICY_INNER_MAX_N);
@@ -1179,6 +1229,7 @@ flat:
     /* 9. the flat DIT */
     k = est_flat_chain(N, c);
     if (!k) return est_refuse(why, whylen, "N = %lld: no flat chain of at most %d stages", N, VFFT_ILFD_MAX_K);
+flat_chain:
     o->k1_il_route = VFFT_K1_IL_FLAT;
     memcpy(o->il_fl, c, sizeof(int) * (size_t)k);
     o->il_fl_n = k;
