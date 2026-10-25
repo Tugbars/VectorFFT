@@ -512,6 +512,9 @@ static inline int est__child_1d(const est_machine_t *m, int N, int placement, es
     rq.nthreads = 1;
     if (est_plan_1d(m, &rq, rc, w2, sizeof w2))
         return est_refuse(why, whylen, "%s at N = %d: %s", what, N, w2);
+    rc->il_rd_n = 0;   /* a child's Rader stage keeps the engine's pick and width: the 1D window rule
+                        * (est_rader_window) was measured on 1D requests only */
+    rc->il_rdw = 0;
     return 0;
 }
 static inline int est__machine_ok(const est_machine_t *m, char *why, size_t whylen)

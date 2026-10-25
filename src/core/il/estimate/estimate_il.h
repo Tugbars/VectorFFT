@@ -72,6 +72,10 @@ typedef struct est_recipe_s
                                     * "" = the create's defaults */
     int il_tw;                     /* [il_tw] flat: a stage's block span; ZTURN-T: the tile;
                                     * 0 = untiled */
+    int il_rd[VFFT_ILRD_MAX_NST];  /* [il_rd] flat, one thread: the Rader stage's inner chain at p - 1
+                                    * (est_rader_window); il_rd_n = 0: the engine's own pick and width */
+    int il_rd_n;
+    int il_rdw;                    /* [il_rdw] its window in columns */
     int il_zt[VFFT_ZTT_MAX_NF];    /* [il_ztt] ZTURN-T's chain; the threaded four-step's super-band
                                     * chain [il_mtsb] */
     int il_zt_n;
@@ -706,6 +710,32 @@ static inline int est_rader_flat_chain(long long N, int *c)
         c[j++] = r[i];
     return j;
 }
+/* THE RADER STAGE'S WINDOW (the owner's rule, 2026-10-25), one thread, on the chain above: the engine's
+ * own inner pick at p - 1 (_ilrd_pick_chain, il_rader_stage.h:184) and the window
+ * max(the default, min(the stage's N / p columns, EST_RD_WIN_CAP)) (_ilrd_default_W, :412). Every window
+ * reads the inner tables again (about 1.6 MB at p = 12289), so a tall stage -- few columns, a large p,
+ * a default of 2 -- takes all its columns at once. The cap keeps a scratch row at most 512 B: at W = 64
+ * the rows of a radix-64 inner stage crowd one L1 set (65792, 98816: 1.17-1.21 against the default).
+ * Measured on 19 cells (N 16336..262093): never slower than the default, within 8 % of the best width.
+ * Threaded plans keep the default: one window runs the stage on one thread (il_flatdit_mt.h:67-71). */
+#define EST_RD_WIN_CAP 32
+static inline void est_rader_window(long long N, est_recipe_t *o)
+{
+    int i, p = 0, nestp = 0;
+    size_t C, W, cap;
+    for (i = 0; i < o->il_fl_n; i++)
+        if (o->il_fl[i] > VFFT_POLICY_CHAIN_MAX_PRIME) p = o->il_fl[i];
+    if (!p || !_ilrd_pick_chain(p - 1, o->il_rd, &o->il_rd_n, &nestp))
+    {
+        o->il_rd_n = 0;
+        return;
+    }
+    C = (size_t)(N / p);
+    W = _ilrd_default_W(p, C);
+    cap = (C < EST_RD_WIN_CAP ? C : EST_RD_WIN_CAP) & ~(size_t)1;
+    if (cap > W) W = cap;
+    o->il_rdw = (int)W;
+}
 /* the forms: t on every middle stage; the last stage t at K = 2, otherwise n, o in the natural
  * class from K = 5. Every pool radix has the t2csgn tail (il_flatdit.h:286-289). */
 static inline void est_flat_forms(int K, int scr, char *f, size_t cap)
@@ -876,6 +906,12 @@ static inline void est_c2c_tokens(est_sb_t *s, const est_recipe_t *r, const char
         est_sb_chain(s, r->il_fl, r->il_fl_n);
         if (r->il_flf[0]) est_sb_add(s, " %sil_forms=%s", pfx, r->il_flf);
         if (r->il_tw > 0) est_sb_add(s, " %sil_tw=%d", pfx, r->il_tw);
+        if (r->il_rd_n > 0)
+        {
+            est_sb_add(s, " %sil_rd=", pfx);
+            est_sb_chain(s, r->il_rd, r->il_rd_n);
+            est_sb_add(s, " %sil_rdw=%d", pfx, r->il_rdw);
+        }
     }
     if (r->k1_il_route == VFFT_K1_IL_ZTT)
     {
@@ -1280,6 +1316,8 @@ static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, e
     T = rq->nthreads > 1 ? rq->nthreads : 1;
     if (est_c2c(m, rq->N, rq->order == VFFT_ORDER_SCRAMBLED, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen) != 0)
         return -1;
+    if (T == 1 && out->k1_il_route == VFFT_K1_IL_FLAT)
+        est_rader_window(rq->N, out);
     return 0;
 }
 
@@ -1518,6 +1556,12 @@ static inline int est_put_rows(vw2_store_t *st, const est_recipe_t *rc, const es
         memcpy(e.il_flf, rc->il_flf, sizeof e.il_flf);
         e.il_flf[sizeof e.il_flf - 1] = 0;
         e.il_tw = rc->il_tw;
+        if (rc->il_rd_n > 0)
+        {
+            memcpy(e.il_rd, rc->il_rd, sizeof(int) * (size_t)rc->il_rd_n);
+            e.il_rd_n = rc->il_rd_n;
+            e.il_rdw = rc->il_rdw;
+        }
     }
     if (route == VFFT_K1_IL_ZTT)
     {

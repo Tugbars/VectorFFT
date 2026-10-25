@@ -259,10 +259,20 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
                 vfft_ilfd_destroy(p);
                 p = NULL;
             }
+            if (p && rc->il_rd_n > 0)
+            {   /* the Rader stage's inner and window, as the replay applies them (c2c_oop_create_il.h:234-243) */
+                int rs = 0;
+                if (!p->has_rd || !vfft_ilrd_get_inner(p, &rs, NULL, NULL, NULL) ||
+                    !vfft_ilrd_set_inner(p, rs, rc->il_rd, rc->il_rd_n, (size_t)rc->il_rdw))
+                {
+                    vfft_ilfd_destroy(p);
+                    p = NULL;
+                }
+            }
         }
         if (!p)
-            return est_refuse(why, whylen, "the flat chain does not build as written (forms \"%s\", tile %d, %s class)",
-                              rc->il_flf, rc->il_tw, scr ? "scrambled" : "natural");
+            return est_refuse(why, whylen, "the flat chain does not build as written (forms \"%s\", tile %d, Rader "
+                              "window %d, %s class)", rc->il_flf, rc->il_tw, rc->il_rdw, scr ? "scrambled" : "natural");
         vfft_ilfd_destroy(p);
         return 0;
     }
@@ -378,6 +388,16 @@ static inline int est__check_plan(const struct vfft_plan_s *h, const est_recipe_
     {
         est_refuse(why, whylen, "the door built another engine than the recipe's (%s)", vw2_oop_il_name[rc->k1_il_route]);
         return 0;
+    }
+    if (rc->k1_il_route == VFFT_K1_IL_FLAT && rc->il_rd_n > 0)
+    {   /* the Rader stage the door bound: the recipe's inner chain and window */
+        int s = 0, Rs[VFFT_ILRD_MAX_NST], nst = 0, W = 0;
+        if (!vfft_ilrd_get_inner(h->k1ilfd, &s, Rs, &nst, &W) || nst != rc->il_rd_n ||
+            memcmp(Rs, rc->il_rd, sizeof(int) * (size_t)nst) || W != rc->il_rdw)
+        {
+            est_refuse(why, whylen, "the door's Rader stage is not the recipe's (window %d against %d)", W, rc->il_rdw);
+            return 0;
+        }
     }
     if (T > 1 && want_mt != got_mt)
     {
