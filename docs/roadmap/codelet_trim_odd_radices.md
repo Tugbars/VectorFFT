@@ -26,7 +26,7 @@ drops 15, 64 and a leading 32 (below).
 | estimate chain | radices it no longer picks | state |
 | --- | --- | --- |
 | 2D/3D column Rader stage, inner chain of p - 1 (`est__rader`, estimate_nd_il.h) | a step above 32 (64), an odd step above 13 (15, 21, 25), a first step of 32 | committed 47d2ab0c |
-| 1D four-step, column chain at N1 (`est_fs_col_chain`, estimate_il.h) | 21, 25, 27 | in progress |
+| 1D four-step, column chain at N1 (`est_fs_col_chain`, estimate_il.h) | 21, 25, 27 | committed d83f867f |
 | 1D three-stage route (chain3) and two-pass pairs | 21, 25, 27 | next, after a timing check |
 | 2D/3D column chains | 21, 25, 27 | after that |
 
