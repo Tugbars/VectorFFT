@@ -171,11 +171,26 @@ typedef struct
 } est_pool_t;
 static inline void est__pool(int N, est_pool_t *P)
 {
-    int cur[8], dropped = 0;
+    int cur[8], dropped = 0, i, j, k = 0, bad;
     P->n = 0;
     memset(cur, 0, sizeof cur);
     if (N >= 2)
         _il2d_enum_rec(N, 0, cur, P->c, P->len, &P->n, &dropped);
+    /* no chain with a spilling radix (est_radix_spills: 21, 25, 27, ...) while another chain exists */
+    for (i = 0; i < P->n; i++)
+    {
+        for (bad = 0, j = 0; j < P->len[i]; j++)
+            bad |= est_radix_spills(P->c[i][j]);
+        if (bad) continue;
+        if (k != i)
+        {
+            memcpy(P->c[k], P->c[i], sizeof P->c[k]);
+            P->len[k] = P->len[i];
+        }
+        k++;
+    }
+    if (k)
+        P->n = k;
 }
 static inline int est__in_pool(const est_pool_t *P, const int *R, int nst)
 {

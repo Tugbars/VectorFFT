@@ -118,6 +118,13 @@ static const int est_ct_leaf_bwd[] = { VFFT_IL_N1_CT_BWD_RADICES(EST__R) };
 #undef EST__R
 /* the pair list's primes from 23 up: a pair or chain3 keeps such a radix out of the leaf */
 static const int est_large_list[] = { 23, 29, 31, 37, 41, 43, 47 };
+/* THE SPILLING RADICES (2026-10-26, the owner): AVX2's 16 YMM registers hold a butterfly up to about
+ * radix 16; an odd composite radix above EST_ODD_SPLIT_MAX (21, 25, 27, ... 63) spills, and every
+ * estimate chain takes its split instead (25 -> 5.5, 27 -> 9.3, 21 -> 7.3). The primes 17-47 have no
+ * split and stay; the powers of two are another question (docs/roadmap/codelet_radix_sunset.md).
+ * The radices and the measurements: docs/roadmap/codelet_trim_odd_radices.md. */
+#define EST_ODD_SPLIT_MAX 16
+static inline int est_radix_spills(int R) { return R > EST_ODD_SPLIT_MAX && (R & 1) && !vfft_is_prime(R); }
 /* the 2D tier's column pool, its odd radices in the enumerator's order (policy_il.h) */
 #define EST__R(R) R,
 static const int est_odd2d[] = { VFFT_IL2D_COL_ODD_RADICES(EST__R) };
@@ -469,6 +476,7 @@ static inline int est_pair_legal(long long N, int R1, int R2)
     if (R1 < 3 || R2 < 3 || R1 > 64 || R2 > 64 || (long long)R1 * R2 != N) return 0;
     if (!est_in(est_pair_list, EST_NELEM(est_pair_list), R1) ||
         !est_in(est_pair_list, EST_NELEM(est_pair_list), R2)) return 0;
+    if (est_radix_spills(R1) || est_radix_spills(R2)) return 0;
     if (est_is_pow2(N) && (R1 == 64 || R2 == 64)) return 0;
     return 1;
 }
@@ -513,6 +521,7 @@ static inline int est_c3_legal(long long N, int R2, int A, int B)
 {
     const long long R1 = (long long)A * B;
     if (R2 < 3 || A < 3 || B < 3 || R1 * R2 != N || R1 < 9 || est_is_pow2(R1)) return 0;
+    if (est_radix_spills(R2) || est_radix_spills(A) || est_radix_spills(B)) return 0;
     return est_in(est_pair_list, EST_NELEM(est_pair_list), R2) &&
            est_in(est_pair_list, EST_NELEM(est_pair_list), A) &&
            est_in(est_pair_list, EST_NELEM(est_pair_list), B);
@@ -780,7 +789,7 @@ static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c,
  * EST_FS_COL_RADIX_MAX: past it a 4-stage chain folds into 64s (3.64.32, 5.5.5.64 from 3145728 up),
  * and 64-stage chains lost 11-15 % at 1179648 (8.64.9, 4.64.9); no such length was timed, so those
  * keep the balanced split. */
-#define EST_FS_ODD_MAX 16
+#define EST_FS_ODD_MAX EST_ODD_SPLIT_MAX
 #define EST_FS_ROW_MAX 512
 #define EST_FS_COL_RADIX_MAX 32
 
@@ -798,7 +807,7 @@ static inline int est_fs_col_chain(long long N1, int *c)
     for (i = 0; i < EST_NELEM(est_odd2d); i++)
     {
         const int r = est_odd2d[i];
-        if (r > EST_FS_ODD_MAX && !vfft_is_prime(r))
+        if (est_radix_spills(r))
             continue;
         while (o % r == 0 && no < 32) { odd[no++] = r; o /= r; }
     }
@@ -1225,7 +1234,7 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
     if (N < 2 || N > VFFT_K1FS_MAX_N)
         return est_refuse(why, whylen, "N = %lld is outside 2..%d", N, VFFT_K1FS_MAX_N);
     /* 2. a solo kernel, when N has no legal pair or N <= 10 */
-    if (est_in(est_n1_list, EST_NELEM(est_n1_list), N) && (!est_pair_shape(N, &R1, &R2) || N <= 10))
+    if (est_in(est_n1_list, EST_NELEM(est_n1_list), N) && !est_radix_spills((int)N) && (!est_pair_shape(N, &R1, &R2) || N <= 10))
     {
         o->k1_il_route = VFFT_K1_IL_MONO;
         o->il_kv = 0;   /* form 0, the solo n1 (il_solo_registry.h:45) */
