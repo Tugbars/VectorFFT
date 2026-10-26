@@ -17,8 +17,8 @@
  *
  * THE FORMULAS ARE PURE, as at rank 1: the machine and the request only -- no clock, no store, no
  * allocation. The facts they read are the library's: the column pool the door races
- * (_il2d_enum_rec, il2d_cols.h:210), the Rader stage's admission and the engine's own default inner
- * and window (vfft_policy_il2d_rader_prime, _ilrd_pick_chain, _ilrd_default_W), the kernel resolvers
+ * (_il2d_enum_rec, il2d_cols.h:210), the Rader stage's admission, the engine's own inner pick and its
+ * candidates (vfft_policy_il2d_rader_prime, _ilrd_pick_chain, _ilrd_enum_inners), the kernel resolvers
  * (vfft_il2p_col_forms, vfft_k1_mono_ilc_fn, vfft_il_n1ccs_fn), the band laws of policy_il.h, the 3D
  * door's strip widths (_ilnd_sw_pool, whose L2 bound is the host's: at create the machine's). The
  * build's pre-flight runs the door's own constructors on the recipe, so a recipe a registry change
@@ -119,8 +119,16 @@ typedef struct est_plan3d_s
 #define EST_ND_ROWB_MAX 16
 #define EST_ND_ROWB2_MAX 64
 #define EST_ND_RBK 8
-/* the Rader stage's window: this many times the engine's default (sketch §6) */
-#define EST_ND_RD_WIN_MUL 4
+/* the Rader stage (est__rader, 2026-10-26): the window EST_ND_RD_W columns; the inner chain the engine's
+ * pick unless a radix passes EST_ND_RD_MAX_RADIX, an odd radix passes EST_ND_RD_ODD_MAX, or the first
+ * radix is EST_ND_RD_MAX_RADIX or more. Every inner chain x the windows 8-256 timed on 26 2D cells (primes
+ * 53-509, 64-2048 columns; docs/research/estimate_threaded/evidence/nd/rader2d/): W32 the best or within
+ * 1 % at 23 of 26; the chains failing a check lose 6-86 % (4.15, 4.25, 21.6, 25.10: odd kernels that
+ * spill; 4.64, 3.64; 32.3). Against the planner 1.20 -> 1.00 (geomean), the worst 1.86 -> 1.08 (193x256,
+ * whose planner takes the three-stage 4.4.12). */
+#define EST_ND_RD_W 32
+#define EST_ND_RD_MAX_RADIX 32
+#define EST_ND_RD_ODD_MAX 13
 /* the 3D natural form (sketch §9): the strips when the volume passes the L3 and axis 0's column is
  * short, 16 N1 bytes within L1d / EST_ND_NF_L1_DIV; the strip width the widest of the door's whose
  * strip scratch, 16 N1 w bytes, fits L2 / EST_ND_NSW_L2_DIV */
@@ -387,18 +395,47 @@ static inline int est__wl_pool(const est_machine_t *m, const est_col_t *c, int *
 
 /* ── the N-arm and the column pass's verdicts ──────────────────────────── */
 
-/* the Rader stage at stage 0 (sketch §6): the engine's own inner pick at p - 1 (_ilrd_pick_chain,
- * il_rader_stage.h:184; never led by radix 64, so the request rebuilds it, :392), the window
- * EST_ND_RD_WIN_MUL times its default (_ilrd_default_W, :412) over the column space (N / p) w, as the
- * engine takes a requested width (_ilrd_create, :433-438). */
+/* an inner chain the Rader stage serves badly: a radix above EST_ND_RD_MAX_RADIX, an odd radix above
+ * EST_ND_RD_ODD_MAX, or a first radix of EST_ND_RD_MAX_RADIX or more */
+static inline int est__rd_inner_bad(const int *Rs, int nst)
+{
+    int i;
+    if (Rs[0] >= EST_ND_RD_MAX_RADIX)
+        return 1;
+    for (i = 0; i < nst; i++)
+        if (Rs[i] > EST_ND_RD_MAX_RADIX || ((Rs[i] & 1) && Rs[i] > EST_ND_RD_ODD_MAX))
+            return 1;
+    return 0;
+}
+/* the Rader stage at stage 0 (sketch §6): the inner chain of p - 1 the engine's own pick (_ilrd_pick_chain,
+ * il_rader_stage.h:184; never led by radix 64, so the request rebuilds it, :392) unless est__rd_inner_bad;
+ * then, of the engine's candidates (_ilrd_enum_inners, :705, the planner's race pool), the fewest stages
+ * that pass, the smallest radices first (the pick when none passes); the window EST_ND_RD_W within the
+ * column space (N / p) w, as the engine takes a requested width (_ilrd_create, :433-438). */
 static inline int est__rader(est_col_t *c, int p)
 {
     const size_t ncol = (size_t)(c->N / p) * (size_t)c->w;
+    _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
     size_t W;
-    int nestp = 0;
+    int nestp = 0, n, i, best = -1;
     if (!_ilrd_pick_chain(p - 1, c->rd, &c->rd_n, &nestp))
         return -1;
-    W = (size_t)EST_ND_RD_WIN_MUL * _ilrd_default_W(p, ncol);
+    if (est__rd_inner_bad(c->rd, c->rd_n))
+    {
+        n = _ilrd_enum_inners(p - 1, cand, VFFT_ILRD_MAX_INNERS);
+        for (i = 0; i < n; i++)
+            if (!est__rd_inner_bad(cand[i].Rs, cand[i].nst) &&
+                (best < 0 || cand[i].nst < cand[best].nst ||
+                 (cand[i].nst == cand[best].nst &&
+                  memcmp(cand[i].Rs, cand[best].Rs, sizeof(int) * (size_t)cand[i].nst) < 0)))
+                best = i;
+        if (best >= 0)
+        {
+            memcpy(c->rd, cand[best].Rs, sizeof(int) * (size_t)cand[best].nst);
+            c->rd_n = cand[best].nst;
+        }
+    }
+    W = EST_ND_RD_W;
     W &= ~(size_t)1;
     if (W > ncol)
         W = ncol & ~(size_t)1;
