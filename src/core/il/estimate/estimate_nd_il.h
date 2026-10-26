@@ -12,7 +12,8 @@
  *
  * SCOPE: one transform (howmany 1), natural order, one thread, either placement (the 2D and 3D rows
  * are placement-blind: one recipe serves both), every axis >= 2. Rank 3 is the 2D plan per plane then
- * axis 0 (s=1), or on the even planes near the L2 the flat tier (s=2, est__flat_plane). The front door
+ * axis 0 (s=1), or on the even planes near the L2 and the planes with an odd side the flat tier (s=2,
+ * est__flat_plane). The front door
  * refuses the rest under the flag (vfft_api.h).
  *
  * THE FORMULAS ARE PURE, as at rank 1: the machine and the request only -- no clock, no store, no
@@ -140,11 +141,21 @@ typedef struct est_plan3d_s
  * 0.82-1.00 x s=1 in 15 of 15 (240^2 at N1 16 32, 150x400, 280^2, 288^2, 300^2 at N1 8 16 32, 320^2,
  * 336^2, 352^2, 360^2 at N1 8 16, 384^2, 400^2); below it 0.96-1.06 (100^2 1.06, 192^2 1.03), above it
  * 448^2 1.04.
- * Not the powers of two (1 MB 0.95-1.05, 2 MB 1.05-1.11) nor the odd planes (105-405: 1.04-1.23 in 15 of
- * 17; the chains carry the odd radices 11-27). A cube past the L3 keeps the planes up to
+ * Not the powers of two (1 MB 0.95-1.05, 2 MB 1.05-1.11). A cube past the L3 keeps the planes up to
  * EST_ND_FLAT_HI_L3_PCT: the estimate's own s=2 against its s=1 over 27 cells (e_flat2.c, 21 rounds) --
  * within the L3 0.90-0.98 in 6 of 6; past it, planes below 1.5 MB 0.92-1.00 in 14 of 14, planes of 1.5 MB
- * and more 0.95-1.03 (320^2 1.01, 400^2 1.01 and 1.03, 384^2 1.02). */
+ * and more 0.95-1.03 (320^2 1.01, 400^2 1.01 and 1.03, 384^2 1.02).
+ * THE PLANES WITH AN ODD SIDE (2026-10-27) take the flat tier at any size up to the same top, once their
+ * chains carry no 21, 25 or 27 (est__pool): the estimate's own s=2 against its s=1, same run, 15 rounds,
+ * 76 cells of 7 KB to 2.5 MB (N1 3-301). Where the plane plan runs no skewed column pass, 63 of 66 at
+ * 0.80-1.02 (64x27^2 0.80, 9x21^2 0.83, 25^3 0.86, 27^3 0.85, 105^2 at N1 32 0.88, 275^2 0.87, 145^3
+ * 0.95, 301^3 0.97), 3 at 1.05-1.10 (31^3, 243^2 and 297^2 at N1 8); where it skews it (a one-stage
+ * column, has_csk) 7 of 10 lose 1.10-1.46 (every plane of 15 rows: 4x15x256 1.46, 15^2x4096 1.20; 9^3
+ * 1.37, 7x11x13 1.26), the flat tier having no skewed pass. The planner banks s=2 at 18 of the 20 odd-side
+ * cubes in the store (s=1 at 75^3, a tie, and 15^2x4096). With 25 and 27 in their chains the same planes
+ * had lost (105-405: 1.04-1.23 in 15 of 17). Nor when the rows are one odd solo kernel (N3 odd in the
+ * solo list, not spilling): 9^3, 15^3, 31^3 and 7x11x13 lose 5-37 %, and the planner banks s=1 at all
+ * four. */
 #define EST_ND_FLAT_LO_PCT 40
 #define EST_ND_FLAT_HI_PCT 125
 #define EST_ND_FLAT_HI_L3_PCT 75
@@ -697,16 +708,22 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
     return 0;
 }
-/* the 3D structure: the flat tier (s=2) on an even plane -- N2 and N3 even, not both powers of two --
- * of EST_ND_FLAT_LO_PCT to EST_ND_FLAT_HI_PCT percent of the L2 (EST_ND_FLAT_HI_L3_PCT when the cube
- * passes the L3) whose column pass is a plain chain (no Bluestein, no Rader stage); else the 2D plan per
- * plane (s=1) */
-static inline int est__flat_plane(const est_machine_t *m, int N1, int N2, int N3, const est_col_t *c)
+/* the 3D structure: the flat tier (s=2) on a plane of at most EST_ND_FLAT_HI_PCT percent of the L2
+ * (EST_ND_FLAT_HI_L3_PCT when the cube passes the L3) whose column pass is a plain chain (no Bluestein, no
+ * Rader stage) and that is either even -- N2 and N3 even, not both powers of two, at least
+ * EST_ND_FLAT_LO_PCT percent of the L2 -- or has an odd side, a plane plan without the skewed column
+ * pass and rows that are not one odd solo kernel; else the 2D plan per plane (s=1) */
+static inline int est__flat_plane(const est_machine_t *m, int N1, int N2, int N3, const est_plan2d_t *pl)
 {
+    const est_col_t *c = &pl->col;
     const long long b = 16LL * N2 * N3;
     const int hi = b * N1 > (long long)m->l3 ? EST_ND_FLAT_HI_L3_PCT : EST_ND_FLAT_HI_PCT;
-    return !(N2 & 1) && !(N3 & 1) && !(est_is_pow2(N2) && est_is_pow2(N3)) && c->blu <= 0 && !c->rd_n &&
-           100 * b >= EST_ND_FLAT_LO_PCT * (long long)m->l2 && 100 * b <= hi * (long long)m->l2;
+    if (c->blu > 0 || c->rd_n || 100 * b > hi * (long long)m->l2)
+        return 0;
+    if ((N2 & 1) || (N3 & 1))   /* a plane with an odd side: any size, unless the plane plan skews its column
+                                 * pass (the flat tier has no skewed pass) or its rows are one odd solo kernel */
+        return !pl->csk && !((N3 & 1) && est_in(est_n1_list, EST_NELEM(est_n1_list), N3) && !est_radix_spills(N3));
+    return !(est_is_pow2(N2) && est_is_pow2(N3)) && 100 * b >= EST_ND_FLAT_LO_PCT * (long long)m->l2;
 }
 /* est_plan_3d: the 3D c2c plan at N1 x N2 x N3, natural, one thread (sketch §9): the structure
  * (est__flat_plane: the 2D plan per plane, s=1, or the flat tier, s=2, with the 2D plan's column chain
@@ -739,7 +756,7 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
-    out->s = est__flat_plane(m, N1, N2, N3, &out->plane.col) ? 2 : 1;
+    out->s = est__flat_plane(m, N1, N2, N3, &out->plane) ? 2 : 1;
     if (out->s == 2)
     {
         out->col1 = out->plane.col;
