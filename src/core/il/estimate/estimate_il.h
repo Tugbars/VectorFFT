@@ -768,17 +768,40 @@ static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c,
 
 /* ── the four-step ──────────────────────────────────────────────────────── */
 
-/* the column chain at N1 over the 2D tier's pool, at most 4 stages (il2d_cols.h:164-241): 8s with
- * one 4 or 16, then the odd part largest first, then a closing radix. A lone 2 closes the chain
- * folded into the smallest odd factor p whose 2p is a closing radix (6, 10, 14, 22, 26), else as 2
- * itself (the closing-only radices, il2d_cols.h:160-163). A chain past 4 stages folds its power of
- * two into 64, 32 or 16 stages. Returns the stage count, 0 = none. */
+/* the four-step's column chain and split (2026-10-26): every column chain of the 2D pool at every
+ * split timed on 8 lengths 300000-1200000 (docs/research/estimate_threaded/evidence/fourstep/; the
+ * radices: docs/roadmap/codelet_trim_odd_radices.md). A composite odd radix above EST_FS_ODD_MAX
+ * spills the 16 YMM registers: the best chain with a 25 or 27 lost 2-17 % to the best without at
+ * every split but one (1000000, a tie); 15 stays (300000: the 15-led chains 0.99-1.00 against the
+ * planner, the best without a 15 1.08). The odd stages lead (15.5.8, 5.5.5.8, 9.8.4.8 against 8.15.5
+ * 1.06, 8.4.25 1.35). The row part N2 at most EST_FS_ROW_MAX: the best splits keep it at 243-600
+ * (600x500, 720x500, 1000x500, 2000x500, 2304x512); the square-root split cost 1.05-1.27 with its
+ * best chain. The short row part only where the column chain then needs no radix above
+ * EST_FS_COL_RADIX_MAX: past it a 4-stage chain folds into 64s (3.64.32, 5.5.5.64 from 3145728 up),
+ * and 64-stage chains lost 11-15 % at 1179648 (8.64.9, 4.64.9); no such length was timed, so those
+ * keep the balanced split. */
+#define EST_FS_ODD_MAX 16
+#define EST_FS_ROW_MAX 512
+#define EST_FS_COL_RADIX_MAX 32
+
+/* the column chain at N1 over the 2D tier's pool, at most 4 stages (il2d_cols.h:164-241): the odd
+ * part largest first, with no composite odd radix above EST_FS_ODD_MAX (21, 25, 27 split into 7.3,
+ * 5.5, 9.3), then 8s with one 4 or 16, then a closing radix; a chain holding a prime above
+ * EST_FS_ODD_MAX puts the 8s first (no large radix leads). A lone 2 closes the chain folded into
+ * the smallest odd factor p whose 2p is a closing radix (6, 10, 14, 22, 26), else as 2 itself (the
+ * closing-only radices, il2d_cols.h:160-163). A chain past 4 stages folds its power of two into 64,
+ * 32 or 16 stages. Returns the stage count, 0 = none. */
 static inline int est_fs_col_chain(long long N1, int *c)
 {
     int odd[32], no = 0, pw[32], np = 0, close = 0, a = est_v2(N1), i, k, big;
     long long o = N1 >> est_v2(N1);
     for (i = 0; i < EST_NELEM(est_odd2d); i++)
-        while (o % est_odd2d[i] == 0 && no < 32) { odd[no++] = est_odd2d[i]; o /= est_odd2d[i]; }
+    {
+        const int r = est_odd2d[i];
+        if (r > EST_FS_ODD_MAX && !vfft_is_prime(r))
+            continue;
+        while (o % r == 0 && no < 32) { odd[no++] = r; o /= r; }
+    }
     if (o != 1) return 0;
     if (a == 1)
     {
@@ -831,19 +854,29 @@ static inline int est_fs_col_chain(long long N1, int *c)
         }
     }
     k = 0;
-    for (i = 0; i < np; i++) c[k++] = pw[i];
-    for (i = 0; i < no; i++) c[k++] = odd[i];
+    if (no && odd[0] <= EST_FS_ODD_MAX)
+    {   /* the odd stages lead; a chain with a prime above EST_FS_ODD_MAX keeps it off the lead
+         * (no such chain was timed): the powers of two first, as before */
+        for (i = 0; i < no; i++) c[k++] = odd[i];
+        for (i = 0; i < np; i++) c[k++] = pw[i];
+    }
+    else
+    {
+        for (i = 0; i < np; i++) c[k++] = pw[i];
+        for (i = 0; i < no; i++) c[k++] = odd[i];
+    }
     if (close) c[k++] = close;
     return (k >= 1 && k <= 4 && est_prod(c, k) == N1) ? k : 0;
 }
 /* the split N1 x N2. A power of two: 512 x 1024 at 2^19, N1 = 4096 from 2^20 (threaded: N / 2048
- * up to 2^20, then 4096). Any other N: the most balanced split with both sides in
- * [VFFT_K1FS_SIDE_MIN, VFFT_K1FS_SIDE_MAX], N1 a column chain and N2 no prime cell
- * (k1_fourstep.h:86-158); on a tie the larger N1 (threaded: the smaller). 0 = none. */
+ * up to 2^20, then 4096). Any other N: both sides in [VFFT_K1FS_SIDE_MIN, VFFT_K1FS_SIDE_MAX], N1 a
+ * column chain and N2 no prime cell (k1_fourstep.h:86-158); one thread: the largest row part N2 at
+ * most EST_FS_ROW_MAX whose column chain has no radix above EST_FS_COL_RADIX_MAX, else (and
+ * threaded) the most balanced split, on a tie the larger N1 (threaded: the smaller). 0 = none. */
 static inline int est_fs_split(long long N, int threaded, int *N1, int *N2)
 {
     long long d, best = 0;
-    int c[8], b1 = 0, b2 = 0;
+    int c[8], b1 = 0, b2 = 0, r1 = 0, r2 = 0;
     if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N) return 0;
     if (est_is_pow2(N))
     {
@@ -856,14 +889,28 @@ static inline int est_fs_split(long long N, int threaded, int *N1, int *N2)
     for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX; d++)
     {
         const long long e = N / d, hi = d > e ? d : e;
+        int nst, i, big = 0;
         if (N % d || e < VFFT_K1FS_SIDE_MIN || e > VFFT_K1FS_SIDE_MAX) continue;
-        if (!est_fs_col_chain(d, c) || vfft_policy_prime_cell((int)e)) continue;
+        if (!(nst = est_fs_col_chain(d, c)) || vfft_policy_prime_cell((int)e)) continue;
+        for (i = 0; i < nst; i++)
+            if (c[i] > big) big = c[i];
+        if (!threaded && e <= EST_FS_ROW_MAX && big <= EST_FS_COL_RADIX_MAX && e > r2)
+        {
+            r1 = (int)d;
+            r2 = (int)e;
+        }
         if (!best || hi < best || (hi == best && (threaded ? d < b1 : d > b1)))
         {
             best = hi;
             b1 = (int)d;
             b2 = (int)e;
         }
+    }
+    if (r2)
+    {   /* one thread: the short row part */
+        *N1 = r1;
+        *N2 = r2;
+        return 1;
     }
     if (!best) return 0;
     *N1 = b1;
