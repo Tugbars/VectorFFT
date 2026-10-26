@@ -19,7 +19,7 @@
  *      clone set dropped): the column chain, Bluestein, the turned pass, the Rader engine, the
  *      natural leaf, the band, the tile, the row route, the turn, the skew, each child's engine;
  *      at rank 3 the structure, the serial verdict, the natural form and its strip width, and the
- *      plane plan as a 2D plan.
+ *      plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2).
  * An estimate create never hands back a plan that measured.
  *
  * POSITION IN vfft.c: included by c2c_estimate_il.h after the 1D build, whose pre-flight, plan check
@@ -177,16 +177,17 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
     return 0;
 }
 /* The 3D row as the 3D door replays it at one thread (fftnd_il.h:1410-1940): axis 0, the structure
- * s=1 alone (no flat arm is built), the natural form -- the strips take the written width only where
- * the door's strip pool is not empty (fftnd_il.h:1566-1575; else it drops the form and races the
- * band), and serve axis 0 unbanded -- the plane plan as a 2D plan, the turned pass's child. Returns
+ * written alone (the other arm is not built), the natural form -- the strips take the written width
+ * only where the door's strip pool is not empty (fftnd_il.h:1566-1575; else it drops the form and
+ * races the band), and serve axis 0 unbanded -- then s=1: the plane plan as a 2D plan; s=2: axis 1 as
+ * the natural pass at (N2, w = N3) unbanded and the row plan at N3; the turned pass's child. Returns
  * 0, or -1 with the reason. */
 static inline int est__preflight_3d(const est_plan3d_t *p, char *why, size_t whylen)
 {
     char w2[400];
     if (p->N1 < 2 || p->N2 < 2 || p->N3 < 2 || vfft_policy_c2c_row_refused(p->N3))
         return est_refuse(why, whylen, "%dx%dx%d is not a 3D cell the door serves", p->N1, p->N2, p->N3);
-    if (p->s != 1 || (p->nf != 1 && p->nf != 2) || (p->nf == 1 && p->nsw) || (p->nf == 2 && p->col.wl))
+    if ((p->s != 1 && p->s != 2) || (p->nf != 1 && p->nf != 2) || (p->nf == 1 && p->nsw) || (p->nf == 2 && p->col.wl))
         return est_refuse(why, whylen, "%dx%dx%d: s=%d nf=%d nsw=%d wl=%d", p->N1, p->N2, p->N3, p->s, p->nf, p->nsw,
                           p->col.wl);
     if (p->nf == 2)
@@ -205,7 +206,17 @@ static inline int est__preflight_3d(const est_plan3d_t *p, char *why, size_t why
         return est_refuse(why, whylen, "%dx%dx%d: axis 0 is not the scrambled pass over the planes", p->N1, p->N2, p->N3);
     if (p->plane.N1 != p->N2 || p->plane.N2 != p->N3)
         return est_refuse(why, whylen, "%dx%dx%d: the plane plan is not %dx%d", p->N1, p->N2, p->N3, p->N2, p->N3);
-    if (est__preflight_2d(&p->plane, w2, sizeof w2))
+    if (p->s == 2)
+    {
+        if (est__preflight_col(&p->col1, w2, sizeof w2))
+            return est_refuse(why, whylen, "%dx%dx%d axis 1: %s", p->N1, p->N2, p->N3, w2);
+        if (!p->col1.nat || p->col1.w != p->N3 || p->col1.N != p->N2 || p->col1.wl || p->col1.blu > 0 || p->col1.rd_n)
+            return est_refuse(why, whylen, "%dx%dx%d: axis 1 is not the natural chain pass at %d over %d, unbanded", p->N1,
+                              p->N2, p->N3, p->N2, p->N3);
+        if (est__preflight_child(&p->plane.rp, p->N3, VFFT_PLACEMENT_IN, "the row plan", why, whylen))
+            return -1;
+    }
+    else if (est__preflight_2d(&p->plane, w2, sizeof w2))
         return est_refuse(why, whylen, "%dx%dx%d, the plane plan: %s", p->N1, p->N2, p->N3, w2);
     if (p->col.tpc == 1 && est__preflight_child(&p->tpcp, p->N1, VFFT_PLACEMENT_IN, "the turned prime pass", why, whylen))
         return -1;
@@ -283,17 +294,23 @@ static inline int est__check_2d(const struct vfft_plan_s *h, const est_plan2d_t 
         return -1;
     return 0;
 }
-/* the 3D plan against its recipe: the 2D plan per plane, serial, the natural form (the strips at the
- * recipe's width, or the cycle walk), axis 0, the plane plan as a 2D plan, the turned pass's plan */
+/* the 3D plan against its recipe: the structure, serial, the natural form (the strips at the recipe's
+ * width, or the cycle walk), axis 0, then s=1: the plane plan as a 2D plan; s=2: axis 1 and the row
+ * plan; the turned pass's plan */
 static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t *p, char *why, size_t whylen)
 {
     const vfft_ilnd_t *d = h ? h->ilnd : NULL;
     if (!d || d->N[0] != p->N1 || d->N[1] != p->N2 || d->N[2] != p->N3)
         return est_refuse(why, whylen, "the door built no 3D plan at %dx%dx%d", p->N1, p->N2, p->N3);
-    if (d->arm != p->s || d->mt != 0 || !d->child || d->row || d->nf != p->nf || (p->nf == 2 && d->nsw != p->nsw))
+    if (d->arm != p->s || d->mt != 0 || !d->child != (p->s == 2) || !d->row != (p->s == 1) || d->nf != p->nf ||
+        (p->nf == 2 && d->nsw != p->nsw))
         return est_refuse(why, whylen, "%dx%dx%d: the door serves structure %d, mt %d, form %d width %d; the recipe %d, "
                           "serial, %d width %d", p->N1, p->N2, p->N3, d->arm, d->mt, d->nf, d->nsw, p->s, p->nf, p->nsw);
-    if (est__check_col(&d->ax0, &p->col, why, whylen) || est__check_2d(d->child, &p->plane, why, whylen))
+    if (est__check_col(&d->ax0, &p->col, why, whylen))
+        return -1;
+    if (p->s == 2 ? est__check_col(&d->ax1, &p->col1, why, whylen) ||
+                        est__check_child(d->row, &p->plane.rp, p->N3, VFFT_PLACEMENT_IN, "row plan", why, whylen)
+                  : est__check_2d(d->child, &p->plane, why, whylen))
         return -1;
     if (p->col.tpc == 1 &&
         est__check_child(d->ax0.tpcplan, &p->tpcp, p->N1, VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))

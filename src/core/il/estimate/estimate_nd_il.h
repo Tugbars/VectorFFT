@@ -11,8 +11,9 @@
  * with the store's own writers; the build is c2c_estimate_nd_il.h's.
  *
  * SCOPE: one transform (howmany 1), natural order, one thread, either placement (the 2D and 3D rows
- * are placement-blind: one recipe serves both), every axis >= 2. Rank 3 is always the 2D plan per
- * plane then axis 0 (s=1). The front door refuses the rest under the flag (vfft_api.h).
+ * are placement-blind: one recipe serves both), every axis >= 2. Rank 3 is the 2D plan per plane then
+ * axis 0 (s=1), or on the even planes near the L2 the flat tier (s=2, est__flat_plane). The front door
+ * refuses the rest under the flag (vfft_api.h).
  *
  * THE FORMULAS ARE PURE, as at rank 1: the machine and the request only -- no clock, no store, no
  * allocation. The facts they read are the library's: the column pool the door races
@@ -75,10 +76,13 @@ typedef struct est_plan3d_s
 {
     int N1, N2, N3;
     est_col_t col;         /* axis 0; with the strips its band is 0 and [wl] [tf] are not written */
-    int s;                 /* [s] 1 = the 2D plan per plane (always: the owner's ruling) */
+    int s;                 /* [s] 1 = the 2D plan per plane, 2 = the flat tier (est__flat_plane) */
     int nf;                /* [nf] 1 = the cycle walk, 2 = the strips */
     int nsw;               /* [nsw] the strip width in columns (nf = 2); 0 = not written (nf = 1) */
-    est_plan2d_t plane;    /* [plane_] the 2D plan at N2 x N3, natural, with its own children */
+    est_plan2d_t plane;    /* [plane_] the 2D plan at N2 x N3, natural, with its own children; s = 2 writes
+                            * only its row plan, under rp_ */
+    est_col_t col1;        /* [chain1 forms1 blu1] s = 2: axis 1, the plane plan's column pass unbanded (the
+                            * door bands axis 0 alone, fftnd_il.h:1752) */
     est_recipe_t tpcp;     /* [tpc_] N1, in place, natural: col.tpc == 1 */
 } est_plan3d_t;
 
@@ -122,6 +126,20 @@ typedef struct est_plan3d_s
  * strip scratch, 16 N1 w bytes, fits L2 / EST_ND_NSW_L2_DIV */
 #define EST_ND_NF_L1_DIV 4
 #define EST_ND_NSW_L2_DIV 2
+/* the 3D structure (est__flat_plane): the flat tier on the even planes of EST_ND_FLAT_LO_PCT to
+ * EST_ND_FLAT_HI_PCT percent of the L2 (2026-10-26, s=1 against s=2 timed on 64 cells, 15 rounds, one
+ * thread; docs/research/estimate_threaded/evidence/nd/s_confirm/). The even planes in that band: s=2
+ * 0.82-1.00 x s=1 in 15 of 15 (240^2 at N1 16 32, 150x400, 280^2, 288^2, 300^2 at N1 8 16 32, 320^2,
+ * 336^2, 352^2, 360^2 at N1 8 16, 384^2, 400^2); below it 0.96-1.06 (100^2 1.06, 192^2 1.03), above it
+ * 448^2 1.04.
+ * Not the powers of two (1 MB 0.95-1.05, 2 MB 1.05-1.11) nor the odd planes (105-405: 1.04-1.23 in 15 of
+ * 17; the chains carry the odd radices 11-27). A cube past the L3 keeps the planes up to
+ * EST_ND_FLAT_HI_L3_PCT: the estimate's own s=2 against its s=1 over 27 cells (e_flat2.c, 21 rounds) --
+ * within the L3 0.90-0.98 in 6 of 6; past it, planes below 1.5 MB 0.92-1.00 in 14 of 14, planes of 1.5 MB
+ * and more 0.95-1.03 (320^2 1.01, 400^2 1.01 and 1.03, 384^2 1.02). */
+#define EST_ND_FLAT_LO_PCT 40
+#define EST_ND_FLAT_HI_PCT 125
+#define EST_ND_FLAT_HI_L3_PCT 75
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -627,9 +645,21 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
     return 0;
 }
-/* est_plan_3d: the 3D c2c plan at N1 x N2 x N3, natural, one thread (sketch §9): the 2D plan per plane
- * (s=1), axis 0 on the scrambled pass over the planes, the natural form (the strips or the cycle walk;
- * axis 0's band only with the cycle walk). Pure. */
+/* the 3D structure: the flat tier (s=2) on an even plane -- N2 and N3 even, not both powers of two --
+ * of EST_ND_FLAT_LO_PCT to EST_ND_FLAT_HI_PCT percent of the L2 (EST_ND_FLAT_HI_L3_PCT when the cube
+ * passes the L3) whose column pass is a plain chain (no Bluestein, no Rader stage); else the 2D plan per
+ * plane (s=1) */
+static inline int est__flat_plane(const est_machine_t *m, int N1, int N2, int N3, const est_col_t *c)
+{
+    const long long b = 16LL * N2 * N3;
+    const int hi = b * N1 > (long long)m->l3 ? EST_ND_FLAT_HI_L3_PCT : EST_ND_FLAT_HI_PCT;
+    return !(N2 & 1) && !(N3 & 1) && !(est_is_pow2(N2) && est_is_pow2(N3)) && c->blu <= 0 && !c->rd_n &&
+           100 * b >= EST_ND_FLAT_LO_PCT * (long long)m->l2 && 100 * b <= hi * (long long)m->l2;
+}
+/* est_plan_3d: the 3D c2c plan at N1 x N2 x N3, natural, one thread (sketch §9): the structure
+ * (est__flat_plane: the 2D plan per plane, s=1, or the flat tier, s=2, with the 2D plan's column chain
+ * and row plan), axis 0 on the scrambled pass over the planes, the natural form (the strips or the cycle
+ * walk; axis 0's band only with the cycle walk). Pure. */
 static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, est_plan3d_t *out, char *why,
                               size_t whylen)
 {
@@ -657,7 +687,12 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
-    out->s = 1;
+    out->s = est__flat_plane(m, N1, N2, N3, &out->plane.col) ? 2 : 1;
+    if (out->s == 2)
+    {
+        out->col1 = out->plane.col;
+        out->col1.wl = 0;
+    }
     out->nf = est_nf_3d(m, &out->col, N2, N3, &out->nsw);
     out->col.wl = out->nf == 2 ? 0 : est_wl_3d(m, &out->col);   /* the strips serve axis 0 unbanded (fftnd_il.h:1619) */
     return 0;
@@ -754,8 +789,10 @@ static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *
     return 0;
 }
 /* est_put_rows_3d: the 3D row into st -- the axis-0 tokens (with the strips no wl, no tf), s, nf and,
- * with the strips, nsw (fftnd_il.h:1731-1738), then the plane child as a whole 2D row with its own
- * children under plane_, and tpc_ (fftnd_il.h:1933-1935). Returns 0, or -1 with the reason. */
+ * with the strips, nsw (fftnd_il.h:1731-1738), then s=1: the plane child as a whole 2D row with its own
+ * children under plane_; s=2: axis 1's tokens on the same row (chain1 forms1 blu1, no band) and the row
+ * plan under rp_ (_ilnd_build_flat, fftnd_il.h:1192-1216); then tpc_ (fftnd_il.h:1933-1935). Returns 0,
+ * or -1 with the reason. */
 static inline int est_put_rows_3d(vw2_store_t *st, const est_plan3d_t *p, char *why, size_t whylen)
 {
     vw2_ilcol_key_t ck;
@@ -768,6 +805,19 @@ static inline int est_put_rows_3d(vw2_store_t *st, const est_plan3d_t *p, char *
         (p->nf == 2 && vw2_ilcol_tok_seti(st, &ck, "nsw", p->nsw) != VW2_OK))
         return est_refuse(why, whylen, "the %dx%dx%d row was refused by the store's writers", p->N1, p->N2, p->N3);
     vw2__ilcol_key(&ck, &key);
+    if (p->s == 2)
+    {
+        vw2_ilcol_key_t ck1 = ck;
+        ck1.axis = 1;
+        if (est__put_col(st, &ck1, &p->col1, -1, 0))
+            return est_refuse(why, whylen, "the %dx%dx%d row's axis 1 was refused by the store's writers", p->N1, p->N2,
+                              p->N3);
+        if (est__put_child(st, &key, "rp_", &p->plane.rp, p->N3, VFFT_PLACEMENT_IN, why, whylen))
+            return -1;
+        if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
+            return -1;
+        return 0;
+    }
     if (!(T = vfft_child_store_new()))
         return est_refuse(why, whylen, "out of memory");
     if (est_put_rows_2d(&T->vw2, &p->plane, why, whylen))
