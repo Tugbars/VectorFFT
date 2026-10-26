@@ -1093,8 +1093,10 @@ static inline int est_blue_inner(const est_machine_t *m, long long M, est_inner_
 }
 /* the ZTURN-T inner's threaded arm: serial while the bound 16 Nc <= 2 L1d holds, else TILES (2) when
  * the inner is tiled with at least 2 tiles of its length M, else BLOCKS (1); no other inner has a
- * threaded form (il_prime_mt.h:36). The c2c prime cell reads the bound at Nc = N, the transform's
- * length. */
+ * threaded form (il_prime_mt.h:36). The c2c prime cell reads the bound at its inner length M, the work
+ * it threads (2026-10-26, at 4 and 6 threads): Bluestein lengths whose N fits the bound but whose M does
+ * not ran 0.53-0.92 x serial threaded (4099, 2246, 3373, 3433, 3903, 4504, 4649, 5260, 5801, 5835), while
+ * M <= 4096 lost (1723 at 1.33-1.39, 1868 at 1.04-1.23). */
 static inline int est_inner_mt(const est_machine_t *m, const est_inner_t *in, long long Nc, long long M, int T)
 {
     if (T <= 1 || !in->ztt || est_serial(m, Nc)) return 0;
@@ -1159,7 +1161,7 @@ inner_done:
     snprintf(o->prime.in_kind, sizeof o->prime.in_kind, "%s", in.kind);
     snprintf(o->prime.in_shape, sizeof o->prime.in_shape, "%s", in.shape);
     o->prime.in_tw = in.tw;
-    o->il_mt = est_inner_mt(m, &in, N, M, T);
+    o->il_mt = est_inner_mt(m, &in, M > N ? M : N, M, T);
     return 0;
 }
 

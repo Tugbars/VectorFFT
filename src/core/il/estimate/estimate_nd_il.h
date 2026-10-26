@@ -99,9 +99,17 @@ typedef struct est_plan3d_s
 #define EST_ND_2D_PLANE_DIV 4
 #define EST_ND_3D_PLANE_DIV 2
 #define EST_ND_2D_BAND_DIV 4
-/* the 2D row route (sketch §8): the skewed pass up to N1 = 16; the turn from N1 = 128 at N2 <= 8; the
- * batched rows up to N2 = 16, the batched two-pass rows up to N2 = 64; the two-pass tile 8 KB */
+/* the 2D row route (sketch §8): the skewed pass up to N1 = 16, and at the odd N1 up to 31 on rows of at
+ * least 128 but at the kernels that spill (est__spills_single); the turn from N1 = 128 at N2 <= 8; the
+ * batched rows up to N2 = 16, the batched two-pass rows up to N2 = 64; the two-pass tile 8 KB. The odd
+ * band is of 2026-10-26: the planner banks the skewed pass at the columns 17, 19, 21, 23, 29, 31 on rows of
+ * 128-2048 (the estimate without it 1.18-1.51 x the planner in 13 of 13 cells) and not on narrow rows
+ * (29x64, 21x21, the 21x64 and 21x21 planes of 21x21x64 and 21x21x21); over the 226 rows of the store
+ * that carry csk this agrees in 208 against 195 for "N1 <= 16" alone. Even N1 in 17..31 were not
+ * measured and keep the old bound. */
 #define EST_ND_CSK_MAX 16
+#define EST_ND_CSK_ODD_MAX 31
+#define EST_ND_CSK_ODD_N2 128
 #define EST_ND_TURN_N1 128
 #define EST_ND_TURN_N2 8
 #define EST_ND_ROWB_MAX 16
@@ -156,6 +164,13 @@ static inline int est__narrow(const est_machine_t *m, long long w)
 {
     return (long long)EST_ND_R16 * 16 * w <= (long long)m->l1d;
 }
+/* THE ODD COMPOSITE KERNELS THAT SPILL (2026-10-26): 25 and 27 run as one whole-axis kernel lose to
+ * their split (5.5, 3.9 / 9.3) -- as a single column or plane stage 1.15-1.82 x the planner's plan in 7 of
+ * 7 cells (25x25, 27x27, 25x25x25, 27x27x27, 25x25x64, 64x25x25, 27x27x64, 64x27x27), and no planner row
+ * of the 14900KF store banks either as a single stage; the skewed pass, which runs the column as one such
+ * kernel, is not banked at N1 = 25 or 27 either. A single 21 is not among them (21x21 0.99, 21x21x64
+ * 1.01). */
+static inline int est__spills_single(int N) { return N == 25 || N == 27; }
 /* one stage at N may serve: below 16 always; else the plane within the L1d, on the scrambled pass
  * every N above 16 within L1d / EST_ND_BLOCKED_L1_DIV (the caller checks the pool) */
 static inline int est__single_ok(const est_machine_t *m, int N, long long w, int nat)
@@ -238,7 +253,7 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
             b = r;
         }
     }
-    if (one >= 0 && (best < 0 || (single && est__single_ok(m, Nrest, w, nat))))
+    if (one >= 0 && (best < 0 || (single && est__single_ok(m, Nrest, w, nat) && !est__spills_single(Nrest))))
         best = one;
     if (best < 0)
         return 0;
@@ -269,7 +284,7 @@ static inline int est_col_chain(const est_machine_t *m, int N, long long w, int 
     for (i = 0; i < P.n; i++)
         if (P.len[i] == 1)
             one = 1;
-    if (one && est__single_ok(m, N, w, nat))
+    if (one && est__single_ok(m, N, w, nat) && !est__spills_single(N))
     {
         R[0] = N;
         return 1;
@@ -381,6 +396,28 @@ static inline int est__rader(est_col_t *c, int p)
  * and the turned prime pass, tpc=1. M is computed in 64 bits: an M the pool cannot chain (above
  * 2^24, four stages of at most 64) is refused -- one past an int at once, where the door's own int
  * loop (il2d_cols.h:937-938) would never end or overflow. The band width is the caller's. */
+/* THE COLUMN UNDER PRIME ROWS (2026-10-26): when the rows are the 1D prime cell, a power-of-two column the
+ * pool holds as one kernel stays one stage, whatever the plane's size. Each row is then its own 1D plan,
+ * with no row walk fused into the column pass, so the column pass is a pass over the plane of its own and
+ * one pass beats two. The store: 16 and 64 columns over prime rows bank the single stage at 9 of 9 rows
+ * (16 x 131, 521, 2053, 4099; 64 x 131, 257, 521, 1031, 2053), while over power-of-two rows of 256 and more
+ * they split at 10 of 12; the split cost 1.08-2.07 x the planner at 10 of 10 timed shapes. */
+static inline void est__col_single_under_prime_rows(est_col_t *c)
+{
+    est_pool_t P;
+    int i;
+    if (c->nst < 2 || !est_is_pow2(c->N))
+        return;
+    est__pool(c->N, &P);
+    for (i = 0; i < P.n; i++)
+        if (P.len[i] == 1 && P.c[i][0] == c->N)
+        {
+            c->R[0] = c->N;
+            c->nst = 1;
+            est__col_forms(c->R, 1, c->forms, sizeof c->forms);
+            return;
+        }
+}
 static inline int est_col_plan(const est_machine_t *m, int N, long long w, int nat, est_col_t *c, char *why,
                                size_t whylen)
 {
@@ -550,6 +587,8 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->N2 = N2;
     if (est_col_plan(m, N1, N2, 1, &out->col, why, whylen))
         return -1;
+    if (vfft_policy_prime_cell(N2))   /* the rows are the 1D prime cell (est__child_1d below, in place) */
+        est__col_single_under_prime_rows(&out->col);
     mono = vfft_k1_mono_ilc_fn(N1, 0) && vfft_k1_mono_ilc_fn(N1, 1);
     n1ccs = vfft_il_n1ccs_fn(N2, 0) && vfft_il_n1ccs_fn(N2, 1);
     out->has_turn = out->col.blu <= 0 && n1ccs;
@@ -563,12 +602,22 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
     /* the row route (sketch §8); a Bluestein cell has no axis race and serves the per-row child */
-    out->csk = out->has_csk && N1 <= EST_ND_CSK_MAX;
+    out->csk = out->has_csk && (N1 <= EST_ND_CSK_MAX || ((N1 & 1) && N1 <= EST_ND_CSK_ODD_MAX && N2 >= EST_ND_CSK_ODD_N2 &&
+                                                            !est__spills_single(N1)));
     out->turn = out->has_turn && !out->csk && N1 >= EST_ND_TURN_N1 && N2 <= EST_ND_TURN_N2;
     if (out->turn || out->col.blu > 0)
         out->ro = 0;
     else if (N2 <= EST_ND_ROWB_MAX)
         out->ro = n1ccs ? 2 : 0;
+    else if (N2 <= EST_ND_ROWB2_MAX && !est_is_pow2(N2) && (N2 > 32 || est__spills_single(N2)))
+        out->ro = 0;   /* a row of 25, 27 or a non-power of two above 32 (up to 64): the per-row child
+                        * (2026-10-26). The batched rows run each row as one kernel of N2, and those kernels
+                        * spill (est__spills_single): the planner banks the per-row child at the rows of 25, 27,
+                        * 35, 45, 49, 60, 63 (2D 25x25, 27x27, 45x60, 63x63; the planes of 9x15x27, 25^3, 27^3,
+                        * 35^3, 45^3, 49^3, 63^3, 64x25x25, 64x27x27) and the batched rows at the rows of 21 and
+                        * 31 (the planes of 21^3, 31^3; 2D 21x21 is the one exception, 14 of 15 agree). The
+                        * estimate's batched rows cost 25x25 and 27x27 1.22-1.69 x the planner; the per-row child
+                        * at 21^3 and 31^3 cost 1.34 and 1.07 */
     else if (N2 <= EST_ND_ROWB2_MAX)
         out->ro = est__rowb2_form(&out->rp) ? 3 : n1ccs ? 2 : 0;
     else
