@@ -119,10 +119,14 @@ static const int est_ct_leaf_bwd[] = { VFFT_IL_N1_CT_BWD_RADICES(EST__R) };
 /* the pair list's primes from 23 up: a pair or chain3 keeps such a radix out of the leaf */
 static const int est_large_list[] = { 23, 29, 31, 37, 41, 43, 47 };
 /* THE SPILLING RADICES (2026-10-26, the owner): AVX2's 16 YMM registers hold a butterfly up to about
- * radix 16; an odd composite radix above EST_ODD_SPLIT_MAX (21, 25, 27, ... 63) spills, and every
- * estimate chain takes its split instead (25 -> 5.5, 27 -> 9.3, 21 -> 7.3). The primes 17-47 have no
- * split and stay; the powers of two are another question (docs/roadmap/codelet_radix_sunset.md).
- * The radices and the measurements: docs/roadmap/codelet_trim_odd_radices.md. */
+ * radix 16; an odd composite radix above EST_ODD_SPLIT_MAX (21, 25, 27, ... 63) spills in its direct
+ * (conjugate-pair) kernel, and the estimate names that kernel nowhere: the solo kernel, the four-step
+ * column chain, the Rader stage's inner chain and a convolution inner's pair take the split instead
+ * (25 -> 5.5, 27 -> 9.3, 21 -> 7.3). The pair and chain3 slots keep them as the odd-composite
+ * Cooley-Tukey twin (form 5, est_nib_fwd), which the planner's race picks at 482 of 490 such slots
+ * of the store. The primes 17-47 have no split and stay; the powers of two are another question
+ * (docs/roadmap/codelet_radix_sunset.md). The radices and the measurements:
+ * docs/roadmap/codelet_trim_odd_radices.md. */
 #define EST_ODD_SPLIT_MAX 16
 static inline int est_radix_spills(int R) { return R > EST_ODD_SPLIT_MAX && (R & 1) && !vfft_is_prime(R); }
 /* the 2D tier's column pool, its odd radices in the enumerator's order (policy_il.h) */
@@ -476,14 +480,15 @@ static inline int est_pair_legal(long long N, int R1, int R2)
     if (R1 < 3 || R2 < 3 || R1 > 64 || R2 > 64 || (long long)R1 * R2 != N) return 0;
     if (!est_in(est_pair_list, EST_NELEM(est_pair_list), R1) ||
         !est_in(est_pair_list, EST_NELEM(est_pair_list), R2)) return 0;
-    if (est_radix_spills(R1) || est_radix_spills(R2)) return 0;
     if (est_is_pow2(N) && (R1 == 64 || R2 == 64)) return 0;
     return 1;
 }
 static inline int est_large(int R) { return est_in(est_large_list, EST_NELEM(est_large_list), R); }
 /* the pair: the most balanced legal pair (the smallest larger factor). When exactly one factor is a
- * prime from 23 up it is the mid R1; otherwise the larger factor is the leaf R2. 0 = none. */
-static inline int est_pair_shape(long long N, int *R1, int *R2)
+ * prime from 23 up it is the mid R1; otherwise the larger factor is the leaf R2. ct = 0 keeps the
+ * spilling radices out: a convolution inner names no kernel form, so it would run their direct
+ * kernel; the route's own pair takes them as the Cooley-Tukey twin. 0 = none. */
+static inline int est_pair_shape_ct(long long N, int *R1, int *R2, int ct)
 {
     int i, lo = 0, hi = 0;
     for (i = 0; i < EST_NELEM(est_pair_list); i++)
@@ -493,7 +498,7 @@ static inline int est_pair_shape(long long N, int *R1, int *R2)
         if (N % b) continue;
         if (N / b > 64) continue;
         a = (int)(N / b);
-        if (!est_pair_legal(N, a, b)) continue;
+        if (!est_pair_legal(N, a, b) || (!ct && (est_radix_spills(a) || est_radix_spills(b)))) continue;
         l = a < b ? a : b;
         h = a < b ? b : a;
         if (!hi || h < hi) { lo = l; hi = h; }
@@ -503,8 +508,9 @@ static inline int est_pair_shape(long long N, int *R1, int *R2)
     else { *R1 = lo; *R2 = hi; }
     return 1;
 }
+static inline int est_pair_shape(long long N, int *R1, int *R2) { return est_pair_shape_ct(N, R1, R2, 1); }
 /* a convolution inner's pair at M: a power of two from 16 to 512 takes mid 4 up to 128, else 16;
- * any other M the pair above */
+ * any other M the pair above, without the spilling radices */
 static inline int est_inner_pair(long long M, int *R1, int *R2)
 {
     if (est_is_pow2(M) && M >= 16 && M <= 512)
@@ -513,7 +519,7 @@ static inline int est_inner_pair(long long M, int *R1, int *R2)
         *R2 = (int)(M / *R1);
         return est_pair_legal(M, *R1, *R2);
     }
-    return est_pair_shape(M, R1, R2);
+    return est_pair_shape_ct(M, R1, R2, 0);
 }
 /* the chain3 enumerator's law (dp_planner_il.h:1674-1730; il2p.h:1576-1586): the leaf R2 in the pair
  * list, R1 = A B >= 9 and not a power of two, A and B in the pair list */
@@ -521,7 +527,6 @@ static inline int est_c3_legal(long long N, int R2, int A, int B)
 {
     const long long R1 = (long long)A * B;
     if (R2 < 3 || A < 3 || B < 3 || R1 * R2 != N || R1 < 9 || est_is_pow2(R1)) return 0;
-    if (est_radix_spills(R2) || est_radix_spills(A) || est_radix_spills(B)) return 0;
     return est_in(est_pair_list, EST_NELEM(est_pair_list), R2) &&
            est_in(est_pair_list, EST_NELEM(est_pair_list), A) &&
            est_in(est_pair_list, EST_NELEM(est_pair_list), B);
@@ -726,8 +731,19 @@ static inline int est_rader_flat_chain(long long N, int *c)
  * a default of 2 -- takes all its columns at once. The cap keeps a scratch row at most 512 B: at W = 64
  * the rows of a radix-64 inner stage crowd one L1 set (65792, 98816: 1.17-1.21 against the default).
  * Measured on 19 cells (N 16336..262093): never slower than the default, within 8 % of the best width.
- * Threaded plans keep the default: one window runs the stage on one thread (il_flatdit_mt.h:67-71). */
+ * Threaded plans keep the default: one window runs the stage on one thread (il_flatdit_mt.h:67-71).
+ * The inner chain runs on the column kernels, which serve 21, 25 and 27 only in their direct form: a
+ * pick that holds one (est_rader_inner_spills) takes, of the engine's candidates (_ilrd_enum_inners,
+ * :705), the fewest stages without one, the smallest radices first -- the 2D column Rader stage's
+ * order (est__rader, estimate_nd_il.h). */
 #define EST_RD_WIN_CAP 32
+static inline int est_rader_inner_spills(const int *Rs, int nst)
+{
+    int i;
+    for (i = 0; i < nst; i++)
+        if (est_radix_spills(Rs[i])) return 1;
+    return 0;
+}
 static inline void est_rader_window(long long N, est_recipe_t *o)
 {
     int i, p = 0, nestp = 0;
@@ -738,6 +754,23 @@ static inline void est_rader_window(long long N, est_recipe_t *o)
     {
         o->il_rd_n = 0;
         return;
+    }
+    if (est_rader_inner_spills(o->il_rd, o->il_rd_n))
+    {
+        _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
+        const int n = _ilrd_enum_inners(p - 1, cand, VFFT_ILRD_MAX_INNERS);
+        int best = -1;
+        for (i = 0; i < n; i++)
+            if (!est_rader_inner_spills(cand[i].Rs, cand[i].nst) &&
+                (best < 0 || cand[i].nst < cand[best].nst ||
+                 (cand[i].nst == cand[best].nst &&
+                  memcmp(cand[i].Rs, cand[best].Rs, sizeof(int) * (size_t)cand[i].nst) < 0)))
+                best = i;
+        if (best >= 0)
+        {
+            memcpy(o->il_rd, cand[best].Rs, sizeof(int) * (size_t)cand[best].nst);
+            o->il_rd_n = cand[best].nst;
+        }
     }
     C = (size_t)(N / p);
     W = _ilrd_default_W(p, C);
