@@ -1297,14 +1297,23 @@ static inline int est_prime_route(const est_machine_t *m, long long N, int T, es
         if (r == 0) return est_refuse(why, whylen, "N = %lld: no inner for Rader at N - 1 = %d", N, M);
     }
     else
-    {   /* Bluestein's length (the owner's rule, 2026-10-23): the smallest of the policy's smooth sizes
-         * when it is at most 0.9 of the power of two and has an inner, else the power of two. Over
-         * the 2,103 Bluestein cells of the 2026-10-13 race record the planner chose a smooth size
-         * exactly where this holds in 1,745; above 0.9 it never did. */
-        int Ms[1 + VFFT_POLICY_ILPRIME_SMOOTH_M], nm;
+    {   /* Bluestein's length (the owner's rule, 2026-10-23, refined 2026-10-27): of the policy's
+         * smooth sizes at most 0.9 of the power of two, the smallest whose inner is ZTURN-T; when none
+         * is, the smallest when it has an inner; else the power of two. Over the 2,103 Bluestein cells
+         * of the 2026-10-13 race record the planner chose a smooth size exactly where 0.9 holds in
+         * 1,745; above 0.9 it never did. The ZTURN-T preference: the smallest size can lack the 16 a
+         * ZTURN-T length needs and run a three-stage inner (1031: 2100 = 4.21.25) where the next size
+         * has it (2160, ZTURN-T 4.15.9.4; the planner's 2D rows of 1031 bank 2240, also ZTURN-T; at
+         * 4099 the smallest, 8232, has no inner and the power of two 16384 ran, now 8400). Same-run against
+         * the planner (2026-10-27): 32/64/256 x 1031 1.61-1.80 -> 1.04-1.05, 16 x 4099 1.41 -> 0.99,
+         * 28 primes 1031-4099 1.147 -> 0.794 (1609 2.05, 1693 2.20 before). */
+        int Ms[1 + VFFT_POLICY_ILPRIME_SMOOTH_M], nm, q;
         nm = vfft_policy_ilprime_blue_m((int)N, Ms, 1 + VFFT_POLICY_ILPRIME_SMOOTH_M);   /* pow2, then ascending */
         M = Ms[0];
-        if (nm > 1 && 10LL * Ms[1] <= 9LL * Ms[0] && Ms[1] <= VFFT_POLICY_INNER_MAX_N)
+        for (q = 1; q < nm && M == Ms[0]; q++)
+            if (10LL * Ms[q] <= 9LL * Ms[0] && Ms[q] <= VFFT_POLICY_INNER_MAX_N && est_inner_ztt(m, Ms[q], &in))
+                M = Ms[q];
+        if (M == Ms[0] && nm > 1 && 10LL * Ms[1] <= 9LL * Ms[0] && Ms[1] <= VFFT_POLICY_INNER_MAX_N)
         {
             r = est_rader_inner(m, Ms[1], &in, o->fs, sizeof o->fs, why, whylen);
             if (r < 0) return -1;

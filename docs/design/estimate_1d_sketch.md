@@ -212,10 +212,22 @@ request in each band only to that band's members.
     holds the four-step at M = N−1 in the four-step band (`k1_commit.h:470-481`). [M] From a
     sample of 4000 of the 513,708 primes in (2^23, 2^24], 38 qualify (about 0.9%), e.g. 15417851
     (`check/results/sweep_large.txt`).
-- **Bluestein length:** M = the next power of two ≥ 2N−1. Refused above 2^24, which leaves the
-  other primes in (2^23, 2^24] refused. The code serves some of them through the Rader-stage flat
-  inner, which estimate does not emit (see Open decisions); it refuses those whose N−1 has neither
-  a four-step split nor exactly one prime factor above the flat pool (`k1_commit.h:365-372`).
+- **Bluestein length:** the policy lists the power of two ≥ 2N−1, then the first three even
+  2,3,5,7-smooth sizes ≥ 2N−1 (`vfft_policy_ilprime_blue_m`, `il/planning/policy_il.h:311-331`). M is
+  the smallest of those smooth sizes that is at most 0.9 of the power of two and has a ZTURN-T inner;
+  if none has one, the smallest smooth size when it is at most 0.9 of the power of two and has any
+  inner; else the power of two.
+  - Why the ZTURN-T test: a ZTURN-T length needs 16 to divide it, and the smallest smooth size often
+    lacks it and runs a three-stage inner. At N = 1031 it is 2100 = 4.21.25, while the next size, 2160,
+    runs ZTURN-T 4.15.9.4. At 4099 the smallest, 8232, has no inner at all and the power of two (16384)
+    ran; 8400 runs ZTURN-T. The planner picks a ZTURN-T size in both cases.
+  - Measured 2026-10-27, against the planner: 2D rows of 1031 (32, 64, 256 rows) went from 1.61-1.80
+    to 1.04-1.05, 16 × 4099 from 1.41 to 0.99, and 28 primes from 1031 to 4099 from 1.147 to 0.794
+    (geometric mean).
+  - Refused above 2^24, which leaves the other primes in (2^23, 2^24] refused. The code serves some
+    of them through the Rader-stage flat inner, which estimate does not emit (see Open decisions); it
+    refuses those whose N−1 has neither a four-step split nor exactly one prime factor above the flat
+    pool (`k1_commit.h:365-372`).
 - **Bluestein inner:**
   - M = 128 (N = 53..61; no smaller M occurs): the pair 4.32 (`pow2_pair`, 5.3), which is the
     row at N = 59 (`14900KF/wisdom2_prime.txt:32`).
