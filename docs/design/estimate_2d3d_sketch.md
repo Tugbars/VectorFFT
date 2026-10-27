@@ -92,6 +92,12 @@ names always exists and resolves (the pre-flight checks it with the door's resol
 4. **Otherwise** the pool's chains of two stages or more, the first by:
    - the stage count nearest k* = ceil(n / 4) on narrow rows (the radix-16 regime), ceil(n / 3) on
      wide ones (the radix-8 regime); on a tie the fewer;
+   - an odd length (also the rest after a Rader prime): k* is the fewest stages a chain without a
+     15 reaches, when that is fewer, and then no chain with a 15 (81: 9.9, 99: 9.11, not 3.3.9 and
+     3.3.11; 75 stays 3.5.5). ceil(n / 3) counts an odd length's stages as if they were radix 8. A 15
+     that the fewest stages would add (75: 5.15, 225: 15.15) lost 1.06-2.09x, and the planner splits
+     3 × 5 in its column chains (5.3.5, 7.3.5). Measured 2026-10-27, old and new in one process on the
+     21 shapes it changes: 0.964x the old time;
    - then the most balanced: the least sum over the stages of (log2 R)^2;
    - then the order: the largest radix last (ascending), except the natural pass on wide rows,
      which closes on its smallest radix (descending); a closing-only radix stays last;

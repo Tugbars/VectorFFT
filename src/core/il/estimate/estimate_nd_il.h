@@ -271,18 +271,44 @@ static inline int est__rank_lt(const est__rank_t *a, const est__rank_t *b)
 /* The pool's chain at N that begins with pre[0..np): the rest (product Nrest) one stage when the
  * pool holds it and it may serve (single, est__single_ok), else the chain of two stages or more first
  * by: the stage count nearest k* (ceil(log2 Nrest / 4) on narrow rows, / 3 on wide ones or when
- * wide is forced), the fewer on a tie; the least sum of (log2 R)^2; the order (ascending, except the
- * natural pass on wide rows: descending); the pool's order. A rest with no such chain takes its one
- * stage when the pool holds it. Returns the stage count into R, 0 = none. */
+ * wide is forced; an odd rest: the fewest stages a chain without a 15 reaches when that is fewer, and
+ * then no chain with a 15), the fewer on a tie; the least sum of (log2 R)^2; the order (ascending,
+ * except the natural pass on wide rows: descending); the pool's order. A rest with no such chain takes
+ * its one stage when the pool holds it. Returns the stage count into R, 0 = none.
+ * The odd rest (2026-10-27): log2 / 3 counts an odd length's stages as if they were radix 8, so wide
+ * rows took one stage too many (81 -> 3.3.9, 99 -> 3.3.11) where the planner runs 9.9 and 11.9 or
+ * 9.11. Never through a 15: the planner splits 3 x 5 in its column chains (75 -> 5.3.5, 105 -> 7.3.5,
+ * 135 -> 5.3.9), and the fewest stages through a 15 lost 1.06-2.09 x the old chain (225x16x16 15.15,
+ * 135x16x16 9.15, 105x16x64 7.15, 75x32x32 5.15, 225x256 15.15). Same process, the old rule against
+ * this one at the 21 of 39 timed shapes it changes: 0.964 x the old time, 1.074 -> 1.033 against the
+ * planner (81^3, 99^3, 81x81x256, 99x99x243, 3x81x256 0.85-0.97); rows of 243 lose (81x243 1.19,
+ * 99x243 1.13). */
+static inline int est__has15(const int *R, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (R[i] == 15)
+            return 1;
+    return 0;
+}
 static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nrest, const est_machine_t *m,
                             long long w, int nat, int wide, int single, int *R)
 {
     const int narrow = !wide && est__narrow(m, w);
-    const int bits = est__ceil_lg(Nrest), kt = narrow ? (bits + 3) / 4 : (bits + 2) / 3;
-    const int asc = !(nat && !narrow);
+    const int bits = est__ceil_lg(Nrest), asc = !(nat && !narrow);
+    int kt = narrow ? (bits + 3) / 4 : (bits + 2) / 3, no15 = 0;
     int i, best = -1, one = -1;
     est__rank_t b, r;
     memset(&b, 0, sizeof b);
+    if (Nrest & 1)   /* an odd rest: the fewest stages a chain without a 15 reaches */
+        for (i = 0; i < P->n; i++)
+        {
+            const int k = P->len[i] - np;
+            if (k < 2 || k >= kt || (np && memcmp(P->c[i], pre, sizeof(int) * (size_t)np)) || est__has15(P->c[i] + np, k))
+                continue;
+            kt = k;
+            no15 = 1;
+        }
     for (i = 0; i < P->n; i++)
     {
         const int k = P->len[i] - np;
@@ -294,6 +320,8 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
                 one = i;
             continue;
         }
+        if (no15 && est__has15(P->c[i] + np, k))
+            continue;
         r.d = k > kt ? k - kt : kt - k;
         r.k = k;
         r.s = est__sumsq(P->c[i] + np, k);
