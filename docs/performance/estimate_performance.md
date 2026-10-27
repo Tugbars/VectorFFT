@@ -5,14 +5,14 @@ two or three dimensions from formulas: the lengths, the vector width, and this m
 sizes and core count. It measures nothing at create and reads or writes no wisdom. This page
 answers two questions. How far are its plans from the plans the default planner measures? And how
 do they compare with MKL? Over
-223 configurations in one, two and three dimensions, measured on 2026-10-26 and 2026-10-27, an
-estimate plan takes 1.006 times the measured plan's time at the median (geometric mean 1.026); 150
-are within 5%, 24 are more than 5% faster and 49 more than 5% slower.
+233 configurations in one, two and three dimensions, measured on 2026-10-26 and 2026-10-27, an
+estimate plan takes 1.006 times the measured plan's time at the median (geometric mean 1.025); 159
+are within 5%, 25 are more than 5% faster and 49 more than 5% slower.
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread
 > **Contract (every section):** complex-to-complex FP64, interleaved, natural order, out of place, K = 1, one thread
 > **Arms:** the measured plan, replayed from the shipped wisdom
-> ([`src/wisdom/14900KF`](../../src/wisdom/14900KF), with the rows the planner raced on 2026-10-26);
+> ([`src/wisdom/14900KF`](../../src/wisdom/14900KF), with the rows the planner raced on 2026-10-26 and 2026-10-27);
 > the estimate plan; the measured plan created a second time, as a control
 > **Method:** the three plans in one process, the caller pinned to one P-core at high priority;
 > 15 rounds with the arm order rotated, 200 ms apart; each time is the arm's median over the
@@ -20,8 +20,10 @@ are within 5%, 24 are more than 5% faster and 49 more than 5% slower.
 > **Tools:** [`src/estimate/estimate_race.c`](../../src/estimate/estimate_race.c) (1D) and
 > [`src/estimate/estimate_race_nd.c`](../../src/estimate/estimate_race_nd.c) (2D and 3D)
 > **Dates:** the 1D powers of two, the 2D and 3D powers of two and the prime column lengths were
-> measured on 2026-10-26 (commits d83f867f and 47d2ab0c), every other section on 2026-10-27 at
-> commit a61b778c; the changes between them leave the plans of the 2026-10-26 sections as they were
+> measured on 2026-10-26 (commits d83f867f and 47d2ab0c), the four-step lengths from 1,310,720 to
+> 5,000,000 on 2026-10-27 after commit f509f566 with the split described in that section, every other
+> section on 2026-10-27 at commit a61b778c; the changes between them leave the plans of the earlier
+> sections as they were
 
 A ratio above 1 means the estimate plan is slower.
 
@@ -84,6 +86,33 @@ odd radices first, with no radix 21, 25 or 27
 480,000 (1.100) and 786,432 (1.058), where the planner picks another split (800 x 600 and
 3,072 x 256), and 1,179,648 (1.075), the same split with the column chain in another order
 (9.8.8.4 against the planner's 9.8.4.8).
+
+## 1D: four-step lengths from 1,310,720 to 5,000,000
+
+The four-step lengths above 1,200,000 that the planner has raced into the shipped wisdom. Longer
+lengths have no planner row; the library's 1D transforms stop at 16,777,216.
+
+| N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
+|---|---:|---:|---|---|
+| 1,310,720 | 4,894,800 | 4,801,647 | 0.997 [0.926..1.244] | 1.010 [0.966..1.105] |
+| 1,500,000 | 6,444,509 | 6,039,573 | 0.925 [0.840..1.055] | 0.996 [0.802..1.153] |
+| 1,594,323 | 7,702,444 | 7,624,511 | 0.995 [0.830..1.372] | 1.019 [0.834..1.277] |
+| 2,000,000 | 8,354,925 | 8,131,500 | 1.007 [0.906..1.140] | 0.967 [0.852..1.064] |
+| 2,359,296 | 9,267,286 | 9,455,929 | 1.021 [0.916..1.095] | 1.022 [0.879..1.111] |
+| 3,000,000 | 11,948,717 | 12,849,517 | 1.047 [0.843..1.206] | 1.014 [0.769..1.316] |
+| 3,145,728 | 12,467,100 | 12,632,880 | 1.019 [0.917..1.078] | 1.006 [0.925..1.089] |
+| 4,000,000 | 18,089,550 | 18,217,150 | 0.995 [0.922..1.098] | 1.003 [0.942..1.043] |
+| 4,718,592 | 21,014,033 | 21,500,267 | 1.030 [0.902..1.100] | 0.989 [0.830..1.141] |
+| 5,000,000 | 21,444,733 | 21,647,567 | 1.000 [0.924..1.070] | 1.005 [0.908..1.091] |
+
+Over the 10 lengths: 1.003 (geometric mean), 9 within 5%, 1 more than 5% faster. Up to 3,145,728
+the estimate keeps the short row part of the section above. Once the array is larger than the L3
+and that split is missing, or its row part is a multiple of 256 with a radix 16 or larger among the
+column stages that run in cache-sized bands (the column stride then falls on 4 KB boundaries), the
+estimate takes another split: a row part whose own plan is ZTURN-T (a chain that starts and ends in
+4 or 8, so divisible by 16, with no 11 or 13), a column chain that may start with one 25, and the
+fewest column stages run over the whole array before the bands. That gives 1,000 x 4,000 (25.5.8),
+512 x 9,216 (8.8.8) and 1,250 x 4,000 (25.5.10) for the last three lengths.
 
 ## 1D: lengths with a prime factor above 47, from 4,099 to 1,000,003
 

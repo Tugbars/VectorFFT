@@ -11,7 +11,8 @@ AVX2 has 16 YMM registers. A butterfly up to about radix 16 fits in them; above 
 forms, and the rule follows the form:
 
 - the **direct (conjugate-pair) kernel**: one 21-, 25- or 27-point DFT in one pass. The estimate names
-  it nowhere; such a step is split instead (21 -> 7.3, 25 -> 5.5, 27 -> 9.3).
+  it in one place, a single 25 at the head of the 1D four-step's column chain once the array is
+  larger than the L3 (below); everywhere else such a step is split (21 -> 7.3, 25 -> 5.5, 27 -> 9.3).
 - the **odd-composite Cooley-Tukey twin** (`_ct`, il_kv form 5): the same radix as internal stages
   inside one call (21 = 3 x 7, 25 = 5 x 5, 27 = 3 x 3 x 3). It spills less, at the price of more memory
   passes inside the call. It exists only in the 1D pair and chain3 kernels (`t2_ct`, `n1t_ct` and the
@@ -19,7 +20,7 @@ forms, and the rule follows the form:
 
 | radix | status in the estimate |
 | --- | --- |
-| 21, 25, 27 | the `_ct` twin in 1D pair and chain3 slots; split everywhere else |
+| 21, 25, 27 | the `_ct` twin in 1D pair and chain3 slots; a direct 25 leading the 1D four-step column chain past the L3; split everywhere else |
 | 15 | kept: below 16, measured winner (below) |
 | 9, 11, 13 | kept: below 16 |
 | 17, 19, 23, 29, 31, 37, 41, 43, 47 | kept: prime, no smaller split; the only alternative is a Rader or Bluestein stage |
@@ -34,6 +35,7 @@ drops 15, 64 and a leading 32 (below).
 | 2D/3D column chains (`est__pool`, estimate_nd_il.h) | direct | 21, 25, 27 | committed f9f640e8 |
 | 2D column Rader stage, inner chain of p - 1 (`est__rader`) | direct | a step above 32 (64), an odd step above 13 (15, 21, 25), a first step of 32 | committed 47d2ab0c |
 | 1D four-step, column chain at N1 (`est_fs_col_chain`, estimate_il.h) | direct | 21, 25, 27 | committed d83f867f |
+| 1D four-step past the L3, one thread (`est_fs_far`, `est_fs_col_chain25`) | direct | 21, 27; one 25 allowed, leading | uncommitted |
 | 1D Rader stage, inner chain of p - 1 (`est_rader_window`) | direct | 21, 25, 27 | uncommitted |
 | 1D solo kernel at N = 21, 25, 27 | direct | 21, 25, 27 | committed f9f640e8 |
 | 1D convolution inner's pair (`est_inner_pair`, the prime route) | direct (no form token) | 21, 25, 27 | f9f640e8, kept uncommitted |
@@ -42,9 +44,11 @@ drops 15, 64 and a leading 32 (below).
 The flat DIT route builds 21 or 25 only when a chain passes 10 stages (`est_merge10` merges 7.3 and
 5.5); no length of the 82,283-length 1D scan reaches it. The ZTURN-T odd mids are 15, 9, 7, 5, 3.
 
-Still naming a direct kernel: the 1D Rader stage at p = 4051 (16 lengths), whose p - 1 = 4050 has no
-inner candidate without 25 or 27; and the backward of a chain3 with 21, 25 or 27 in a mid slot (the
-backward mids have no form twin, il2p.h:1649-1652).
+Still naming a direct kernel: the 1D four-step past the L3, whose column chain may start with one 25
+(the 2D column kinds; 116 of the 6,983 lengths of a 13-smooth scan from 262,144 to 16,777,216 hold
+one); the 1D Rader stage at p = 4051 (16 lengths), whose p - 1 = 4050 has no inner candidate without
+25 or 27; and the backward of a chain3 with 21, 25 or 27 in a mid slot (the backward mids have no form
+twin, il2p.h:1649-1652).
 
 ## The measurements
 
@@ -57,6 +61,12 @@ process. Evidence (git-ignored): `docs/research/estimate_threaded/evidence/fours
   one, at every split but one; at 1,000,000 a 25-led chain tied (0.968 against 0.971). At the
   estimate's own split, dropping the 25 alone took 480,000 from 1.39 to 1.05 against the planner,
   360,000 from 1.25 to 1.09, 500,000 from 1.35 to 1.03.
+- **1D four-step past the L3 takes one 25** (2026-10-27, 4,000,000-12,000,000): at the same split a
+  column chain led by one 25 beat the chain without it at every length, by 2-14 %: 5,000,000
+  (1,250 x 4,000) 25.5.10 0.98 against 5.5.5.10 1.11-1.14, 4,000,000 0.99 against 1.03, both against
+  the planner; 10,000,000 (1,000 x 10,000) 25.5.8 0.78 against 5.5.5.8 0.86, against the estimate's
+  previous split. Timed part by part at 5,000,000, the column stages run over the whole array before
+  the bands cost about 4 ms each, and the 25 takes one of them away.
 - **Radix 15 stays**: at 300,000 the 15-led chains won (15.5.8 0.99, 15.8.5 1.00 against the
   planner); the best chain without a 15 measured 1.08.
 - **2D column Rader inner chains**: every inner chain against windows 8-256, 26 shapes (primes
@@ -85,8 +95,10 @@ process. Evidence (git-ignored): `docs/research/estimate_threaded/evidence/fours
 ## For the trim
 
 - **Removal candidates: the direct 21, 25, 27 kernels** in every family (the column kinds
-  `t2c`, `t2cp`, `t2cs`, `t2csg*`, `n1c*`, and the 1D `t2`, `n1t`, `n1`). No estimate plan names them
-  except the two cases above. Before they go: the chain3 backward mids need a form for 21, 25, 27
+  `t2c`, `t2cp`, `t2cs`, `t2csg*`, `n1c*`, and the 1D `t2`, `n1t`, `n1`), except the direct 25 of the
+  column kinds the four-step's column chain runs (a measured win past the L3, above). No other estimate
+  plan names them except the Rader stage at 4051 and the chain3 backward mids above. Before they go:
+  the chain3 backward mids need a form for 21, 25, 27
   (or chain3 keeps them out of its mid slots), and the planner's pools drop them, with the re-race of
   the cells that bank them.
 - **Keep**: the `_ct` twins (`t2_ct`, `n1t_ct`, `n1_ct_bwd`, `t2t_ct_bwd` at 15, 21, 25, 27), 15,
