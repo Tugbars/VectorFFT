@@ -821,10 +821,24 @@ static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c,
  * best chain. The short row part only where the column chain then needs no radix above
  * EST_FS_COL_RADIX_MAX: past it a 4-stage chain folds into 64s (3.64.32, 5.5.5.64 from 3145728 up),
  * and 64-stage chains lost 11-15 % at 1179648 (8.64.9, 4.64.9); no such length was timed, so those
- * keep the balanced split. */
+ * keep the balanced split.
+ * Past the short row part, one thread, 16 N past the L3 (2026-10-27, 4000000-12000000, every part of
+ * the walk timed on its own): where no short row part qualifies, the balanced split lost 15-32 % to the planner;
+ * where its row part is a multiple of 256 (the column stride a multiple of 4 KB) and a banded power
+ * of two stage passes EST_FS_BAND_RADIX_MAX, the banded stages ran twice as long (9216 x 512 9.8.8.16 lost
+ * 11-15 % at 4718592 to 4608 x 1024 9.8.8.8; a long column alone costs nothing: 8712 x 500 beat the
+ * split below by 16 % at 4356000). Three costs set the split there. The rows: a row part divisible by 16 has
+ * a ZTURN-T plan (both chain ends 4 or 8, ztt.h:321-345), one that is not ran its rows 50 % slower
+ * (5000 against 4000 at 5000000). The wide column stages: each stage before the band is one pass
+ * over the array (about 4 ms at 5000000). The 25: one in the column chain saves a wide stage, 2-14 %
+ * at every length timed (25.5.10 0.98 against 5.5.5.10 1.14 at 5000000). So a row part whose own
+ * plan is ZTURN-T (divisible by 16 is not enough: a row of 2000 runs chain3, one with an 11 or a 13
+ * has no ZTURN-T chain, and those lost 9-31 %), the column chain with at most one 25 leading, a band,
+ * the fewest wide stages, then the fewest stages, then the longest row. */
 #define EST_FS_ODD_MAX EST_ODD_SPLIT_MAX
 #define EST_FS_ROW_MAX 512
 #define EST_FS_COL_RADIX_MAX 32
+#define EST_FS_BAND_RADIX_MAX 8
 
 /* the column chain at N1 over the 2D tier's pool, at most 4 stages (il2d_cols.h:164-241): the odd
  * part largest first, with no composite odd radix above EST_FS_ODD_MAX (21, 25, 27 split into 7.3,
@@ -832,17 +846,17 @@ static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c,
  * EST_FS_ODD_MAX puts the 8s first (no large radix leads). A lone 2 closes the chain folded into
  * the smallest odd factor p whose 2p is a closing radix (6, 10, 14, 22, 26), else as 2 itself (the
  * closing-only radices, il2d_cols.h:160-163). A chain past 4 stages folds its power of two into 64,
- * 32 or 16 stages. Returns the stage count, 0 = none. */
-static inline int est_fs_col_chain(long long N1, int *c)
+ * 32 or 16 stages. one25: at most one 25 (it leads). Returns the stage count, 0 = none. */
+static inline int est_fs_col_chain25(long long N1, int *c, int one25)
 {
     int odd[32], no = 0, pw[32], np = 0, close = 0, a = est_v2(N1), i, k, big;
     long long o = N1 >> est_v2(N1);
     for (i = 0; i < EST_NELEM(est_odd2d); i++)
     {
-        const int r = est_odd2d[i];
-        if (est_radix_spills(r))
+        const int r = est_odd2d[i], once = one25 && r == 25;
+        if (est_radix_spills(r) && !once)
             continue;
-        while (o % r == 0 && no < 32) { odd[no++] = r; o /= r; }
+        while (o % r == 0 && no < 32) { odd[no++] = r; o /= r; if (once) break; }
     }
     if (o != 1) return 0;
     if (a == 1)
@@ -896,7 +910,7 @@ static inline int est_fs_col_chain(long long N1, int *c)
         }
     }
     k = 0;
-    if (no && odd[0] <= EST_FS_ODD_MAX)
+    if (no && (odd[0] <= EST_FS_ODD_MAX || odd[0] == 25))
     {   /* the odd stages lead; a chain with a prime above EST_FS_ODD_MAX keeps it off the lead
          * (no such chain was timed): the powers of two first, as before */
         for (i = 0; i < no; i++) c[k++] = odd[i];
@@ -910,6 +924,7 @@ static inline int est_fs_col_chain(long long N1, int *c)
     if (close) c[k++] = close;
     return (k >= 1 && k <= 4 && est_prod(c, k) == N1) ? k : 0;
 }
+static inline int est_fs_col_chain(long long N1, int *c) { return est_fs_col_chain25(N1, c, 0); }
 /* the split N1 x N2. A power of two: 512 x 1024 at 2^19, N1 = 4096 from 2^20 (threaded: N / 2048
  * up to 2^20, then 4096). Any other N: both sides in [VFFT_K1FS_SIDE_MIN, VFFT_K1FS_SIDE_MAX], N1 a
  * column chain and N2 no prime cell (k1_fourstep.h:86-158); one thread: the largest row part N2 at
@@ -1020,6 +1035,61 @@ static inline void est_bwd_tokens(est_sb_t *s, const est_recipe_t *r, const char
         est_sb_add(s, " %sil_chain=%d.%d.%d", pfx, r->il_c3[0], r->il_c3[1], r->il_c3[2]);
 }
 
+/* one thread past the short row part (the comment above EST_FS_ODD_MAX), 16 N past the L3 (every
+ * length timed was; vfft_policy_exceeds_l3, policy_cache.h:46-50): when the one-thread split
+ * N1 x N2 is not the short row part, or its row part is a multiple of 256 and a banded power of two
+ * stage passes EST_FS_BAND_RADIX_MAX, the split whose row
+ * plan is ZTURN-T (the row plan est_fs_child builds, in place) and whose column chain (at most one 25)
+ * is banded, with the fewest wide
+ * stages, then the fewest stages, then the longest row. Replaces N1, N2 and returns 1 (the child's
+ * column chain takes the 25); 0 keeps them. */
+static inline int est_fs_far(const est_machine_t *m, long long N, int *N1, int *N2)
+{
+    int c[8], nst, i, big = 0, bcut = 99, bnst = 99, b1 = 0, b2 = 0;
+    long long d;
+    est_recipe_t row;
+    char why[256];
+    if (est_is_pow2(N) || (m->l3 > 0 && 16LL * N <= (long long)m->l3)) return 0;
+    if ((nst = est_fs_col_chain(*N1, c)))
+    {
+        const int wl = est_fs_wl(m, c, nst, *N1, *N2);
+        long long L = *N1;
+        int bandbig = 0;
+        for (i = 0; i < nst; i++)
+        {
+            if (c[i] > big) big = c[i];
+            if (wl > 0 && L <= wl && est_is_pow2(c[i]) && c[i] > bandbig) bandbig = c[i];
+            L /= c[i];
+        }
+        if (*N2 <= EST_FS_ROW_MAX && big <= EST_FS_COL_RADIX_MAX && (*N2 % 256 || bandbig <= EST_FS_BAND_RADIX_MAX))
+            return 0;
+    }
+    for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX; d++)
+    {
+        const long long e = N / d;
+        long long L = d;
+        int wl, cut = 0;
+        if (N % d || e < VFFT_K1FS_SIDE_MIN || e > VFFT_K1FS_SIDE_MAX || e % 16 || vfft_policy_prime_cell((int)e)) continue;
+        if (!(nst = est_fs_col_chain25(d, c, 1))) continue;
+        if (est_c2c(m, e, 0, 1, 1, &row, why, sizeof why) != 0 || row.k1_il_route != VFFT_K1_IL_ZTT) continue;
+        for (i = 0, big = 0; i < nst; i++)
+            if (c[i] > big) big = c[i];
+        if (big > EST_FS_COL_RADIX_MAX || !(wl = est_fs_wl(m, c, nst, d, e))) continue;
+        while (L != wl && cut < nst) L /= c[cut++];
+        if (cut < bcut || (cut == bcut && (nst < bnst || (nst == bnst && e > b2))))
+        {
+            bcut = cut;
+            bnst = nst;
+            b1 = (int)d;
+            b2 = (int)e;
+        }
+    }
+    if (!b1) return 0;
+    *N1 = b1;
+    *N2 = b2;
+    return 1;
+}
+
 /* ── the four-step's child ──────────────────────────────────────────────── */
 
 /* The four-step's 2D child at N1 x N2 as the 2D row's tokens: fs_chain, fs_wl, fs_tf = (fs_wl > 0)
@@ -1027,14 +1097,15 @@ static inline void est_bwd_tokens(est_sb_t *s, const est_recipe_t *r, const char
  * 2D tier races when its row lacks them (below); at T > 1 fs_cmt=1 with fs_mtarm=1 fs_msw=128 when
  * fs_wl = 0, else 0 and 0. Then the row plan at N2 -- this procedure's c2c cell, natural, in place,
  * one thread, the row plan's own key (k1_fourstep.h:226) -- as fs_row_*, and its backward twin as
- * fs_row_bwd_* (key :229) when the row plan is a pair or chain3 with backward forms. */
-static inline int est_fs_child(const est_machine_t *m, int N1, int N2, int T, char *fs, size_t cap,
-                               char *why, size_t whylen)
+ * fs_row_bwd_* (key :229) when the row plan is a pair or chain3 with backward forms. c25: the column
+ * chain may hold one 25 (est_fs_far's split). */
+static inline int est__fs_child(const est_machine_t *m, int N1, int N2, int T, int c25, char *fs, size_t cap,
+                                char *why, size_t whylen)
 {
     est_recipe_t row;
     est_sb_t s;
     int c[8], nst, wl;
-    nst = est_fs_col_chain(N1, c);
+    nst = est_fs_col_chain25(N1, c, c25);
     if (!nst) return est_refuse(why, whylen, "the four-step %dx%d has no column chain at %d", N1, N2, N1);
     wl = est_fs_wl(m, c, nst, N1, N2);
     if (est_c2c(m, N2, 0, 1, 1, &row, why, whylen) != 0) return -1;
@@ -1079,21 +1150,27 @@ static inline int est_fs_child(const est_machine_t *m, int N1, int N2, int T, ch
         return est_refuse(why, whylen, "the four-step %dx%d: its child's tokens pass %u bytes", N1, N2, (unsigned)cap);
     return 0;
 }
-/* The four-step route: il_pair = the one-thread split (in place the same split), il_kv = 0 (the
- * transpose-sweep form). At T > 1, il_mt = the threaded split's N1 and the child is that split's own
- * (k1_commit.h:1538-1552, 1595-1620); il_mtsb = 8.64.8 when natural, 16 N passes the L3 or no L3 is
+static inline int est_fs_child(const est_machine_t *m, int N1, int N2, int T, char *fs, size_t cap,
+                               char *why, size_t whylen)
+{
+    return est__fs_child(m, N1, N2, T, 0, fs, cap, why, whylen);
+}
+/* The four-step route: il_pair = the one-thread split (in place the same split; at T = 1 past the
+ * short row part est_fs_far's), il_kv = 0 (the transpose-sweep form). At T > 1, il_mt = the threaded
+ * split's N1 and the child is that split's own (k1_commit.h:1538-1552, 1595-1620); il_mtsb = 8.64.8 when natural, 16 N passes the L3 or no L3 is
  * reported (vfft_policy_exceeds_l3, policy_cache.h:46-50), N1 = 4096 and N2 % 16 == 0
  * (k1_fourstep.h:955-958), else none. */
 static inline int est_fs_route(const est_machine_t *m, long long N, int scr, int T, est_recipe_t *o,
                                char *why, size_t whylen)
 {
-    int N1, N2, N1T, N2T;
+    int N1, N2, N1T, N2T, c25 = 0;
     if (!est_fs_split(N, 0, &N1, &N2)) return est_refuse(why, whylen, "N = %lld has no four-step split", N);
+    if (T <= 1) c25 = est_fs_far(m, N, &N1, &N2);
     o->k1_il_route = VFFT_K1_IL_FS;
     o->il_R1 = N1;
     o->il_R2 = N2;
     o->il_kv = 0;
-    if (T <= 1) return est_fs_child(m, N1, N2, 1, o->fs, sizeof o->fs, why, whylen);
+    if (T <= 1) return est__fs_child(m, N1, N2, 1, c25, o->fs, sizeof o->fs, why, whylen);
     if (!est_fs_split(N, 1, &N1T, &N2T))
         return est_refuse(why, whylen, "N = %lld has no four-step split for the threaded plan", N);
     o->il_mt = N1T;
