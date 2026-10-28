@@ -1,0 +1,22 @@
+2026-10-28 09:24:57 store: fresh copy of this CPU's shipped wisdom (C:\Users\TUH\Desktop\VectorFFT-main\src\wisdom\new)
+2026-10-28 09:24:57 run: 159 cells, contract 2D out of place, bin C:\Users\TUH\Desktop\VectorFFT-main\gauntlet
+2026-10-28 09:24:57 calibrate: 159 cells (0 already done)
+2026-10-28 09:28:37   calibrated 25/159 (4x4096), 219 s elapsed
+2026-10-28 09:32:39   calibrated 50/159 (16x2048), 461 s elapsed
+2026-10-28 09:37:07   calibrated 75/159 (64x1024), 729 s elapsed
+2026-10-28 09:40:54   calibrated 100/159 (256x512), 957 s elapsed
+2026-10-28 09:45:55   calibrated 125/159 (1024x256), 1258 s elapsed
+2026-10-28 09:53:45 run: 159 cells, contract 2D out of place, bin C:\Users\TUH\Desktop\VectorFFT-main\gauntlet
+2026-10-28 09:53:45 calibrate: 13 cells (146 already done)
+2026-10-28 10:00:14 run: 159 cells, contract 2D out of place, bin C:\Users\TUH\Desktop\VectorFFT-main\gauntlet
+2026-10-28 10:00:14 calibrate: 3 cells (156 already done)
+2026-10-28 10:03:28   calibrated 3/3 (8192x512), 194 s elapsed
+2026-10-28 10:03:28 bench: 159 cells (0 already benched, 0 not banked -> not benched)
+2026-10-28 10:04:14   benched 25/159 (4x4096), 41 s elapsed
+2026-10-28 10:05:03   benched 50/159 (16x2048), 90 s elapsed
+2026-10-28 10:05:52   benched 75/159 (64x1024), 139 s elapsed
+2026-10-28 10:06:49   benched 100/159 (256x512), 196 s elapsed
+2026-10-28 10:08:18   benched 125/159 (1024x256), 285 s elapsed
+2026-10-28 10:10:36   benched 150/159 (4096x1024), 423 s elapsed
+2026-10-28 10:12:06   benched 159/159 (8192x512), 513 s elapsed
+2026-10-28 10:12:07 report: C:\Users\TUH\Desktop\VectorFFT-main\gauntlet\results\fftw_avx512_2026-10-28_2d\report_2d_fftw.md

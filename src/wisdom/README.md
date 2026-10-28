@@ -19,7 +19,8 @@ taken from another CPU's folder.
 | folder | holds |
 |---|---|
 | `14900KF/` | the rows raced on the Intel i9-14900KF |
-| `Zen4/` | the rows raced on the AMD Zen 4 laptop (Ryzen 5 PRO 8640HS) |
+| `Zen4/` | the rows raced on the AMD Zen 4 laptop (Ryzen 5 PRO 8640HS) with the AVX2 build |
+| `Zen4_avx512/` | the rows raced on the same laptop with the AVX-512 build |
 | `new/` | the six shard files with headers only: the folder of the next CPU this store has not seen |
 
 **A folder belongs to the CPU its files are stamped with**, not to its name.
