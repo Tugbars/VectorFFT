@@ -240,7 +240,8 @@ static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
 }
 /* THE LEAN DOOR'S ENTRIES (2026-10-11): the bound executor never declines, so
  * vfft_execute may jump into it (k1_go, per direction). Every 1D c2c and 1D
- * real executor qualifies; mono gets its per-direction forms. The 2D real
+ * real executor qualifies, and the one-thread 2D c2c plan (2026-10-29,
+ * _k2x_il2d_c2c); mono gets its per-direction forms. The 2D real
  * forms decline an aliased call and are never passed here. A real plan has
  * ONE direction (R2C forward, C2R backward): its other entry stays NULL, so a
  * call in the wrong direction leaves the lean door and is refused, with the
@@ -431,6 +432,15 @@ static int _k2x_il2d_c2r_d2ks(struct vfft_plan_s *h, vfft_dir_t dir, const doubl
 }
 static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);   /* il/rank1/lm_batch_il.h */
 static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout); /* il/rank2/lm_batch2d_il.h */
+static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim);   /* below */
+/* THE ONE-THREAD 2D C2C PLAN (2026-10-29): the native tier's walk never declines, so the lean door
+ * enters it past the full door's signature walk (6-8 ns of a 2x2..4x8 call, against 4-16 ns of
+ * kernels). The walk is _vfft_il_execute's own, called as the full door calls it. */
+static int _k2x_il2d_c2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    _vfft_il_execute((vfft_plan)h, dir, (double *)zin, NULL, zout, NULL);
+    return 0;
+}
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 {
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
@@ -459,6 +469,14 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         if (h->transform == VFFT_C2R && h->il2d_cxd_on && h->il2d_cxd_leaf)
             h->k1_exec = !(h->il2d_rx_on && h->il2d_rx_lm) ? _k2x_il2d_c2r_d
                        : (h->il2d_rx_stk < 0 && h->il2d_cxd_stk < 0) ? _k2x_il2d_c2r_d2k : _k2x_il2d_c2r_d2ks;
+        return hp;
+    }
+    if (h->transform == VFFT_C2C && h->layout == (int)VFI_LAYOUT_IL && h->N2 > 0 && h->il2d_row &&
+        !h->pq_inner && !h->tcb && !h->ilnd && !h->ilndr && h->nthreads <= 1)
+    {   /* the one-thread 2D c2c plan: both directions, the lean door's jump (a threaded plan keeps the
+         * full door, which arms the caller's pin) */
+        h->k1_exec = _k2x_il2d_c2c;
+        h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = _k2x_il2d_c2c;
         return hp;
     }
     if (h->transform != VFFT_C2C || h->layout != (int)VFI_LAYOUT_IL) return hp;

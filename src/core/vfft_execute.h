@@ -365,7 +365,8 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
      * at N = 2 through the door for ~1 ns of kernel, 25% of the cell at
      * N = 32, 12% at 64 (measured 2026-09-21, benches/k1_fwd_ref_probe --time).
      * THE LEAN DOOR (2026-10-11): an executor that never declines (k1_go,
-     * per direction: every 1D c2c and 1D real executor) is entered by a jump,
+     * per direction: every 1D c2c and 1D real executor, and the one-thread
+     * 2D c2c plan since 2026-10-29) is entered by a jump,
      * with no frame here and no return test; it returns straight to the
      * caller: 0.5-0.7 ns off a small 1D call (N = 8: c2c 6.1 -> 5.4 ns, r2c
      * 5.2 -> 4.6; measured 2026-10-11 against the door before it, same run).
