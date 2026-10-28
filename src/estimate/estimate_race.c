@@ -1,18 +1,22 @@
 /* estimate_race.c -- the estimate method's plans against the banked plans, TIMED (tracked, not wired into the library).
  *
- * For each length N (1D c2c, natural order, out of place, one thread) three plans in one process:
+ * For each length N (1D c2c, r2c or c2r, natural order, out of place, one thread) three plans in one process:
  *   B   the banked plan: vfft_create from a scratch copy of the store (a store hit replays its row)
- *   E   the estimate plan: vfft_create with VFFT_FLAG_ESTIMATE (the library's formulas and build: a
- *       private in-memory store, no measuring, no store read)
+ *   E   the estimate plan. c2c: vfft_create with VFFT_FLAG_ESTIMATE (the library's formulas and build: a
+ *       private in-memory store, no measuring, no store read). r2c / c2r: the library refuses the flag
+ *       there, so E is this folder's real formulas and build (estimate_1d.h est_plan_any,
+ *       estimate_build.h est_build_any_ex: the same private store and replay, on the library's pieces)
  *   B2  the banked plan created a second time: the control (B against itself = the noise floor)
  * Neither create may read the library's clock (VFFT_CLOCK_PROBE counts every read): a create that read it
- * measured, and its N is reported and skipped. The three outputs must agree.
+ * measured, and its N is reported and skipped. The three outputs must agree. r2c runs VFFT_FORWARD on N
+ * reals; c2r runs VFFT_BACKWARD on N/2 + 1 Hermitian bins (the imaginary parts of bin 0 and, at even N,
+ * bin N/2 zero, so every engine reads the same input).
  * Protocol (the repo's single-thread law): vfft_measure_confine(0), the caller pinned to logical CPU 2,
  * HIGH priority; R rounds, the arms in a rotated order, 200 ms apart; each block = warm executes, then
  * REPS timed executes with REPS sized to ~80 ms. Reported per N: each arm's median over the rounds, and
  * the per-round ratios E/B and B2/B with their range.
  *
- *   estimate_race <store dir> [rounds=15] N...      (no N: every power of two 64..2^23)
+ *   estimate_race <store dir> [rounds=15] [c2c|r2c|c2r] N...   (no N: every power of two 64..2^23)
  * Build: python gauntlet/build.py --compile --src src/estimate/estimate_race.c   (no --vfft) */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +28,8 @@ static void est_clock_probe(void);
 #define VFFT_CLOCK_PROBE est_clock_probe()
 #include "vfft.c"                    /* FIRST: the whole library in its own order (form_slot_gate.c:23); it
                                       * carries the library's estimate (il/estimate/estimate_il.h) */
+#include "estimate_1d.h"             /* the real formulas: est_plan_any, est_recipe_print */
+#include "estimate_build.h"          /* the real build: est_build_any_ex */
 static void est_clock_probe(void) { est_clock_reads++; }
 
 #define NARM 3
@@ -38,25 +44,65 @@ static double qpc_ns(void)
 }
 static int cmpd(const void *a, const void *b) { const double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 
+/* one shard of the store, loaded once */
+static char *load_shard(const char *store, const char *name)
+{
+    char p[1024];
+    FILE *f;
+    long n;
+    char *s;
+    snprintf(p, sizeof p, "%s/%s", store, name);
+    if (!(f = fopen(p, "rb"))) return NULL;
+    fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
+    s = (char *)malloc((size_t)n + 1);
+    n = (long)fread(s, 1, (size_t)n, f);
+    s[n] = 0;
+    fclose(f);
+    return s;
+}
+/* a real row's payload: the text between the key's '|' and the next one (or the line's end) */
+static void row_payload(const char *l, char *out, size_t cap)
+{
+    const char *p = strchr(l, '|'), *e = strchr(l, '\n'), *q;
+    out[0] = 0;
+    if (!p || (e && p > e)) return;
+    for (p++; *p == ' '; p++) {}
+    q = strchr(p, '|');
+    if (!q || (e && q > e)) q = e ? e : p + strlen(p);
+    while (q > p && (q[-1] == ' ' || q[-1] == '\r')) q--;
+    snprintf(out, cap, "%.*s", (int)(q - p), p);
+}
+/* the stored real row for one N (wisdom2_real.txt, ord=nat place=oop, one thread) */
+static char *g_real;
+static void banked_real(const char *store, int t, int N, char *out, size_t cap)
+{
+    char key[160];
+    const char *l;
+    if (!g_real && !(g_real = load_shard(store, "wisdom2_real.txt"))) { snprintf(out, cap, "(no real shard)"); return; }
+    snprintf(key, sizeof key, "@cell t=%s n=%d q=1 ord=nat place=oop |", t == VFFT_R2C ? "r2c" : "c2r", N);
+    if (!(l = strstr(g_real, key))) { snprintf(out, cap, "(no row)"); return; }
+    row_payload(l, out, cap);
+}
+/* the estimate's real row for one N, from its recipe in the store's text */
+static void est_real_tokens(const est_any_recipe_t *rc, const est_request_t *rq, char *out, size_t cap)
+{
+    static char buf[8192];
+    char key[96];
+    const char *l;
+    out[0] = 0;
+    est_recipe_print(rc, rq, buf, sizeof buf);
+    snprintf(key, sizeof key, "t=%s n=%d q=1 ord=nat place=oop |", rq->transform == VFFT_R2C ? "r2c" : "c2r", rq->N);
+    if (!(l = strstr(buf, key))) { snprintf(out, cap, "%s (row not printed)", rc->eng); return; }
+    row_payload(l, out, cap);
+}
+
 /* the stored row's recipe for one N, as its tokens (route, pair, ztt, flat, chain3, tile, four-step) */
 static char *g_oop;   /* wisdom2_oop.txt, loaded once */
 static void banked_tokens(const char *store, int N, char *out, size_t cap)
 {
     char key[160];
     out[0] = 0;
-    if (!g_oop)
-    {
-        char p[1024];
-        FILE *f;
-        long n;
-        snprintf(p, sizeof p, "%s/wisdom2_oop.txt", store);
-        if (!(f = fopen(p, "rb"))) { snprintf(out, cap, "(no oop shard)"); return; }
-        fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
-        g_oop = (char *)malloc((size_t)n + 1);
-        n = (long)fread(g_oop, 1, (size_t)n, f);
-        g_oop[n] = 0;
-        fclose(f);
-    }
+    if (!g_oop && !(g_oop = load_shard(store, "wisdom2_oop.txt"))) { snprintf(out, cap, "(no oop shard)"); return; }
     snprintf(key, sizeof key, "@cell t=c2c n=%d q=1 ord=nat place=oop role=comp lay=il |", N);
     const char *l = strstr(g_oop, key);
     if (!l) { snprintf(out, cap, "(no row)"); return; }
@@ -96,11 +142,18 @@ static void est_tokens(const est_recipe_t *rc, char *out, size_t cap)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { printf("usage: estimate_race <store dir> [rounds] N...\n"); return 2; }
+    if (argc < 2) { printf("usage: estimate_race <store dir> [rounds] [c2c|r2c|c2r] N...\n"); return 2; }
     const char *store = argv[1];
     const int R = argc > 2 ? atoi(argv[2]) : 15;
+    int first = 3, tf = VFFT_C2C;
+    if (argc > 3 && (!strcmp(argv[3], "c2c") || !strcmp(argv[3], "r2c") || !strcmp(argv[3], "c2r")))
+    {
+        tf = !strcmp(argv[3], "r2c") ? VFFT_R2C : !strcmp(argv[3], "c2r") ? VFFT_C2R : VFFT_C2C;
+        first = 4;
+    }
+    const char *tname = tf == VFFT_R2C ? "r2c" : tf == VFFT_C2R ? "c2r" : "c2c";
     int Ns[64], nN = 0;
-    for (int i = 3; i < argc && nN < 64; i++) Ns[nN++] = atoi(argv[i]);
+    for (int i = first; i < argc && nN < 64; i++) Ns[nN++] = atoi(argv[i]);
     if (!nN) for (int n = 64; n <= (1 << 23); n *= 2) Ns[nN++] = n;
 
     est_machine_t m;
@@ -110,7 +163,8 @@ int main(int argc, char **argv)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
-    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d\n", m.lanes, m.l1d, m.l2, m.l3, m.cores, store, R);
+    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d; %s\n", m.lanes, m.l1d, m.l2, m.l3, m.cores,
+           store, R, tname);
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << 2);
     printf("# HIGH priority: %s; caller on CPU %lu\n", SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) ? "ok" : "REFUSED",
@@ -122,21 +176,35 @@ int main(int argc, char **argv)
     for (int k = 0; k < nN; k++)
     {
         const int N = Ns[k];
-        char bt[256], et[256], why[768];
-        banked_tokens(store, N, bt, sizeof bt);
+        char bt[512], et[512], why[768];
+        if (tf == VFFT_C2C) banked_tokens(store, N, bt, sizeof bt);
+        else banked_real(store, tf, N, bt, sizeof bt);
         vfft_plan p[NARM] = { 0 };
         /* B and B2: the public create from the scratch store */
         for (int a = 0; a < NARM; a += 2)
         {
             vfft_config_t c;
             memset(&c, 0, sizeof c);
-            c.n[0] = N; c.nthreads = 1; c.wisdom_dir = store;
+            c.transform = tf; c.n[0] = N; c.nthreads = 1; c.wisdom_dir = store;
             const long r0 = est_clock_reads;
             p[a] = vfft_create(&c);
             if (est_clock_reads != r0) { printf("N=%-8d banked create MEASURED (clock read %ld times): skipped\n", N, est_clock_reads - r0); goto next; }
             if (!p[a]) { printf("N=%-8d banked create refused: %s\n", N, vfft_error()); goto next; }
         }
+        if (tf != VFFT_C2C)
+        {   /* E, real: this folder's formulas and build (the library refuses the flag on a real request) */
+            est_request_t rq = { N, tf, VFFT_ORDER_NATURAL, VFFT_PLACEMENT_OUT, 1 };
+            est_any_recipe_t rc;
+            est_build_report_t rep;
+            if (est_plan_any(&m, &rq, &rc, why, sizeof why)) { printf("N=%-8d estimate refused (formula): %s\n", N, why); goto next; }
+            est_real_tokens(&rc, &rq, et, sizeof et);
+            const long r0 = est_clock_reads;
+            p[1] = (vfft_plan)est_build_any_ex(&rc, &rq, why, sizeof why, &rep);
+            if (est_clock_reads != r0 || rep.status == EST_MEASURED) { printf("N=%-8d estimate create MEASURED: skipped\n", N); goto next; }
+            if (!p[1]) { printf("N=%-8d estimate create refused: %s\n", N, why); goto next; }
+        }
         /* E: the estimate, through the public flag; the recipe is printed from the library's formulas */
+        else
         {
             est_request_t rq = { N, VFFT_C2C, VFFT_ORDER_NATURAL, VFFT_PLACEMENT_OUT, 1 };
             est_recipe_t rc;
@@ -151,17 +219,24 @@ int main(int argc, char **argv)
             if (!p[1]) { printf("N=%-8d estimate create refused: %s\n", N, vfft_error()); goto next; }
         }
         {
-            const size_t bytes = (size_t)N * 16;
+            /* c2c: N complex in and out. r2c: N reals in, N/2 + 1 bins out. c2r: N/2 + 1 Hermitian bins in,
+             * N reals out. Every buffer holds the larger side. */
+            const long H = N / 2 + 1;
+            const long nin = tf == VFFT_C2C ? 2L * N : tf == VFFT_R2C ? (long)N : 2L * H;
+            const long nout = tf == VFFT_C2C ? 2L * N : tf == VFFT_R2C ? 2L * H : (long)N;
+            const int dir = tf == VFFT_C2R ? VFFT_BACKWARD : VFFT_FORWARD;
+            const size_t bytes = (size_t)(tf == VFFT_C2C ? 2L * N : 2L * H) * sizeof(double);
             double *in = vfft_malloc(bytes), *out[NARM];
             unsigned s = 12345u;
-            for (long i = 0; i < 2L * N; i++) { s = s * 1664525u + 1013904223u; in[i] = (double)(s >> 8) / 16777216.0 - 0.5; }
-            for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(bytes); vfft_execute(p[a], VFFT_FORWARD, in, out[a]); }
+            for (long i = 0; i < nin; i++) { s = s * 1664525u + 1013904223u; in[i] = (double)(s >> 8) / 16777216.0 - 0.5; }
+            if (tf == VFFT_C2R) { in[1] = 0; if (!(N & 1)) in[2 * (N / 2) + 1] = 0; }
+            for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(bytes); vfft_execute(p[a], dir, in, out[a]); }
             double emax = 0, mag = 0;
             for (int a = 1; a < NARM; a++)
-                for (long i = 0; i < 2L * N; i++) { const double e = fabs(out[a][i] - out[0][i]); if (e > emax) emax = e; if (fabs(out[0][i]) > mag) mag = fabs(out[0][i]); }
+                for (long i = 0; i < nout; i++) { const double e = fabs(out[a][i] - out[0][i]); if (e > emax) emax = e; if (fabs(out[0][i]) > mag) mag = fabs(out[0][i]); }
             /* size the block to ~80 ms from a short probe of B */
             double t0 = qpc_ns();
-            for (int i = 0; i < 3; i++) vfft_execute(p[0], VFFT_FORWARD, in, out[0]);
+            for (int i = 0; i < 3; i++) vfft_execute(p[0], dir, in, out[0]);
             const double one = (qpc_ns() - t0) / 3;
             int reps = (int)(80e6 / one); if (reps < 3) reps = 3; if (reps > 200000) reps = 200000;
             int warm = reps / 10; if (warm < 2) warm = 2;
@@ -170,9 +245,9 @@ int main(int argc, char **argv)
                 for (int j = 0; j < NARM; j++)
                 {
                     const int a = (j + r) % NARM;
-                    for (int w = 0; w < warm; w++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                    for (int w = 0; w < warm; w++) vfft_execute(p[a], dir, in, out[a]);
                     t0 = qpc_ns();
-                    for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                    for (int i = 0; i < reps; i++) vfft_execute(p[a], dir, in, out[a]);
                     t[a][r] = (qpc_ns() - t0) / reps;
                     Sleep(200);
                 }
@@ -193,7 +268,7 @@ int main(int argc, char **argv)
     next:
         for (int a = 0; a < NARM; a++) if (p[a]) vfft_destroy(p[a]);
     }
-    printf("\n# summary (ns per forward execute; E/B < 1 = estimate faster):\n");
+    printf("\n# summary (ns per %s execute; E/B < 1 = estimate faster):\n", tname);
     for (int k = 0; k < nN; k++) if (line[k][0]) printf("%s\n", line[k]);
     if (nTimed) printf("# geometric mean E/B over %d lengths: %.3f\n", nTimed, exp((sumE - sumB) / nTimed));
     return 0;

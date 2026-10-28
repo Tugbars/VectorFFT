@@ -5,25 +5,29 @@ two or three dimensions from formulas: the lengths, the vector width, and this m
 sizes and core count. It measures nothing at create and reads or writes no wisdom. This page
 answers two questions. How far are its plans from the plans the default planner measures? And how
 do they compare with MKL? Over
-233 configurations in one, two and three dimensions, measured on 2026-10-26 and 2026-10-27, an
-estimate plan takes 1.006 times the measured plan's time at the median (geometric mean 1.025); 159
-are within 5%, 25 are more than 5% faster and 49 more than 5% slower.
+314 configurations in one, two and three dimensions, measured on 2026-10-26 and 2026-10-27, an
+estimate plan takes 1.007 times the measured plan's time at the median (geometric mean 1.019); 207
+are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 
 > **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread
-> **Contract (every section):** complex-to-complex FP64, interleaved, natural order, out of place, K = 1, one thread
+> **Contract (every section):** complex-to-complex FP64 (the last section: real-to-complex and
+> complex-to-real), interleaved, natural order, out of place, K = 1, one thread
 > **Arms:** the measured plan, replayed from the shipped wisdom
 > ([`src/wisdom/14900KF`](../../src/wisdom/14900KF), with the rows the planner raced on 2026-10-26 and 2026-10-27);
 > the estimate plan; the measured plan created a second time, as a control
 > **Method:** the three plans in one process, the caller pinned to one P-core at high priority;
 > 15 rounds with the arm order rotated, 200 ms apart; each time is the arm's median over the
 > rounds; each ratio is the median of the 15 per-round ratios, with their range in brackets
-> **Tools:** [`src/estimate/estimate_race.c`](../../src/estimate/estimate_race.c) (1D) and
+> **Tools:** [`src/estimate/estimate_race.c`](../../src/estimate/estimate_race.c) (1D, complex and real) and
 > [`src/estimate/estimate_race_nd.c`](../../src/estimate/estimate_race_nd.c) (2D and 3D)
 > **Dates:** the 1D powers of two, the 2D and 3D powers of two and the prime column lengths were
-> measured on 2026-10-26 (commits d83f867f and 47d2ab0c), the four-step lengths from 1,310,720 to
-> 5,000,000 on 2026-10-27 after commit f509f566 with the split described in that section, every other
-> section on 2026-10-27 at commit a61b778c; the changes between them leave the plans of the earlier
-> sections as they were
+> measured on 2026-10-26 (commits d83f867f and 47d2ab0c); the four-step lengths from 1,310,720 to
+> 5,000,000 on 2026-10-27 after commit f509f566 with the split described in that section; the 1D
+> Bluestein lengths and the primes from 1,031 to 4,099 on 2026-10-27 at commit 55c75923; 59 of the
+> 2D and 3D other shapes (the rows of a prime above 1,000, and the shapes with an odd side from 75 to
+> 945) on 2026-10-27 at commit 0d702e36; the real transforms on 2026-10-28 at commit 0d702e36; every
+> other section on 2026-10-27 at commit a61b778c. The changes between them leave the plans of the
+> earlier sections as they were
 
 A ratio above 1 means the estimate plan is slower.
 
@@ -114,14 +118,14 @@ estimate takes another split: a row part whose own plan is ZTURN-T (a chain that
 fewest column stages run over the whole array before the bands. That gives 1,000 x 4,000 (25.5.8),
 512 x 9,216 (8.8.8) and 1,250 x 4,000 (25.5.10) for the last three lengths.
 
-## 1D: lengths with a prime factor above 47, from 4,099 to 1,000,003
+## 1D: lengths with a prime factor above 47, from 8,191 to 1,000,003
 
-Primes (served by a Rader or Bluestein method) and composites whose prime factor above 47 runs as a
-Rader stage inside the chain.
+Primes (served by a Rader or Bluestein method), then composites with a prime factor above 47:
+20,014, 49,188, 98,247 and 200,006 run Bluestein's method on the whole length, the other six a chain
+with a Rader stage for that factor.
 
 | N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
 |---|---:|---:|---|---|
-| 4,099 | 50,235 | 47,100 | 0.938 [0.908..0.981] | 1.019 [0.974..1.049] |
 | 8,191 | 48,963 | 49,054 | 1.005 [0.986..1.032] | 0.996 [0.982..1.029] |
 | 10,007 | 79,055 | 79,156 | 1.000 [0.939..1.025] | 1.003 [0.961..1.039] |
 | 16,381 | 119,404 | 119,604 | 0.994 [0.948..1.059] | 0.998 [0.946..1.061] |
@@ -143,10 +147,61 @@ Rader stage inside the chain.
 | 196,614 | 1,202,327 | 1,290,683 | 1.076 [0.922..1.278] | 1.000 [0.866..1.188] |
 | 200,006 | 3,147,100 | 3,505,185 | 1.124 [1.076..1.194] | 1.001 [0.941..1.090] |
 
-Over the 21 lengths: 1.044 (geometric mean), 12 within 5%. The primes sit at 0.94 to 1.08. The
-composites with a Rader stage carry the losses: 131,056 (1.257), 98,816 (1.168), 200,006 (1.124),
+Over the 20 lengths: 1.049 (geometric mean), 12 within 5%. The primes sit at 0.96 to 1.08. The
+composites carry the losses. Four are chains with a Rader stage: 131,056 (1.257), 98,816 (1.168),
 98,312 (1.115) and 64,576 (1.093), where the planner takes another inner chain for the Rader stage
-or another outer chain. The estimate's inner chain takes no radix 21, 25 or 27.
+or another outer chain; the estimate's inner chain takes no radix 21, 25 or 27. At 200,006 (1.124)
+both plans run Bluestein's method with a four-step inner: the planner's at 403,200 split 672 x 600,
+the estimate's at 401,408 split 784 x 512.
+
+## 1D: Bluestein lengths from 4,483 to 102,881
+
+Lengths the estimate serves with Bluestein's method on the whole length: 20 primes, then 10
+composites with a prime factor above 47. Their planner rows were raced on 2026-10-27. Of the lengths
+the planner races for the convolution (the power of two at or above 2N - 1, and the three smallest
+even lengths above 2N - 1 made of the factors 2, 3, 5 and 7), the estimate takes the smallest one
+whose inner runs ZTURN-T (a length divisible by 16) and that is at most 0.9 times the power of two
+([`docs/design/estimate_1d_sketch.md`](../design/estimate_1d_sketch.md), section 4.6).
+
+| N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
+|---|---:|---:|---|---|
+| 4,483 | 28,028 | 32,371 | 1.157 [1.112..1.180] | 1.021 [0.989..1.090] |
+| 5,261 | 34,096 | 34,815 | 1.022 [0.993..1.046] | 0.991 [0.974..1.012] |
+| 6,203 | 47,990 | 40,502 | 0.837 [0.810..0.862] | 1.006 [0.972..1.053] |
+| 6,857 | 44,193 | 45,897 | 1.047 [1.015..1.068] | 0.991 [0.981..1.059] |
+| 8,573 | 64,170 | 61,215 | 0.958 [0.914..1.010] | 0.993 [0.941..1.028] |
+| 10,193 | 69,065 | 69,278 | 1.005 [0.950..1.034] | 1.016 [0.969..1.080] |
+| 12,101 | 89,990 | 89,152 | 0.998 [0.917..1.040] | 1.016 [0.975..1.070] |
+| 14,173 | 118,201 | 109,736 | 0.931 [0.884..0.991] | 0.987 [0.951..1.053] |
+| 16,879 | 147,023 | 145,922 | 0.983 [0.940..1.068] | 1.018 [0.951..1.066] |
+| 19,777 | 192,913 | 164,823 | 0.856 [0.812..0.943] | 1.001 [0.977..1.028] |
+| 23,531 | 212,082 | 208,294 | 0.953 [0.883..1.074] | 0.992 [0.947..1.037] |
+| 27,653 | 253,399 | 249,152 | 0.967 [0.916..1.016] | 0.988 [0.946..1.057] |
+| 32,771 | 326,258 | 323,827 | 0.996 [0.916..1.054] | 0.992 [0.948..1.052] |
+| 37,493 | 397,420 | 378,418 | 0.929 [0.906..0.997] | 1.016 [0.994..1.065] |
+| 45,377 | 502,213 | 490,956 | 0.991 [0.890..1.061] | 0.986 [0.911..1.106] |
+| 52,489 | 715,340 | 635,741 | 0.905 [0.810..0.987] | 1.007 [0.919..1.126] |
+| 65,539 | 929,762 | 806,931 | 0.863 [0.795..0.971] | 0.975 [0.895..1.118] |
+| 73,483 | 906,865 | 883,876 | 0.975 [0.897..1.056] | 1.012 [0.921..1.090] |
+| 87,491 | 1,185,074 | 1,150,888 | 0.964 [0.910..1.103] | 1.019 [0.943..1.107] |
+| 102,881 | 1,393,910 | 1,455,100 | 1.043 [0.919..1.159] | 0.985 [0.875..1.075] |
+| 6,049 | 35,824 | 38,078 | 1.061 [1.042..1.091] | 0.998 [0.982..1.009] |
+| 8,403 | 62,360 | 61,638 | 0.988 [0.937..1.012] | 0.998 [0.980..1.017] |
+| 10,479 | 74,652 | 82,228 | 1.104 [1.001..1.167] | 0.994 [0.937..1.060] |
+| 13,123 | 115,678 | 109,230 | 0.944 [0.885..1.018] | 1.013 [0.938..1.048] |
+| 20,324 | 171,541 | 165,575 | 0.965 [0.921..1.010] | 1.005 [0.968..1.050] |
+| 22,499 | 211,363 | 221,149 | 1.048 [1.021..1.111] | 1.005 [0.927..1.076] |
+| 39,415 | 379,822 | 376,110 | 0.996 [0.913..1.066] | 0.986 [0.949..1.062] |
+| 54,891 | 404,340 | 583,021 | 1.452 [1.374..1.730] | 1.000 [0.891..1.102] |
+| 76,443 | 989,684 | 951,838 | 0.966 [0.863..1.021] | 1.011 [0.873..1.073] |
+| 94,499 | 1,206,895 | 1,297,488 | 1.070 [0.979..1.146] | 0.956 [0.889..1.083] |
+
+Over the 30 lengths: 0.994 (geometric mean), 0.986 at the median; 18 within 5%, 7 more than 5%
+faster, 5 more than 5% slower. 54,891 (1.452) is the one large loss: the planner runs it as a chain
+with a Rader stage (107.3.19.9). At 4,483 (1.157), 10,479 (1.104) and 94,499 (1.070) the planner's
+length is a little longer, with more factors of 2: 9,216 against the estimate's 9,072, 21,504
+against 21,168 and 192,000 against 190,512. At 6,049 (1.061) both use 12,288, with the inner's
+stages in another order (4.3.4.4.8.8 against 4.3.8.8.4.4).
 
 ## 1D: lengths with a radix 21, 25 or 27
 
@@ -198,6 +253,48 @@ raced before the Rader-stage chain existed, so the ratios measure against that o
 | 4,077 | 23,258 | 14,980 | 0.642 [0.612..0.646] | 1.035 [1.027..1.040] |
 
 Over the 20 lengths: 0.605 (geometric mean), every one more than 5% faster.
+
+## 1D: primes from 1,031 to 4,099 against older planner rows
+
+Not counted in the totals above. The estimate serves these primes with Bluestein's method at the
+length of the section above (2,160 for 1,031, 8,400 for 4,099). The shipped rows for these lengths
+were raced from 2026-09-21 to 2026-10-03, when the planner raced the power of two alone (4,096 for
+1,031, 16,384 for 4,099); it has raced the shorter lengths since commit 094e9edd (2026-10-11). The
+ratios measure against that older plan.
+
+| N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
+|---|---:|---:|---|---|
+| 1,031 | 11,462 | 6,750 | 0.591 [0.578..0.627] | 1.007 [0.924..1.081] |
+| 1,033 | 9,116 | 6,672 | 0.739 [0.696..0.798] | 1.017 [0.898..1.144] |
+| 1,129 | 10,232 | 6,075 | 0.594 [0.590..0.603] | 0.999 [0.990..1.006] |
+| 1,237 | 10,478 | 6,536 | 0.624 [0.616..0.632] | 1.002 [0.987..1.014] |
+| 1,307 | 10,164 | 7,344 | 0.719 [0.710..0.725] | 1.001 [0.991..1.005] |
+| 1,487 | 10,246 | 9,199 | 0.896 [0.879..0.901] | 0.999 [0.994..1.006] |
+| 1,499 | 11,134 | 9,223 | 0.828 [0.807..0.886] | 0.977 [0.922..1.048] |
+| 1,609 | 10,315 | 10,492 | 1.014 [1.003..1.020] | 0.993 [0.981..1.002] |
+| 1,693 | 10,506 | 10,110 | 0.956 [0.942..0.987] | 1.000 [0.992..1.021] |
+| 1,709 | 10,436 | 10,025 | 0.959 [0.954..0.998] | 1.002 [1.000..1.022] |
+| 1,747 | 10,792 | 10,294 | 0.953 [0.928..0.969] | 0.998 [0.983..1.011] |
+| 2,063 | 21,932 | 13,913 | 0.633 [0.624..0.646] | 1.019 [0.966..1.041] |
+| 2,087 | 22,643 | 13,932 | 0.616 [0.612..0.623] | 1.011 [0.978..1.032] |
+| 2,179 | 21,925 | 13,267 | 0.604 [0.579..0.612] | 0.995 [0.988..0.999] |
+| 2,437 | 17,777 | 16,912 | 0.947 [0.911..1.030] | 0.978 [0.891..1.069] |
+| 2,459 | 22,263 | 16,916 | 0.760 [0.747..0.766] | 1.010 [0.969..1.016] |
+| 2,477 | 21,911 | 16,946 | 0.774 [0.743..0.780] | 1.006 [0.991..1.015] |
+| 2,621 | 22,293 | 15,924 | 0.712 [0.706..0.721] | 0.999 [0.988..1.015] |
+| 2,699 | 22,476 | 17,877 | 0.794 [0.763..0.809] | 0.991 [0.981..1.000] |
+| 2,833 | 22,393 | 18,543 | 0.826 [0.813..0.838] | 0.999 [0.990..1.013] |
+| 2,903 | 22,298 | 19,330 | 0.866 [0.841..0.873] | 1.002 [0.997..1.010] |
+| 2,939 | 22,330 | 19,418 | 0.868 [0.841..0.893] | 1.005 [0.991..1.048] |
+| 3,089 | 22,629 | 19,481 | 0.861 [0.824..0.869] | 1.001 [0.986..1.018] |
+| 3,389 | 23,189 | 21,121 | 0.912 [0.901..0.959] | 0.997 [0.948..1.054] |
+| 3,413 | 22,605 | 21,084 | 0.932 [0.918..0.940] | 1.002 [0.992..1.014] |
+| 3,467 | 22,359 | 23,776 | 1.063 [1.015..1.078] | 1.002 [0.977..1.018] |
+| 3,499 | 22,665 | 23,582 | 1.043 [0.991..1.048] | 1.001 [0.965..1.011] |
+| 4,099 | 51,221 | 28,538 | 0.557 [0.538..0.596] | 0.995 [0.969..1.056] |
+
+Over the 28 primes: 0.794 (geometric mean), 22 more than 5% faster; 3,467 (1.063) is the one more
+than 5% slower.
 
 ---
 
@@ -254,10 +351,15 @@ Over the 41 configurations: 1.018 (geometric mean), 1.014 at the median; 23 with
 ## 2D: other shapes
 
 <details>
-<summary>70 shapes: geometric mean 1.055, median 1.007, 52 within 5%</summary>
+<summary>101 shapes: geometric mean 1.038, median 1.013, 70 within 5%</summary>
 
 | Shape | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
 |---|---:|---:|---|---|
+| 8 × 1,229 | 56,507 | 58,496 | 1.024 [0.965..1.063] | 1.001 [0.956..1.041] |
+| 8 × 1,759 | 93,430 | 93,453 | 1.007 [0.945..1.123] | 0.976 [0.907..1.056] |
+| 8 × 6,053 | 336,864 | 366,017 | 1.094 [1.047..1.143] | 0.992 [0.947..1.021] |
+| 8 × 8,819 | 533,310 | 541,456 | 1.017 [0.952..1.110] | 0.996 [0.933..1.087] |
+| 8 × 13,451 | 998,071 | 1,018,549 | 1.026 [0.919..1.166] | 0.993 [0.913..1.092] |
 | 9 × 512 | 4,855 | 4,875 | 1.003 [0.971..1.021] | 0.991 [0.967..1.008] |
 | 11 × 512 | 6,007 | 6,221 | 1.035 [1.023..1.039] | 1.006 [0.997..1.010] |
 | 13 × 512 | 7,210 | 7,532 | 1.020 [0.992..1.049] | 1.020 [0.974..1.054] |
@@ -265,7 +367,10 @@ Over the 41 configurations: 1.018 (geometric mean), 1.014 at the median; 23 with
 | 16 × 131 | 7,434 | 7,983 | 1.073 [0.959..1.197] | 1.009 [0.979..1.126] |
 | 16 × 521 | 43,003 | 43,829 | 1.019 [0.949..1.119] | 0.987 [0.894..1.086] |
 | 16 × 2,053 | 238,468 | 289,507 | 1.185 [1.104..1.306] | 1.003 [0.957..1.064] |
-| 16 × 4,099 | 545,168 | 856,017 | 1.568 [1.518..1.747] | 0.998 [0.901..1.072] |
+| 16 × 2,693 | 293,729 | 327,401 | 1.115 [1.015..1.158] | 1.012 [0.954..1.050] |
+| 16 × 4,099 | 534,359 | 539,814 | 1.009 [0.924..1.161] | 1.015 [0.881..1.118] |
+| 16 × 8,403 | 1,136,848 | 1,216,800 | 1.029 [0.970..1.132] | 1.002 [0.914..1.094] |
+| 16 × 13,451 | 2,081,188 | 2,097,370 | 1.005 [0.893..1.105] | 0.991 [0.933..1.113] |
 | 17 × 512 | 11,636 | 13,135 | 1.037 [0.889..1.178] | 1.014 [0.892..1.145] |
 | 17 × 1,024 | 23,754 | 23,895 | 0.997 [0.900..1.122] | 0.973 [0.918..1.120] |
 | 19 × 256 | 6,358 | 6,524 | 1.023 [0.928..1.127] | 1.030 [0.926..1.141] |
@@ -286,8 +391,10 @@ Over the 41 configurations: 1.018 (geometric mean), 1.014 at the median; 23 with
 | 31 × 512 | 32,739 | 32,835 | 1.001 [0.879..1.120] | 1.008 [0.904..1.127] |
 | 31 × 2,048 | 155,245 | 147,598 | 0.997 [0.922..1.150] | 0.993 [0.913..1.110] |
 | 32 × 131 | 14,228 | 13,652 | 0.971 [0.910..1.037] | 1.006 [0.945..1.041] |
-| 32 × 1,031 | 216,952 | 427,592 | 2.020 [1.935..2.124] | 0.997 [0.959..1.044] |
+| 32 × 1,031 | 212,439 | 229,509 | 1.081 [0.921..1.135] | 1.003 [0.904..1.048] |
 | 32 × 2,053 | 489,659 | 611,732 | 1.213 [1.090..1.291] | 1.003 [0.950..1.057] |
+| 32 × 6,053 | 1,471,606 | 1,499,180 | 1.019 [0.973..1.110] | 1.014 [0.950..1.083] |
+| 32 × 8,819 | 2,253,391 | 2,198,171 | 0.982 [0.904..1.067] | 1.003 [0.931..1.101] |
 | 37 × 512 | 33,524 | 33,516 | 1.001 [0.979..1.025] | 1.001 [0.978..1.021] |
 | 41 × 512 | 39,257 | 39,329 | 0.999 [0.989..1.024] | 1.007 [0.992..1.015] |
 | 43 × 512 | 41,827 | 41,913 | 0.997 [0.971..1.016] | 1.003 [0.989..1.027] |
@@ -301,24 +408,45 @@ Over the 41 configurations: 1.018 (geometric mean), 1.014 at the median; 23 with
 | 64 × 131 | 28,674 | 28,092 | 1.009 [0.958..1.055] | 1.003 [0.960..1.062] |
 | 64 × 257 | 54,015 | 55,152 | 1.046 [1.003..1.088] | 0.988 [0.942..1.014] |
 | 64 × 521 | 164,226 | 165,864 | 0.997 [0.922..1.083] | 0.983 [0.898..1.075] |
-| 64 × 1,031 | 419,054 | 862,101 | 2.066 [1.982..2.254] | 1.004 [0.961..1.038] |
+| 64 × 1,031 | 417,763 | 459,199 | 1.101 [1.042..1.153] | 1.003 [0.956..1.045] |
+| 64 × 1,229 | 516,858 | 505,904 | 0.973 [0.929..1.006] | 0.994 [0.943..1.044] |
 | 64 × 2,053 | 1,009,284 | 1,128,124 | 1.134 [1.068..1.274] | 1.000 [0.940..1.057] |
+| 64 × 2,693 | 1,267,721 | 1,309,886 | 1.034 [0.978..1.093] | 1.000 [0.960..1.072] |
+| 64 × 4,099 | 2,249,265 | 2,217,444 | 0.979 [0.936..1.057] | 0.998 [0.925..1.020] |
+| 64 × 6,049 | 3,112,988 | 3,189,924 | 1.020 [0.876..1.131] | 1.021 [0.891..1.093] |
 | 67 × 512 | 82,000 | 82,558 | 1.006 [0.989..1.014] | 1.009 [0.992..1.018] |
 | 71 × 512 | 83,014 | 83,262 | 1.007 [0.976..1.017] | 1.011 [0.980..1.035] |
+| 75 × 1,024 | 157,574 | 169,960 | 1.078 [1.003..1.132] | 0.997 [0.944..1.065] |
+| 81 × 243 | 45,192 | 53,618 | 1.124 [0.899..1.263] | 0.997 [0.921..1.093] |
+| 81 × 4,096 | 848,670 | 895,516 | 1.062 [0.937..1.149] | 0.991 [0.872..1.103] |
 | 97 × 97 | 38,947 | 38,512 | 0.989 [0.973..1.007] | 0.989 [0.972..1.014] |
 | 97 × 512 | 117,372 | 116,193 | 0.987 [0.974..1.000] | 1.000 [0.989..1.016] |
+| 99 × 243 | 51,290 | 60,551 | 1.150 [0.870..1.349] | 0.949 [0.843..1.179] |
+| 99 × 512 | 108,762 | 125,743 | 1.156 [1.098..1.205] | 1.028 [0.974..1.096] |
 | 105 × 105 | 18,963 | 21,174 | 1.114 [0.945..1.133] | 1.010 [0.850..1.022] |
+| 105 × 2,048 | 512,188 | 532,634 | 1.036 [0.959..1.160] | 0.996 [0.926..1.125] |
+| 128 × 1,031 | 990,297 | 1,117,010 | 1.145 [1.071..1.208] | 1.005 [0.942..1.045] |
+| 128 × 1,759 | 1,710,991 | 1,813,051 | 1.040 [0.972..1.168] | 1.008 [0.931..1.084] |
 | 131 × 512 | 191,043 | 194,016 | 1.014 [0.955..1.024] | 0.998 [0.931..1.007] |
 | 131 × 4,096 | 1,925,367 | 1,925,922 | 1.015 [0.955..1.074] | 1.001 [0.951..1.051] |
+| 135 × 1,024 | 312,698 | 345,285 | 1.072 [0.951..1.153] | 1.033 [0.924..1.087] |
+| 225 × 256 | 106,602 | 115,726 | 1.066 [0.950..1.128] | 1.008 [0.915..1.086] |
 | 256 × 131 | 130,291 | 143,243 | 1.087 [1.006..1.195] | 0.991 [0.950..1.037] |
 | 256 × 257 | 263,606 | 305,923 | 1.160 [1.112..1.216] | 1.006 [0.961..1.056] |
-| 256 × 1,031 | 2,264,959 | 3,525,950 | 1.586 [1.457..1.781] | 0.997 [0.927..1.079] |
+| 256 × 1,031 | 2,114,349 | 2,371,487 | 1.127 [1.053..1.209] | 0.991 [0.901..1.091] |
 | 257 × 64 | 39,448 | 40,209 | 1.019 [0.972..1.058] | 1.012 [0.964..1.059] |
 | 257 × 256 | 180,966 | 175,087 | 0.972 [0.934..0.996] | 0.987 [0.943..1.046] |
 | 257 × 512 | 404,274 | 391,373 | 0.968 [0.931..1.005] | 1.001 [0.959..1.043] |
+| 261 × 16 | 7,512 | 9,781 | 1.297 [1.252..1.339] | 0.992 [0.949..1.033] |
+| 285 × 8 | 4,000 | 4,685 | 1.193 [1.083..1.269] | 1.005 [0.948..1.050] |
+| 333 × 32 | 20,403 | 21,199 | 1.048 [1.013..1.084] | 0.998 [0.983..1.040] |
 | 360 × 360 | 286,548 | 289,154 | 1.020 [0.968..1.070] | 1.004 [0.956..1.041] |
 | 521 × 512 | 989,436 | 992,273 | 1.004 [0.950..1.017] | 1.006 [0.947..1.035] |
+| 555 × 64 | 73,932 | 86,409 | 1.164 [1.147..1.228] | 0.993 [0.979..1.042] |
 | 662 × 512 | 1,428,176 | 1,434,024 | 1.008 [0.984..1.042] | 1.023 [0.986..1.045] |
+| 675 × 256 | 377,733 | 376,161 | 0.974 [0.897..1.058] | 1.002 [0.875..1.052] |
+| 765 × 1,024 | 2,445,448 | 3,053,245 | 1.233 [1.158..1.407] | 0.976 [0.907..1.017] |
+| 945 × 512 | 1,400,631 | 1,404,433 | 0.990 [0.809..1.074] | 1.004 [0.822..1.037] |
 | 1,000 × 1,000 | 3,266,527 | 3,330,214 | 1.024 [0.938..1.093] | 1.002 [0.891..1.096] |
 | 1,009 × 128 | 500,460 | 465,008 | 0.925 [0.909..0.939] | 1.002 [0.956..1.011] |
 | 1,031 × 64 | 438,319 | 433,127 | 0.989 [0.984..1.001] | 1.001 [0.992..1.013] |
@@ -331,24 +459,74 @@ Over the 41 configurations: 1.018 (geometric mean), 1.014 at the median; 23 with
 
 </details>
 
-Over the 70 shapes: 1.055 (geometric mean), 1.007 at the median; 52 within 5%, 4 more than 5%
-faster, 14 more than 5% slower. The large losses are the rows of a prime length above 1,000:
-64 x 1,031 (2.066), 32 x 1,031 (2.020), 256 x 1,031 (1.586), 16 x 4,099 (1.568), 32 x 2,053
-(1.213); and 8,191 x 8 (1.651).
+**Over the 101 shapes:**
+
+- geometric mean 1.038, median 1.013;
+- 70 within 5%;
+- 4 more than 5% faster: 2,018 x 64 (0.887), 1,031 x 512 (0.921), 1,009 x 128 (0.925),
+  27 x 512 (0.939);
+- 27 more than 5% slower: the table below.
+
+**How the estimate plans these shapes:**
+
+- a row of a prime length above 1,000 runs Bluestein's method at the length of the 1D section above
+  (2,160 for 1,031, 8,400 for 4,099); those rows read 0.97 to 1.15;
+- an odd column length takes the fewest stages a chain without a 15 reaches (81: 9.9, 99: 11.9).
+
+**The 27 shapes more than 5% slower.** Each plan cell names what differs between the two plans in
+the column chain, the switches and the row method. A bare chain is the column chain. The switches
+as the wisdom rows spell them: `wl` = the column pass in bands of that many columns, `sw` = the
+unbanded column walk tiled at that width, `csk=1` = the skewed column pass, `ro` = the row route
+(0 one row at a time, 2 the batched rows), `turn=1` = the turned pass.
+
+| Shape | Estimate ÷ measured | Estimate | Planner |
+|---|---|---|---|
+| 8,191 × 8 | 1.651 | Rader column, inner 21.15.26; `turn=1` | Rader column, inner 15.13.3.14; `ro=2` |
+| 261 × 16 | 1.297 | 9.29 | 29.9, `sw=16` |
+| 765 × 1,024 | 1.233 | 17.9.5 | 17.9.5, `wl=45` |
+| 32 × 2,053 | 1.213 | rows: Rader, inner 4.19.27 | rows: Bluestein at 2,160 (8.15.9.4) |
+| 285 × 8 | 1.193 | 3.5.19, `turn=1` | 19.15, `ro=2` |
+| 4,099 × 16 | 1.189 | Rader column, inner 683.6 | Bluestein column at 16,384 (8.8.8.32) |
+| 16 × 2,053 | 1.185 | rows: Rader, inner 4.19.27 | rows: Bluestein at 2,160 |
+| 555 × 64 | 1.164 | 3.5.37, `wl=185` | 37.3.5, `sw=64` |
+| 256 × 257 | 1.160 | 8.8.4, `wl=64`; rows: Rader, inner 16.16 | 16.4.4; rows: Rader, inner 8.32 |
+| 99 × 512 | 1.156 | 11.9, `wl=9` | 11.9, `sw=8` |
+| 99 × 243 | 1.150 | 11.9 | 11.3.3 |
+| 128 × 1,031 | 1.145 | 8.4.4, `wl=16`; rows: Bluestein at 2,160 | 32.4, `wl=32`; rows: Bluestein at 2,240 |
+| 21 × 21 | 1.144 | 3.7, `ro=2` | 3.7, `ro=0` |
+| 64 × 2,053 | 1.134 | rows: Rader, inner 4.19.27 | rows: Bluestein at 2,160 |
+| 256 × 1,031 | 1.127 | 8.8.4, `wl=16`; rows: Bluestein at 2,160 | 16.16, `wl=64`; rows: Bluestein at 2,240 |
+| 81 × 243 | 1.124 | 9.9; rows: pair | 3.3.3.3; rows: three-stage chain |
+| 16 × 2,693 | 1.115 | `csk=1`; rows: Bluestein at 5,488 | `wl=16`; rows: Bluestein at 5,600 |
+| 105 × 105 | 1.114 | 7.15 | 15.7 |
+| 64 × 1,031 | 1.101 | rows: Bluestein at 2,160 | rows: Bluestein at 2,240 |
+| 8 × 6,053 | 1.094 | `csk=1`; rows: inner 4.3.8.8.4.4 | `csk=0`; rows: inner 4.3.8.4.4.8 (both Bluestein at 12,288) |
+| 256 × 131 | 1.087 | 16.16, `wl=128`; rows: Rader, inner 10.13 | 32.8; rows: Rader, inner 13.10 |
+| 32 × 1,031 | 1.081 | rows: Bluestein at 2,160 | `wl=32`; rows: Bluestein at 2,240 |
+| 75 × 1,024 | 1.078 | 5.5.3 | 5.3.5 |
+| 16 × 131 | 1.073 | `csk=1`; rows: Rader, inner 10.13 | `wl=16`; rows: Rader, inner 13.10 |
+| 135 × 1,024 | 1.072 | 9.5.3 | 9.3.5 |
+| 225 × 256 | 1.066 | 9.5.5, `wl=25` | 5.5.3.3, `sw=128` |
+| 81 × 4,096 | 1.062 | 9.9 | 9.9, `wl=9` |
 
 ## 3D: other shapes
 
 <details>
-<summary>26 shapes: geometric mean 1.026, median 1.011, 13 within 5%</summary>
+<summary>47 shapes: geometric mean 1.020, median 1.011, 25 within 5%</summary>
 
 | Shape | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
 |---|---:|---:|---|---|
 | 3 × 3 × 4,096 | 57,933 | 65,390 | 1.108 [0.982..1.269] | 1.001 [0.928..1.123] |
+| 3 × 81 × 256 | 126,926 | 119,480 | 0.948 [0.824..1.146] | 0.993 [0.860..1.139] |
 | 3 × 1,024 × 1,024 | 13,286,640 | 13,190,220 | 0.990 [0.919..1.072] | 0.991 [0.910..1.070] |
 | 7 × 11 × 13 | 1,224 | 1,236 | 1.011 [0.980..1.025] | 1.000 [0.979..1.016] |
+| 8 × 81 × 256 | 358,165 | 375,892 | 1.053 [0.986..1.148] | 1.020 [0.934..1.238] |
 | 9 × 9 × 9 | 800 | 796 | 0.996 [0.967..1.011] | 1.003 [0.971..1.019] |
+| 9 × 81 × 243 | 566,937 | 595,865 | 1.019 [0.778..1.217] | 0.997 [0.846..1.196] |
 | 15 × 15 × 15 | 5,688 | 5,801 | 1.016 [1.008..1.128] | 1.007 [0.897..1.133] |
 | 15 × 15 × 4,096 | 2,454,050 | 2,925,228 | 1.189 [1.178..1.211] | 1.043 [1.022..1.070] |
+| 15 × 225 × 243 | 2,972,162 | 3,346,204 | 1.133 [0.801..1.463] | 1.022 [0.795..1.304] |
+| 16 × 99 × 256 | 1,145,403 | 1,221,046 | 1.081 [0.997..1.273] | 1.016 [0.840..1.195] |
 | 21 × 21 × 21 | 17,459 | 18,461 | 1.055 [0.857..1.231] | 1.006 [0.814..1.170] |
 | 21 × 21 × 64 | 48,327 | 46,446 | 0.961 [0.876..0.994] | 1.010 [0.973..1.043] |
 | 25 × 25 × 25 | 32,826 | 32,920 | 1.003 [0.884..1.105] | 0.997 [0.916..1.112] |
@@ -358,28 +536,74 @@ faster, 14 more than 5% slower. The large losses are the rows of a prime length 
 | 27 × 27 × 64 | 88,537 | 81,778 | 0.923 [0.848..1.011] | 0.981 [0.901..1.070] |
 | 27 × 64 × 64 | 256,788 | 260,309 | 1.013 [0.929..1.120] | 0.987 [0.897..1.081] |
 | 31 × 31 × 31 | 124,852 | 123,992 | 0.995 [0.969..1.005] | 0.990 [0.962..1.003] |
+| 32 × 75 × 256 | 1,669,711 | 1,709,366 | 1.016 [0.907..1.195] | 1.026 [0.899..1.112] |
 | 35 × 35 × 35 | 101,005 | 118,544 | 1.175 [0.862..1.411] | 1.004 [0.858..1.201] |
 | 45 × 45 × 45 | 257,644 | 251,674 | 0.977 [0.761..1.283] | 1.004 [0.760..1.319] |
 | 49 × 49 × 49 | 388,471 | 390,784 | 1.006 [0.913..1.094] | 1.012 [1.000..1.128] |
 | 63 × 63 × 63 | 756,320 | 711,912 | 0.944 [0.856..1.193] | 1.000 [0.789..1.268] |
 | 64 × 25 × 25 | 83,182 | 82,999 | 0.999 [0.881..1.134] | 0.996 [0.922..1.127] |
 | 64 × 27 × 27 | 91,876 | 101,488 | 1.100 [0.993..1.192] | 1.001 [0.923..1.073] |
-| 75 × 75 × 75 | 1,356,298 | 1,423,222 | 1.051 [0.879..1.310] | 0.997 [0.803..1.238] |
-| 81 × 81 × 81 | 1,743,334 | 1,867,280 | 1.067 [0.951..1.398] | 0.996 [0.786..1.309] |
-| 99 × 99 × 99 | 3,379,386 | 3,605,696 | 1.067 [0.885..1.392] | 0.979 [0.748..1.293] |
+| 75 × 8 × 128 | 126,065 | 135,639 | 1.096 [1.022..1.209] | 0.997 [0.946..1.058] |
+| 75 × 27 × 27 | 144,253 | 119,243 | 0.849 [0.790..0.982] | 1.011 [0.830..1.223] |
+| 75 × 32 × 32 | 145,538 | 145,084 | 1.013 [0.911..1.144] | 0.987 [0.926..1.038] |
+| 75 × 75 × 75 | 1,381,667 | 1,418,486 | 1.011 [0.872..1.300] | 0.979 [0.787..1.227] |
+| 75 × 75 × 225 | 4,562,472 | 4,893,528 | 1.081 [0.978..1.246] | 0.996 [0.831..1.176] |
+| 81 × 9 × 81 | 115,275 | 139,995 | 1.132 [0.967..1.388] | 1.042 [0.832..1.249] |
+| 81 × 16 × 16 | 34,846 | 33,192 | 0.960 [0.845..1.096] | 0.995 [0.887..1.114] |
+| 81 × 64 × 64 | 851,198 | 837,095 | 0.982 [0.865..1.020] | 0.988 [0.912..1.034] |
+| 81 × 81 × 81 | 1,735,422 | 1,737,867 | 1.003 [0.843..1.297] | 1.003 [0.813..1.296] |
+| 81 × 81 × 256 | 5,171,108 | 5,262,162 | 1.026 [0.904..1.103] | 1.013 [0.835..1.152] |
+| 99 × 16 × 32 | 85,204 | 78,423 | 0.923 [0.822..1.086] | 0.993 [0.873..1.133] |
+| 99 × 25 × 25 | 123,679 | 124,060 | 1.001 [0.820..1.206] | 1.025 [0.843..1.199] |
+| 99 × 64 × 64 | 972,142 | 992,477 | 1.025 [0.922..1.109] | 0.992 [0.897..1.037] |
+| 99 × 99 × 99 | 2,842,267 | 3,291,363 | 1.035 [0.780..1.340] | 1.021 [0.931..1.341] |
+| 99 × 99 × 243 | 8,086,067 | 7,624,278 | 0.937 [0.873..1.104] | 1.008 [0.929..1.282] |
 | 100 × 100 × 100 | 2,837,167 | 3,082,363 | 1.088 [1.040..1.125] | 1.002 [0.961..1.036] |
+| 105 × 16 × 64 | 180,301 | 202,845 | 1.100 [1.047..1.156] | 0.999 [0.955..1.106] |
 | 125 × 125 × 125 | 7,977,573 | 8,521,554 | 1.072 [0.928..1.265] | 1.000 [0.844..1.219] |
+| 135 × 16 × 16 | 51,298 | 55,789 | 1.085 [0.996..1.178] | 1.001 [0.941..1.157] |
+| 225 × 16 × 16 | 91,600 | 91,638 | 0.999 [0.938..1.020] | 1.059 [1.017..1.085] |
 
 </details>
 
-Over the 26 shapes: 1.026 (geometric mean), 13 within 5%, 3 more than 5% faster, 10 more than 5%
-slower. A plane with an odd side runs the flat tier (one pass over each axis of the cube) unless
-its 2D plan skews its column pass or its rows are one odd solo kernel; the column chains take no
-radix 21, 25 or 27. The losses: 15 x 15 x 4,096 (1.189), where the planner runs its 2D plan per
-plane with the strips; 35^3 (1.175), 81^3 and 99^3 (1.067), whose axis-0 chain differs from the
-planner's (5.7, 3.3.9, 3.3.11 against 7.5, 9.9, 11.9); 3 x 3 x 4,096 (1.108), where the planner
-takes the flat tier over a skewed plane; 64 x 27 x 27 (1.100), axis 0 as 8.8 against the planner's
-single 64; 100^3 (1.088) and 125^3 (1.072), where the planner's axis 0 holds a 25.
+**Over the 47 shapes:**
+
+- geometric mean 1.020, median 1.011;
+- 25 within 5%;
+- 7 more than 5% faster: 75 x 27 x 27 (0.849), 27 x 27 x 64 (0.923), 99 x 16 x 32 (0.923),
+  99 x 99 x 243 (0.937), 27^3 (0.940), 63^3 (0.944), 3 x 81 x 256 (0.948);
+- 15 more than 5% slower: the table below.
+
+**How the estimate plans these shapes:**
+
+- a plane with an odd side runs the flat tier (one pass over each axis of the cube) unless its 2D
+  plan skews its column pass or its rows are one odd solo kernel;
+- the column chains take no radix 21, 25 or 27;
+- an odd length takes the fewest stages a chain without a 15 reaches (axis 0 of 81^3: 9.9, the
+  planner's chain; of 99^3: 9.11 against the planner's 11.9).
+
+**The 15 shapes more than 5% slower.** Each plan cell names what differs between the two plans. The
+structure as the wisdom rows spell it: `s=1` = the 2D plan per plane, then axis 0; `s=2` = the flat
+tier; `nf=2` = axis 0 in strips. "Axis 0" is the axis-0 chain, `wl` its bands, "plane" the plane's
+column chain, `csk=1` a plane whose column pass is skewed.
+
+| Shape | Estimate ÷ measured | Estimate | Planner |
+|---|---|---|---|
+| 15 × 15 × 4,096 | 1.189 | axis 0 15; plane 15 | axis 0 3.5, `nf=2`; plane 5.3 |
+| 35 × 35 × 35 | 1.175 | axis 0 5.7; plane 5.7 | axis 0 7.5; plane 7.5 |
+| 15 × 225 × 243 | 1.133 | `s=2`; plane 9.5.5 | `s=1`; plane 15.5.3 |
+| 81 × 9 × 81 | 1.132 | `s=1`, `wl=9` | `s=2` |
+| 3 × 3 × 4,096 | 1.108 | `s=1` | `s=2` |
+| 64 × 27 × 27 | 1.100 | axis 0 8.8, `wl=32` | axis 0 64, `wl=64` |
+| 105 × 16 × 64 | 1.100 | `s=1`; axis 0 3.5.7, `wl=35`; plane `csk=1` | `s=2`; axis 0 7.3.5, `wl=15`; plane `csk=0` |
+| 75 × 8 × 128 | 1.096 | `s=1`; axis 0 3.5.5, `wl=25`; plane `csk=1` | `s=2`; axis 0 5.3.5, `wl=15`; plane `csk=0` |
+| 100 × 100 × 100 | 1.088 | `s=1`; axis 0 4.5.5; plane 4.5.5 | `s=2`; axis 0 25.4; plane 5.4.5 |
+| 135 × 16 × 16 | 1.085 | axis 0 3.5.9, `wl=45` | axis 0 5.3.9, `wl=27` |
+| 16 × 99 × 256 | 1.081 | `wl=8`; plane 11.9 | `nf=2`; plane 11.3.3 |
+| 75 × 75 × 225 | 1.081 | `s=2`; axis 0 3.5.5; plane 5.5.3 | `s=1`; axis 0 15.5; plane 15.5 |
+| 125 × 125 × 125 | 1.072 | axis 0 5.5.5 | axis 0 25.5 |
+| 21 × 21 × 21 | 1.055 | axis 0 3.7 | axis 0 7.3 |
+| 8 × 81 × 256 | 1.053 | `s=2`; plane 9.9 | `s=1`; plane 9.3.3 |
 
 ## 2D and 3D: a prime column length above 47
 
@@ -417,6 +641,80 @@ shapes are the same.
 | 193 × 256 | 123,191 | 132,625 | 1.077 [1.060..1.095] | 1.003 [0.990..1.015] |
 
 Over the 25 shapes: 1.004 (geometric mean), 22 within 5%.
+
+---
+
+## 1D real transforms (R2C and C2R): a first sample
+
+Not counted in the totals above, and not in the library yet: `vfft_create` refuses
+`VFFT_FLAG_ESTIMATE` on R2C and C2R. The estimate arm here is the real formulas of
+[`src/estimate/estimate_1d.h`](../../src/estimate/estimate_1d.h), built by
+[`src/estimate/estimate_build.h`](../../src/estimate/estimate_build.h) through the same private store
+and replay as the library's C2C estimate, measuring nothing at create. An even length that runs as a
+complex transform of N/2 (zr2c) takes the library's C2C estimate for that half. Measured on
+2026-10-28 at commit 0d702e36 with [`src/estimate/estimate_race.c`](../../src/estimate/estimate_race.c)
+(`r2c`, `c2r`): out of place, one thread, the method of the sections above; C2R runs on Hermitian
+input. This section is updated as the real rules change.
+
+The engine column is the planner's: zrm the small real kernels, zrp the real pair, zttr real
+ZTURN-T, zr2c the complex transform of N/2, zrf the odd composite chain, zrb the odd prime's
+Bluestein method.
+
+### R2C
+
+| N | Engine | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
+|---|---|---:|---:|---|---|
+| 12 | zrm | 7.3 | 7.3 | 1.000 [0.917..1.068] | 1.001 [0.987..1.068] |
+| 64 | zrp | 24.4 | 28.1 | 1.151 [1.104..1.241] | 1.002 [0.962..1.035] |
+| 120 | zrp | 51.4 | 55.8 | 1.087 [1.081..1.105] | 0.997 [0.990..1.003] |
+| 1,280 | zttr | 612 | 694 | 1.134 [1.123..1.148] | 1.005 [0.998..1.011] |
+| 65,536 | zttr | 49,810 | 47,996 | 1.000 [0.924..1.074] | 1.002 [0.919..1.044] |
+| 1,000 | zr2c | 619 | 636 | 1.025 [0.978..1.092] | 1.011 [0.987..1.041] |
+| 4,050 | zr2c | 3,787 | 3,801 | 1.009 [0.912..1.094] | 1.012 [0.911..1.103] |
+| 131,072 | zr2c | 115,826 | 118,269 | 1.011 [0.939..1.088] | 1.001 [0.916..1.146] |
+| 105 | zrf | 80.4 | 90.2 | 1.122 [1.076..1.134] | 1.001 [0.966..1.014] |
+| 1,035 | zrf | 946 | 943 | 1.000 [0.920..1.083] | 1.004 [0.931..1.083] |
+| 531,441 | zrf | 1,168,350 | 1,288,840 | 1.088 [0.952..1.179] | 1.003 [0.906..1.146] |
+| 1,031 | zrb | 4,860 | 5,244 | 1.094 [1.029..1.222] | 0.993 [0.932..1.061] |
+| 50,021 | zrb | 360,246 | 373,492 | 1.033 [1.003..1.149] | 0.992 [0.957..1.070] |
+
+### C2R
+
+| N | Engine | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
+|---|---|---:|---:|---|---|
+| 12 | zrm | 7.8 | 7.9 | 1.008 [0.898..1.020] | 0.999 [0.894..1.014] |
+| 64 | zrp | 24.8 | 27.2 | 1.100 [1.049..1.151] | 0.975 [0.927..1.228] |
+| 120 | zrp | 53.4 | 57.8 | 1.087 [1.037..1.141] | 0.998 [0.964..1.054] |
+| 1,280 | zttr | 648 | 713 | 1.098 [1.089..1.159] | 1.002 [0.939..1.023] |
+| 65,536 | zttr | 51,418 | 53,267 | 1.038 [0.935..1.069] | 1.011 [0.903..1.228] |
+| 131,072 | zttr | 122,845 | 120,592 | 0.986 [0.966..1.004] | 0.998 [0.975..1.065] |
+| 1,000 | zr2c | 654 | 846 | 1.296 [1.237..1.625] | 1.014 [1.000..1.108] |
+| 4,050 | zr2c | 4,341 | 4,516 | 1.042 [0.806..1.432] | 0.993 [0.933..1.208] |
+| 105 | zrf | 77.7 | 83.5 | 1.071 [1.000..1.116] | 0.954 [0.889..0.990] |
+| 1,035 | zrf | 834 | 831 | 0.991 [0.947..1.036] | 0.998 [0.956..1.050] |
+| 531,441 | zrf | 1,168,660 | 1,165,532 | 0.993 [0.840..1.168] | 0.982 [0.809..1.023] |
+| 1,031 | zrb | 4,756 | 5,316 | 1.120 [1.055..1.179] | 0.998 [0.961..1.059] |
+| 50,021 | zrb | 414,812 | 419,765 | 1.003 [0.975..1.050] | 0.966 [0.881..1.030] |
+
+**Over the 13 lengths of each direction:**
+
+- R2C: geometric mean 1.057, median 1.033; C2R: 1.061, median 1.042;
+- 7 within 5% in each direction, none more than 5% faster; the lengths outside the loss table below
+  sit at 0.99 to 1.04;
+- 2,097,152 (zfsr) is in neither table: the planner's shipped row did not replay (its create
+  measured), in both directions.
+
+**The losses:**
+
+| N | R2C | C2R | Estimate | Planner |
+|---|---|---|---|---|
+| 1,000 | 1.025 | 1.296 | C2R: the complex half out of place (in place from N = 1,024 only), chain 10.10.5 | in place, chain 10.5.10 |
+| 1,031 | 1.094 | 1.120 | Bluestein at 1,792, a three-stage inner (32.7.8): the shortest length with any inner, as the C2C rule took before commit 55c75923 | Bluestein at 2,048, ZTURN-T (4.4.4.8.4) |
+| 64 | 1.151 | 1.100 | pair 8.8 | pair 4.16 |
+| 120 | 1.087 | 1.087 | pair 10.12 | pair 12.10 |
+| 1,280 | 1.134 | 1.098 | the complex half (pair 10.64; C2R 64.10) | real ZTURN-T (4.5.8.4; C2R 4.8.5.4) |
+| 105 | 1.122 | 1.071 | chain 3.5.7 | 7.3.5 (R2C), 15.7 (C2R) |
+| 531,441 | 1.088 | 0.993 | R2C: 9.9.9.9.9.9 | 9.9.9.3.9.27 |
 
 ---
 
