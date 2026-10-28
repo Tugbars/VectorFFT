@@ -1,6 +1,6 @@
 # chain3/ — the backward scatter of the three-pass chain
 
-27 files, `t2tg_bwd`. A three-pass chain exists so odd factors can be used at
+29 files, `t2tg_bwd`. A three-pass chain exists so odd factors can be used at
 all: a two-pass pair needs both pass counts even. Its forward passes are the
 pair's kinds (`n1t`, `t2` from [`../pair2p/`](../pair2p/)) and the shared leaf;
 `t2tg_bwd` is the backward pass's strided scatter that the chain needs and the

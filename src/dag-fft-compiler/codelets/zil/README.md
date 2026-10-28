@@ -9,16 +9,16 @@ token selects it, and what in it is unused.
 
 | folder | files | kinds | engine, wisdom |
 | --- | ---: | --- | --- |
-| [`avx2/shared/`](avx2/shared/) | 62 | `n1` | a whole small transform in registers: MONO forward, the pair's and chain3's backward leaf |
+| [`avx2/shared/`](avx2/shared/) | 63 | `n1` | a whole small transform in registers: MONO forward, the pair's and chain3's backward leaf |
 | [`avx2/shared/col/`](avx2/shared/col/) | 108 | `n1c`, `t2c` | the N-D column stage (2D, 3D) and the in-place 1D MONO path; `chain=` |
 | [`avx2/shared/col/blocked/`](avx2/shared/col/blocked/) | 18 | `n1cb*`, `t2cb*` | the radix-32/64 column forms, raced: `forms=`; the radix-16 stage's one body `t2cb44` (2026-10-06) |
 | [`avx2/shared/col/half/`](avx2/shared/col/half/) | 32 | `n1ch`, `n1cb*h` | the forward column leaf's half-store twins (the plane stores as two 128-bit halves: the odd CCE pitch of the 2D real r2c column pass), raced: `forms=` |
 | [`avx2/mono/`](avx2/mono/) | 2 | `mono64_il` | N = 64 as a fused 8x8, MONO form 1 (raced; the pair wins here) |
-| [`avx2/pair2p/`](avx2/pair2p/) | 161 | `n1t`, `t2`, `t2t`, `*_ct` | the two-pass Bailey pair: `il_route=2p`, `il_kv` |
+| [`avx2/pair2p/`](avx2/pair2p/) | 171 | `n1t`, `t2`, `t2t`, `*_ct` | the two-pass Bailey pair: `il_route=2p`, `il_kv` |
 | [`avx2/pair2p/blocked/`](avx2/pair2p/blocked/) | 18 | `n1b*`, `n1tb*`, `t2b*`, `t2bt*` | radix 16/32/64 as two passes: an `il_kv` variant |
 | [`avx2/pair2p/tangent/`](avx2/pair2p/tangent/) | 14 | `tan`, `bw32`, `t256`, `m128` | the tangent interior: `il_kv` 3 and 4 |
 | [`avx2/rows/`](avx2/rows/) | 82 | `n1ccs`; `n1tr`, `t2r`, `t2tr`, `n1r` (+ `tan`) | the 2D row pass: `ro=2`, `ro=3` + `rbk=` |
-| [`avx2/chain3/`](avx2/chain3/) | 27 | `t2tg_bwd` | the three-pass chain's backward scatter: `il_route=chain3` |
+| [`avx2/chain3/`](avx2/chain3/) | 29 | `t2tg_bwd` | the three-pass chain's backward scatter: `il_route=chain3` |
 | [`avx2/flat/`](avx2/flat/) | 198 | `t2cp`, `t2cs`, `t2csg`, `t2csgn`, `t2csgt`, `t2csgnt` | the flat mixed-radix DIT for odd N: `il_route=flat` |
 | [`avx2/flat/odd_mid/`](avx2/flat/odd_mid/) | 15 | `msz`, `mszt` | the flat engine's odd middle radices 3..15 |
 | [`avx2/ztt/`](avx2/ztt/) | 39 | `t0tp`, `tmg`, `tlf`, `tlfi`, `t0d`, `tmgd`, `tld` | ZTURN-T, 2048..262144: `il_route=ztt`, `il_tw=` |

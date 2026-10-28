@@ -1,6 +1,6 @@
 # pair2p/ — the two-pass Bailey pair
 
-161 files. A length N = R1 x R2 runs as two passes: `n1t` (the R1 leaf with a
+171 files. A length N = R1 x R2 runs as two passes: `n1t` (the R1 leaf with a
 turned store), then `t2` (the R2 stage with twiddles); backward `t2t` then the
 `n1_bwd` leaf from [`../shared/`](../shared/). The transpose between the
 passes is folded into the store addresses (R lane swaps), so there is no extra

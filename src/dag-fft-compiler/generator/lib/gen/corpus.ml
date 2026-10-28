@@ -404,6 +404,64 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix14_z_n1t_avx2.c"
+    , [ "14"; "--cil-n1t"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_n1t_bwd_avx2.c"
+    , [ "14"; "--cil-n1t"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_t2_avx2.c"
+    , [ "14"; "--cil-t2"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_t2_bwd_avx2.c"
+    , [ "14"; "--cil-t2"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_t2t_bwd_avx2.c"
+    , [ "14"
+      ; "--cil-t2"
+      ; "--cil-turnst"
+      ; "--cil-bwd"
+      ; "--isa"
+      ; "avx2"
+      ; "--uarch"
+      ; "raptor_lake_avx2"
+      ] )
+  ; ( "radix14_z_t2tg_bwd_avx2.c"
+    , [ "14"
+      ; "--cil-t2"
+      ; "--cil-turnst-gs"
+      ; "--cil-bwd"
+      ; "--isa"
+      ; "avx2"
+      ; "--uarch"
+      ; "raptor_lake_avx2"
+      ] )
+  ; ( "radix20_z_n1_bwd_avx2.c"
+    , [ "20"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix20_z_n1t_avx2.c"
+    , [ "20"; "--cil-n1t"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix20_z_n1t_bwd_avx2.c"
+    , [ "20"; "--cil-n1t"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix20_z_t2_avx2.c"
+    , [ "20"; "--cil-t2"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix20_z_t2_bwd_avx2.c"
+    , [ "20"; "--cil-t2"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix20_z_t2t_bwd_avx2.c"
+    , [ "20"
+      ; "--cil-t2"
+      ; "--cil-turnst"
+      ; "--cil-bwd"
+      ; "--isa"
+      ; "avx2"
+      ; "--uarch"
+      ; "raptor_lake_avx2"
+      ] )
+  ; ( "radix20_z_t2tg_bwd_avx2.c"
+    , [ "20"
+      ; "--cil-t2"
+      ; "--cil-turnst-gs"
+      ; "--cil-bwd"
+      ; "--isa"
+      ; "avx2"
+      ; "--uarch"
+      ; "raptor_lake_avx2"
+      ] )
   ; ( "radix15_z_n1_avx2.c"
     , [ "15"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_n1_bwd_avx2.c"
