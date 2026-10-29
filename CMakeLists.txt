@@ -451,6 +451,35 @@ add_library(dagcodelets OBJECT ${VFFT_CODELET_SRCS})
 target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
 target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 
+# ── THE KERNELS' STACK ALIGNMENT (Windows, GCC; 2026-10-29) ──
+# Win64 guarantees a 16-byte aligned stack and GCC cannot realign one under SEH, so a codelet that spills a vector
+# register does it with unaligned moves wherever the process put rsp: the same kernel splits cache lines in one
+# process and not in the next (up to 2x per call, measured). src/tools/build/align_kernel_stacks.py gives every such
+# kernel a wrapper that runs it on a 64-byte aligned frame (the kernel's code untouched, ~1 ns a call); it runs on
+# each archive that holds the codelets, after the archive is built. gauntlet/build.py runs the same tool.
+set(VFFT_ALIGN_KERNEL_STACKS OFF)
+if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        set(VFFT_ALIGN_KERNEL_STACKS ON)
+    else()
+        message(WARNING "VectorFFT: no Python 3 found: the codelets are built WITHOUT their 64-byte aligned frames "
+                        "(src/tools/build/align_kernel_stacks.py); each process then runs the spilling kernels at "
+                        "whatever stack position it draws. Install Python 3 and re-configure.")
+    endif()
+endif()
+message(STATUS "kernel stack alignment: ${VFFT_ALIGN_KERNEL_STACKS}")
+function(vfft_align_kernel_stacks _target)
+    if(VFFT_ALIGN_KERNEL_STACKS)
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/build/align_kernel_stacks.py"
+                    "$<TARGET_FILE:${_target}>" --cc "${CMAKE_C_COMPILER}" --objdump "${CMAKE_OBJDUMP}"
+                    --objcopy "${CMAKE_OBJCOPY}" --nm "${CMAKE_NM}" --ar "${CMAKE_AR}"
+                    --keep vfft.c.obj --keep vfft.c.o --cache "${PROJECT_BINARY_DIR}/kernel_stack_align"
+            VERBATIM)
+    endif()
+endfunction()
+
 find_package(Threads REQUIRED)
 
 # ── THE LIBRARY: VectorFFT::vfft = libvfft.a (src/core/vfft.c + every codelet) ─
@@ -510,6 +539,7 @@ target_link_libraries(vectorfft_vfft PRIVATE Threads::Threads)   # a static arch
 if(NOT VFFT_MSVC_STYLE)
     target_link_libraries(vectorfft_vfft PRIVATE m)
 endif()
+vfft_align_kernel_stacks(vectorfft_vfft)   # before the last word below: POST_BUILD steps run in this order
 # the build's last word on the library: what was compiled, for which CPU
 add_custom_command(TARGET vectorfft_vfft POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "VectorFFT: built $<TARGET_FILE_NAME:vectorfft_vfft> -- codelet ISA ${VFFT_ISA} (${_ncodelets} codelets, ${VFFT_ISA_FLAGS_TXT}), for ${VFFT_TARGET_TXT}"

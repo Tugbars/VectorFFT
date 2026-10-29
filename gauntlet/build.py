@@ -39,6 +39,7 @@ DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + g
 DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
 DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZEN wisdom bundle (spike_wisdom.txt)
 WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
+ALIGN_TOOL   = ROOT / 'src' / 'tools' / 'build' / 'align_kernel_stacks.py'   # the codelets' 64-byte frames (Windows, gcc)
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
 DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
 # The ISA flags of the codelet library and the drivers, placed after -march=native
@@ -285,8 +286,16 @@ def dag_codelet_lib(tc) -> str | None:
             old.unlink()
             old.with_suffix('.d').unlink(missing_ok=True)
 
+    # THE KERNELS' STACK ALIGNMENT (Windows, gcc; src/tools/build/align_kernel_stacks.py): every codelet that
+    # spills a vector register runs on a 64-byte aligned frame. The archive is processed before it replaces the
+    # old one; its stamp is the tool's own content, so a changed tool re-archives without recompiling.
+    align = tc['is_windows'] and not (tc['is_icx'] or tc['is_clang'] or tc['is_msvc_style'])
+    align_key = (hashlib.sha256(ALIGN_TOOL.read_bytes()).hexdigest() if align else 'off')
+    align_stamp = objdir / '_align.key'
+    align_ok = align_stamp.exists() and align_stamp.read_text(encoding='ascii').strip() == align_key
+
     stale = [(s, o) for (s, o) in pairs if _is_stale(s, o)]
-    if not stale and lib.exists():
+    if not stale and lib.exists() and align_ok:
         print(f'  [codelets] cached lib ({len(srcs)} codelets)')
         stamp.write_text(key, encoding='ascii')
         return str(lib)
@@ -319,8 +328,18 @@ def dag_codelet_lib(tc) -> str | None:
         tmp_lib.unlink(missing_ok=True)
         print(f'  [codelets] ar FAILED:\n{ra.stderr[:800]}', file=sys.stderr)
         return None
+    if align:
+        rk = subprocess.run([sys.executable, str(ALIGN_TOOL), str(tmp_lib), '--cc', tc['cc'],
+                             '--cache', str(objdir / '_align_cache')],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if rk.returncode != 0:
+            tmp_lib.unlink(missing_ok=True)
+            print(f'  [codelets] stack alignment FAILED:\n{(rk.stdout + rk.stderr)[-1500:]}', file=sys.stderr)
+            return None
+        print('  [codelets] ' + rk.stdout.strip().replace('align_kernel_stacks: ', 'stack alignment: '))
     os.replace(tmp_lib, lib)
     stamp.write_text(key, encoding='ascii')
+    align_stamp.write_text(align_key, encoding='ascii')
     print(f'  [codelets] lib built ({len(objs)} objects)')
     return str(lib)
 

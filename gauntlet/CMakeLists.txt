@@ -27,6 +27,7 @@
 # internal include walk PUBLIC, which the bench tools need; the user's
 # library is VectorFFT::vfft.
 add_library(vfft_core STATIC "${DAG_CORE}/vfft.c" $<TARGET_OBJECTS:dagcodelets>)
+vfft_align_kernel_stacks(vfft_core)   # the codelets' 64-byte frames, as in the library (root CMakeLists.txt)
 target_include_directories(vfft_core PUBLIC ${VFFT_INCLUDE_DIRS})
 target_compile_options(vfft_core PRIVATE ${VFFT_C_FLAGS})
 target_compile_definitions(vfft_core PUBLIC ${VFFT_WISDOM_DEFS} _CRT_SECURE_NO_WARNINGS)
