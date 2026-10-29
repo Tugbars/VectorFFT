@@ -19,14 +19,17 @@ THE FIX. For each GLOBAL function of a codelet object that reads or writes a ymm
     every kernel. The body's frame T = 8 + 8 * pushes + sub is read from its disassembly. The wrapper copies the
     stack arguments the body reads (all 16 words when the body keeps a frame pointer, whose argument reads this
     script does not count) and calls it. One extra call, about 1 ns.
-Static functions keep their place (their caller is a wrapped kernel, so their position is fixed too).
+The wrappers of member X are their own member, X.stack.o, beside it: a program links the wrapper and the body of
+the kernels it calls and nothing more (one member for every wrapper made each linked wrapper drag in every
+spilling kernel). Static functions keep their place (their caller is a wrapped kernel, so their position is fixed
+too).
 
     align_kernel_stacks.py ARCHIVE --cc GCC [--objdump X --objcopy X --nm X --ar X] [--keep MEMBER ...] [--cache DIR]
 
   --cc       assembles the wrappers; the binutils default to its directory (x86_64-w64-mingw32-gcc -> ...-objdump)
   --keep     archive members left as they are (vfft.c's object: its functions are the library's own, varargs among them)
   --cache    processed members by content hash, so a rebuild that changed only vfft.c re-analyses nothing
-An archive that already holds the wrapper member is left as it is. The archive is replaced atomically."""
+An archive that already holds wrapper members is left as it is. The archive is replaced atomically."""
 import argparse
 import hashlib
 import json
@@ -38,18 +41,21 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
-WRAP_MEMBER = 'vfft_kernel_stack_align.o'   # the wrappers' object, and the "already processed" mark
+WRAP_SUFFIX = '.stack.o'   # member X's wrappers are member X.stack.o; their presence marks a processed archive
 BODY = '__body'
 ALL_ARGS = 16          # stack arguments copied when the body's own reads cannot be counted
-VERSION = 1            # bumped when the analysis or the wrapper changes: the cache keys on it
+VERSION = 3            # bumped when the analysis or the wrapper changes: the cache keys on it
 
 func_re = re.compile(r'^[0-9a-f]+ <([^>]+)>:')
 push_re = re.compile(r'^\s*[0-9a-f]+:\s+push\s+\w+')
 sub_re = re.compile(r'^\s*[0-9a-f]+:\s+sub\s+rsp,(0x[0-9a-f]+|rax)')
 moveax_re = re.compile(r'^\s*[0-9a-f]+:\s+mov\s+eax,(0x[0-9a-f]+)')
 framep_re = re.compile(r'^\s*[0-9a-f]+:\s+mov\s+rbp,rsp')
+leabp_re = re.compile(r'^\s*[0-9a-f]+:\s+lea\s+rbp,\[rsp(?:\+(0x[0-9a-f]+))?\]')
 wide_re = re.compile(r'(YMMWORD|ZMMWORD) PTR \[rsp(?:\+(0x[0-9a-f]+))?\]')
 any_re = re.compile(r'PTR \[rsp(?:\+(0x[0-9a-f]+))?\]')
+wide_bp_re = re.compile(r'(YMMWORD|ZMMWORD) PTR \[rbp(?:([+-])(0x[0-9a-f]+))?\]')
+any_bp_re = re.compile(r'PTR \[rbp(?:([+-])(0x[0-9a-f]+))?\]')
 
 
 def tool(cc, name):
@@ -95,12 +101,19 @@ def analyse(objdump, paths):
             continue
         if 'T' not in fn:
             continue
-        for x in any_re.findall(line):
-            off = int(x, 16) if x else 0
+        m = leabp_re.match(line)
+        if m and 'bp' not in fn:   # LLVM's frame pointer (icx): rbp = rsp + K after the prologue's sub
+            fn['bp'] = int(m.group(1), 16) if m.group(1) else 0
+            continue
+        offs = [int(x, 16) if x else 0 for x in any_re.findall(line)]
+        wide = [(w, int(x, 16) if x else 0) for w, x in wide_re.findall(line)]
+        if 'bp' in fn:   # [rbp +- X] is the frame offset K +- X
+            offs += [fn['bp'] + (int(x, 16) if s == '+' else -int(x, 16)) if x else fn['bp'] for s, x in any_bp_re.findall(line)]
+            wide += [(w, fn['bp'] + (int(x, 16) if s == '+' else -int(x, 16)) if x else fn['bp']) for w, s, x in wide_bp_re.findall(line)]
+        for off in offs:
             if off >= fn['T'] + 32:   # the caller's stack argument (off - T - 32) / 8
                 fn['maxarg'] = max(fn['maxarg'], (off - fn['T'] - 32) // 8)
-        for w, x in wide_re.findall(line):
-            fn['wide'].append((w, int(x, 16) if x else 0))
+        fn['wide'] += wide
     return res
 
 
@@ -155,9 +168,12 @@ def main():
     archive = os.path.abspath(a.archive)
 
     members = run([ar, 't', archive]).split()
-    if WRAP_MEMBER in members:
+    if any(m.endswith(WRAP_SUFFIX) for m in members):
         print('align_kernel_stacks: %s is already aligned' % os.path.basename(archive))
         return
+    if 'vfft_kernel_stack_align.o' in members:   # version 1 put every wrapper in this one member
+        sys.exit('align_kernel_stacks: %s was aligned by an older version of this script; rebuild the archive '
+                 'from its objects' % archive)
     if len(set(members)) != len(members):
         sys.exit('align_kernel_stacks: %s has members of the same name; they cannot be extracted apart' % archive)
     if a.cache:
@@ -175,7 +191,12 @@ def main():
             if c and os.path.exists(c + '.json') and os.path.exists(c + '.o'):
                 with open(c + '.json') as f:
                     specs[m] = json.load(f)
+                if specs[m] and not os.path.exists(c + WRAP_SUFFIX):
+                    todo.append(m)
+                    continue
                 shutil.copyfile(c + '.o', os.path.join(work, m))
+                if specs[m]:
+                    shutil.copyfile(c + WRAP_SUFFIX, os.path.join(work, m + WRAP_SUFFIX))
             else:
                 todo.append(m)
 
@@ -205,10 +226,17 @@ def main():
                 run([objcopy, '--redefine-syms=' + syms, p, p + '.new'])
                 os.replace(p + '.new', p)
                 os.remove(syms)
+                with open(p + '.S', 'w') as f:   # the wrappers of this member: their own member, X.stack.o
+                    f.write('/* generated by src/tools/build/align_kernel_stacks.py: the wrappers of %s */\n'
+                            '\t.text\n%s' % (m, ''.join(wrapper_text(s) for s in specs[m])))
+                run([a.cc, '-c', p + '.S', '-o', p + WRAP_SUFFIX])
+                os.remove(p + '.S')
             if a.cache:   # write-then-rename: concurrent builds may share the cache
                 c = os.path.join(a.cache, keys[m])
-                shutil.copyfile(p, c + '.o.%d' % os.getpid())
-                os.replace(c + '.o.%d' % os.getpid(), c + '.o')
+                for src, dst in ((p, c + '.o'), (p + WRAP_SUFFIX, c + WRAP_SUFFIX)):
+                    if os.path.exists(src):
+                        shutil.copyfile(src, dst + '.%d' % os.getpid())
+                        os.replace(dst + '.%d' % os.getpid(), dst)
                 with open(c + '.json.%d' % os.getpid(), 'w') as f:
                     json.dump(specs[m], f)
                 os.replace(c + '.json.%d' % os.getpid(), c + '.json')
@@ -217,13 +245,10 @@ def main():
             list(ex.map(rename, todo))
 
         wrapped = [s for m in members if m in specs for s in specs[m]]
-        with open(os.path.join(work, 'wrappers.S'), 'w') as f:
-            f.write('/* generated by src/tools/build/align_kernel_stacks.py: one wrapper per spilling kernel */\n'
-                    '\t.text\n' + ''.join(wrapper_text(s) for s in wrapped))
-        run([a.cc, '-c', os.path.join(work, 'wrappers.S'), '-o', os.path.join(work, WRAP_MEMBER)])
+        order = members + [m + WRAP_SUFFIX for m in members if specs.get(m)]
         rsp = os.path.join(work, 'members.rsp')
         with open(rsp, 'w') as f:
-            f.write('\n'.join(os.path.join(work, m).replace('\\', '/') for m in members + [WRAP_MEMBER]))
+            f.write('\n'.join(os.path.join(work, m).replace('\\', '/') for m in order))
         tmp = archive + '.%d.tmp' % os.getpid()
         if os.path.exists(tmp):
             os.remove(tmp)
