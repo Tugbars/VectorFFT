@@ -141,12 +141,12 @@
 @cell t=c2c n=4058 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=4057 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=262 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=263 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=263 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=9.64 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=265 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=2024 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=267 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=268 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=16.64 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=269 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.4 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=269 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=9.64 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=271 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=10.3.9 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=274 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=16.64 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=2022 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-21
@@ -155,14 +155,14 @@
 @cell t=c2c n=4056 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=281 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=8.5.7 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=4055 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=283 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4 in_tw=0 | ran=1 src=race date=2026-09-21
+@cell t=c2c n=283 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=9.64 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=284 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.4.4.4 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=2021 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=4054 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=4053 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=291 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=292 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=293 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.4 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=293 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=295 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=4052 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=298 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4 in_tw=0 | ran=1 src=race date=2026-09-20
@@ -178,7 +178,7 @@
 @cell t=c2c n=313 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=8.3.13 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=314 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=316 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=317 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=317 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.10 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=318 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=4049 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=321 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.32 in_tw=0 | ran=1 src=race date=2026-09-20
@@ -361,30 +361,30 @@
 @cell t=c2c n=565 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=566 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.64 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=568 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=569 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=569 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=3p in_sh=32.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=571 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=10.3.19 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=573 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=573 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=3p in_sh=32.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=4005 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=4004 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=577 q=1 ord=scr place=ip role=method lay=il | eng=rader in=2p in_sh=9.64 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=4003 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=579 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=579 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=3p in_sh=8.7.21 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=4002 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=581 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=582 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=583 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.64 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=584 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=586 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=587 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=586 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=3p in_sh=8.7.21 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
+@cell t=c2c n=587 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=3p in_sh=8.7.21 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=4001 q=1 ord=scr place=ip role=method lay=il | eng=rader in=ztt in_sh=8.5.5.5.4 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=590 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=591 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.64 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=4000 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=593 q=1 ord=scr place=ip role=method lay=il | eng=rader in=2p in_sh=16.37 in_tw=0 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=596 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=597 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=597 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=3999 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=599 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=599 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=601 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=8.3.25 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=3998 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=603 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
@@ -446,12 +446,12 @@
 @cell t=c2c n=677 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=4.13.13 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=678 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=679 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=681 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.8 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=681 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=3982 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=683 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=685 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=3981 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=687 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=687 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=3980 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=689 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=3979 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.8.4 in_tw=1024 | ran=1 src=race date=2026-09-22
@@ -462,7 +462,7 @@
 @cell t=c2c n=3978 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=3977 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=698 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=699 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=64.32 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=699 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=701 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=4.7.25 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=3976 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=3975 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
@@ -503,7 +503,7 @@
 @cell t=c2c n=749 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.4.4.8 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=751 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.64 in_tw=0 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=3966 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=753 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=2p in_sh=32.64 in_tw=0 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=753 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=3965 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.8.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=755 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=757 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=4.7.27 in_tw=0 | ran=1 src=race date=2026-09-21
@@ -723,7 +723,7 @@
 @cell t=c2c n=1027 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1028 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1030 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1031 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1031 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.7.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=3913 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=1033 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=8.3.43 in_tw=0 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=1034 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -731,7 +731,7 @@
 @cell t=c2c n=1036 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1037 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1038 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1039 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1039 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.7.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1041 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1042 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1043 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -739,7 +739,7 @@
 @cell t=c2c n=1046 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1047 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1048 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1049 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1049 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.7.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1051 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=10.5.21 in_tw=0 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1052 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1054 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -748,14 +748,14 @@
 @cell t=c2c n=1058 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1059 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1060 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1061 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1061 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.7.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1062 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1063 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1063 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.7.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1065 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1066 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1067 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1068 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1069 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1069 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.7.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1070 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1072 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1073 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -777,12 +777,12 @@
 @cell t=c2c n=1094 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1095 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1096 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1097 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1097 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.7.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1098 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1099 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1101 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1102 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1103 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1103 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.7.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1104 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1106 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1107 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -804,7 +804,7 @@
 @cell t=c2c n=1126 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1127 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1128 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1129 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=2048 | ran=1 src=race date=2026-09-21
+@cell t=c2c n=1129 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.9.4.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1130 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1131 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1132 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -832,7 +832,7 @@
 @cell t=c2c n=1160 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1161 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1162 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1163 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.4 in_tw=2048 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1163 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.7.7.3.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1164 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1165 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1166 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -848,16 +848,16 @@
 @cell t=c2c n=1178 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1179 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1180 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1181 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1181 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1182 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1184 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1185 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1186 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1187 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1187 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.15.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1189 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1191 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1192 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1193 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1193 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1194 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1195 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1196 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -911,7 +911,7 @@
 @cell t=c2c n=1256 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1257 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1258 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1259 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1259 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.5.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1261 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1262 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1263 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -929,7 +929,7 @@
 @cell t=c2c n=1276 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1277 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=4.11.29 in_tw=0 | ran=1 src=race date=2026-09-21
 @cell t=c2c n=1278 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-20
-@cell t=c2c n=1279 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
+@cell t=c2c n=1279 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.4.5.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=1281 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1282 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-20
 @cell t=c2c n=1283 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.8 in_tw=1024 | ran=1 src=race date=2026-09-20
@@ -1559,13 +1559,13 @@
 @cell t=c2c n=2060 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2061 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2062 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2063 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2063 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2064 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2065 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2066 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2067 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2068 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2069 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2069 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2070 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2071 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2072 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
@@ -1579,11 +1579,11 @@
 @cell t=c2c n=2080 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2081 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=32.5.13 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2082 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2083 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2083 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2084 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2085 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2086 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2087 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2087 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2088 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2089 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=8.9.29 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2090 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
@@ -1595,7 +1595,7 @@
 @cell t=c2c n=2096 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2097 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2098 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2099 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2099 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2100 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2101 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2102 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
@@ -1607,7 +1607,7 @@
 @cell t=c2c n=2108 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2109 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.8.8.8 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2110 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2111 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2111 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2112 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2113 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=32.11.6 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2114 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
@@ -1627,17 +1627,17 @@
 @cell t=c2c n=2128 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2129 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=16.7.19 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2130 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2131 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2131 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2132 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2133 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2134 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2135 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2136 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2137 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2137 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2138 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2139 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4.4 in_tw=2048 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2140 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.8.4.4.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22
-@cell t=c2c n=2141 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
+@cell t=c2c n=2141 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.4 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
 @cell t=c2c n=2142 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.4.4.8.8 in_tw=1024 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2143 q=1 ord=scr place=ip role=method lay=il | eng=rader in=3p in_sh=6.17.21 in_tw=0 | ran=1 src=race date=2026-09-22
 @cell t=c2c n=2144 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4 in_tw=1024 | ran=1 src=race date=2026-09-22

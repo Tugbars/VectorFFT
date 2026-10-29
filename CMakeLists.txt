@@ -451,21 +451,43 @@ add_library(dagcodelets OBJECT ${VFFT_CODELET_SRCS})
 target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
 target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 
-# ── THE KERNELS' STACK ALIGNMENT (Windows, GCC; 2026-10-29) ──
+# ── THE KERNELS' STACK ALIGNMENT (Windows, GCC and icx; 2026-10-29) ──
 # Win64 guarantees a 16-byte aligned stack and GCC cannot realign one under SEH, so a codelet that spills a vector
 # register does it with unaligned moves wherever the process put rsp: the same kernel splits cache lines in one
 # process and not in the next (up to 2x per call, measured). src/tools/build/align_kernel_stacks.py gives every such
 # kernel a wrapper that runs it on a 64-byte aligned frame (the kernel's code untouched, ~1 ns a call); it runs on
 # each archive that holds the codelets, after the archive is built. gauntlet/build.py runs the same tool.
 set(VFFT_ALIGN_KERNEL_STACKS OFF)
-if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+set(VFFT_ALIGN_TOOLS "")
+if(WIN32 AND (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR VFFT_IS_ICX))
     find_package(Python3 COMPONENTS Interpreter)
-    if(Python3_Interpreter_FOUND)
-        set(VFFT_ALIGN_KERNEL_STACKS ON)
-    else()
+    if(NOT Python3_Interpreter_FOUND)
         message(WARNING "VectorFFT: no Python 3 found: the codelets are built WITHOUT their 64-byte aligned frames "
                         "(src/tools/build/align_kernel_stacks.py); each process then runs the spilling kernels at "
-                        "whatever stack position it draws. Install Python 3 and re-configure.")
+                        "whatever stack position it draws. Install Python 3, or name the one you have: re-configure "
+                        "with -DPython3_EXECUTABLE=<path to python.exe>.")
+    elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        set(VFFT_ALIGN_KERNEL_STACKS ON)
+        set(VFFT_ALIGN_TOOLS --cc "${CMAKE_C_COMPILER}" --objdump "${CMAKE_OBJDUMP}" --objcopy "${CMAKE_OBJCOPY}"
+                             --nm "${CMAKE_NM}" --ar "${CMAKE_AR}")
+    else()
+        # icx: its own LLVM binutils and its GNU-style driver (which assembles the wrappers) beside it; the
+        # disassembly the tool reads is GNU objdump's (MinGW's): icx ships no objdump
+        get_filename_component(_vfft_icx_dir "${CMAKE_C_COMPILER}" DIRECTORY)
+        find_program(VFFT_ICX_DRIVER icx HINTS "${_vfft_icx_dir}" NO_DEFAULT_PATH)
+        find_program(VFFT_LLVM_AR llvm-ar HINTS "${_vfft_icx_dir}/compiler" "${_vfft_icx_dir}")
+        find_program(VFFT_LLVM_OBJCOPY llvm-objcopy HINTS "${_vfft_icx_dir}/compiler" "${_vfft_icx_dir}")
+        find_program(VFFT_LLVM_NM llvm-nm HINTS "${_vfft_icx_dir}/compiler" "${_vfft_icx_dir}")
+        find_program(VFFT_GNU_OBJDUMP objdump)
+        if(VFFT_ICX_DRIVER AND VFFT_LLVM_AR AND VFFT_LLVM_OBJCOPY AND VFFT_LLVM_NM AND VFFT_GNU_OBJDUMP)
+            set(VFFT_ALIGN_KERNEL_STACKS ON)
+            set(VFFT_ALIGN_TOOLS --cc "${VFFT_ICX_DRIVER}" --objdump "${VFFT_GNU_OBJDUMP}" --objcopy "${VFFT_LLVM_OBJCOPY}"
+                                 --nm "${VFFT_LLVM_NM}" --ar "${VFFT_LLVM_AR}")
+        else()
+            message(WARNING "VectorFFT: icx's kernel stack alignment needs icx, llvm-ar, llvm-objcopy and llvm-nm "
+                            "beside the compiler and a GNU objdump (MinGW) on the PATH; one is missing, so the "
+                            "codelets are built WITHOUT their 64-byte aligned frames.")
+        endif()
     endif()
 endif()
 message(STATUS "kernel stack alignment: ${VFFT_ALIGN_KERNEL_STACKS}")
@@ -473,8 +495,7 @@ function(vfft_align_kernel_stacks _target)
     if(VFFT_ALIGN_KERNEL_STACKS)
         add_custom_command(TARGET ${_target} POST_BUILD
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/build/align_kernel_stacks.py"
-                    "$<TARGET_FILE:${_target}>" --cc "${CMAKE_C_COMPILER}" --objdump "${CMAKE_OBJDUMP}"
-                    --objcopy "${CMAKE_OBJCOPY}" --nm "${CMAKE_NM}" --ar "${CMAKE_AR}"
+                    "$<TARGET_FILE:${_target}>" ${VFFT_ALIGN_TOOLS}
                     --keep vfft.c.obj --keep vfft.c.o --cache "${PROJECT_BINARY_DIR}/kernel_stack_align"
             VERBATIM)
     endif()

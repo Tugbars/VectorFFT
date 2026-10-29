@@ -536,8 +536,23 @@ static inline double est_c3_spread(int a, int b, int c)   /* 3 x the variance of
     const double la = log((double)a), lb = log((double)b), lc = log((double)c), mu = (la + lb + lc) / 3.0;
     return (la - mu) * (la - mu) + (lb - mu) * (lb - mu) + (lc - mu) * (lc - mu);
 }
+/* NO 14 LEAD WHERE 16 DIVIDES N (2026-10-29, the owner: "it should stop putting 14 first in three-pass
+ * plans"): there the race keeps the twos in one leaf (784 16.7.7, 1120 16.10.7, 480 16.5.6; none of the
+ * 7 chain3 cells it raced with radix 14 at such N led with 14, while with one to three twos 14 led at 17
+ * lengths, 882 14.9.7, 1400 14.10.10), and the most balanced triple led with 14 and ran up to 1.6x the
+ * stored plan (784 14.8.7, 1456 14.13.8). The leaf is the largest even factor (below), so such a triple
+ * is one whose largest even factor is 14. */
+static inline int est_c3_lead14(long long N, int a, int b, int c)
+{
+    int m = 0;
+    if (N % 16) return 0;
+    if (!(a & 1) && a > m) m = a;
+    if (!(b & 1) && b > m) m = b;
+    if (!(c & 1) && c > m) m = c;
+    return m == 14;
+}
 /* chain3. The factors: the most balanced legal triple, the least variance of log radix (the first
- * in the enumerator's order on a tie: the leaf in list order, A ascending). The order: the leaf is
+ * in the enumerator's order on a tie: the leaf in list order, A ascending; est_c3_lead14 skipped). The order: the leaf is
  * the largest even factor (else the largest that is not a prime from 23 up), the two mids follow
  * descending; when the enumerator refuses that order the mids swap; failing that, the legal order
  * of the same factors with the largest leaf. c3 = {R2, A, B}. */
@@ -554,7 +569,7 @@ static inline int est_chain3_shape(long long N, int c3[3])
         for (A = 3; A <= R1 / 2; A++)
         {
             double sp;
-            if (R1 % A || !est_c3_legal(N, R2, A, (int)(R1 / A))) continue;
+            if (R1 % A || !est_c3_legal(N, R2, A, (int)(R1 / A)) || est_c3_lead14(N, R2, A, (int)(R1 / A))) continue;
             sp = est_c3_spread(R2, A, (int)(R1 / A));
             if (!have || sp < best - 1e-12) { best = sp; t[0] = R2; t[1] = A; t[2] = (int)(R1 / A); have = 1; }
         }

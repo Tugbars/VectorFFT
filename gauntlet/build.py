@@ -221,6 +221,15 @@ def _compile_cmd(tc, src: Path, obj: Path, flags: list) -> list:
              '-c', str(src), '-o', str(obj)])
 
 
+def _llvm_tool(tc, name: str) -> str:
+    """An LLVM binutil of icx's install (llvm-ar, llvm-nm, llvm-objcopy): beside icx or in its compiler/ folder."""
+    icx = Path(shutil.which(tc['cc']) or tc['cc'])
+    for cand in (icx.parent / 'compiler' / f'{name}.exe', icx.parent / f'{name}.exe'):
+        if cand.is_file():
+            return str(cand)
+    return name
+
+
 def dag_codelet_lib(tc) -> str | None:
     """Compile the dag codelets into a CACHED static lib. They're OCaml-
     generated and unchanged between calibration runs, so a driver rebuild is a
@@ -289,7 +298,18 @@ def dag_codelet_lib(tc) -> str | None:
     # THE KERNELS' STACK ALIGNMENT (Windows, gcc; src/tools/build/align_kernel_stacks.py): every codelet that
     # spills a vector register runs on a 64-byte aligned frame. The archive is processed before it replaces the
     # old one; its stamp is the tool's own content, so a changed tool re-archives without recompiling.
-    align = tc['is_windows'] and not (tc['is_icx'] or tc['is_clang'] or tc['is_msvc_style'])
+    align = tc['is_windows'] and not (tc['is_clang'] or tc['is_msvc_style'])
+    align_args = []
+    if align and tc['is_icx']:
+        # icx: its own LLVM binutils beside it; the disassembly the tool reads is GNU objdump's (mingw's)
+        gnu_objdump = Path(_default_windows_cc()).with_name('objdump.exe')
+        if gnu_objdump.is_file():
+            align_args = ['--objdump', str(gnu_objdump), '--objcopy', _llvm_tool(tc, 'llvm-objcopy'),
+                          '--nm', _llvm_tool(tc, 'llvm-nm'), '--ar', _llvm_tool(tc, 'llvm-ar')]
+        else:
+            print(f'  [codelets] stack alignment OFF: icx needs GNU objdump (mingw) to read the kernels\' frames, '
+                  f'none at {gnu_objdump}')
+            align = False
     align_key = (hashlib.sha256(ALIGN_TOOL.read_bytes()).hexdigest() if align else 'off')
     align_stamp = objdir / '_align.key'
     align_ok = align_stamp.exists() and align_stamp.read_text(encoding='ascii').strip() == align_key
@@ -310,7 +330,8 @@ def dag_codelet_lib(tc) -> str | None:
         print(f'  [codelets] compiled {len(stale)} in {time.time() - t0:.1f}s')
 
     objs = sorted(o for (_, o) in pairs)
-    ar = str(Path(tc['cc']).with_name(Path(tc['cc']).name.replace('gcc', 'ar')))
+    ar = (_llvm_tool(tc, 'llvm-ar') if tc['is_icx'] else      # icx has no `ar` of its own name: its llvm-ar
+          str(Path(tc['cc']).with_name(Path(tc['cc']).name.replace('gcc', 'ar'))))
     # Per-process temp names, then an atomic replace. Builds DO run concurrently
     # here (a second session was observed mid-build on 2026-08-23), and the old
     # unlink-then-ar sequence left a window in which the archive did not exist:
@@ -321,7 +342,7 @@ def dag_codelet_lib(tc) -> str | None:
     objs_rsp.write_text('\n'.join(o.as_posix() for o in objs), encoding='ascii')
     if tmp_lib.exists():
         tmp_lib.unlink()
-    ra = subprocess.run([ar, 'rcs', str(tmp_lib), f'@{objs_rsp}'],
+    ra = subprocess.run([ar] + (['--format=coff'] if tc['is_icx'] else []) + ['rcs', str(tmp_lib), f'@{objs_rsp}'],
                         capture_output=True, text=True, encoding='utf-8', errors='replace')
     objs_rsp.unlink(missing_ok=True)
     if ra.returncode != 0:
@@ -330,7 +351,7 @@ def dag_codelet_lib(tc) -> str | None:
         return None
     if align:
         rk = subprocess.run([sys.executable, str(ALIGN_TOOL), str(tmp_lib), '--cc', tc['cc'],
-                             '--cache', str(objdir / '_align_cache')],
+                             '--cache', str(objdir / '_align_cache')] + align_args,
                             capture_output=True, text=True, encoding='utf-8', errors='replace')
         if rk.returncode != 0:
             tmp_lib.unlink(missing_ok=True)

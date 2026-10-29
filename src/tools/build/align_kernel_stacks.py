@@ -52,6 +52,8 @@ sub_re = re.compile(r'^\s*[0-9a-f]+:\s+sub\s+rsp,(0x[0-9a-f]+|rax)')
 moveax_re = re.compile(r'^\s*[0-9a-f]+:\s+mov\s+eax,(0x[0-9a-f]+)')
 framep_re = re.compile(r'^\s*[0-9a-f]+:\s+mov\s+rbp,rsp')
 leabp_re = re.compile(r'^\s*[0-9a-f]+:\s+lea\s+rbp,\[rsp(?:\+(0x[0-9a-f]+))?\]')
+bpwrite_re = re.compile(r'^\s*[0-9a-f]+:\s+(?:mov|lea|add|sub|pop|xor|and|or|imul|shl|shr|sar|inc|dec|neg|not|xchg|cmov\w*)\s+rbp,')
+insn_re = re.compile(r'^\s*[0-9a-f]+:\s+\S')
 wide_re = re.compile(r'(YMMWORD|ZMMWORD) PTR \[rsp(?:\+(0x[0-9a-f]+))?\]')
 any_re = re.compile(r'PTR \[rsp(?:\+(0x[0-9a-f]+))?\]')
 wide_bp_re = re.compile(r'(YMMWORD|ZMMWORD) PTR \[rbp(?:([+-])(0x[0-9a-f]+))?\]')
@@ -101,19 +103,44 @@ def analyse(objdump, paths):
             continue
         if 'T' not in fn:
             continue
+        if not insn_re.match(line):
+            continue
+        first = fn.setdefault('after', 0) == 0   # the first instruction after the prologue's sub
+        fn['after'] += 1
+        # LLVM's frame pointer (icx): `lea rbp,[rsp+K]` right after the sub, rbp never written again. Then
+        # [rbp +- X] is the frame offset K +- X. Any other write to rbp from rsp makes rbp a pointer this script
+        # does not follow: the wrapper then copies every stack argument (fp).
         m = leabp_re.match(line)
-        if m and 'bp' not in fn:   # LLVM's frame pointer (icx): rbp = rsp + K after the prologue's sub
+        if m and first:
             fn['bp'] = int(m.group(1), 16) if m.group(1) else 0
             continue
-        offs = [int(x, 16) if x else 0 for x in any_re.findall(line)]
-        wide = [(w, int(x, 16) if x else 0) for w, x in wide_re.findall(line)]
-        if 'bp' in fn:   # [rbp +- X] is the frame offset K +- X
-            offs += [fn['bp'] + (int(x, 16) if s == '+' else -int(x, 16)) if x else fn['bp'] for s, x in any_bp_re.findall(line)]
-            wide += [(w, fn['bp'] + (int(x, 16) if s == '+' else -int(x, 16)) if x else fn['bp']) for w, s, x in wide_bp_re.findall(line)]
-        for off in offs:
+        if bpwrite_re.match(line):
+            if 'bp' in fn:
+                fn['bp_lost'] = True
+            if m:
+                fn['fp'] = True
+        for x in any_re.findall(line):
+            off = int(x, 16) if x else 0
             if off >= fn['T'] + 32:   # the caller's stack argument (off - T - 32) / 8
                 fn['maxarg'] = max(fn['maxarg'], (off - fn['T'] - 32) // 8)
-        fn['wide'] += wide
+        fn['wide'] += [(w, int(x, 16) if x else 0) for w, x in wide_re.findall(line)]
+        if 'bp' in fn:
+            fn.setdefault('bp_offs', []).extend((-1 if s == '-' else 1) * int(x, 16) if x else 0
+                                                for s, x in any_bp_re.findall(line))
+            fn.setdefault('bp_wide', []).extend((w, (-1 if s == '-' else 1) * int(x, 16) if x else 0)
+                                                for w, s, x in wide_bp_re.findall(line))
+    for funcs in res.values():
+        for fn in funcs.values():
+            if 'bp' not in fn:
+                continue
+            if fn.get('bp_lost'):   # rbp was not a frame pointer after all
+                fn['fp'] = True
+                continue
+            for x in fn.get('bp_offs', ()):
+                off = fn['bp'] + x
+                if off >= fn['T'] + 32:
+                    fn['maxarg'] = max(fn['maxarg'], (off - fn['T'] - 32) // 8)
+            fn['wide'] += [(w, fn['bp'] + x) for w, x in fn.get('bp_wide', ())]
     return res
 
 
@@ -167,7 +194,9 @@ def main():
     ar = a.ar or tool(a.cc, 'ar')
     archive = os.path.abspath(a.archive)
 
-    members = run([ar, 't', archive]).split()
+    # by base name: Microsoft's lib.exe (icx with the MSVC-style driver) names a member by its object's build path
+    # (CMakeFiles\x.dir\...\f.c.obj), and ar x writes the base name
+    members = [re.split(r'[\\/]', m)[-1] for m in run([ar, 't', archive]).split()]
     if any(m.endswith(WRAP_SUFFIX) for m in members):
         print('align_kernel_stacks: %s is already aligned' % os.path.basename(archive))
         return
@@ -186,7 +215,7 @@ def main():
             if m in a.keep:
                 continue
             with open(os.path.join(work, m), 'rb') as f:
-                keys[m] = hashlib.sha256(f.read() + b'v%d' % VERSION).hexdigest()
+                keys[m] = hashlib.sha256(f.read() + b'v%d' % VERSION).hexdigest()[:32]   # short: Windows MAX_PATH
             c = a.cache and os.path.join(a.cache, keys[m])
             if c and os.path.exists(c + '.json') and os.path.exists(c + '.o'):
                 with open(c + '.json') as f:
@@ -252,7 +281,8 @@ def main():
         tmp = archive + '.%d.tmp' % os.getpid()
         if os.path.exists(tmp):
             os.remove(tmp)
-        run([ar, 'rcs', tmp, '@' + rsp])
+        # llvm-ar (icx) writes the COFF archive format, the one lld-link and link.exe both read
+        run([ar] + (['--format=coff'] if 'llvm-ar' in os.path.basename(ar).lower() else []) + ['rcs', tmp, '@' + rsp])
         os.replace(tmp, archive)
         print('align_kernel_stacks: %s: %d kernels aligned in %d of %d objects (%d analysed, %d from the cache)%s'
               % (os.path.basename(archive), len(wrapped), sum(1 for m in specs if specs[m]), len(specs), len(todo),
