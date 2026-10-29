@@ -1,4 +1,4 @@
-# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform, natural order, one thread)
+# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform, natural order; rank 2 at any thread count)
 
 2026-10-22. The design of `VFFT_FLAG_ESTIMATE` at rank 2 and 3, written before the code that follows
 it (`src/core/il/estimate/estimate_nd_il.h`, `src/core/il/estimate/c2c_estimate_nd_il.h`). Nothing was
@@ -17,7 +17,7 @@ the banked rows, **[I]** interpretation.
 | rank | 2 and 3 (1 as before) | 4 |
 | batch | one transform (howmany 1) | howmany > 1 |
 | order | natural (the default) | scrambled at rank 2 and 3 |
-| threads | one | nthreads > 1 at rank 2 and 3 |
+| threads | rank 2: any (§8a, 2026-10-29); rank 3: one | nthreads > 1 at rank 3 |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
 | lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5) |
 | rank-3 structure | always `s=1`: the 2D plan per plane, then axis 0 | the flat structure is never planned |
@@ -35,7 +35,8 @@ never reads or writes the user's wisdom, and is never a fallback.
 | L2 | the band widths (2D and 3D); the 3D strip width | `vfft_cpu_l2_bytes()` |
 | L3 | the 3D natural form: the strips only on a volume past it (no L3 reported counts as past, as the 1D estimate reads it) | `vfft_cpu_l3_bytes()` |
 | lane count | refuse a machine whose lane count is not this build's (as at rank 1); the 1D children | `VFFT_IL_VW` |
-| core count | not used: no rank-2/3 verdict at one thread relates to it | — |
+| thread count | rank 2 at T > 1: the strip ladder's floor of T strips and the turn's bound (§8a); the threads themselves are the request's (`nthreads`) | the request |
+| core count | not used | — |
 
 ## 3. What is written
 
@@ -250,6 +251,40 @@ child is the pair 4.4), which has no row-loop twins, so `ro=3` cannot bind (the 
 would re-race the axis). The estimate takes `ro=2` there: the batched mono rows, the other batched
 route. The count above includes this: with `ro=3` at 16 it would be 146 / 920.
 
+## 8a. The 2D plan at T > 1 (`cmt`, `mtarm`, `msw`, `nls`; 2026-10-29)
+
+The one-thread plan above, then how it threads (`est_mt_2d`), written under the key `nthreads=T` with
+the threaded verdict the door serves from the row (fft2d_create_il.h:1144-1152). The rules read the data's
+size against the caches and the count of columns only: how a thread count scales is the machine's, so no
+rule is fitted to it (the owner's ruling of 2026-10-29).
+
+| token | formula |
+|---|---|
+| `cmt` | 0 (serial) while the plane, 16 N1 N2 bytes, fits L1d / 2, on two rows (N1 = 2), and through the turned prime pass (the door runs it on one thread, il2d_tier.h:1503); else 1 |
+| `turn` | also 1 on a threaded plane of at most 2T columns where the door builds the turn (too few columns to share); `csk`, `ro` and the band 0 with it |
+| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 1, the strips |
+| the chain, `wl` | the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
+| `msw` | a rung of the door's ladder (`_il2d_sw_ladder`: w divides N2, the strip 16 N1 w within the L2, at least T strips): while an 8-column strip fits L1d / 2 and the transform's in and out (32 N1 N2) fit the L2, the widest within L1d / 2; else the widest whose strip's in and out (32 N1 w) fit the L2; the narrowest when none does; 0 (each worker's whole range) on an empty ladder |
+| `nls` | beside a natural leaf only: 0 (strided) on the strips, else 1 |
+
+**Timed** against the planner's banked plan at T = 8 on the 159 power-of-two planes (sides 2-8192, at most
+2^22 points), one process, 15 rounds, the process on one logical CPU per P-core
+(`docs/research/estimate_threaded/evidence/nd/mt2d/`): 1.013 (geometric mean; median 1.005; the planner's
+plan against itself 1.000). The planner's own 8-thread recipe under these rules: 1.015. Each rule's share:
+the turn on few columns (2-16 columns from 256 rows: 1.56-2.50 -> 0.96-1.02); the cache width against the
+widest rung 1.079 -> 1.039; its L2 clause 1.153 -> 0.993 on the 9 planes it moves (32-128 rows, 1024-8192
+columns); the unbanded chain 1.075 -> 1.031 on the 62 planes it moves (the leftover factor in a larger last
+stage instead: 1.070). Above 1.10 still: the planes the planner tiles or blocks (8192x32-256, 2048x256,
+256x256, 1024x64, 512x128: 1.10-1.23, the planner's recipe under these rules too), 256x128 (1.44: strips of
+16, the planner's 8), 32 rows over 128-1024 columns (1.06-1.19: the planner's skewed pass at 8 threads).
+
+**Past the powers of two**, 24 planes (composite, odd, Rader and Bluestein columns, the turn and the skew;
+the planner raced at T = 8 into the store, `npow2_t8.txt`), two runs (`ab_npow2.txt`, `ab_npow2b.txt`):
+1.068 (median 1.00). The unbanded chain on these chains against their one-thread chain: 1.004. Above 1.10:
+6000x500 2.16 (no rung of the ladder divides 500, so the strips take each worker's whole range, 6 MB, past
+the L2; the planner tiles), the planes the planner tiles (100x100 1.38, 3000x200 1.36, 1920x1080 1.12,
+3024x512 1.11), and 643x256 1.46 (the turned prime pass, serial in both plans: its Bluestein chain).
+
 ## 9. The 3D plan
 
 | token | formula | [M] against the 1,288 natural one-thread rows |
@@ -304,7 +339,8 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
 3. **The door's replay** (`est__replay`, unchanged: `wisdom_write = 0`, the detectors).
 4. **The plan check**, which catches a silent fallback: the 2D handle's chain (`il2d_col.nst`, `R`),
    `blu`, `tpc`, the Rader engine, the natural leaf, `wl`, `wc`, `il2d_rowb` / `il2d_rowb2` / the
-   two-pass tile, `il2d_turn`, `il2d_csk`, and every built child's engine (`est__check_plan`); the 3D
+   two-pass tile, `il2d_turn`, `il2d_csk`, at T > 1 the thread count and the served verdict (`colmt`,
+   `natarm`, `msw`, `natst`), and every built child's engine (`est__check_plan`); the 3D
    handle's `arm == 1`, `mt == 0`, the natural form `nf` (and with the strips the width `nsw`), the
    axis-0 descriptor the same way, and its plane plan checked as a 2D plan.
 
@@ -314,7 +350,7 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
 |---|---|
 | rank 4 | `vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank 4 (drop the flag to plan it by measuring)` |
 | rank 2 or 3, scrambled | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)` |
-| rank 2 or 3, nthreads > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 on one thread only, not nthreads %d (drop the flag to plan it by measuring)` |
+| rank 3, nthreads > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 3 on one thread only, not nthreads %d (drop the flag to plan it by measuring)` |
 | howmany > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans one transform, not a batch of %zu (drop the flag to plan it by measuring)` (as before) |
 | any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a plan-steering switch is set (unset it: estimate plans from formulas only)` |
 

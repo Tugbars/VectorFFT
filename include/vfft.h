@@ -147,8 +147,9 @@ extern "C"
                                             no wisdom is read or written, and wisdom_dir is
                                             not opened. One VFFT_C2C transform, INTERLEAVED:
                                             1D in any order, placement and nthreads; rank 2
-                                            and 3 in natural order on one thread, either
-                                            placement. vfft_create() refuses the flag on any
+                                            in natural order at any nthreads, rank 3 in
+                                            natural order on one thread, either placement.
+                                            vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment
                                             variable that steers a plan (VFFT_IL2D_WL, ...)

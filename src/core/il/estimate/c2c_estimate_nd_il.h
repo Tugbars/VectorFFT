@@ -174,6 +174,24 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
                           p->N2, p->turn, p->csk, p->ro, p->col.wl);
     if (p->sw || p->rbk < 1)
         return est_refuse(why, whylen, "%dx%d: sw=%d rbk=%d", p->N1, p->N2, p->sw, p->rbk);
+    if (p->T > 1)
+    {   /* the threaded verdict as the door serves it (fft2d_create_il.h:1144-1152, _il2d_c2c_mt il2d_tier.h:1492):
+         * the skew and the turn one walk, the chain walk the strips (unbanded) at a width on the door's ladder,
+         * the turned prime pass serial; nls beside a natural leaf only */
+        const int want_nat = p->col.nat && p->col.blu <= 0 && p->col.nst > 1;
+        int lad[6], n, i, in = (p->msw == 0);
+        n = _il2d_sw_ladder(p->N1, p->N2, p->T, lad, 6);
+        for (i = 0; i < n; i++)
+            in |= lad[i] == p->msw;
+        if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
+            (p->cmt && (p->turn || p->csk) && (p->mtarm || p->msw)) ||
+            (p->cmt && !p->turn && !p->csk && (p->mtarm != 1 || p->col.wl || !in)) || (p->nls >= 0) != want_nat ||
+            p->nls > 1)
+            return est_refuse(why, whylen, "%dx%d T=%d: cmt=%d mtarm=%d msw=%d nls=%d is no threaded verdict the door serves "
+                              "here", p->N1, p->N2, p->T, p->cmt, p->mtarm, p->msw, p->nls);
+    }
+    else if (p->cmt || p->mtarm || p->msw)
+        return est_refuse(why, whylen, "%dx%d: a threaded verdict on a one-thread plan", p->N1, p->N2);
     return 0;
 }
 /* The 3D row as the 3D door replays it at one thread (fftnd_il.h:1410-1940): axis 0, the structure
@@ -270,13 +288,18 @@ static inline int est__check_col(const vfft_ilcol_t *d, const est_col_t *c, char
     return 0;
 }
 /* the 2D plan against its recipe: the column pass, the tile, the row route and its tile, the turn,
- * the skew, every child's engine */
+ * the skew, at T > 1 the threaded verdict, every child's engine */
 static inline int est__check_2d(const struct vfft_plan_s *h, const est_plan2d_t *p, char *why, size_t whylen)
 {
     if (!h || h->N != p->N1 || h->N2 != p->N2 || h->ilnd)
         return est_refuse(why, whylen, "the door built no 2D plan at %dx%d", p->N1, p->N2);
     if (est__check_col(&h->il2d_col, &p->col, why, whylen))
         return -1;
+    if (p->T > 1 && (h->nthreads != p->T || h->il2d_col.colmt != p->cmt || h->il2d_col.natarm != p->mtarm ||
+                     h->il2d_col.msw != p->msw || h->il2d_col.natst != ((p->cmt && p->nls >= 0) ? p->nls : 1)))
+        return est_refuse(why, whylen, "%dx%d: the door serves T=%d cmt=%d mtarm=%d msw=%d nls=%d, the recipe T=%d cmt=%d "
+                          "mtarm=%d msw=%d nls=%d", p->N1, p->N2, h->nthreads, h->il2d_col.colmt, h->il2d_col.natarm,
+                          h->il2d_col.msw, h->il2d_col.natst, p->T, p->cmt, p->mtarm, p->msw, p->nls);
     if (h->il2d_col.wc != p->sw || h->il2d_rowb != (p->ro == 2) || h->il2d_rowb2 != (p->ro == 3) ||
         (p->ro == 3 && h->il2d_rowb2_ch != (int)_il2d_rb2_rows(p->rbk, (size_t)p->N2)) || h->il2d_turn != p->turn ||
         h->il2d_csk != p->csk)
@@ -322,8 +345,9 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
 
 /* est_build_nd: the recipe of a 2D (p2) or 3D (p3; the other NULL) request -> a plan built with
  * nothing measured, or NULL with the reason in why and the outcome in rep (may be NULL). cfg is the
- * request as the front door translated it: interleaved c2c, rank 2 or 3, howmany 1, natural, one
- * thread; its store and save flag are not used. Holds the create lock from the pre-flight to the end.
+ * request as the front door translated it: interleaved c2c, rank 2 or 3, howmany 1, natural, rank 2 at
+ * the recipe's thread count (est_mt_2d), rank 3 on one thread; its store and save flag are not used.
+ * Holds the create lock from the pre-flight to the end.
  * The caller owns the plan (vfft_destroy). */
 static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const vfft_cfg_t *cfg,
                                                est_build_report_t *rep, char *why, size_t whylen)
@@ -345,11 +369,12 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
         return NULL;
     }
     if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != rank || cfg->howmany > 1 ||
-        cfg->nthreads > 1 || cfg->order == VFI_ORDER_SCRAMBLED ||
-        (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2)) ||
+        cfg->order == VFI_ORDER_SCRAMBLED || (p3 && cfg->nthreads > 1) ||
+        (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p2->T > 1 ? p2->T : 1))) ||
         (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3)))
     {
-        est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order on one thread", rank);
+        est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order, %s", rank,
+                   p3 ? "on one thread" : "at the recipe's thread count");
         return NULL;
     }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
@@ -394,7 +419,10 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         if (!p)
             snprintf(why, sizeof why, "out of memory");
         else if (!est_plan_2d(m, cfg->n[0], cfg->n[1], p, why, sizeof why))
+        {
+            est_mt_2d(m, cfg->nthreads, p);
             h = est_build_nd(p, NULL, cfg, NULL, why, sizeof why);
+        }
         free(p);
     }
     else if (cfg->dims == 3)

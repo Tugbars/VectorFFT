@@ -10,8 +10,9 @@
  * door builds, by the 1D estimate's est_plan_1d unchanged. est_put_rows_2d / est_put_rows_3d write it
  * with the store's own writers; the build is c2c_estimate_nd_il.h's.
  *
- * SCOPE: one transform (howmany 1), natural order, one thread, either placement (the 2D and 3D rows
- * are placement-blind: one recipe serves both), every axis >= 2. Rank 3 is the 2D plan per plane then
+ * SCOPE: one transform (howmany 1), natural order, either placement (the 2D and 3D rows are
+ * placement-blind: one recipe serves both), every axis >= 2; rank 2 at any thread count (est_mt_2d threads
+ * the one-thread plan), rank 3 on one thread. Rank 3 is the 2D plan per plane then
  * axis 0 (s=1), or on the even planes near the L2 and the planes with an odd side the flat tier (s=2,
  * est__flat_plane). The front door
  * refuses the rest under the flag (vfft_api.h).
@@ -66,6 +67,13 @@ typedef struct est_plan2d_s
                             * kernel (fft2d_create_il.h:544) */
     int has_csk;           /* the door builds the skewed pass's row plan: no Bluestein, N1 has a mono
                             * kernel (fft2d_create_il.h:584-588) */
+    int T;                 /* the threads (est_mt_2d): 0 or 1 = one thread; T > 1 = the row's key nthreads=T and
+                            * the threaded verdict below (fft2d_create_il.h:1144-1152) */
+    int cmt;               /* [cmt] T > 1: the column pass threaded (1) or serial (0) */
+    int mtarm;             /* [mtarm] T > 1, threaded: 0 the one threaded walk (the skew's, the turn's), 1 the strips */
+    int msw;               /* [msw] the strips' width in columns, 0 = each worker's whole range */
+    int nls;               /* [nls] T > 1: the natural leaf staged (1) or strided (0); -1 = not written (no natural
+                            * leaf: the door banks it only beside one, il2d_tier.h:4517) */
     est_recipe_t rp;       /* [rp_]   N2, in place, natural, T = 1: always */
     est_recipe_t turnp;    /* [turn_] N1, in place, natural: has_turn */
     est_recipe_t cskp;     /* [csk_]  N2, out of place, natural: has_csk */
@@ -159,6 +167,35 @@ typedef struct est_plan3d_s
 #define EST_ND_FLAT_LO_PCT 40
 #define EST_ND_FLAT_HI_PCT 125
 #define EST_ND_FLAT_HI_L3_PCT 75
+/* THE 2D PLAN AT T > 1 (est_mt_2d, 2026-10-29): the one-thread plan, then how it threads, from the data's
+ * size against the caches and the count of columns only -- how a thread count scales is the machine's, so
+ * no rule is fitted to it. Serial while the plane fits L1d / EST_ND_MT_SERIAL_L1_DIV, or on two rows; the
+ * turn (where the door builds one) on at most EST_ND_MT_TURN_PER_T x T columns, too few to share; the
+ * skewed pass and the turn their one threaded walk; the chain walk as strips (est__msw_2d), which the door
+ * runs unbanded (il2d_tier.h:1643), so with the unbanded walk's chain: no band, est__pick's radix-8 regime
+ * as est_blu_chain takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart,
+ * il2d_tier.h:1898-1903). The strips' width: an 8-column strip (EST_ND_MT_SW_MIN, the door's narrowest)
+ * within L1d / EST_ND_MT_SW_L1_DIV while the transform's in and out fit the L2 -> the widest within that
+ * fraction of the L1d (the column passes stay in the L1); else the widest whose strip's in and out fit the
+ * L2 (past the L2 an 8-column strip reads 128 B of each row and jumps to a new 4 KB page). Timed against
+ * the planner's banked plan at T = 8 on the 159 power-of-two planes (sides 2-8192, at most 2^22 points),
+ * one process, 15 rounds (docs/research/estimate_threaded/evidence/nd/mt2d/): 1.013 (geomean, median
+ * 1.005, control 1.000); the planner's own 8-thread recipe under the same rules 1.015. Each rule's share:
+ * the turn (2-16 columns from 256 rows: 1.56-2.50 -> 0.96-1.02), the cache width against the widest rung
+ * 1.079 -> 1.039 overall, the L2 clause 1.153 -> 0.993 on the 9 planes it moves (32-128 rows, 1024-8192
+ * columns), the unbanded chain 1.075 -> 1.031 on the 62 planes it moves (the leftover factor in a larger
+ * last stage instead: 1.070). Left above 1.10: the planes the planner tiles or blocks (8192x32-256,
+ * 2048x256, 256x256, 1024x64, 512x128: 1.10-1.23, the planner's recipe under these rules too), 256x128
+ * (1.44: strips of 16, the planner's 8) and 32 rows over 128-1024 columns (1.06-1.19: the planner's skewed
+ * pass at 8 threads). Past the powers of two, 24 planes (composite, odd, Rader and Bluestein columns; the
+ * planner raced at T = 8 into the store): 1.068 (median 1.00; the unbanded chain on their chains against
+ * the one-thread chain 1.004). Above 1.10: 6000x500 2.16 (no rung divides 500, so each worker's whole range,
+ * 6 MB, past the L2; the planner tiles), the tiled 100x100, 3000x200, 1920x1080, 3024x512 (1.11-1.38), and
+ * 643x256 1.46 (the turned prime pass, serial in both plans: its Bluestein chain). */
+#define EST_ND_MT_SERIAL_L1_DIV 2
+#define EST_ND_MT_TURN_PER_T 2
+#define EST_ND_MT_SW_MIN 8
+#define EST_ND_MT_SW_L1_DIV 2
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -736,6 +773,66 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
     return 0;
 }
+/* the strips' width at T (EST_ND_MT_*): a rung of the door's ladder (_il2d_sw_ladder: w | N2, the strip
+ * N1 w 16 B within the L2, at least T strips) -- while an 8-column strip fits L1d / EST_ND_MT_SW_L1_DIV and
+ * the transform's in and out fit the L2, the widest within that fraction of the L1d; else the widest whose
+ * strip's in and out, 32 N1 w B, fit the L2; the narrowest when none does; 0 (each worker's whole range) on
+ * an empty ladder */
+static inline int est__msw_2d(const est_machine_t *m, int N1, int N2, int T)
+{
+    int lad[6], n, i, w = 0;
+    const int l1 = 16LL * N1 * EST_ND_MT_SW_MIN <= m->l1d / EST_ND_MT_SW_L1_DIV && 32LL * N1 * N2 <= m->l2;
+    if ((n = _il2d_sw_ladder(N1, N2, T, lad, 6)) < 1)
+        return 0;
+    for (i = 0; i < n; i++)
+        if (l1 ? 16LL * N1 * lad[i] <= m->l1d / EST_ND_MT_SW_L1_DIV : 32LL * N1 * lad[i] <= m->l2)
+            w = lad[i];
+    return w ? w : lad[0];
+}
+/* est_mt_2d: the one-thread plan p (est_plan_2d) threaded at T (EST_ND_MT_*): the threaded verdict and,
+ * where it threads, the turn on few columns, or the strips with the unbanded walk's chain. A column through
+ * the turned prime pass stays serial: the door runs that pass on one thread (il2d_tier.h:1503). T < 2
+ * leaves p one-thread. */
+static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
+{
+    const int nat = p->col.nat && p->col.blu <= 0;   /* the natural leaf, once the chain has two stages */
+    p->T = T > 1 ? T : 1;
+    p->cmt = p->mtarm = p->msw = 0;
+    p->nls = -1;
+    if (T < 2)
+        return;
+    if (16LL * p->N1 * p->N2 > m->l1d / EST_ND_MT_SERIAL_L1_DIV && p->N1 != 2 && p->col.tpc != 1)
+    {
+        p->cmt = 1;
+        if (p->N2 <= EST_ND_MT_TURN_PER_T * T && p->has_turn && !p->turn)
+        {
+            p->turn = 1;
+            p->csk = 0;
+            p->ro = 0;
+            p->col.wl = est_wl_2d(m, &p->col, p->N2, p->csk, p->turn, EST_ND_2D_PLANE_DIV);
+        }
+        if (!p->csk && !p->turn)
+        {
+            if (p->col.blu <= 0 && !p->col.rd_n)
+            {   /* the unbanded walk's chain (est_blu_chain's pick); a chain the pool lacks keeps the plan's */
+                est_pool_t P;
+                int R[8], k;
+                est__pool(p->N1, &P);
+                if ((k = est__pick(&P, NULL, 0, p->N1, m, p->N2, 1, /*wide=*/1, /*single=*/0, R)) > 0)
+                {
+                    memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+                    p->col.nst = k;
+                    est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+                }
+            }
+            p->col.wl = 0;
+            p->mtarm = 1;
+            p->msw = est__msw_2d(m, p->N1, p->N2, T);
+        }
+    }
+    if (nat && p->col.nst > 1)
+        p->nls = (p->cmt && p->mtarm == 1) ? 0 : 1;   /* the strips strided; else the door's staged default */
+}
 /* the 3D structure: the flat tier (s=2) on a plane of at most EST_ND_FLAT_HI_PCT percent of the L2
  * (EST_ND_FLAT_HI_L3_PCT when the cube passes the L3) whose column pass is a plain chain (no Bluestein, no
  * Rader stage) and that is either even -- N2 and N3 even, not both powers of two, at least
@@ -863,17 +960,25 @@ static inline int est__put_child(vw2_store_t *st, const vw2_key_t *key, const ch
         return est_refuse(why, whylen, "the child %s* at N = %d could not be put on its parent's row", pre, N);
     return 0;
 }
-/* est_put_rows_2d: the 2D row into st -- the column tokens, sw rbk turn csk (il2d_tier.h:4201-4204),
- * then the children rp_ turn_ csk_ tpc_ (il2d_tier.h:4225-4228). Returns 0, or -1 with the reason. */
+/* est_put_rows_2d: the 2D row into st -- the column tokens, sw rbk turn csk (il2d_tier.h:4201-4204), at
+ * T > 1 under the key nthreads=T with the threaded verdict cmt mtarm msw nls (il2d_tier.h:4511-4517), then
+ * the children rp_ turn_ csk_ tpc_ (il2d_tier.h:4225-4228), one-thread rows as the door's. Returns 0, or -1
+ * with the reason. */
 static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *why, size_t whylen)
 {
     vw2_ilcol_key_t ck;
     vw2_key_t key;
     est__colkey(&ck, 2, p->N1, p->N2, 0);
+    ck.nthreads = p->T > 1 ? p->T : 1;
     if (est__put_col(st, &ck, &p->col, p->ro, 1) || vw2_ilcol_tok_seti(st, &ck, "sw", p->sw) != VW2_OK ||
         vw2_ilcol_tok_seti(st, &ck, "rbk", p->rbk) != VW2_OK || vw2_ilcol_tok_seti(st, &ck, "turn", p->turn) != VW2_OK ||
         vw2_ilcol_tok_seti(st, &ck, "csk", p->csk) != VW2_OK)
         return est_refuse(why, whylen, "the %dx%d row was refused by the store's writers", p->N1, p->N2);
+    if (p->T > 1 &&
+        (vw2_ilcol_tok_seti(st, &ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, &ck, "mtarm", p->mtarm) != VW2_OK ||
+         vw2_ilcol_tok_seti(st, &ck, "msw", p->msw) != VW2_OK ||
+         (p->nls >= 0 && vw2_ilcol_tok_seti(st, &ck, "nls", p->nls) != VW2_OK)))
+        return est_refuse(why, whylen, "the %dx%d row's threaded verdict was refused by the store's writers", p->N1, p->N2);
     vw2__ilcol_key(&ck, &key);
     if (est__put_child(st, &key, "rp_", &p->rp, p->N2, VFFT_PLACEMENT_IN, why, whylen))
         return -1;

@@ -18,6 +18,9 @@
  *      sides, primes up to 47, Rader columns (a prime above 47 whose p - 1 chains, nested too), Bluestein
  *      columns (the turned prime pass), prime rows. Correct against a long-double DFT: every bin while
  *      P (N1 + N2) stays under ND_FULL_WORK, else 32 sampled bins; and the round trip.
+ *   D2T the D2 cells at T = 8 (est_mt_2d): built with the threaded verdict the recipe writes -- the
+ *      estimate's plan check refuses a plan whose served verdict (cmt, mtarm, msw, nls) is not the recipe's --
+ *      and correct the same way.
  *   D3 rank 3 the same way: every power-of-two N1 x N2 x N3 with sides 2..1024 and at most 2^12 points,
  *      then powers of two over every rule (the scrambled pass's exceptions, the band, the plane child's
  *      routes), odd shapes, Rader and Bluestein on axis 0 and inside the plane, prime rows; and the two
@@ -28,7 +31,7 @@
  *      scopes entered (vfft_measure_scopes) do not move across it.
  *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, howmany 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
- *      at rank 2 and 3 scrambled order, more than one thread, a batch, an axis of length 1, a last axis
+ *      at rank 2 and 3 scrambled order, at rank 3 more than one thread, a batch, an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
  *   E  the environment guard: a variable that steers a plan (VFFT_IL_KV at rank 1, VFFT_IL2D_WL at rank 2,
@@ -598,8 +601,8 @@ static void nd_errors(vfft_plan p, const ndref_t *r, int ip, double *ebin, doubl
 }
 static long g_nd_built = 0;
 static double g_nd_eb = 0.0, g_nd_er = 0.0;   /* a section's worst forward and round-trip errors */
-/* one rank-2 or rank-3 cell in both placements: built, nothing measured, correct */
-static void nd_cell(int rank, int n0, int n1, int n2)
+/* one rank-2 or rank-3 cell at T threads in both placements: built, nothing measured, correct */
+static void nd_cell(int rank, int n0, int n1, int n2, int T)
 {
     const int n[3] = { n0, n1, n2 };
     ndref_t r;
@@ -612,11 +615,12 @@ static void nd_cell(int rank, int n0, int n1, int n2)
         vfft_plan p;
         int measured;
         if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d %s", n0, n1, n2, ip ? "ip" : "oop");
-        else snprintf(name, sizeof name, "%dx%d %s", n0, n1, ip ? "ip" : "oop");
+        else snprintf(name, sizeof name, "%dx%d %s T=%d", n0, n1, ip ? "ip" : "oop", T);
         memset(&c, 0, sizeof c);
         c.rank = rank;
         c.n[0] = n0; c.n[1] = n1; c.n[2] = rank == 3 ? n2 : 0;
         c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+        c.nthreads = T;
         p = est_create(&c, &measured);
         CHECK(!measured, "M  %s: the create MEASURED", name);
         CHECK(p != NULL, "D  %s: refused: %s", name, vfft_error());
@@ -671,7 +675,7 @@ int main(int argc, char **argv)
                                  999983, 1000000, 1048573, 1048576, 2 * 3 * 5 * 7 * 11 * 13 * 17 };
     ref_t r;
     long N;
-    int a, i, f0, f1, d0n, d1n;
+    int a, i, f0, f1, d0n, d1n, T2;
     unsigned long long d0, d1, e0, e1;
     unsigned long long z = 0x2545F4914F6CDD1Dull;
     for (a = 1; a + 1 < argc; a++)
@@ -713,10 +717,8 @@ int main(int argc, char **argv)
         refused("rank 2 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.order = VFFT_ORDER_SCRAMBLED;
         refused("rank 3 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
-        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.nthreads = 8;
-        refused("rank 2 nthreads 8", &c, "plans rank 2 and 3 on one thread only, not nthreads 8");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.nthreads = 4;
-        refused("rank 3 nthreads 4", &c, "plans rank 2 and 3 on one thread only, not nthreads 4");
+        refused("rank 3 nthreads 4", &c, "plans rank 3 on one thread only, not nthreads 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4;
         refused("rank 2 howmany 4", &c, "plans one transform, not a batch of 4");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.batch = VFFT_BATCH_LANE_MAJOR;
@@ -791,9 +793,10 @@ int main(int argc, char **argv)
     }
     sec_end("A4");
 
-    /* D2: rank 2, natural, one thread, both placements */
-    sec_begin();
+    /* D2: rank 2, natural, one thread, both placements; D2T the same cells at T = 8 */
+    for (T2 = 1; T2 <= 8; T2 += 7)
     {
+        sec_begin();
         static const int D2[][2] = {
             /* the larger powers of two: the leading stage, the band, the turn, a four-step row plan */
             { 512, 512 }, { 2048, 4 }, { 2048, 64 }, { 4096, 16 }, { 8192, 8 }, { 1024, 1024 }, { 64, 8192 },
@@ -819,10 +822,10 @@ int main(int argc, char **argv)
         for (x = 1; x <= 13; x++)   /* every power-of-two N1 x N2, sides 2..8192, at most 2^18 points */
             for (y = 1; y <= 13; y++)
                 if (x + y <= 18)
-                    nd_cell(2, 1 << x, 1 << y, 0);
+                    nd_cell(2, 1 << x, 1 << y, 0, T2);
         for (i = 0; i < (int)(sizeof D2 / sizeof D2[0]); i++)
-            nd_cell(2, D2[i][0], D2[i][1], 0);
-        sec_end_nd("D2", b0);
+            nd_cell(2, D2[i][0], D2[i][1], 0, T2);
+        sec_end_nd(T2 > 1 ? "D2T" : "D2", b0);
     }
 
     /* D3: rank 3, natural, one thread, both placements */
@@ -848,9 +851,9 @@ int main(int argc, char **argv)
             for (y = 1; y <= 10; y++)
                 for (zz = 1; zz <= 10; zz++)
                     if (x + y + zz <= 12)
-                        nd_cell(3, 1 << x, 1 << y, 1 << zz);
+                        nd_cell(3, 1 << x, 1 << y, 1 << zz, 1);
         for (i = 0; i < (int)(sizeof D3 / sizeof D3[0]); i++)
-            nd_cell(3, D3[i][0], D3[i][1], D3[i][2]);
+            nd_cell(3, D3[i][0], D3[i][1], D3[i][2], 1);
         {   /* the natural form (sketch §9) on volumes past this machine's L3 (none reported: past 32 MiB):
              * axis 0 short, 16 N1 <= L1d / 4, the strips; axis 0 long, N1 >= 1024 and 16 N1 > L1d / 4, the cycle walk */
             const long l1d = vfft_cpu_l1d_bytes(), l3 = vfft_cpu_l3_bytes();
@@ -861,8 +864,8 @@ int main(int argc, char **argv)
             while (16LL * c1 * 64 * c3 <= past) c3 *= 2;
             printf("  D3 the natural form past the L3 (%ld bytes; L1d %ld): 64x512x%d (%lld MiB) the strips, %dx64x%d "
                    "(%lld MiB) the cycle walk\n", l3, l1d, s3, (16LL * 64 * 512 * s3) >> 20, c1, c3, (16LL * c1 * 64 * c3) >> 20);
-            nd_cell(3, 64, 512, s3);
-            nd_cell(3, c1, 64, c3);
+            nd_cell(3, 64, 512, s3, 1);
+            nd_cell(3, c1, 64, c3, 1);
         }
         sec_end_nd("D3", b0);
     }

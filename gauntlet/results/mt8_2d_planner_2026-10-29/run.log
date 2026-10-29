@@ -1,0 +1,18 @@
+2026-10-29 12:45:33 run: 159 cells, contract 2D out of place, T=8, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-10-29 12:45:33 calibrate: 159 cells (0 already done)
+2026-10-29 12:45:37   calibrated 25/159 (4x4096), 4 s elapsed
+2026-10-29 12:45:42   calibrated 50/159 (16x2048), 9 s elapsed
+2026-10-29 12:45:46   calibrated 75/159 (64x1024), 13 s elapsed
+2026-10-29 12:45:51   calibrated 100/159 (256x512), 18 s elapsed
+2026-10-29 12:45:55   calibrated 125/159 (1024x256), 23 s elapsed
+2026-10-29 12:46:00   calibrated 150/159 (4096x1024), 27 s elapsed
+2026-10-29 12:46:01   calibrated 159/159 (8192x512), 29 s elapsed
+2026-10-29 12:46:01 bench: 159 cells (0 already benched, 0 not banked -> not benched)
+2026-10-29 12:46:50   benched 25/159 (4x4096), 47 s elapsed
+2026-10-29 12:47:37   benched 50/159 (16x2048), 93 s elapsed
+2026-10-29 12:48:24   benched 75/159 (64x1024), 141 s elapsed
+2026-10-29 12:49:15   benched 100/159 (256x512), 191 s elapsed
+2026-10-29 12:50:08   benched 125/159 (1024x256), 244 s elapsed
+2026-10-29 12:51:07   benched 150/159 (4096x1024), 304 s elapsed
+2026-10-29 12:51:28   benched 159/159 (8192x512), 325 s elapsed
+2026-10-29 12:51:30 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\mt8_2d_planner_2026-10-29\report_2d_mt8.md
