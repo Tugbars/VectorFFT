@@ -198,14 +198,29 @@ typedef struct est_plan3d_s
  * one stage of N1 where the pool has it (the planner's block plans keep it: 16x4050 with the one-thread
  * 4.4 3.06, with 16 0.96). Timed at T = 8 on the 77 such planes of 3-16 rows (L1d to L3), one process, 15
  * rounds: 2.105 -> 0.876 (median 1.00, control 0.994); where the planner banked serial (20) 0.50 (16x4093
- * 0.15, 8x8100 0.20; 6x360 and 16x147 lose 1.28 and 1.36), where it blocks 1.07. The turn on N1 not a
- * multiple of 4 (also serial, :1462) is not moved: blocks do not fix it (243, 625, 2187 x 12: 1.49-1.65 in
- * blocks, 1.22-2.17 serial; the planner tiles). */
+ * 0.15, 8x8100 0.20; 6x360 and 16x147 lose 1.28 and 1.36), where it blocks 1.07. Blocks do not fix the
+ * turn the door runs serial (on N1 not a multiple of EST_ND_MT_TURN_N1_DIV, :1458; 243, 625, 2187 x 12:
+ * 1.49-1.65 in blocks, 1.22-2.17 serial): the tile below does.
+ * THE TILE ON A TALL PLANE (2026-10-30): where N1 >= EST_ND_MT_TILE_N1_PER_N2 x N2 the chain walk takes the
+ * door's tile (mtarm 2: the first stage across the plane, then each worker one sub-problem with the leaf's
+ * rows fused, il2d_tier.h:1547) instead of the strips, no band, the unbanded walk's chain with its first
+ * stage the pool's smallest first radix of at least T where the chain leads with less (the tile runs
+ * min(R0, T) workers: 1500x20 strips 3.30, the tile with 5.5.5.12 1.00, with 15.5.5.4 0.94); so does the
+ * turn the door runs serial. Tile against strips at T = 8, one process, 15 rounds, by N1 / N2 (236 planes
+ * of the power-of-two and grid studies): 64 and up 0.57, 16-64 0.70, 4-16 0.85, 1-4 1.05, below 1 1.25-1.83
+ * (the strip of a worker past the L2: the tile 14 of 14). The rule's threshold read off those planes (1.153
+ * -> 1.039 against the planner; per plane the better of the two 1.000), then held on 84 planes no study
+ * had used, raced into the store first (14 per N1 / N2 band, 128 KB to 48 MB): 1.433 -> 1.203, the better
+ * of the two per plane 1.146; tile against strips 0.57, 0.71, 0.87, 0.98, 1.31-1.51 by the same bands; a
+ * rule on the strip's bytes against the caches held worse (1.236). Left: the planner tiles with fewer,
+ * larger radices (1440x160 32.5.9 against 9.8.5.4, 1215x375 15.9.9 against 9.9.5.3). */
 #define EST_ND_MT_SERIAL_L1_DIV 2
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
 #define EST_ND_MT_SW_L1_DIV 2
 #define EST_ND_MT_CSK_COLS 16
+#define EST_ND_MT_TURN_N1_DIV 4
+#define EST_ND_MT_TILE_N1_PER_N2 4
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -721,6 +736,28 @@ static inline int est__machine_ok(const est_machine_t *m, char *why, size_t whyl
     return 0;
 }
 
+/* the row route of a plane without the turn (sketch §8): p's N2, column and row plan set */
+static inline int est__ro_2d(const est_plan2d_t *p)
+{
+    const int N2 = p->N2, n1ccs = vfft_il_n1ccs_fn(N2, 0) && vfft_il_n1ccs_fn(N2, 1);
+    if (p->col.blu > 0)
+        return 0;
+    if (N2 <= EST_ND_ROWB_MAX)
+        return n1ccs ? 2 : 0;
+    if (N2 <= EST_ND_ROWB2_MAX && !est_is_pow2(N2) && (N2 > 32 || est__spills_single(N2)))
+        return 0;   /* a row of 25, 27 or a non-power of two above 32 (up to 64): the per-row child
+                     * (2026-10-26). The batched rows run each row as one kernel of N2, and those kernels
+                     * spill (est__spills_single): the planner banks the per-row child at the rows of 25, 27,
+                     * 35, 45, 49, 60, 63 (2D 25x25, 27x27, 45x60, 63x63; the planes of 9x15x27, 25^3, 27^3,
+                     * 35^3, 45^3, 49^3, 63^3, 64x25x25, 64x27x27) and the batched rows at the rows of 21 and
+                     * 31 (the planes of 21^3, 31^3; 2D 21x21 is the one exception, 14 of 15 agree). The
+                     * estimate's batched rows cost 25x25 and 27x27 1.22-1.69 x the planner; the per-row child
+                     * at 21^3 and 31^3 cost 1.34 and 1.07 */
+    if (N2 <= EST_ND_ROWB2_MAX)
+        return est__rowb2_form(&p->rp) ? 3 : n1ccs ? 2 : 0;
+    return 0;
+}
+
 /* est_plan_2d: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10). Returns 0 with
  * *out filled, or -1 with the reason. Pure. */
 static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d_t *out, char *why, size_t whylen)
@@ -761,23 +798,7 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->csk = out->has_csk && (N1 <= EST_ND_CSK_MAX || ((N1 & 1) && N1 <= EST_ND_CSK_ODD_MAX && N2 >= EST_ND_CSK_ODD_N2 &&
                                                             !est__spills_single(N1)));
     out->turn = out->has_turn && !out->csk && N1 >= EST_ND_TURN_N1 && N2 <= EST_ND_TURN_N2;
-    if (out->turn || out->col.blu > 0)
-        out->ro = 0;
-    else if (N2 <= EST_ND_ROWB_MAX)
-        out->ro = n1ccs ? 2 : 0;
-    else if (N2 <= EST_ND_ROWB2_MAX && !est_is_pow2(N2) && (N2 > 32 || est__spills_single(N2)))
-        out->ro = 0;   /* a row of 25, 27 or a non-power of two above 32 (up to 64): the per-row child
-                        * (2026-10-26). The batched rows run each row as one kernel of N2, and those kernels
-                        * spill (est__spills_single): the planner banks the per-row child at the rows of 25, 27,
-                        * 35, 45, 49, 60, 63 (2D 25x25, 27x27, 45x60, 63x63; the planes of 9x15x27, 25^3, 27^3,
-                        * 35^3, 45^3, 49^3, 63^3, 64x25x25, 64x27x27) and the batched rows at the rows of 21 and
-                        * 31 (the planes of 21^3, 31^3; 2D 21x21 is the one exception, 14 of 15 agree). The
-                        * estimate's batched rows cost 25x25 and 27x27 1.22-1.69 x the planner; the per-row child
-                        * at 21^3 and 31^3 cost 1.34 and 1.07 */
-    else if (N2 <= EST_ND_ROWB2_MAX)
-        out->ro = est__rowb2_form(&out->rp) ? 3 : n1ccs ? 2 : 0;
-    else
-        out->ro = 0;
+    out->ro = out->turn ? 0 : est__ro_2d(out);
     out->rbk = EST_ND_RBK;
     out->sw = 0;
     out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
@@ -799,10 +820,51 @@ static inline int est__msw_2d(const est_machine_t *m, int N1, int N2, int T)
             w = lad[i];
     return w ? w : lad[0];
 }
+/* the unbanded walk's chain (est_blu_chain's pick); a Rader stage, a Bluestein column or a chain the pool
+ * lacks keeps the plan's */
+static inline void est__unbanded_chain_2d(const est_machine_t *m, est_plan2d_t *p)
+{
+    est_pool_t P;
+    int R[8], k;
+    if (p->col.blu > 0 || p->col.rd_n)
+        return;
+    est__pool(p->N1, &P);
+    if ((k = est__pick(&P, NULL, 0, p->N1, m, p->N2, 1, /*wide=*/1, /*single=*/0, R)) > 0)
+    {
+        memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+        p->col.nst = k;
+        est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+    }
+}
+/* the tile's chain at T: 1 when the door tiles p's chain (a natural chain of two stages or more, no
+ * Bluestein; il2d_tier.h:1545), its first stage then the pool's smallest first radix of at least T where
+ * the chain leads with less (the tile runs min(R0, T) workers, il2d_tier.h:1555) and the rest est__pick's;
+ * 0 leaves p as it was */
+static inline int est__tile_chain_2d(const est_machine_t *m, int T, est_plan2d_t *p)
+{
+    est_pool_t P;
+    int R[8], k, r0 = 0, i;
+    if (!p->col.nat || p->col.blu > 0 || p->col.nst < 2)
+        return 0;
+    if (p->col.R[0] >= T || p->col.rd_n)
+        return 1;
+    est__pool(p->N1, &P);
+    for (i = 0; i < P.n; i++)
+        if (P.c[i][0] >= T && P.len[i] >= 2 && (!r0 || P.c[i][0] < r0))
+            r0 = P.c[i][0];
+    if (r0 && (k = est__pick(&P, &r0, 1, p->N1 / r0, m, p->N2, 1, /*wide=*/1, /*single=*/0, R)) > 0)
+    {
+        memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+        p->col.nst = k;
+        est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+    }
+    return 1;
+}
 /* est_mt_2d: the one-thread plan p (est_plan_2d) threaded at T (EST_ND_MT_*): the threaded verdict and,
  * where it threads, the turn on few columns, the blocks where the door would run the skewed pass serial,
- * or the strips with the unbanded walk's chain. A column through the turned prime pass stays serial: the
- * door runs that pass on one thread (il2d_tier.h:1503). T < 2 leaves p one-thread. */
+ * the tile on a tall plane, or the strips with the unbanded walk's chain. A column through the turned
+ * prime pass stays serial: the door runs that pass on one thread (il2d_tier.h:1503). T < 2 leaves p
+ * one-thread. */
 static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
 {
     const int nat = p->col.nat && p->col.blu <= 0;   /* the natural leaf, once the chain has two stages */
@@ -813,6 +875,8 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
         return;
     if (16LL * p->N1 * p->N2 > m->l1d / EST_ND_MT_SERIAL_L1_DIV && p->N1 != 2 && p->col.tpc != 1)
     {
+        const int tall = p->N1 >= (long long)EST_ND_MT_TILE_N1_PER_N2 * p->N2;
+        int tile = 0;
         p->cmt = 1;
         if (p->N2 <= EST_ND_MT_TURN_PER_T * T && p->has_turn && !p->turn)
         {
@@ -820,6 +884,18 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
             p->csk = 0;
             p->ro = 0;
             p->col.wl = est_wl_2d(m, &p->col, p->N2, p->csk, p->turn, EST_ND_2D_PLANE_DIV);
+        }
+        if (p->turn && p->N1 % EST_ND_MT_TURN_N1_DIV && tall)
+        {   /* the door runs this turn serial: the tile, where the chain takes one */
+            const est_col_t keep = p->col;
+            est__unbanded_chain_2d(m, p);
+            if ((tile = est__tile_chain_2d(m, T, p)) != 0)
+            {
+                p->turn = 0;
+                p->ro = est__ro_2d(p);
+            }
+            else
+                p->col = keep;
         }
         if (p->csk && p->N2 % EST_ND_MT_CSK_COLS)
         {   /* the door runs this skew serial: the chain walk in blocks, one stage of N1 where the pool has it */
@@ -837,21 +913,14 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
         }
         else if (!p->csk && !p->turn)
         {
-            if (p->col.blu <= 0 && !p->col.rd_n)
-            {   /* the unbanded walk's chain (est_blu_chain's pick); a chain the pool lacks keeps the plan's */
-                est_pool_t P;
-                int R[8], k;
-                est__pool(p->N1, &P);
-                if ((k = est__pick(&P, NULL, 0, p->N1, m, p->N2, 1, /*wide=*/1, /*single=*/0, R)) > 0)
-                {
-                    memcpy(p->col.R, R, sizeof(int) * (size_t)k);
-                    p->col.nst = k;
-                    est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
-                }
+            if (!tile)
+            {
+                est__unbanded_chain_2d(m, p);
+                tile = tall && est__tile_chain_2d(m, T, p);
             }
             p->col.wl = 0;
-            p->mtarm = 1;
-            p->msw = est__msw_2d(m, p->N1, p->N2, T);
+            p->mtarm = tile ? 2 : 1;
+            p->msw = tile ? 0 : est__msw_2d(m, p->N1, p->N2, T);
         }
     }
     if (nat && p->col.nst > 1)

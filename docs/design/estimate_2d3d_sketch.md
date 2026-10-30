@@ -261,10 +261,10 @@ rule is fitted to it (the owner's ruling of 2026-10-29).
 | token | formula |
 |---|---|
 | `cmt` | 0 (serial) while the plane, 16 N1 N2 bytes, fits L1d / 2, on two rows (N1 = 2), and through the turned prime pass (the door runs it on one thread, il2d_tier.h:1503); else 1 |
-| `turn` | also 1 on a threaded plane of at most 2T columns where the door builds the turn (too few columns to share); `csk`, `ro` and the band 0 with it |
+| `turn` | also 1 on a threaded plane of at most 2T columns where the door builds the turn (too few columns to share); `csk`, `ro` and the band 0 with it. 0 again where the door would run the turn serial (N1 not a multiple of 4, `_il2d_turn_exec_mt`, il2d_tier.h:1458) and the plane takes the tile; `ro` then as a plane without the turn |
 | `csk` | also 0 where N2 is not a multiple of 16: the door threads the skewed pass on whole groups of 16 columns only (`_il2d_csk_exec_mt`, il2d_tier.h:1432) and runs it serial otherwise |
-| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 0, the blocks, where the skew was dropped; else 1, the strips |
-| the chain, `wl` | the blocks: one stage of N1 where the pool has it (else the one-thread chain), the band of a plane without the skew; the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
+| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 0, the blocks, where the skew was dropped; 2, the tile, on a tall plane (N1 >= 4 N2) whose chain the door tiles (natural, two stages or more, no Bluestein); else 1, the strips |
+| the chain, `wl` | the blocks: one stage of N1 where the pool has it (else the one-thread chain), the band of a plane without the skew; the tile: no band, the strips' chain below with its first stage the pool's smallest first radix of at least T where that chain leads with less (the tile runs min(R0, T) workers, il2d_tier.h:1555); the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
 | `msw` | a rung of the door's ladder (`_il2d_sw_ladder`: w divides N2, the strip 16 N1 w within the L2, at least T strips): while an 8-column strip fits L1d / 2 and the transform's in and out (32 N1 N2) fit the L2, the widest within L1d / 2; else the widest whose strip's in and out (32 N1 w) fit the L2; the narrowest when none does; 0 (each worker's whole range) on an empty ladder |
 | `nls` | beside a natural leaf only: 0 (strided) on the strips, else 1 |
 
@@ -293,9 +293,23 @@ walk there with one stage of N1. With the blocks (`est_rows_v.c`, two variants, 
 on the 77 such planes found, one process, 15 rounds: 2.105 -> 0.876 (median 1.00; control 0.994). The one
 stage of N1 against the one-thread chain at 16 rows: 16x4050 0.96 against 3.06. Where the planner banked
 serial (20 planes) the blocks run 0.50 of its time (16x4093 0.15, 8x8100 0.20; 6x360 and 16x147 lose 1.28 and
-1.36); where it blocks, 1.07. The turn on N1 not a multiple of 4 (the door runs it serial too,
-il2d_tier.h:1462) is not moved: blocks do not fix it (243, 625, 2187 x 12: 1.49-1.65 in blocks, 1.22-2.17
-serial; the planner tiles).
+1.36); where it blocks, 1.07. Blocks do not fix the turn the door runs serial (N1 not a multiple of 4,
+il2d_tier.h:1458; 243, 625, 2187 x 12: 1.49-1.65 in blocks, 1.22-2.17 serial); the tile below does.
+
+**The tile on a tall plane** (2026-10-30): the strips against the door's tile (`est_rows_t.c`, three chains,
+`tile_ab_report.txt`) on the 236 planes of the power-of-two and grid studies that the estimate strips, one
+process, 15 rounds. Tile against strips by N1/N2: 64 and up 0.57, 16-64 0.70, 4-16 0.85, 1-4 1.05, below 1
+1.25-1.83; where a worker's strip passes the L2 the tile wins 14 of 14. The strips' radix-8 chain tiles
+better than the one-thread chain (1.28 against 1.34 the planner, tiles everywhere), and better again with a
+first stage of at least T (1500x20: strips 3.30, the tile with 5.5.5.12 1.00, with 15.5.5.4 0.94). Three
+rules fixed on these planes (`tile_rules_preregistered.txt`; against the planner, strips everywhere 1.153,
+the better of the two per plane 1.000): N1 >= 4 N2 1.039; the strip's bytes against the caches 1.030; either
+1.026. Then 84 planes no study had used, raced into the store first (`fresh_cells.py`, 14 per N1/N2 band,
+128 KB to 48 MB; `fresh_rules_score.txt`): strips 1.433, N1 >= 4 N2 **1.203**, the cache rule 1.236, either
+1.207, the better of the two per plane 1.146; tile against strips 0.57, 0.71, 0.87, 0.98, 1.31-1.51 by the
+same bands. The rule taken: N1 >= 4 N2. Left: the planner tiles with fewer, larger radices (1440x160 32.5.9
+against 9.8.5.4, 1215x375 15.9.9 against 9.9.5.3), and N1 of 100, 125 and 625 keep a first radix of 5 (the
+pool drops the spilling 25).
 
 ## 9. The 3D plan
 
