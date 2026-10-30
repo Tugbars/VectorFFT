@@ -1,0 +1,44 @@
+2026-10-30 14:09:01 run: 485 cells, contract 2D out of place, T=8, bin build/gauntlet
+2026-10-30 14:09:01 calibrate: 485 cells (0 already done)
+2026-10-30 14:09:07   calibrated 25/485 (4x16384), 6 s elapsed
+2026-10-30 14:09:12   calibrated 50/485 (6x131220), 11 s elapsed
+2026-10-30 14:09:17   calibrated 75/485 (10x8192), 16 s elapsed
+2026-10-30 14:09:22   calibrated 100/485 (12x65610), 21 s elapsed
+2026-10-30 14:09:27   calibrated 125/485 (16x4096), 26 s elapsed
+2026-10-30 14:09:32   calibrated 150/485 (128x16), 31 s elapsed
+2026-10-30 14:09:37   calibrated 175/485 (256x64), 36 s elapsed
+2026-10-30 14:09:41   calibrated 200/485 (360x20), 40 s elapsed
+2026-10-30 14:09:46   calibrated 225/485 (495x104), 45 s elapsed
+2026-10-30 14:09:51   calibrated 250/485 (625x1080), 50 s elapsed
+2026-10-30 14:09:55   calibrated 275/485 (810x156), 54 s elapsed
+2026-10-30 14:10:00   calibrated 300/485 (1024x8), 59 s elapsed
+2026-10-30 14:10:05   calibrated 325/485 (1350x312), 64 s elapsed
+2026-10-30 14:10:09   calibrated 350/485 (1600x168), 68 s elapsed
+2026-10-30 14:10:14   calibrated 375/485 (2160x66), 73 s elapsed
+2026-10-30 14:10:19   calibrated 400/485 (2700x104), 78 s elapsed
+2026-10-30 14:10:23   calibrated 425/485 (3200x28), 82 s elapsed
+2026-10-30 14:10:28   calibrated 450/485 (4800x30), 87 s elapsed
+2026-10-30 14:10:33   calibrated 475/485 (8192x8), 92 s elapsed
+2026-10-30 14:10:35   calibrated 485/485 (16384x64), 94 s elapsed
+2026-10-30 14:10:35 bench: 485 cells (0 already benched, 0 not banked -> not benched)
+2026-10-30 14:11:51   benched 25/485 (4x16384), 73 s elapsed
+2026-10-30 14:12:51   benched 50/485 (6x131220), 133 s elapsed
+2026-10-30 14:13:50   benched 75/485 (10x8192), 193 s elapsed
+2026-10-30 14:14:51   benched 100/485 (12x65610), 254 s elapsed
+2026-10-30 14:15:48   benched 125/485 (16x4096), 310 s elapsed
+2026-10-30 14:16:41   benched 150/485 (128x16), 364 s elapsed
+2026-10-30 14:17:33   benched 175/485 (256x64), 416 s elapsed
+2026-10-30 14:18:28   benched 200/485 (360x20), 471 s elapsed
+2026-10-30 14:19:21   benched 225/485 (495x104), 523 s elapsed
+2026-10-30 14:20:13   benched 250/485 (625x1080), 576 s elapsed
+2026-10-30 14:21:06   benched 275/485 (810x156), 629 s elapsed
+2026-10-30 14:22:05   benched 300/485 (1024x8), 687 s elapsed
+2026-10-30 14:22:59   benched 325/485 (1350x312), 742 s elapsed
+2026-10-30 14:23:58   benched 350/485 (1600x168), 800 s elapsed
+2026-10-30 14:24:52   benched 375/485 (2160x66), 854 s elapsed
+2026-10-30 14:25:51   benched 400/485 (2700x104), 914 s elapsed
+2026-10-30 14:26:49   benched 425/485 (3200x28), 972 s elapsed
+2026-10-30 14:27:46   benched 450/485 (4800x30), 1028 s elapsed
+2026-10-30 14:28:40   benched 475/485 (8192x8), 1083 s elapsed
+2026-10-30 14:29:04   benched 485/485 (16384x64), 1107 s elapsed
+2026-10-30 14:29:06 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\mt8_2d_methods_estimate_2026-10-30\report_2d_mt8.md
