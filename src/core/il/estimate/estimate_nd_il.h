@@ -819,8 +819,9 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
     return 0;
 }
-/* the strips' width at T (EST_ND_MT_*): a rung of the door's ladder (_il2d_sw_ladder: w | N2, the strip
- * N1 w 16 B within the L2, at least T strips) -- while an 8-column strip fits L1d / EST_ND_MT_SW_L1_DIV and
+/* the strips' width at T (EST_ND_MT_*): a rung of the door's ladder (_il2d_sw_ladder: w at most a worker's
+ * column block N2 / T, the last sub-strip narrower where w does not divide it, the strip N1 w 16 B within
+ * the L2) -- while an 8-column strip fits L1d / EST_ND_MT_SW_L1_DIV and
  * the transform's in and out fit the L2, the widest within that fraction of the L1d; else the widest whose
  * strip's in and out, 32 N1 w B, fit the L2; the narrowest when none does; 0 (each worker's whole range) on
  * an empty ladder */

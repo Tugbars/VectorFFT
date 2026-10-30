@@ -1860,11 +1860,17 @@ static void _il2d_arm_exec_mt_sw(void *v)
     c->h->il2d_col.natst = c->lst;
     _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
-/* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence),
- * sw a divisor of N2, and at T > 1 at least T sub-strips. 8 is on it
- * because at N1 = 8192 the 16-column dense strip is the whole L2 and
- * streams every stage through L3 (8192x128 measured 0.76 at T=8); the
- * column kernels take any count >= 1. */
+/* the strip-width ladder: N1 x sw x 16 B under L2 (the hardware fence).
+ * At T > 1 every width up to a worker's column block (N2 / T): a worker
+ * walks its block in sub-strips of sw and the last one is narrower where
+ * sw does not divide the block (_il2d_cmt_body, mode 5), as the real
+ * tier's ladder has it -- so a plane with no width dividing N2 (750, 125,
+ * 1500 columns) still walks a narrow dense strip in L2 instead of each
+ * worker's whole block (1500x750 T=8: the column pass 943 us whole, MKL's
+ * 4-column groups 256). One thread (the serial walk's tile) keeps sw a
+ * divisor of N2. 8 is on it because at N1 = 8192 the 16-column dense
+ * strip is the whole L2 and streams every stage through L3 (8192x128
+ * measured 0.76 at T=8); the column kernels take any count >= 1. */
 static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
 {
     static const int SW[] = { 8, 16, 32, 64, 128, 256 };
@@ -1872,9 +1878,8 @@ static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
     for (i = 0; i < 6 && n < max; i++)
     {
         const int w = SW[i];
-        if (w > N2 || N2 % w) continue;
+        if (w > N2 || (T > 1 ? w > N2 / T : N2 % w != 0)) continue;
         if (!vfft_policy_fits_l2((long)N1 * w * 16)) continue;
-        if (T > 1 && N2 / w < T) continue;
         out[n++] = w;
     }
     return n;
@@ -2903,8 +2908,13 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
     nl = _il2d_sw_ladder(N1, N2, T, lad, 6);
     for (k = 0; k < nl; k++)
         if (lad[k] > swcap) swcap = lad[k];
-    if (N2 / T >= 2 && vfft_policy_fits_l2((long)N1 * (N2 / T) * 16) && N2 / T > swcap)
-        swcap = N2 / T;
+    {   /* the unsized walk (msw 0) runs a worker's whole block: the blocks split N2 as N2 t / T, so the
+         * widest is N2 / T rounded up (100 columns on 8 workers: 13; sized down, those workers left
+         * the dense scratch for the in-place walk, 2-4x slower) */
+        const int wmax = (N2 + T - 1) / T;
+        if (wmax >= 2 && vfft_policy_fits_l2((long)N1 * wmax * 16) && wmax > swcap)
+            swcap = wmax;
+    }
     if (swcap < 2)
         return 0;
     c->natsscr = (double **)calloc((size_t)T, sizeof *c->natsscr);
