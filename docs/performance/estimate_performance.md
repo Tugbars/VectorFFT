@@ -9,9 +9,9 @@ do they compare with MKL? Over
 estimate plan takes 1.007 times the measured plan's time at the median (geometric mean 1.019); 207
 are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 
-> **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread
-> **Contract (every section):** complex-to-complex FP64 (the last section: real-to-complex and
-> complex-to-real), interleaved, natural order, out of place, K = 1, one thread
+> **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread (the last section: 8 threads)
+> **Contract (every section):** complex-to-complex FP64 (the 1D real section: real-to-complex and
+> complex-to-real), interleaved, natural order, out of place, K = 1
 > **Arms:** the measured plan, replayed from the shipped wisdom
 > ([`src/wisdom/14900KF`](../../src/wisdom/14900KF), with the rows the planner raced on 2026-10-26 and 2026-10-27);
 > the estimate plan; the measured plan created a second time, as a control
@@ -752,3 +752,47 @@ below 1.8e-15 at every length.
 | Primes (131..4,093) | 533 | 1.21x | 86% |
 | Composites, largest prime factor ≤ 47 | 1,276 | 1.99x | 93% |
 | Composites, largest prime factor ≥ 53 | 2,154 | 1.21x | 86% |
+
+---
+
+## Estimate against MKL at 8 threads: 2D planes on the tile, the blocks, the skewed pass and the turn
+
+> **Competitor:** Intel oneMKL 2025.3, 8 threads  
+> **Record:** [`mt8_2d_methods_estimate_2026-10-30`](../../gauntlet/results/mt8_2d_methods_estimate_2026-10-30/)
+> (2026-10-30, after commit 78da152f). Every plane's plan is the estimate's: its 8-thread rows were written
+> with the calls `VFFT_FLAG_ESTIMATE` makes (`est_plan_2d`, `est_mt_2d`, `est_put_rows_2d`), and the
+> gauntlet's bench replayed them  
+> **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1, both libraries
+> at 8 threads, unpaced  
+> **Method:** one process per plane; both engines timed in two arms with the engine order flipped;
+> every speedup is MKL's time over VectorFFT's, the geometric mean of the two arms
+
+At 8 threads the estimate's column pass has four methods beside the strips
+([`estimate_2d3d_sketch.md`](../design/estimate_2d3d_sketch.md) section 8a):
+- **tile:** the first column stage across the plane, then each first-stage sub-problem on one worker;
+- **blocks:** the column chain walked in blocks, where the door would run the skewed pass on one thread;
+- **skewed pass:** the plane with few rows, threaded on groups of 16 columns;
+- **turn:** the plane with few columns, turned so its columns become rows.
+
+MKL's threaded 2D runs the rows and then the columns on every shape.
+
+400 planes: every plane with an 8-thread row banked in the 14900KF store where the estimate serves one of
+the four methods (the planes of the 2D threading studies, leaning towards tall planes and planes with few
+rows). The planner's plans on the same planes are in [`v1_0_results.md`](v1_0_results.md) (2D C2C at T=8).
+
+| Method | Planes | Geomean | Median | At or above parity |
+|---|---|---|---|---|
+| Tile | 242 | 1.33x | 1.28x | 86% |
+| Blocks | 78 | 1.16x | 1.11x | 67% |
+| Skewed pass | 52 | 1.35x | 1.29x | 83% |
+| Turn | 28 | 3.11x | 3.14x | 100% |
+| **All four** | **400** | **1.38x** | **1.28x** | **83%** |
+
+By the plane's bytes (16 N1 N2) against the caches (L2 2 MiB, L3 36 MiB), geomean (planes):
+
+| Method | L2 | L3 | Past L3 |
+|---|---|---|---|
+| Tile | 1.43x (134) | 1.23x (105) | 1.07x (3) |
+| Blocks | 1.23x (57) | 1.00x (20) | 0.93x (1) |
+| Skewed pass | 1.54x (38) | 0.91x (11) | 1.08x (3) |
+| Turn | 3.11x (28) | – | – |

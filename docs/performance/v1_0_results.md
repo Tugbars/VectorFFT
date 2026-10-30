@@ -957,68 +957,34 @@ At 8 threads the column pass has four methods beside the strips (`docs/design/il
 
 MKL's threaded 2D runs the rows and then the columns on every shape.
 
-The planes: 485, every plane with an 8-thread plan banked in the 14900KF store where the planner or the
-estimate serves one of the four methods. They come from the 2D threading studies, so they lean towards
-tall planes and planes with few rows; they are not a uniform sample.
-
-The setup: complex-to-complex, interleaved, natural order, out of place, K=1, both libraries at 8 threads,
-unpaced. Two runs:
-- **planner:** the planner's banked plans;
-- **estimate:** `VFFT_FLAG_ESTIMATE`'s plans, served as store rows.
-
-Speedup = MKL time / ours, the geometric mean of the two engine orders. The records are
-`gauntlet/results/mt8_2d_methods_planner_2026-10-30/` and `gauntlet/results/mt8_2d_methods_estimate_2026-10-30/`.
-The control plane, 64×64, read 1.04–1.33× over 12 readings in the planner run and 1.19–1.56× in the
-estimate run.
+392 planes: every plane with an 8-thread plan banked in the 14900KF store whose plan is one of the four
+methods (the planes of the 2D threading studies, leaning towards tall planes and planes with few rows).
+Complex-to-complex, interleaved, natural order, out of place, K=1, both libraries at 8 threads. Speedup =
+MKL time / ours, the geometric mean of the two engine orders. The record is
+`gauntlet/results/mt8_2d_methods_planner_2026-10-30/`; the estimate's plans on the same planes are in
+[`estimate_performance.md`](estimate_performance.md).
 
 ```
- method         planner                                   estimate
-                planes  geomean  median   <1.0  >=1.2     planes  geomean  median   <1.0  >=1.2
-──────────────────────────────────────────────────────────────────────────────────────────────────
- tile              252    1.34×   1.32×     51    153        242    1.33×   1.28×     35    144
- blocks             80    1.30×   1.17×     23     35         78    1.16×   1.11×     26     31
- skewed pass        32    1.37×   1.31×      2     24         52    1.35×   1.29×      9     36
- turn               28    3.03×   3.14×      0     28         28    3.11×   3.14×      0     27
-──────────────────────────────────────────────────────────────────────────────────────────────────
- all four          392    1.41×   1.33×     76    240        400    1.38×   1.28×     70    238
+ method         planes   geomean   median   at/above parity
+─────────────────────────────────────────────────────────────
+ tile              252     1.34×    1.32×        80%
+ blocks             80     1.30×    1.17×        71%
+ skewed pass        32     1.37×    1.31×        94%
+ turn               28     3.03×    3.14×       100%
+─────────────────────────────────────────────────────────────
+ all four          392     1.41×    1.33×        81%
 ```
 
 By the plane's bytes (16·N1·N2) against the caches (L2 2 MiB, L3 36 MiB), geomean (planes):
 
 ```
- method         planner                                 estimate
-                L2            L3            past L3     L2            L3            past L3
-───────────────────────────────────────────────────────────────────────────────────────────────
- tile           1.39× (136)   1.30× (110)   0.99× (6)   1.43× (134)   1.23× (105)   1.07× (3)
- blocks         1.39× (50)    1.17× (29)    0.87× (1)   1.23× (57)    1.00× (20)    0.93× (1)
- skewed pass    1.40× (28)    0.91× (2)     1.47× (2)   1.54× (38)    0.91× (11)    1.08× (3)
- turn           3.13× (27)    1.31× (1)     –           3.11× (28)    –             –
+ method         L2            L3            past L3
+───────────────────────────────────────────────────────
+ tile           1.39× (136)   1.30× (110)   0.99× (6)
+ blocks         1.39× (50)    1.17× (29)    0.87× (1)
+ skewed pass    1.40× (28)    0.91× (2)     1.47× (2)
+ turn           3.13× (27)    1.31× (1)     –
 ```
-
-The weakest planes:
-
-```
- method         planner                                          estimate
-───────────────────────────────────────────────────────────────────────────────────────────────────────
- tile           135×63 0.44, 625×125 0.49, 625×750 0.55,          625×125 0.56, 200×50 0.60, 693×66 0.69,
-                243×125 0.64                                      2187×500 0.71
- blocks         81×125 0.65, 15×4375 0.67, 6×10935 0.67,          10×78643 0.56, 6×131071 0.61, 12×750 0.72,
-                3×21875 0.68                                      15×4375 0.72
- skewed pass    6×131072 0.83, 3×1048576 0.90                     8×131072 0.51, 6×524288 0.61, 16×65536 0.63
- turn           16384×64 1.31, 2048×32 1.43                       128×16 1.05, 256×16 1.44
-```
-
-- **The turn:** about 3× on all 28 planes in both runs.
-- **The skewed pass:** 1.35–1.37×. Its planes below parity are at L3 and past it (8×131072, 6×524288).
-- **The tile:** 1.33–1.34×, ahead on 4 planes in 5. The deepest losses lead the column chain with 5, 9 or 27
-  (625, 135, 243 rows), so the first stage's sub-problems do not share evenly among 8 workers.
-- **The blocks:** 1.16–1.30×, the weakest of the four, behind on about a third of their planes. Those are
-  planes of 3–16 rows with long rows: all 26 in the estimate run, 13 of 23 in the planner run (the rest
-  81×125 to 2560×280).
-
-The planes of the set where a side serves the strips or one thread run 1.02× (planner, 93 planes) and
-0.97× (estimate, 85). Two planes of the planner run were raced by the run instead of replayed: 3×1378125
-(1.53×) and 6×524288 (0.64×).
 
 ### 3D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (standing as of 2026-09-15)
 
