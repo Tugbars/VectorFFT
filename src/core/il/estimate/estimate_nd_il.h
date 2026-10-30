@@ -191,11 +191,21 @@ typedef struct est_plan3d_s
  * planner raced at T = 8 into the store): 1.068 (median 1.00; the unbanded chain on their chains against
  * the one-thread chain 1.004). Above 1.10: 6000x500 2.16 (no rung divides 500, so each worker's whole range,
  * 6 MB, past the L2; the planner tiles), the tiled 100x100, 3000x200, 1920x1080, 3024x512 (1.11-1.38), and
- * 643x256 1.46 (the turned prime pass, serial in both plans: its Bluestein chain). */
+ * 643x256 1.46 (the turned prime pass, serial in both plans: its Bluestein chain).
+ * THE SKEWED PASS THE DOOR RUNS SERIAL (2026-10-30): the door threads the skewed pass on whole groups of
+ * EST_ND_MT_CSK_COLS columns only (_il2d_csk_exec_mt, il2d_tier.h:1432), so where N2 is not a multiple of
+ * it the skew is dropped and the plain chain walk threads in blocks (mtarm 0, the planner's split there),
+ * one stage of N1 where the pool has it (the planner's block plans keep it: 16x4050 with the one-thread
+ * 4.4 3.06, with 16 0.96). Timed at T = 8 on the 77 such planes of 3-16 rows (L1d to L3), one process, 15
+ * rounds: 2.105 -> 0.876 (median 1.00, control 0.994); where the planner banked serial (20) 0.50 (16x4093
+ * 0.15, 8x8100 0.20; 6x360 and 16x147 lose 1.28 and 1.36), where it blocks 1.07. The turn on N1 not a
+ * multiple of 4 (also serial, :1462) is not moved: blocks do not fix it (243, 625, 2187 x 12: 1.49-1.65 in
+ * blocks, 1.22-2.17 serial; the planner tiles). */
 #define EST_ND_MT_SERIAL_L1_DIV 2
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
 #define EST_ND_MT_SW_L1_DIV 2
+#define EST_ND_MT_CSK_COLS 16
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -790,9 +800,9 @@ static inline int est__msw_2d(const est_machine_t *m, int N1, int N2, int T)
     return w ? w : lad[0];
 }
 /* est_mt_2d: the one-thread plan p (est_plan_2d) threaded at T (EST_ND_MT_*): the threaded verdict and,
- * where it threads, the turn on few columns, or the strips with the unbanded walk's chain. A column through
- * the turned prime pass stays serial: the door runs that pass on one thread (il2d_tier.h:1503). T < 2
- * leaves p one-thread. */
+ * where it threads, the turn on few columns, the blocks where the door would run the skewed pass serial,
+ * or the strips with the unbanded walk's chain. A column through the turned prime pass stays serial: the
+ * door runs that pass on one thread (il2d_tier.h:1503). T < 2 leaves p one-thread. */
 static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
 {
     const int nat = p->col.nat && p->col.blu <= 0;   /* the natural leaf, once the chain has two stages */
@@ -811,7 +821,21 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
             p->ro = 0;
             p->col.wl = est_wl_2d(m, &p->col, p->N2, p->csk, p->turn, EST_ND_2D_PLANE_DIV);
         }
-        if (!p->csk && !p->turn)
+        if (p->csk && p->N2 % EST_ND_MT_CSK_COLS)
+        {   /* the door runs this skew serial: the chain walk in blocks, one stage of N1 where the pool has it */
+            est_pool_t P;
+            int R1[1] = { p->N1 };
+            p->csk = 0;
+            est__pool(p->N1, &P);
+            if (p->col.blu <= 0 && !p->col.rd_n && est__in_pool(&P, R1, 1))
+            {
+                p->col.R[0] = p->N1;
+                p->col.nst = 1;
+                est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+            }
+            p->col.wl = est_wl_2d(m, &p->col, p->N2, p->csk, p->turn, EST_ND_2D_PLANE_DIV);
+        }
+        else if (!p->csk && !p->turn)
         {
             if (p->col.blu <= 0 && !p->col.rd_n)
             {   /* the unbanded walk's chain (est_blu_chain's pick); a chain the pool lacks keeps the plan's */

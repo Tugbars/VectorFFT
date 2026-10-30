@@ -176,8 +176,8 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
         return est_refuse(why, whylen, "%dx%d: sw=%d rbk=%d", p->N1, p->N2, p->sw, p->rbk);
     if (p->T > 1)
     {   /* the threaded verdict as the door serves it (fft2d_create_il.h:1144-1152, _il2d_c2c_mt il2d_tier.h:1492):
-         * the skew and the turn one walk, the chain walk the strips (unbanded) at a width on the door's ladder,
-         * the turned prime pass serial; nls beside a natural leaf only */
+         * the skew and the turn one walk, the chain walk the strips (unbanded) at a width on the door's ladder
+         * or the blocks (no width), the turned prime pass serial; nls beside a natural leaf only */
         const int want_nat = p->col.nat && p->col.blu <= 0 && p->col.nst > 1;
         int lad[6], n, i, in = (p->msw == 0);
         n = _il2d_sw_ladder(p->N1, p->N2, p->T, lad, 6);
@@ -185,7 +185,8 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
             in |= lad[i] == p->msw;
         if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
             (p->cmt && (p->turn || p->csk) && (p->mtarm || p->msw)) ||
-            (p->cmt && !p->turn && !p->csk && (p->mtarm != 1 || p->col.wl || !in)) || (p->nls >= 0) != want_nat ||
+            (p->cmt && !p->turn && !p->csk && (p->mtarm == 1 ? p->col.wl || !in : p->mtarm != 0 || p->msw)) ||
+            (p->nls >= 0) != want_nat ||
             p->nls > 1)
             return est_refuse(why, whylen, "%dx%d T=%d: cmt=%d mtarm=%d msw=%d nls=%d is no threaded verdict the door serves "
                               "here", p->N1, p->N2, p->T, p->cmt, p->mtarm, p->msw, p->nls);

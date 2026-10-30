@@ -262,8 +262,9 @@ rule is fitted to it (the owner's ruling of 2026-10-29).
 |---|---|
 | `cmt` | 0 (serial) while the plane, 16 N1 N2 bytes, fits L1d / 2, on two rows (N1 = 2), and through the turned prime pass (the door runs it on one thread, il2d_tier.h:1503); else 1 |
 | `turn` | also 1 on a threaded plane of at most 2T columns where the door builds the turn (too few columns to share); `csk`, `ro` and the band 0 with it |
-| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 1, the strips |
-| the chain, `wl` | the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
+| `csk` | also 0 where N2 is not a multiple of 16: the door threads the skewed pass on whole groups of 16 columns only (`_il2d_csk_exec_mt`, il2d_tier.h:1432) and runs it serial otherwise |
+| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 0, the blocks, where the skew was dropped; else 1, the strips |
+| the chain, `wl` | the blocks: one stage of N1 where the pool has it (else the one-thread chain), the band of a plane without the skew; the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
 | `msw` | a rung of the door's ladder (`_il2d_sw_ladder`: w divides N2, the strip 16 N1 w within the L2, at least T strips): while an 8-column strip fits L1d / 2 and the transform's in and out (32 N1 N2) fit the L2, the widest within L1d / 2; else the widest whose strip's in and out (32 N1 w) fit the L2; the narrowest when none does; 0 (each worker's whole range) on an empty ladder |
 | `nls` | beside a natural leaf only: 0 (strided) on the strips, else 1 |
 
@@ -284,6 +285,17 @@ the planner raced at T = 8 into the store, `npow2_t8.txt`), two runs (`ab_npow2.
 6000x500 2.16 (no rung of the ladder divides 500, so the strips take each worker's whole range, 6 MB, past
 the L2; the planner tiles), the planes the planner tiles (100x100 1.38, 3000x200 1.36, 1920x1080 1.12,
 3024x512 1.11), and 643x256 1.46 (the turned prime pass, serial in both plans: its Bluestein chain).
+
+**The skewed pass the door runs serial** (2026-10-30): a wider study of 3-16 rows (95 planes, L1d to L3, the
+planner raced at T = 8 into the store; `csk_ab_report.txt`) found the estimate's skewed pass serial on every
+plane where N2 is not a multiple of 16 (2.21 against the planner, 3.50 at L3); the planner blocks the chain
+walk there with one stage of N1. With the blocks (`est_rows_v.c`, two variants, `skewturn_ab_report.txt`),
+on the 77 such planes found, one process, 15 rounds: 2.105 -> 0.876 (median 1.00; control 0.994). The one
+stage of N1 against the one-thread chain at 16 rows: 16x4050 0.96 against 3.06. Where the planner banked
+serial (20 planes) the blocks run 0.50 of its time (16x4093 0.15, 8x8100 0.20; 6x360 and 16x147 lose 1.28 and
+1.36); where it blocks, 1.07. The turn on N1 not a multiple of 4 (the door runs it serial too,
+il2d_tier.h:1462) is not moved: blocks do not fix it (243, 625, 2187 x 12: 1.49-1.65 in blocks, 1.22-2.17
+serial; the planner tiles).
 
 ## 9. The 3D plan
 
