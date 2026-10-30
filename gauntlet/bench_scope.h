@@ -14,8 +14,10 @@
  *                           TPAUSE nor MWAITX
  *   VFFT_PCORE_MASK=<mask>  the threaded protocol's process mask; 0 = do not
  *                           confine (the control for a mask-distorted threaded
- *                           engine). Unset: one logical CPU per P-core, read
- *                           from the machine by the library.
+ *                           engine). Unset: every logical CPU of the P-cores,
+ *                           read from the machine by the library (the
+ *                           hyperthread siblings stay in the set, so the
+ *                           library's guards can hold them).
  */
 #ifndef VFFT_GAUNTLET_BENCH_SCOPE_H
 #define VFFT_GAUNTLET_BENCH_SCOPE_H
@@ -73,11 +75,13 @@ static void bench_scope_lifted(void)
     vfft_measure_configure(&mc);
 }
 
-/* THE THREADED PROTOCOL'S CONFINEMENT: the process on one logical CPU per
- * P-core, for every engine's threads, before any of them exist (Intel OpenMP
- * reads the mask at init; on Linux threads inherit their creator's). The
- * caller then pins itself to logical 0, the core the library's pool reserves
- * for it. */
+/* THE THREADED PROTOCOL'S CONFINEMENT: the process on the P-cores (every
+ * logical CPU of them), for every engine's threads, before any of them exist
+ * (Intel OpenMP reads the mask at init; on Linux threads inherit their
+ * creator's). The library's pool takes one logical CPU per core and its
+ * guards hold the siblings of the cores in use, so a sibling is no place for
+ * another engine's thread either while they hold it. The caller then pins
+ * itself to logical 0, the core the library's pool reserves for it. */
 static void bench_pin_pcores(void)
 {
     const char *e = getenv("VFFT_PCORE_MASK");
@@ -92,7 +96,7 @@ static void bench_pin_pcores(void)
     if (!got)
         fprintf(stderr, "pin: the process could not be confined (mask 0x%llx) -- threads may land on E-cores\n", want);
     else
-        printf("# process affinity = 0x%llx (%s)\n", got, e ? "VFFT_PCORE_MASK" : "one logical CPU per P-core");
+        printf("# process affinity = 0x%llx (%s)\n", got, e ? "VFFT_PCORE_MASK" : "the P-cores with their hyperthread siblings");
 }
 
 #endif /* VFFT_GAUNTLET_BENCH_SCOPE_H */

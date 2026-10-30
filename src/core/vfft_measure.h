@@ -36,7 +36,10 @@ void vfft_measure_configure(const vfft_measure_config_t *config)
 
 int vfft_measure_begin(void)
 {
-    return _vfs_enter();
+    const int f = _vfs_enter();
+    if (_vfs.depth == 1 && _thread_pool_nworkers > 0)
+        _thread_pool_scope_hold(&_thread_pool_pin);   /* the pool lives: its guards hold for whatever this times */
+    return f;
 }
 
 void vfft_measure_end(void)
@@ -49,10 +52,12 @@ void vfft_measure_end(void)
 unsigned long long vfft_measure_confine(unsigned long long mask)
 {
     if (mask == 0)
-    { /* the first logical CPU of each P-core */
-        int k, c;
-        for (k = 0; (c = vfft_topo_pcore_cpu(k)) >= 0; k++)
-            if (c < 64)
+    { /* every logical CPU of the P-cores: no E-cores; the hyperthread siblings stay in the set, so the
+       * library's guards can hold them (sibling_guard.h) -- the pool still takes one per core */
+        const vfft_topology_t *t = vfft_topology();
+        int c;
+        for (c = 0; c < t->ncpu && c < 64; c++)
+            if (t->core[c] >= 0 && t->pcore[c])
                 mask |= 1ull << c;
     }
     if (mask == 0)
@@ -83,7 +88,7 @@ unsigned long long vfft_measure_confine(unsigned long long mask)
 const char *vfft_measure_describe(char *buf, size_t n)
 {
     static const char *const gk[] = {"none", "TPAUSE (C0.2)", "MONITORX/MWAITX", "PAUSE spinner"};
-    char pin[64], guard[80];
+    char pin[64], guard[120];
     if (!buf || !n)
         return "";
     if (!_vfs_last.valid)
@@ -98,9 +103,9 @@ const char *vfft_measure_describe(char *buf, size_t n)
     if (_vfs_last.guard_kind)
         snprintf(guard, sizeof guard, "logical CPU %d held by %s", _vfs_last.guard_cpu, gk[_vfs_last.guard_kind & 3]);
     else
-        snprintf(guard, sizeof guard, "none");
-    snprintf(buf, n, "pin: %s; sibling guard: %s; priority: %s; measurement lock: %s%s",
-             pin, guard,
+        snprintf(guard, sizeof guard, "%s", _vfft_guard_in_vm() ? "none (a virtual machine)" : "none");
+    snprintf(buf, n, "pin: %s; sibling guard: %s; the pool's sibling guards: %d; priority: %s; measurement lock: %s%s",
+             pin, guard, _vfft_guard_pool_count(),
              _vfs_last.prio == 2 ? "process raised" : _vfs_last.prio == 1 ? "thread raised"
                                                                           : "unchanged",
              _vfs_last.lock_state > 0 ? "held" : _vfs_last.lock_state == 0 ? "NOT obtained"

@@ -2,7 +2,7 @@
  * at the chosen rigor -> build -> execute. Feature coverage: src/core/README.md.
  * See docs/design/vfft_front_door.md. */
 #include "vfft.h"
-#include "common/plan/vfft_cfg.h"   /* the request the engines read (API v2, 2026-10-15) */
+#include "common/plan/vfft_cfg.h" /* the request the engines read (API v2, 2026-10-15) */
 /* the library's own create, execute and store calls (the public eight are vfft_api.h, at the end) */
 struct vfft_plan_s;
 static vfft_plan _vfft_create_cfg(const vfft_cfg_t *cfg);
@@ -11,7 +11,7 @@ static vfft_wisdom *_vfft_wisdom_load(const char *dir);
 static int _vfft_wisdom_save(const vfft_wisdom *w, const char *dir);
 static void _vfft_wisdom_free(vfft_wisdom *w);
 static const char *_vfft_plan_route(vfft_plan p);
-static void _vfft_create_lock(void);   /* one create at a time (defined with the front door) */
+static void _vfft_create_lock(void); /* one create at a time (defined with the front door) */
 static void _vfft_create_unlock(void);
 #include "vfft_diagnostics.h"                /* the MT engagement counters this file defines */
 #include "split/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
@@ -300,7 +300,7 @@ static void _vfft_pool_arm(int n)
 static int _vfft_plan_threads(const vfft_cfg_t *cfg)
 {
     if (cfg && cfg->nthreads > 0)
-        return cfg->nthreads; /* the request's own count, bounded at the front door; its workers are ensured there */
+        return cfg->nthreads;     /* the request's own count, bounded at the front door; its workers are ensured there */
     return thread_pool_setting(); /* 0 = the setting for creates (vfft_set_num_threads) */
 }
 
@@ -373,7 +373,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     const char *d = (dir && dir[0]) ? dir : ".";
     W->dir_too_long = 0;
     if (strlen(d) >= sizeof W->dir)
-    {   /* never cut silently: the store opens in memory, read-only, and says so */
+    { /* never cut silently: the store opens in memory, read-only, and says so */
         _vfft_warn("vfft_create: wisdom_dir is %zu characters, over the %zu the "
                    "store holds; it is not used: the library's own store serves READ-ONLY and the "
                    "winners are kept for this process",
@@ -412,7 +412,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
      * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein_seed); /* the frozen seed */
-    vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
+    vfft_c2r_path_load(W->path_c2r_path);                         /* c2r NATURAL/STRIDE per-cell path table */
     /* wisdom2 (the live store). A bank always lands in memory, and a
      * create's winner is saved before the create returns (owner,
      * 2026-10-04): an explicit directory, VFFT_WISDOM_DIR or the build's
@@ -462,8 +462,8 @@ static void _bundle_load(struct vfft_wisdom_s *W)
                 vw2_open(&W->vw2, open_dir, 1);
             vw2_set_build(&W->vw2, _vfft_build_id()); /* every row banked here carries bld= */
             if (W->vw2.dir[0])
-            {   /* the Bluestein cells calibrated on this machine live in the
-                 * store beside the wisdom2 shards; the frozen seed stays read-only */
+            { /* the Bluestein cells calibrated on this machine live in the
+               * store beside the wisdom2 shards; the frozen seed stays read-only */
                 snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", W->vw2.dir);
                 bluestein_wisdom_merge(&W->bluestein, W->path_bluestein);
             }
@@ -669,8 +669,8 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         vfft_r2c_plan_destroy(ps);
         return pr;
     }
-    {   /* the arms are timed serially: the serial scope, on this thread only,
-         * instead of a resize of the pool under every other plan */
+    { /* the arms are timed serially: the serial scope, on this thread only,
+       * instead of a resize of the pool under every other plan */
         thread_pool_serial_enter();
         if (_r2c_race_arms(pr, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nr, &ns) != 0)
@@ -747,7 +747,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
         return ps;
     if (!ps)
         return pn;
-    {   /* timed serially in the serial scope (as the r2c race above) */
+    { /* timed serially in the serial scope (as the r2c race above) */
         thread_pool_serial_enter();
         if (_c2r_race_arms(pn, ps, N, K,
                            _vw2_lay_of(cfg) == VW2_LAY_IL, &nn, &ns) != 0)
@@ -1033,7 +1033,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (N1 < 2 || N2 < 2 || (N2 & 1))
         {
             _vfft_warn("vfft_create: SPLIT 2D %s %dx%d needs both extents >= 2 and an even last "
-                       "extent; the INTERLEAVED tier serves an odd one", _vfft_tname(t), N1, N2);
+                       "extent; the INTERLEAVED tier serves an odd one",
+                       _vfft_tname(t), N1, N2);
             return NULL;
         }
         /* r2c and c2r have separate 2D wisdom tables (different optima, same
@@ -1071,7 +1072,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (!pr2c || !pcol)
         {
             _vfft_warn("vfft_create: SPLIT 2D %s %dx%d: the split stride engines cover no %s of "
-                       "length %d; the INTERLEAVED tier serves it", _vfft_tname(t), N1, N2,
+                       "length %d; the INTERLEAVED tier serves it",
+                       _vfft_tname(t), N1, N2,
                        pcol ? "row half" : "column", pcol ? N2 / 2 : N1);
             if (pr2c)
                 stride_plan_destroy(pr2c);
@@ -1179,7 +1181,7 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 #include "il/real/zrb_lanes.h"  /* the lane Bluestein: the real batch's lane-major geometry on the column pass (2026-10-01) */
 
 #include "il/rank1/il_rader_stage.h" /* the RADER STAGE of the flat chain: a prime radix above the pool (2026-10-13); after il2d_cols.h (its column machinery) */
-#include "il/rank2/il2d_tier.h" /* IL 2D real/c2c tier: passes, MT,
+#include "il/rank2/il2d_tier.h"      /* IL 2D real/c2c tier: passes, MT,
                                          * and the four racers (step 17) */
 
 /* THE SAVE (owner, 2026-10-04: "the planner found the winner, why don't
@@ -1365,15 +1367,15 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_cfg_t *cfg,
     return stride;
 }
 
-#include "split/split_create.h" /* the SPLIT create: the split side of the one fork */
-#include "il/rank1/lm_batch_il.h" /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
-#include "il/rank2/lm_batch2d_il.h" /* the LANE-MAJOR 2D batch: the first axis a column pass, the last the 1D batch per block (2026-10-15) */
+#include "split/split_create.h"      /* the SPLIT create: the split side of the one fork */
+#include "il/rank1/lm_batch_il.h"    /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
+#include "il/rank2/lm_batch2d_il.h"  /* the LANE-MAJOR 2D batch: the first axis a column pass, the last the 1D batch per block (2026-10-15) */
 #include "il/rank2/lm_batch2dr_il.h" /* its real twin, r2c and c2r: the 1D real batch per block, a complex column pass over the spectrum */
-#include "il/rank3/lm_batch3d_il.h" /* the LANE-MAJOR 3D batch: the first axis a column pass over the volume's width, the 2D batch per block (2026-10-15) */
+#include "il/rank3/lm_batch3d_il.h"  /* the LANE-MAJOR 3D batch: the first axis a column pass over the volume's width, the 2D batch per block (2026-10-15) */
 #include "il/rank3/lm_batch3dr_il.h" /* its real twin, r2c and c2r: the 2D real batch per block, a complex column pass over the spectrum (2026-10-19) */
-#include "il/il_create.h"       /* the INTERLEAVED create: the IL side of the one fork */
-#include "bridge/real_bridge.h" /* 1D real: where the layouts still meet (D1, temporary) */
-#include "vfft_batch.h"         /* owned-batch allocator (step 28) */
+#include "il/il_create.h"            /* the INTERLEAVED create: the IL side of the one fork */
+#include "bridge/real_bridge.h"      /* 1D real: where the layouts still meet (D1, temporary) */
+#include "vfft_batch.h"              /* owned-batch allocator (step 28) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1427,8 +1429,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * child threads on it at T > 1 (no serial form to fall to). */
         return (g->k1il2p || g->k1il3p || (g->k1ilfd && g->k1ilfd->mt == 0) ||
                 (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1) ||
-                (g->k1_mono_ilf && g->k1_mono_ilb) ||            /* the mono: one pure kernel, alias-safe in place */
-                (g->k1ilpr && g->k1ilpr->mt == 0))               /* the prime cell's serial form: plan-owned planes, pool-free */
+                (g->k1_mono_ilf && g->k1_mono_ilb) || /* the mono: one pure kernel, alias-safe in place */
+                (g->k1ilpr && g->k1ilpr->mt == 0))    /* the prime cell's serial form: plan-owned planes, pool-free */
                    ? 1
                    : 0;
     if (!g->k1_on)
@@ -1688,8 +1690,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
     if (!a->lm != !b->lm)
         TC_NEQ("lane-major batch");
     if (a->lm)
-    {   /* the lane-major batch: the extents, the column descriptor's chain and class, its raced knobs
-         * and the kernels by identity (a 2D or 3D batch's child is compared through its own plan) */
+    { /* the lane-major batch: the extents, the column descriptor's chain and class, its raced knobs
+       * and the kernels by identity (a 2D or 3D batch's child is compared through its own plan) */
         const vfft_ilcol_t *x = &a->il2d_col, *y = &b->il2d_col;
         if (a->N != b->N || a->N2 != b->N2 || a->N3 != b->N3 || a->K != b->K || x->nst != y->nst ||
             memcmp(x->R, y->R, sizeof(int) * (size_t)(x->nst > 0 ? x->nst : 0)) ||
@@ -1995,8 +1997,8 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims < 2 &&
         cfg->layout == VFI_LAYOUT_IL && K > 1 && !ob &&
         cfg->batch_geom != VFFT_BATCH_CONTIGUOUS && !vfft_policy_batch_lane_major(cfg))
-    {   /* the lane-major real batch serves r2c at an even N out of place (il/rank1/lm_batch_il.h, 2026-10-14);
-         * the rest of the real lane-major space is refused with its reason until its piece */
+    { /* the lane-major real batch serves r2c at an even N out of place (il/rank1/lm_batch_il.h, 2026-10-14);
+       * the rest of the real lane-major space is refused with its reason until its piece */
         _vfft_warn("vfft_create: the lane-major interleaved %s batch (N=%d, howmany=%d, batch=%s) is not "
                    "served: %s -- name batch=VFFT_BATCH_CONTIGUOUS (the %d transforms end to end, "
                    "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
@@ -2294,13 +2296,13 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
      * transform/rank below is served by ONE side, chosen here, once. */
     if (cfg->dims == 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
-        return _vfft_create_lm2dr_il(cfg, W, K);   /* the LANE-MAJOR 2D real batch (lm_batch2dr_il.h): its own executors */
+        return _vfft_create_lm2dr_il(cfg, W, K); /* the LANE-MAJOR 2D real batch (lm_batch2dr_il.h): its own executors */
     if (cfg->dims == 3 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
-        return _vfft_create_lm3dr_il(cfg, W, K);   /* the LANE-MAJOR 3D real batch (lm_batch3dr_il.h): the same executors, before the fork so the lean door never rebinds them */
+        return _vfft_create_lm3dr_il(cfg, W, K); /* the LANE-MAJOR 3D real batch (lm_batch3dr_il.h): the same executors, before the fork so the lean door never rebinds them */
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS)
-        return _vfft_create_lmr_il(cfg, W, N, K);   /* the LANE-MAJOR real batch, r2c or c2r (lm_batch_il.h): the policy admitted it above */
+        return _vfft_create_lmr_il(cfg, W, N, K); /* the LANE-MAJOR real batch, r2c or c2r (lm_batch_il.h): the policy admitted it above */
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R))
         return _vfft_create_real(cfg, ob, W, reg, N, K);
     /* ── THE LAYOUT FORK ── */
@@ -2402,7 +2404,7 @@ int vfft_c2r_load_path(const char *path)
  * forces the include to sit here is its. */
 #define VFFT_EXECUTE_IMPL /* this TU owns the definition - see the header */
 #include "vfft_execute.h"
-#include "vfft_api.h"    /* THE PUBLIC API v2: create, execute, execute_split, info, error (2026-10-15) */
+#include "vfft_api.h" /* THE PUBLIC API v2: create, execute, execute_split, info, error (2026-10-15) */
 
 /* owned_buffers=1: the plan owns its planes, built from the SAME cfg — so the
  * inner create's batch cross-checks are invariants, and vfft_destroy frees them.
@@ -2428,10 +2430,10 @@ static vfft_plan _vfft_create_outer(const vfft_cfg_t *cfg)
         return _vfft_create_inner(cfg, NULL);
     if ((cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) ||
         (cfg->dims == 3 && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
-    {   /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D or
-         * 3D real plan at the pitch the policy names; one padded plane (volume) allocated here,
-         * zeroed, read back through vfft_plan_planes (both roles) and vfft_plan_stride (its row
-         * pitch). A NESTED create (a rank-3 plan's plane child) takes the pitch and no plane. */
+    { /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D or
+       * 3D real plan at the pitch the policy names; one padded plane (volume) allocated here,
+       * zeroed, read back through vfft_plan_planes (both roles) and vfft_plan_stride (its row
+       * pitch). A NESTED create (a rank-3 plan's plane child) takes the pitch and no plane. */
         struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, NULL);
         size_t rows, pitch;
         if (!h)
@@ -2448,7 +2450,7 @@ static vfft_plan _vfft_create_outer(const vfft_cfg_t *cfg)
             rows = (size_t)h->N;
             pitch = 2 * h->il2d_ipP;
         }
-        h->own_pitch = pitch;   /* the caller lays its plane at this pitch (vfft_info().stride) */
+        h->own_pitch = pitch; /* the caller lays its plane at this pitch (vfft_info().stride) */
         (void)rows;
         return h;
     }
@@ -2464,7 +2466,7 @@ static vfft_plan _vfft_create_outer(const vfft_cfg_t *cfg)
     }
     h->own_batch = ob;
     if (_vfft_create_depth <= 1)
-        _own_batch_drop_planes(ob);   /* the caller's planes sit at the stride (vfft_info().stride) */
+        _own_batch_drop_planes(ob); /* the caller's planes sit at the stride (vfft_info().stride) */
     return h;
 }
 
@@ -2492,7 +2494,8 @@ static void _vfft_create_lock(void)
             InterlockedExchange(&_vfft_create_cs_init, 2);
         }
         else
-            while (_vfft_create_cs_init != 2) _mm_pause();
+            while (_vfft_create_cs_init != 2)
+                _mm_pause();
     }
     EnterCriticalSection(&_vfft_create_cs);
 }
@@ -2532,11 +2535,13 @@ static vfft_plan _vfft_create_cfg(const vfft_cfg_t *cfg)
         thread_pool_plan_retain(hp->nthreads); /* its workers stay until vfft_destroy */
         if (hp->layout == (int)VFI_LAYOUT_IL && hp->placement != VFFT_INPLACE &&
             (hp->transform == VFFT_R2C || hp->transform == VFFT_C2R) && !hp->alias_scr)
-        {   /* the alias copy buffer (V11): the input's size -- K x the real cube for r2c, K x the CCE
-             * cube for c2r (the last axis N/2 + 1 bins, interleaved) */
+        { /* the alias copy buffer (V11): the input's size -- K x the real cube for r2c, K x the CCE
+           * cube for c2r (the last axis N/2 + 1 bins, interleaved) */
             const size_t n1 = (size_t)hp->N, n2 = hp->N2 > 0 ? (size_t)hp->N2 : 1, n3 = hp->N3 > 0 ? (size_t)hp->N3 : 1;
-            const size_t last = hp->N3 > 0 ? n3 : hp->N2 > 0 ? n2 : n1;
-            const size_t lead = (hp->N3 > 0 ? n1 * n2 : hp->N2 > 0 ? n1 : 1);
+            const size_t last = hp->N3 > 0 ? n3 : hp->N2 > 0 ? n2
+                                                             : n1;
+            const size_t lead = (hp->N3 > 0 ? n1 * n2 : hp->N2 > 0 ? n1
+                                                                   : 1);
             const size_t per = hp->transform == VFFT_R2C ? lead * last : lead * 2 * (last / 2 + 1);
             const size_t K = hp->K > 0 ? hp->K : 1;
             hp->alias_doubles = per * K;
@@ -2774,11 +2779,12 @@ static const char *_vfft_plan_route(vfft_plan p)
                                                                             : (f == 2 ? "child+strips" : "child");
         if (!mt)
             return s;
-        return a == 3 ? "plane+band" : a == 2 ? (f == 3 ? "plane+payonce+stages" : f == 2 ? "plane+payonce+strips" : "plane+payonce")
+        return a == 3 ? "plane+band" : a == 2 ? (f == 3 ? "plane+payonce+stages" : f == 2 ? "plane+payonce+strips"
+                                                                                          : "plane+payonce")
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
     if (h->lm)
-        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm";   /* the lane-major batch on the column pass, c2c, r2c and c2r at ranks 1 to 3 (the 1D real batch's chain at N / 2; the 2D and 3D real batches' first axis over the spectrum) */
+        return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm"; /* the lane-major batch on the column pass, c2c, r2c and c2r at ranks 1 to 3 (the 1D real batch's chain at N / 2; the 2D and 3D real batches' first axis over the spectrum) */
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)
     { /* the 2D interleaved tier (2026-09-23): the column engine; +rb = the
        * batched rows, +rb2 = the batched two-pass rows; turn = the whole
@@ -2819,7 +2825,6 @@ static const char *_vfft_plan_route(vfft_plan p)
         return "-";
     return vw2_oop_il_name[h->k1_il_route];
 }
-
 
 /* ════════════════════════════════════════════════════════════════════════
  * PLAN FINGERPRINT — see src/core/vfft_fingerprint.h for the contract and
@@ -2883,7 +2888,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     FP__ADD(" | k1=%d sp=%d il=%d zr2c=%d",
             h->k1_on, h->k1_sp_route, h->k1_il_route,
             h->zr2c_route);
-        /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
+    /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
             h->nat2d_ncyc, h->mt_unsafe);

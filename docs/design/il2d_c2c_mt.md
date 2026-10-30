@@ -124,7 +124,8 @@ and its threaded form on one row: the strips at 16 columns with the staged leaf.
 
 A process that races or times threaded arms confines itself to the eight performance cores
 (`vfft_measure_confine`, `vfft.h`; the gauntlet's `bench_pin_pcores` in `gauntlet/bench_scope.h`:
-one logical CPU per P-core, mask 0x5555 on this host, `VFFT_PCORE_MASK` overriding, 0 = the
+every logical CPU of the P-cores, mask 0xFFFF on this host, so the library's guards hold the
+siblings of the cores in use (`common/support/sibling_guard.h`), `VFFT_PCORE_MASK` overriding, 0 = the
 unmasked control), pins the caller to logical 0 (the core the pool
 reserves for it; pinned to core 2 the caller shared a physical core with worker 1 and every
 barrier waited for the pair), raises its priority, and sizes the pool before the create. It

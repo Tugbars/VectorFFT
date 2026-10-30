@@ -140,8 +140,9 @@ static DWORD_PTR worker_cpus(void)
     CloseHandle(snap);
     return cpus;
 }
-/* the first P-core (its first logical CPU) with no thread of ours pinned on either sibling: the
- * core the pool left to its caller */
+/* the first P-core (its first logical CPU) with no thread of ours pinned on that CPU: the core the
+ * pool left to its caller. Its other logical CPU is not read: the pool's guard holds the sibling of
+ * every core the pool uses, the caller's included (src/core/common/support/sibling_guard.h) */
 static int free_pcore(DWORD_PTR w)
 {
     int c;
@@ -149,15 +150,21 @@ static int free_pcore(DWORD_PTR w)
     {
         const int s = sibling_of(c);
         if (!g_pcore[c] || g_core[c] < 0) continue;
-        if (((w >> c) & 1) || (s >= 0 && ((w >> s) & 1))) continue;
+        if (s >= 0 && s < c) continue;   /* not its core's first logical CPU */
+        if ((w >> c) & 1) continue;
         return c;
     }
     return -1;
 }
-static int first_set(DWORD_PTR w)
+/* the first CPU in w that is its core's first logical CPU: a worker's (the pool's guards hold the others) */
+static int first_worker(DWORD_PTR w)
 {
     int c;
-    for (c = 0; c < g_ncpu; c++) if ((w >> c) & 1) return c;
+    for (c = 0; c < g_ncpu; c++)
+    {
+        const int s = sibling_of(c);
+        if (((w >> c) & 1) && !(s >= 0 && s < c)) return c;
+    }
     return -1;
 }
 static int first_ecore(void)
@@ -350,10 +357,11 @@ int main(int argc, char **argv)
     }
     w = worker_cpus();
     res = free_pcore(w);
-    wcpu = first_set(w);
+    wcpu = first_worker(w);
     ecore = first_ecore();
-    printf("  pool threads %d; workers pinned on 0x%llx; the core left to the caller: CPU %d (%s); a worker's: CPU %d; "
-           "first E-core: CPU %d\n", vfft_pool_threads(), (unsigned long long)w, res, kind(res), wcpu, ecore);
+    printf("  pool threads %d; threads pinned alone (workers, their guards) on 0x%llx; the core left to the caller: "
+           "CPU %d (%s); a worker's: CPU %d; first E-core: CPU %d\n", vfft_pool_threads(), (unsigned long long)w, res,
+           kind(res), wcpu, ecore);
     CHECK(vfft_pool_threads() >= CELL_T && w != 0 && res >= 0 && wcpu >= 0,
           "the pool has %d threads, workers pinned, a reserved P-core found (CPU %d)", vfft_pool_threads(), res);
     if (res < 0 || wcpu < 0)

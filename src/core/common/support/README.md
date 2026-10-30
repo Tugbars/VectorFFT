@@ -14,6 +14,7 @@ math here — this is the floor the engine stands on.
 | `race_timing.h` | the racers' shared clock and median (`vfft_now_ns`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
 | `race_scope.h` | **the race scope**: the conditions every measurement runs under — the machine-wide measurement lock, the pin to a P-core, the hyperthread-sibling guard (TPAUSE / MWAITX), the priority, and their restore. `vfft_create` enters it at its first clock read (this header redefines `vfft_now_ns` to touch it) and leaves it when it returns; the public `vfft_measure_*` calls (`vfft.h`, bodies in `core/vfft_measure.h`) put the same scope around a caller's own timing. Included by `vfft.c` only, before every header that reads the clock |
 | `cpu_topology.h` | which logical CPU is which: physical cores, hyperthread siblings, P-cores and E-cores, read from the OS once (`vfft_topology`, `vfft_topo_sibling`, `vfft_topo_pcore_cpu`) |
+| `sibling_guard.h` | **the hyperthread-sibling guards**: one waiting thread per logical CPU (TPAUSE / MWAITX), shared by the race scope (the racing core's sibling; every pool core's sibling once the scope uses the pool) and the pool (each used core's sibling while that core's worker is awake); none inside a virtual machine. Also the set the process may run on (`_vfs_allowed`). Included by `threads.h` |
 | `cpu_cache.h` | the P-core's L1d and L2, the L3 and the SMT width, read once at plan time **on a P-core** (the read moves the calling thread there and back); measured by default, `-DVFFT_L1D_DISCOVER=0` pins the old constants |
 | `cpu_identity.h` | **the CPU identity** (`host= isa= l1d= l2= l3= pcores= ecores=`): the stamp of a wisdom folder, and what selects this CPU's folder under the store's root (`common/wisdom/wisdom2_folders.h`) |
 
@@ -128,9 +129,10 @@ inside a transform*), dispatched **thousands of times per second**. A general fr
 
 > **⚠ Warning.** A sibling guard is a thread that holds the hyperthread sibling of a core the library
 > times or runs on, waiting in `TPAUSE` (Intel) or `MWAITX` (AMD), so that no other thread shares that
-> core. `race_scope.h` starts one for the racing thread's core; the design in
-> [`docs/design/pool_sibling_guard.md`](../../../../docs/design/pool_sibling_guard.md) extends it to every
-> core a threaded race or the pool uses. Where they stand:
+> core (`sibling_guard.h`). The race scope holds the racing thread's core's sibling, and the siblings of
+> every core the pool uses once the scope uses the pool; the pool holds each used core's sibling while
+> that core's worker is awake. The design and its measurements:
+> [`docs/design/pool_sibling_guard.md`](../../../../docs/design/pool_sibling_guard.md). Where they stand:
 >
 > | Platform | Guards | Measured |
 > |---|---|---|
@@ -141,7 +143,9 @@ inside a transform*), dispatched **thousands of times per second**. A general fr
 >
 > Before relying on the guards on bare-metal Linux or on AMD, measure them there the way the design
 > document's section 2 does: fresh processes, the plan's pool with and without the guards, the machine as it
-> is and under a background load. If they do not help on a platform, turn them off there.
+> is and under a background load. A measurement scope with the guard turned off
+> (`vfft_measure_configure`, `VFFT_MEASURE_GUARD_OFF`) times the pool without them. If they do not help
+> on a platform, turn them off there.
 
 ---
 

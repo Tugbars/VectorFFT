@@ -18,6 +18,13 @@
  *   - The serial scope: a race that times its arms serially enters it on
  *     its own thread; thread_pool_workers_for answers 1 inside it.
  *   - Engines fork-join through thread_pool_workers_for + thread_pool_run.
+ *   - THE SIBLING GUARDS: each core the pool uses -- every worker's, and
+ *     the one it leaves to its caller -- has its hyperthread sibling held by
+ *     a waiting thread while that core's worker is awake (worker 0 for the
+ *     caller's core), so no other program's thread shares a core with ours
+ *     (sibling_guard.h). A worker that parks parks its guard; its wake wakes
+ *     it. A measurement scope that uses the pool holds every guard to the
+ *     scope's end (_thread_pool_scope_hold; race_scope.h).
  *
  * No OpenMP, no TBB, no external dependencies.
  */
@@ -36,6 +43,7 @@
 #  include <unistd.h>
 #  include <time.h>
 #endif
+#include "sibling_guard.h"  /* the guards on the siblings of the pool's cores */
 
 #define THREAD_POOL_MAX_DISPATCH 64   /* the arg-array bound and the slot count */
 
@@ -139,11 +147,14 @@ static __thread int _thread_pool_self_slot = 0;
 /* the calling thread's pin for one execute (thread_pool_caller_arm, below): state 0 = not inside an
  * execute of a plan created with more than one thread, 1 = inside one and not yet placed, 2 = its first
  * fork-join placed it; old = the affinity mask to put back (0 = the thread was not moved; on Linux 1 =
- * moved, the mask in oldm). One record: MinGW's GCC reaches a thread-local through a call
- * (__emutls_get_address), so an execute that never forks makes one such call, not one per field. */
+ * moved, the mask in oldm). scope = the measurement scope on this thread (race_scope.h): 0 = none, 1 =
+ * entered, 2 = it used the pool and holds every pool guard to the scope's end. One
+ * record: MinGW's GCC reaches a thread-local through a call (__emutls_get_address), so an execute that
+ * never forks makes one such call, not one per field. */
 typedef struct
 {
     int state;
+    int scope;
     unsigned long long old;
 #if defined(__linux__)
     long nbytes;              /* the mask's bytes as sched_getaffinity returned them */
@@ -151,14 +162,25 @@ typedef struct
 #endif
 } thread_pool_pin_t;
 #if defined(_MSC_VER)
-static __declspec(thread) thread_pool_pin_t _thread_pool_pin = { 0, 0 };
+static __declspec(thread) thread_pool_pin_t _thread_pool_pin = { 0 };
 #else
-static __thread thread_pool_pin_t _thread_pool_pin = { 0, 0 };
+static __thread thread_pool_pin_t _thread_pool_pin = { 0 };
 #endif
 /* the calling thread's slot in a fork-join: 0 = the caller (and any thread that is not a
  * pool worker), i + 1 = pool worker i. What an engine with per-thread scratch indexes by,
  * so no walker carries a worker index (il_rader_stage.h's column stage). */
 static inline int thread_pool_self_slot(void) { return _thread_pool_self_slot; }
+/* inside a measurement scope that holds no pool guard yet: hold every one to the scope's end
+ * (sibling_guard.h). Called where the scope starts using the pool: its first fork-join, a growth of the
+ * pool inside it, and a caller's own scope begun while the pool lives (vfft_measure_begin). */
+static inline void _thread_pool_scope_hold(thread_pool_pin_t *pin)
+{
+    if (pin->scope == 1)
+    {
+        _vfft_guard_hold_take();
+        pin->scope = 2;
+    }
+}
 static inline void thread_pool_serial_enter(void) { _thread_pool_serial_depth++; }
 static inline void thread_pool_serial_leave(void) { if (_thread_pool_serial_depth > 0) _thread_pool_serial_depth--; }
 
@@ -177,6 +199,8 @@ typedef struct {
     volatile int parked;    /* 1 = waiting on its event (the worker sets it, the dispatcher reads it) */
     int core_id;            /* logical core to pin to (-1 = no pin) */
     int index;              /* its slot: worker i serves dispatch slot i+1 */
+    int guard[2];           /* the guards that follow it (their CPUs, -1 = none): its core's sibling's
+                               and, for worker 0, the caller core's sibling's (sibling_guard.h) */
 #ifdef _WIN32
     HANDLE thread;
     HANDLE ev;              /* auto-reset: a wake posted before the wait is kept */
@@ -215,7 +239,10 @@ static inline void _thread_pool_pin_to_core(int core_id) {
  * is Dekker's: the worker stores parked = 1 then re-reads done, the
  * dispatcher stores done = 0 then reads parked; both stores are full fences,
  * so one of the two always sees the other, and the wake is never lost (the
- * event keeps a wake posted before the wait). */
+ * event keeps a wake posted before the wait). Its guards park when they see
+ * it parked; awake again, it wakes them (the same handshake, guard side:
+ * sibling_guard.h, _vfft_guard_poke) -- on its own thread, so a dispatch
+ * pays nothing for them. */
 static inline void _thread_pool_park(_thread_pool_worker_t *w) {
 #ifdef _WIN32
     _thread_pool_store(&w->parked, 1);
@@ -233,6 +260,8 @@ static inline void _thread_pool_park(_thread_pool_worker_t *w) {
 #else
     (void)w;
 #endif
+    if (w->guard[0] >= 0) _vfft_guard_poke(&_vfft_guards[w->guard[0]]);
+    if (w->guard[1] >= 0) _vfft_guard_poke(&_vfft_guards[w->guard[1]]);
 }
 static inline void _thread_pool_wake(_thread_pool_worker_t *w) {
 #ifdef _WIN32
@@ -476,6 +505,8 @@ static void _thread_pool_start(int i, int stride, int ncpu, int reserved) {
     w->arg = NULL;
     w->index = i;
     w->core_id = (cid < ncpu) ? cid : -1;  /* beyond the last logical core -> no pin (runs anywhere) */
+    w->guard[0] = w->guard[1] = -1;        /* its guards: thread_pool_ensure, once its slot's peers are placed */
+    _vfft_guard_bar(w->core_id);           /* no guard shares a worker's CPU (a stride override's layout) */
 #ifdef _WIN32
     if (!w->ev) w->ev = CreateEvent(NULL, FALSE, FALSE, NULL);
     w->thread = CreateThread(NULL, 0, _thread_pool_worker_func, w, 0, NULL);
@@ -502,7 +533,9 @@ static void _thread_pool_destroy(void) {
         pthread_mutex_destroy(&w->mu);
         pthread_cond_destroy(&w->cv);
 #endif
+        w->guard[0] = w->guard[1] = -1;
     }
+    _vfft_guard_pool_drop();   /* their guards end with them (one a measurement scope holds stays to its end) */
     _thread_pool_nworkers = 0;
     _thread_pool_reserved_slot = _thread_pool_reserved_cpu = -1;   /* a fresh pool reads its caller again */
 }
@@ -525,17 +558,35 @@ static void thread_pool_ensure(int n) {
     _thread_pool_lock();
     if (n - 1 > _thread_pool_nworkers) {
         const int stride = _thread_pool_pin_stride(), ncpu = _thread_pool_ncpu();
-        if (_thread_pool_reserved_slot < 0) {   /* the first growth fixes the layout for the pool's life */
+        const int first = (_thread_pool_reserved_slot < 0);
+        unsigned long long busy = 0;           /* the CPUs the pool's threads use: no guard goes there */
+        if (first) {   /* the first growth fixes the layout for the pool's life */
             _thread_pool_reserved_slot = _thread_pool_caller_slot(stride);
             _thread_pool_reserved_cpu = _thread_pool_reserved_slot * stride;
         }
         for (int i = _thread_pool_nworkers; i < n - 1; i++)
             _thread_pool_start(i, stride, ncpu, _thread_pool_reserved_slot);
+        /* THE GUARDS (sibling_guard.h): each new worker's core's sibling, held while that worker is
+         * awake; at the first growth also the caller core's sibling, held while worker 0 is awake */
+        if (_thread_pool_reserved_cpu >= 0 && _thread_pool_reserved_cpu < 64)
+            busy |= 1ull << _thread_pool_reserved_cpu;
+        for (int i = 0; i < n - 1; i++)
+            if (_thread_pool_slots[i].core_id >= 0 && _thread_pool_slots[i].core_id < 64)
+                busy |= 1ull << _thread_pool_slots[i].core_id;
+        for (int i = _thread_pool_nworkers; i < n - 1; i++)
+            if (_thread_pool_slots[i].core_id >= 0)
+                _thread_pool_slots[i].guard[0] = _vfft_guard_pool_add(_thread_pool_slots[i].core_id,
+                                                                      &_thread_pool_slots[i].parked, busy);
+        if (first && _thread_pool_reserved_cpu < ncpu)
+            _thread_pool_slots[0].guard[1] = _vfft_guard_pool_add(_thread_pool_reserved_cpu,
+                                                                  &_thread_pool_slots[0].parked, busy);
         _thread_pool_nworkers = n - 1;
     }
     if (n - 1 > _thread_pool_needed)
         _thread_pool_store(&_thread_pool_needed, n - 1);
     _thread_pool_unlock();
+    _thread_pool_scope_hold(&_thread_pool_pin);   /* a measurement scope arming the pool holds its guards (it waits
+                                                     for them to come up: outside the lock) */
 }
 
 /** A plan created at thread count T is alive: its workers stay alive and
@@ -663,6 +714,8 @@ static inline void thread_pool_run(int T, void (*fn)(void *),
         thread_pool_pin_t *pin = &_thread_pool_pin;
         if (pin->state == 1)
             _thread_pool_caller_place(pin);   /* the first fork-join of an armed execute: the caller's pin */
+        _thread_pool_scope_hold(pin);   /* a race's first fork-join in a measurement scope: every pool guard
+                                           stays awake to the scope's end, none parks between two arms */
     }
     _thread_pool_lock();
     for (int t = 1; t < T && t <= _thread_pool_nworkers; t++) {

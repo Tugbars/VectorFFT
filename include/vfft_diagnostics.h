@@ -111,10 +111,13 @@ extern "C"
    * to one P-core (the core the pool leaves to its caller once the pool exists, the second
    * P-core before that), a guard thread holding that core's hyperthread sibling with the
    * processor's idle instruction (TPAUSE on Intel, MWAITX on AMD; a part with neither runs
-   * unguarded), and the measuring thread's priority raised where the system allows it. A
-   * winner measured without the lock, or on a thread not pinned to a P-core, is served for the
-   * process and not saved. Zero is every field's default, and a value outside a field's enum
-   * is the default too. */
+   * unguarded) and, once the scope uses the pool (a race forks onto the workers or grows the
+   * pool; a scope of vfft_measure_begin() begun while the pool lives), the guards on the
+   * siblings of every core the pool uses held to the scope's end (the pool keeps them itself
+   * while its workers are awake; none inside a virtual machine), and the measuring thread's priority
+   * raised where the system allows it. A winner measured without the lock, or on a thread not
+   * pinned to a P-core, is served for the process and not saved. Zero is every field's
+   * default, and a value outside a field's enum is the default too. */
   typedef struct
   {
     int pin;          /**< VFFT_MEASURE_PIN_DEFAULT, _OFF or _CORE */
@@ -132,9 +135,10 @@ extern "C"
   enum
   {
     VFFT_MEASURE_GUARD_DEFAULT = 0, /**< the processor's idle instruction, where it has one */
-    VFFT_MEASURE_GUARD_OFF = 1,
-    VFFT_MEASURE_GUARD_PAUSE = 2    /**< a PAUSE spinner: every part with hyperthreads; slows the
-                                         measured thread about 12% (every candidate alike) */
+    VFFT_MEASURE_GUARD_OFF = 1,     /**< no guard; the pool's own guards also wait out the scope */
+    VFFT_MEASURE_GUARD_PAUSE = 2    /**< a PAUSE spinner on the measuring core's sibling: every part
+                                         with hyperthreads; slows the measured thread about 12%
+                                         (every candidate alike) */
   };
   enum
   {
@@ -194,8 +198,10 @@ extern "C"
    * @brief Confine the process to a set of logical CPUs, for a threaded
    *        comparison: every thread created afterwards, by any library, runs
    *        inside it.
-   * @param mask Bit c = logical CPU c; 0 = one logical CPU per P-core (no
-   *        hyperthread siblings, no E-cores).
+   * @param mask Bit c = logical CPU c; 0 = every logical CPU of the P-cores
+   *        (no E-cores; the hyperthread siblings stay in the set so the
+   *        library's guards can hold them, and the pool still takes one
+   *        logical CPU per core).
    * @return The mask applied, 0 when the system refused it. Not undone by
    *         vfft_measure_end().
    */

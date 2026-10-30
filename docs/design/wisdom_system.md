@@ -109,15 +109,15 @@ entered at the first clock read inside a create and left when the outermost
 | --- | --- |
 | **measurement lock** | One lock for the machine, so two processes (or two threads) never race at once: a named mutex on Windows, a locked file in `/tmp` on Linux, both released by the OS when the holder dies. A hit takes none. The wait is bounded (60 s by default); after it the race runs anyway and its winner is served, not saved. |
 | **pin** | The racing thread is pinned to the caller's own core in the library's layout: the core the pool left to its caller once the pool exists (`thread_pool_caller_cpu()`, `common/support/threads.h`: core 0, or the core a calling thread pinned to one logical CPU held when the pool first started), the second P-core (logical CPU 2 on a hyperthreaded part) before that. Only a P-core the process is allowed is taken; the others are walked in order. P-cores, E-cores and siblings are read from the OS (`common/support/cpu_topology.h`), on Intel and AMD alike. A thread that ends on no P-core races where it is, and the winner is served, not saved. |
-| **sibling guard** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (1.1-1.5x slower without it). It waits with TPAUSE (Intel) or MWAITX (AMD), which cost the racing thread nothing; a part with neither races unguarded. No guard goes to a CPU outside the set the process is confined to. |
+| **sibling guards** | A guard thread holds the pinned core's hyperthread sibling for the race, so the OS cannot park another thread there (1.1-1.5x slower without it); once the scope uses the pool (a race forks onto it or grows it; a caller's own scope begun while the pool lives), the guards on the siblings of every core the pool uses are held until the scope ends, so no guard parks between two arms (a contended worker ran whole processes 2.4x slower). The guards are one table shared with the pool (`common/support/sibling_guard.h`; the pool holds each used core's sibling while that core's worker is awake). They wait with TPAUSE (Intel) or MWAITX (AMD), which cost the timed threads nothing; a part with neither races unguarded. No guard goes to a CPU outside the set the process is confined to, and none starts inside a virtual machine. With the guard turned off (`vfft_measure_configure`), the pool's guards wait out the scope too. |
 | **priority** | The racing thread's priority is raised for the race. Best effort: where it cannot be raised (Linux without `CAP_SYS_NICE`), the winner is still saved. |
 | **restore** | The guard ends, and affinity and priority return to what they were; the pool never pins the caller, so a create leaves the thread as it found it. An execute that forks pins the calling thread to the core the pool left to it, from its first fork-join to the end of the call, and puts its affinity back (`threads.h`, `thread_pool_caller_arm`). |
 
 - The same scope is public in `vfft.h`: `vfft_measure_configure()` sets it up (pin,
   guard, priority, the lock wait), `vfft_measure_begin()` and `vfft_measure_end()` put
-  it around a caller's own timing, `vfft_measure_confine()` confines a process to one
-  logical CPU per P-core for a threaded comparison, and `vfft_measure_describe()`
-  reports it. A create inside a caller's scope adds nothing to it. The gauntlet holds no
+  it around a caller's own timing, `vfft_measure_confine()` confines a process to the
+  P-cores for a threaded comparison (every logical CPU of them: the siblings stay in the
+  set so the guards can hold them), and `vfft_measure_describe()` reports it. A create inside a caller's scope adds nothing to it. The gauntlet holds no
   pin or guard code: `gauntlet/bench_scope.h` maps its switches onto these calls.
 - Not covered: the application's own threads on the race core, and other software's
   load. That is the user's responsibility.

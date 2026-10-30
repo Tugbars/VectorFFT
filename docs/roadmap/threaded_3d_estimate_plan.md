@@ -95,15 +95,15 @@ it races longer than about 2 minutes.
 
 | # | Step | Tool | Output | Time |
 |---|---|---|---|---|
-| 0 | Guards for the research: scratch guards on logical CPUs 1, 3, ..., 15 (as `plan2d_mtg.c`), or build the planning half of the library guard first | owner decides | guarded races | 0 or about half a day |
-| 1 | Tools in the scratchpad: `plan3d_mtg.c` (guarded 3D race; prints the threaded fields, seconds, RACED or replayed); `ab3d_mtn.c` (several arms in one process, rotated, guarded, a second planner arm as control, the engagement counter, a check that no arm measured anything, and a guarded MKL arm); a 3D twin of `est_rows_lib.c` (the library's estimate rows at T); `cells3d.py` | scratch | tools | about 3 h |
+| 0 | Guards for the research (owner, 2026-10-30: integrate the whole fix first): the library's own guards hold the second hyperthread of every core the pool uses, in its races and in its pool ([`pool_sibling_guard.md`](../design/pool_sibling_guard.md), built 2026-10-30); the tools add none of their own and run unconfined or under `vfft_measure_confine(0)`, which keeps the siblings in the set | library | guarded races and timings | done |
+| 1 | Tools in the scratchpad: `plan3d_mtg.c` (3D race at T under the library's guards; prints the threaded fields, seconds, RACED or replayed); `ab3d_mtn.c` (several arms in one process, rotated, inside one measurement scope so the library holds the guards, a second planner arm as control, the engagement counter, a check that no arm measured anything, and an MKL arm); a 3D twin of `est_rows_lib.c` (the library's estimate rows at T); `cells3d.py` | scratch | tools | about 3 h |
 | 2 | Pilot: 2 cells per region plus the expensive classes (256 MB, tall, Rader, Bluestein) | `plan3d_mtg` | seconds per race, the budget | about 30 min |
 | 3 | Race A, B1, B2 and half of S, guarded, into the real store | `plan3d_mtg`, `ab3d_mtn` | fresh rows with their plane plans; verdicts by region and shape; the one-thread boundary and the team by time lost | 1-2 h |
 | 4 | Score each draft rule of section 4 on A: once with the planner's recipe and once with the estimate's one-thread recipe, so threading loss and recipe loss separate; run B3 and B4; where a lead rests on fewer than about 10 cells, one region or powers of two only, race more cells before believing it | `ab3d_mtn`, scratch stores | estimate / planner per rule, region and shape | 2-3 h |
 | 5 | The owner approves the rules to test; they are written down before C is picked | | frozen rules | |
 | 6 | Race C and the other half of S into the real store; score; add in-place and backward arms on 20 cells of C (the row serves both placements and both directions) | `cells3d`, `plan3d_mtg`, `ab3d_mtn` | geomean, median, counts above 1.05 and 1.10 per region, every cell above 1.10 with its cause | about 1.5 h |
 | 7 | Build, after approval: `est_mt_3d`; the threaded fields on `est_plan3d_t`; `est_put_rows_3d` keyed at T and writing both structures' plans where needed; the preflight at T (including the `nsw` beside the cycle form refusal); `est__colkey` at T; lift the refusals (`vfft_api.h`, `c2c_estimate_nd_il.h`) and invert the gate's "rank 3 at 4 threads" refusal check; a D3T gate section; `estimate_race_nd.c` at T; the sketch's stale "s=1 always" text; check that the library's rows equal the scored rows and the forward is bitwise equal | library, `estimate_gate` | the threaded 3D estimate | about a day |
-| 8 | Against MKL on D, guarded, both engine orders, for the estimate's rows and the planner's | `ab3d_mtn` (or the gauntlet once its confinement keeps the siblings) | the standing per region against the old one | about 1 h |
+| 8 | Against MKL on D, guarded, both engine orders, for the estimate's rows and the planner's | the gauntlet (its confinement keeps the siblings since 2026-10-30) or `ab3d_mtn` | the standing per region against the old one | about 1 h |
 
 ## 4. First rules to test (each tied to a fact of the door)
 
@@ -127,13 +127,15 @@ it races longer than about 2 minutes.
 
 ## 5. Decisions for the owner
 
-1. Step 0: scratch guards for the research, or the library's planning guard first?
+1. Decided (owner, 2026-10-30): the library's own guards, built first, hold the second hyperthreads in every
+   race and execute of the research; the tools hold none themselves.
 2. Re-race the 534 old rows? Not needed for scoring: only freshly raced cells are scored.
 3. The band arm (never raced, an old note had it 10-17% ahead at 8192x8x2 and 8192x32x4) and the cycle form at T
    (won 13 rows in the 09-25 race): report as door gaps only, or race them as forced arms on about 10 cells each?
 4. The pass bar for C. Suggested: geomean at most 1.05 per region, every cell above 1.10 explained.
-5. The MKL comparison: a guarded MKL arm in `ab3d_mtn`, or change the library's confinement helper to keep the
-   siblings and use the gauntlet. Hot input (the gauntlet's default) or cold (it moves the lead by 16-28%)?
+5. The MKL comparison: the confinement helper keeps the siblings now (built with the guards), so the gauntlet
+   times both engines under the library's guards. Open: hot input (the gauntlet's default) or cold (it moves
+   the lead by 16-28%)?
 
 ## 6. Door gaps to report, not fill
 
@@ -151,4 +153,8 @@ it races longer than about 2 minutes.
 - The one-thread recipe's gap in the L3 region (1.033) carries into every threaded result; step 4 separates it.
 - Other sessions share the machine: runs go in quiet windows with the control arm watched.
 
-After 3D: 2D and 3D at 4 and 2 threads (owner, 2026-10-30).
+After 3D (owner, 2026-10-30; the order between the two is not set):
+
+- 2D and 3D at 4 and 2 threads.
+- The real estimate (R2C and C2R) as its own workstream: the 1D real formulas brought up to the C2C ones and to
+  the 10-29 thread rulings, then a 2D and 3D real estimate.
