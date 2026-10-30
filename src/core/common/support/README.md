@@ -124,6 +124,27 @@ inside a transform*), dispatched **thousands of times per second**. A general fr
 
 ---
 
+## The hyperthread-sibling guards: measure them on every platform they run on
+
+> **⚠ Warning.** A sibling guard is a thread that holds the hyperthread sibling of a core the library
+> times or runs on, waiting in `TPAUSE` (Intel) or `MWAITX` (AMD), so that no other thread shares that
+> core. `race_scope.h` starts one for the racing thread's core; the design in
+> [`docs/design/pool_sibling_guard.md`](../../../../docs/design/pool_sibling_guard.md) extends it to every
+> core a threaded race or the pool uses. Where they stand:
+>
+> | Platform | Guards | Measured |
+> |---|---|---|
+> | Windows on a real machine (i9-14900KF) | on | yes: every threaded plane faster, never slow |
+> | Linux on a real machine | **on** | **no** |
+> | AMD (`MWAITX`) | **on** | **no** |
+> | Any virtual machine (WSL2, cloud guests) | **off** | yes: in WSL2 the guards made the pool up to 2x slower |
+>
+> Before relying on the guards on bare-metal Linux or on AMD, measure them there the way the design
+> document's section 2 does: fresh processes, the plan's pool with and without the guards, the machine as it
+> is and under a background load. If they do not help on a platform, turn them off there.
+
+---
+
 ## `strided_codelets.h` — 2D Design-C row-FFT codelets
 
 The ABI-typed registry struct (`strided_codelets_t`) that the **auto-emitted**

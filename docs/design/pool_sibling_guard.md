@@ -119,8 +119,18 @@ guarded cores stay in the light C0.2 state instead of a deep sleep state.
   lifecycle is built.
 - **The confinement helper.** `vfft_measure_confine` (mask 0x5555 on the i9-14900KF) must change to keep the
   siblings of the cores it allows (section 3, Tools); until it does, a confined process times the unguarded pool.
-- **Other machines.** Measured on the i9-14900KF under Windows. The guard has a Linux form
-  (`pthread_setaffinity_np`) and an AMD form (`MWAITX`); AMD has not been measured.
+- **Virtual machines.** Under WSL2 (Linux 6.6 in a Hyper-V virtual machine on the same i9-14900KF, 32 virtual
+  CPUs reported as 16 cores x 2) the Linux form works: the guards pin to the siblings and wait in `TPAUSE`. But
+  there it makes the pool slower: 15x4375 at 8 threads 62-64 us in 6 of 6 guarded processes against 30-33 us
+  (4 of 6) or about 60 (2 of 6) unguarded; 625x125 73-112 against 65-69. A guest's virtual CPUs are host threads
+  that the host moves between cores, so a guest's sibling is not a core's sibling, and a waiting guard still
+  occupies a host CPU. So no guard starts inside a virtual machine. CPUID leaf 1 ECX bit 31 (a hypervisor is
+  present) is set on this Windows host too, which runs as Hyper-V's root partition; Hyper-V's privilege flags
+  (leaf 0x40000003, EBX bit 0, the right to create partitions) are 1 on the host and 0 in WSL2, so a guest is a
+  set hypervisor bit with another vendor (leaf 0x40000000) or Hyper-V without that flag.
+- **Other machines.** The guards are on for bare-metal Linux and for AMD (`MWAITX`), where the hardware cause is
+  the same, but neither has been measured; `src/core/common/support/README.md` carries the warning that they
+  must be measured there.
 
 ## 5. Evidence
 
