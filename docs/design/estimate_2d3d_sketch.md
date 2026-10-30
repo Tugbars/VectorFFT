@@ -263,8 +263,8 @@ rule is fitted to it (the owner's ruling of 2026-10-29).
 | `cmt` | 0 (serial) while the plane, 16 N1 N2 bytes, fits L1d / 2, on two rows (N1 = 2), and through the turned prime pass (the door runs it on one thread, il2d_tier.h:1503); else 1 |
 | `turn` | also 1 on a threaded plane of at most 2T columns where the door builds the turn (too few columns to share); `csk`, `ro` and the band 0 with it. 0 again where the door would run the turn serial (N1 not a multiple of 4, `_il2d_turn_exec_mt`, il2d_tier.h:1458) and the plane takes the tile; `ro` then as a plane without the turn |
 | `csk` | also 0 where N2 is not a multiple of 16: the door threads the skewed pass on whole groups of 16 columns only (`_il2d_csk_exec_mt`, il2d_tier.h:1432) and runs it serial otherwise |
-| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 0, the blocks, where the skew was dropped; 2, the tile, on a tall plane (N1 >= 4 N2) whose chain the door tiles (natural, two stages or more, no Bluestein); else 1, the strips |
-| the chain, `wl` | the blocks: one stage of N1 where the pool has it (else the one-thread chain), the band of a plane without the skew; the tile: no band, the strips' chain below with its first stage the pool's smallest first radix of at least T where that chain leads with less (the tile runs min(R0, T) workers, il2d_tier.h:1555); the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
+| `mtarm` | the skewed pass and the turn: 0, their one threaded walk; the chain walk: 0, the blocks, where the skew was dropped; 2, the tile, on a tall plane (N1 >= 4 N2) whose chain the door tiles (natural, two stages or more, no Bluestein) and has no Rader stage; else 1, the strips (also where the door would run the turn serial on a Rader chain) |
+| the chain, `wl` | the blocks: one stage of N1 where the pool has it (else the one-thread chain), the band of a plane without the skew; the tile: no band, a first stage of the strips' chain below, or the pool's smallest first radix of at least T where that chain leads with less, and where that radix is not a multiple of T the pool's first radix of at most 32 that shares best among the workers, R0 / (T ceil(R0/T)), the larger on a tie (the tile runs min(R0, T) workers on R0 sub-problems, il2d_tier.h:1555); the rest `est__pick`'s one-thread regime; the strips run unbanded (il2d_tier.h:1643): no band, and the unbanded walk's chain -- `est__pick`'s radix-8 regime, as `est_blu_chain` takes it (a radix-32 stage of an unbanded pass past the L2 runs 64 streams 16 KB apart, il2d_tier.h:1898-1903); a Rader stage or a Bluestein column keeps its chain |
 | `msw` | a rung of the door's ladder (`_il2d_sw_ladder`: w divides N2, the strip 16 N1 w within the L2, at least T strips): while an 8-column strip fits L1d / 2 and the transform's in and out (32 N1 N2) fit the L2, the widest within L1d / 2; else the widest whose strip's in and out (32 N1 w) fit the L2; the narrowest when none does; 0 (each worker's whole range) on an empty ladder |
 | `nls` | beside a natural leaf only: 0 (strided) on the strips, else 1 |
 
@@ -307,9 +307,30 @@ the better of the two per plane 1.000): N1 >= 4 N2 1.039; the strip's bytes agai
 1.026. Then 84 planes no study had used, raced into the store first (`fresh_cells.py`, 14 per N1/N2 band,
 128 KB to 48 MB; `fresh_rules_score.txt`): strips 1.433, N1 >= 4 N2 **1.203**, the cache rule 1.236, either
 1.207, the better of the two per plane 1.146; tile against strips 0.57, 0.71, 0.87, 0.98, 1.31-1.51 by the
-same bands. The rule taken: N1 >= 4 N2. Left: the planner tiles with fewer, larger radices (1440x160 32.5.9
-against 9.8.5.4, 1215x375 15.9.9 against 9.9.5.3), and N1 of 100, 125 and 625 keep a first radix of 5 (the
-pool drops the spilling 25).
+same bands. The rule taken: N1 >= 4 N2. Then 76 more tall planes no study had used (N1 >= 4 N2, raced
+first; `tall_cells.py`, `est_rows_s.c` for the plan before the tile, `tall_ab_report.txt`): 2.047 -> 1.212
+against the planner, except a chain with a Rader stage, where the tile ran 1.32-4.03 x the strips on 7 of 7
+(1282x84 641.2, 2307x75 769.3; the planner strips all 7, the strips 1.01 of it). A Rader chain keeps the
+strips, and so does the turn the door runs serial on one (579x15 193.3: the tile 1.57, the serial turn
+3.04, the planner's strips 1.00). The other 69: 2.199 -> 1.133 (N1/N2 4-8: better on 12 of 18, worse on
+none; the turn the door runs serial, 10 planes: 2.72 -> 1.09). Left there: the planner tiles with fewer,
+larger radices (1440x160 32.5.9 against 9.8.5.4, 4800x30 32.5.3.10 against 15.8.8.5; past the L2 1.32,
+within it 1.06), and N1 of 100, 125 and 625 keep a first radix of 5 (the pool drops the spilling 25).
+
+**The tile's chain** (2026-10-30): R0 sub-problems on T workers take ceil(R0/T) rounds, so a first radix that
+is not a multiple of T leaves workers idle (9 at T = 8: two rounds, 0.56 of the workers busy). Six chains
+on the 192 tiled planes of the studies above (`est_rows_tc.c`, `tilechain_report.txt`, `rule_ab_report.txt`;
+the library's tile 1.111 against the planner, median 1.081): the one-thread rest, the largest first radix,
+both, the planner's own chain, then the best-sharing first radix with either rest. The rule fixed on these planes
+(`tile_chain_rule_preregistered.txt`; 1.033 on them, put together from the two runs' arms): keep a first radix that is a multiple of T; else the pool's first
+radix of at most 32 that shares best, the larger on a tie; the rest in the one-thread regime (1440x160
+9.8.5.4 -> 32.5.9, the planner's; 4800x30 15.8.8.5 -> 32.15.10). Then 50 tall planes no study had used,
+raced into the store first (`tall_cells2.py`, `ab_m.txt`): 1.202 -> **1.062** against the planner (median
+1.195 -> 1.066, control 0.997), faster by more than 10% on 25, slower on 2 (693x66, 768x52); by the move of
+the first radix: 9 -> 15 0.79 (16 planes), 9 -> 16 0.74, 9 -> 8 0.77, 8 kept (the rest only) 0.98. Left: on
+8-led planes of N1 not a power of two the planner leads with 16 or 32 (1120x90 32.5.7 against 8.4.5.7; 1.20
+over 17 such planes); 8 -> 32 there lost on the powers of two (1.19) and below 512 rows (1.35). N1 of 625
+keeps 5 (the best share of its pool).
 
 ## 9. The 3D plan
 

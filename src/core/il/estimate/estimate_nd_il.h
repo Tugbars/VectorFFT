@@ -212,8 +212,22 @@ typedef struct est_plan3d_s
  * -> 1.039 against the planner; per plane the better of the two 1.000), then held on 84 planes no study
  * had used, raced into the store first (14 per N1 / N2 band, 128 KB to 48 MB): 1.433 -> 1.203, the better
  * of the two per plane 1.146; tile against strips 0.57, 0.71, 0.87, 0.98, 1.31-1.51 by the same bands; a
- * rule on the strip's bytes against the caches held worse (1.236). Left: the planner tiles with fewer,
- * larger radices (1440x160 32.5.9 against 9.8.5.4, 1215x375 15.9.9 against 9.9.5.3). */
+ * rule on the strip's bytes against the caches held worse (1.236). Then 76 more tall planes no study had
+ * used (N1 >= 4 N2, raced first): the plan before the tile 2.047 -> 1.212, except a chain with a Rader stage,
+ * where the tile ran 1.32-4.03 x the strips on 7 of 7 (1282x84 641.2, 2307x75 769.3; the planner strips
+ * all 7, the strips 1.01 of it), so a Rader chain keeps the strips, and so does the turn the door runs
+ * serial on one (579x15 193.3: the tile 1.57, the serial turn 3.04, the planner's strips 1.00). The other
+ * 69: 2.199 -> 1.133 (N1 / N2 4-8: better on 12 of 18, worse on none).
+ * THE TILE'S CHAIN (2026-10-30): R0 sub-problems on T workers take ceil(R0 / T) rounds, so a first radix
+ * that is not a multiple of T leaves workers idle (9 at T = 8: two rounds, 0.56 of the workers busy); there
+ * the first radix of at most EST_ND_MT_TILE_R0_MAX that shares best, the larger on a tie, and the rest in
+ * the one-thread regime (fewer, larger stages: 1440x160 9.8.5.4 -> 32.5.9, the planner's). Read off the 192
+ * tiled planes of the studies above (1.111 against the planner, median 1.081), then held on 50 tall planes
+ * no study had used, raced into the store first: 1.202 -> 1.062 (median 1.195 -> 1.066, control 0.997),
+ * faster by more than 10% on 25, slower on 2 (693x66, 768x52); 9 -> 15 0.79 (16 planes), 9 -> 16 0.74,
+ * 9 -> 8 0.77, a first radix of 8 kept (the rest only) 0.98. Left: on 8-led planes of N1 not a power of two
+ * the planner leads with 16 or 32 (1120x90 32.5.7 against 8.4.5.7: 1.20 over 17 such planes); 8 -> 32
+ * there lost on the powers of two (1.19) and below 512 rows (1.35). */
 #define EST_ND_MT_SERIAL_L1_DIV 2
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
@@ -221,6 +235,7 @@ typedef struct est_plan3d_s
 #define EST_ND_MT_CSK_COLS 16
 #define EST_ND_MT_TURN_N1_DIV 4
 #define EST_ND_MT_TILE_N1_PER_N2 4
+#define EST_ND_MT_TILE_R0_MAX 32
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -837,22 +852,37 @@ static inline void est__unbanded_chain_2d(const est_machine_t *m, est_plan2d_t *
     }
 }
 /* the tile's chain at T: 1 when the door tiles p's chain (a natural chain of two stages or more, no
- * Bluestein; il2d_tier.h:1545), its first stage then the pool's smallest first radix of at least T where
- * the chain leads with less (the tile runs min(R0, T) workers, il2d_tier.h:1555) and the rest est__pick's;
- * 0 leaves p as it was */
+ * Bluestein; il2d_tier.h:1545) and the chain has no Rader stage (the strips run it faster, EST_ND_MT_*),
+ * its first stage then the pool's smallest first radix of at least T where the chain leads with less, and
+ * where that radix is not a multiple of T the pool's first radix of at most EST_ND_MT_TILE_R0_MAX that
+ * shares best among the workers, R0 / (T ceil(R0 / T)), the larger on a tie (the tile runs min(R0, T)
+ * workers on R0 sub-problems, il2d_tier.h:1555); the rest est__pick's one-thread regime; 0 leaves p as it was */
 static inline int est__tile_chain_2d(const est_machine_t *m, int T, est_plan2d_t *p)
 {
     est_pool_t P;
     int R[8], k, r0 = 0, i;
-    if (!p->col.nat || p->col.blu > 0 || p->col.nst < 2)
+    double bb = -1;
+    if (!p->col.nat || p->col.blu > 0 || p->col.nst < 2 || p->col.rd_n)
         return 0;
-    if (p->col.R[0] >= T || p->col.rd_n)
-        return 1;
     est__pool(p->N1, &P);
-    for (i = 0; i < P.n; i++)
-        if (P.c[i][0] >= T && P.len[i] >= 2 && (!r0 || P.c[i][0] < r0))
-            r0 = P.c[i][0];
-    if (r0 && (k = est__pick(&P, &r0, 1, p->N1 / r0, m, p->N2, 1, /*wide=*/1, /*single=*/0, R)) > 0)
+    if (p->col.R[0] < T)
+        for (i = 0; i < P.n; i++)
+            if (P.c[i][0] >= T && P.len[i] >= 2 && (!r0 || P.c[i][0] < r0))
+                r0 = P.c[i][0];
+    if (!r0)
+        r0 = p->col.R[0];
+    if (r0 % T)
+        for (i = 0; i < P.n; i++)
+        {
+            const int c = P.c[i][0];
+            const double b = (double)c / (T * ((c + T - 1) / T));
+            if (P.len[i] >= 2 && c <= EST_ND_MT_TILE_R0_MAX && (b > bb + 1e-9 || (b > bb - 1e-9 && c > r0)))
+            {
+                bb = b;
+                r0 = c;
+            }
+        }
+    if ((k = est__pick(&P, &r0, 1, p->N1 / r0, m, p->N2, 1, /*wide=*/0, /*single=*/0, R)) > 0)
     {
         memcpy(p->col.R, R, sizeof(int) * (size_t)k);
         p->col.nst = k;
@@ -886,10 +916,10 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
             p->col.wl = est_wl_2d(m, &p->col, p->N2, p->csk, p->turn, EST_ND_2D_PLANE_DIV);
         }
         if (p->turn && p->N1 % EST_ND_MT_TURN_N1_DIV && tall)
-        {   /* the door runs this turn serial: the tile, where the chain takes one */
+        {   /* the door runs this turn serial: the tile where the chain takes one, the strips on a Rader chain */
             const est_col_t keep = p->col;
             est__unbanded_chain_2d(m, p);
-            if ((tile = est__tile_chain_2d(m, T, p)) != 0)
+            if ((tile = est__tile_chain_2d(m, T, p)) != 0 || p->col.rd_n)
             {
                 p->turn = 0;
                 p->ro = est__ro_2d(p);
