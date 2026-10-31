@@ -11,8 +11,8 @@
  * with the store's own writers; the build is c2c_estimate_nd_il.h's.
  *
  * SCOPE: one transform (howmany 1), natural order, either placement (the 2D and 3D rows are
- * placement-blind: one recipe serves both), every axis >= 2; rank 2 at any thread count (est_mt_2d threads
- * the one-thread plan), rank 3 on one thread. Rank 3 is the 2D plan per plane then
+ * placement-blind: one recipe serves both), every axis >= 2, any thread count (est_mt_2d and est_mt_3d
+ * thread the one-thread plan). Rank 3 is the 2D plan per plane then
  * axis 0 (s=1), or on the even planes near the L2 and the planes with an odd side the flat tier (s=2,
  * est__flat_plane). The front door
  * refuses the rest under the flag (vfft_api.h).
@@ -93,6 +93,13 @@ typedef struct est_plan3d_s
     est_col_t col1;        /* [chain1 forms1 blu1] s = 2: axis 1, the plane plan's column pass unbanded (the
                             * door bands axis 0 alone, fftnd_il.h:1752) */
     est_recipe_t tpcp;     /* [tpc_] N1, in place, natural: col.tpc == 1 */
+    int T;                 /* the threads (est_mt_3d): 0 or 1 = one thread; T > 1 = the row's key nthreads=T and
+                            * the threaded verdict below (fftnd_il.h:1778-1802) */
+    int cmt;               /* [cmt] T > 1: 0 serial (the one-thread plan above), 2 the plane arm */
+    int cmts;              /* [cmts] T > 1: the structure the threaded verdict runs with */
+    int cmtf;              /* [cmtf] T > 1: the natural form at T, 1 the cycle walk, 2 the strips */
+    int mtnsw;             /* [nsw] cmt = 2 with the strips: their width at T, written over the one-thread nsw
+                            * (the row carries one nsw; fftnd_il.h:1785-1786); 0 otherwise */
 } est_plan3d_t;
 
 /* ── the estimate's constants (docs/design/estimate_2d3d_sketch.md) ────── */
@@ -236,6 +243,30 @@ typedef struct est_plan3d_s
 #define EST_ND_MT_TURN_N1_DIV 4
 #define EST_ND_MT_TILE_N1_PER_N2 4
 #define EST_ND_MT_TILE_R0_MAX 32
+/* THE 3D PLAN AT T > 1 (est_mt_3d, 2026-10-31): the one-thread plan -- its axis-0 chain, structure and plane
+ * plan unchanged -- threaded with the door's own partition: one thread while the cube, 16 N1 N2 N3 bytes, times
+ * the workers that can take part, min(N1, N2 N3, T), fits EST_ND_MT3_SERIAL_KB x T (the bound grows where
+ * fewer than T take part: twice it at 4 workers of 8, four times at 2); else the plane arm (axis 0 in column
+ * strips on min(N2 N3, T) workers, then the planes on min(N1, T); the door never races the band arm,
+ * fftnd_il.h:80) on the full team, with the one-thread structure; the natural form the door's own, the strips
+ * wherever its strip pool is not empty and the cycle walk where it is (fftnd_il.h:83), the strips' width the
+ * widest of the pool whose scratch, 16 N1 w bytes, fits L2 / EST_ND_MT3_NSW_L2_DIV, else the narrowest.
+ * Timed at T = 8 against the planner's plans on 299 cells raced into the store first (8 KB to 256 MB in five
+ * regions by the cube against the L1d, L2 and L3; cubes, flat, tall and other shapes, half not powers of two,
+ * Rader and Bluestein axis 0), one process, 15 rounds, the hyperthread siblings held
+ * (docs/research/estimate_threaded/evidence/nd/3d_night/): the threading rules on the planner's own one-thread
+ * plans 1.004 (15 cells above 1.10), the estimate as built 1.019 (each region at most 1.047; 55 above 1.10, 41
+ * of them the one-thread plan it inherits: the banded walk's width on tall cells, 32768x8x4 1.26, the plane
+ * plan on flat cells, 8x8x16384 1.85). Each rule against its rivals: one thread or threads on 94 cells timed
+ * both ways (8-512 KB): the cube within 24 KB (L1d / 2, the 2D rule) 1.051 against the faster of the two, the
+ * bound above 1.011 (cells of 34-37 KB stay mixed whatever the bound: 52x7x6 1.41, 63x6x6 1.28); the full
+ * team: the half team where a plane passes the L2 cost 8-11 % past 16 MB (7x32x8819 2.4x), it won 3 of 63
+ * races, and the old rows that banked it, timed again, 0.995 of the full team; the one-thread structure
+ * against always the child 1.009 and 1.046 at 2-16 MB (15x256x256 1.73); every width of the pool timed on 70
+ * cells: L2 / 4 1.019 against the best on the 30 it was read off and 1.024 on 40 fresh cells, the one-thread
+ * width 1.048, L2 / 2 1.049 (1024x64x32: 16 columns 0.71 of the planner's 128). */
+#define EST_ND_MT3_SERIAL_KB 32
+#define EST_ND_MT3_NSW_L2_DIV 4
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -1015,11 +1046,43 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
     out->col.wl = out->nf == 2 ? 0 : est_wl_3d(m, &out->col);   /* the strips serve axis 0 unbanded (fftnd_il.h:1619) */
     return 0;
 }
+/* est_mt_3d: the one-thread plan p (est_plan_3d) threaded at T (EST_ND_MT3_*): serial while the cube times the
+ * workers that can take part fits EST_ND_MT3_SERIAL_KB x T; else the plane arm on the full team with the
+ * one-thread structure, the strips wherever the door's strip pool at axis 0 is not empty (at the widest width
+ * whose scratch fits L2 / EST_ND_MT3_NSW_L2_DIV, else the narrowest), the cycle walk where it is. The recipe
+ * itself is not changed. T < 2 leaves p one-thread. */
+static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
+{
+    const long long cube = 16LL * p->N1 * p->N2 * p->N3, cols = (long long)p->N2 * p->N3;
+    long long w = T;
+    int sp[8], n, i;
+    p->T = T > 1 ? T : 1;
+    p->cmt = 0;
+    p->cmts = p->s;
+    p->cmtf = p->nf;
+    p->mtnsw = 0;
+    if (T < 2)
+        return;
+    if (p->N1 < w)
+        w = p->N1;
+    if (cols < w)
+        w = cols;
+    if (cube * w <= (long long)EST_ND_MT3_SERIAL_KB * 1024 * T)
+        return;
+    p->cmt = 2;
+    n = est__sw_pool(&p->col, p->N2, p->N3, sp, 8);
+    p->cmtf = n > 0 ? 2 : 1;
+    for (i = 0; i < n; i++)
+        if (16LL * p->N1 * sp[i] <= (long long)m->l2 / EST_ND_MT3_NSW_L2_DIV && sp[i] > p->mtnsw)
+            p->mtnsw = sp[i];
+    if (n > 0 && !p->mtnsw)
+        p->mtnsw = sp[0];
+}
 
 /* ── the row writer ─────────────────────────────────────────────────────── */
 
 /* the column row's key: rank 2 or 3, natural, axis 0, c2c, one thread (vw2__ilcol_key; the doors'
- * keys at fft2d_create_il.h:404 and fftnd_il.h:1474-1478) */
+ * keys at fft2d_create_il.h:404 and fftnd_il.h:1474-1478); the writers key a threaded plan's row at its T */
 static inline void est__colkey(vw2_ilcol_key_t *ck, int rank, int n0, int n1, int n2)
 {
     memset(ck, 0, sizeof *ck);
@@ -1115,10 +1178,13 @@ static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *
     return 0;
 }
 /* est_put_rows_3d: the 3D row into st -- the axis-0 tokens (with the strips no wl, no tf), s, nf and,
- * with the strips, nsw (fftnd_il.h:1731-1738), then s=1: the plane child as a whole 2D row with its own
+ * with the strips, nsw (fftnd_il.h:1731-1738), at T > 1 under the key nthreads=T with the threaded verdict
+ * cmt cmts cmtf and, beside the threaded strips, their width over nsw (fftnd_il.h:1826-1839; no cmtp: the
+ * full team), then s=1: the plane child as a whole 2D row with its own
  * children under plane_; s=2: axis 1's tokens on the same row (chain1 forms1 blu1, no band) and the row
- * plan under rp_ (_ilnd_build_flat, fftnd_il.h:1192-1216); then tpc_ (fftnd_il.h:1933-1935). Returns 0,
- * or -1 with the reason. */
+ * plan under rp_ (_ilnd_build_flat, fftnd_il.h:1192-1216); then tpc_ (fftnd_il.h:1933-1935). The threaded
+ * structure is the one-thread one, so the row carries that structure's children alone. Returns 0, or -1
+ * with the reason. */
 static inline int est_put_rows_3d(vw2_store_t *st, const est_plan3d_t *p, char *why, size_t whylen)
 {
     vw2_ilcol_key_t ck;
@@ -1126,10 +1192,17 @@ static inline int est_put_rows_3d(vw2_store_t *st, const est_plan3d_t *p, char *
     struct vfft_wisdom_s *T;
     int ok;
     est__colkey(&ck, 3, p->N1, p->N2, p->N3);
+    ck.nthreads = p->T > 1 ? p->T : 1;
     if (est__put_col(st, &ck, &p->col, -1, p->nf != 2) || vw2_ilcol_tok_seti(st, &ck, "s", p->s) != VW2_OK ||
         vw2_ilcol_tok_seti(st, &ck, "nf", p->nf) != VW2_OK ||
         (p->nf == 2 && vw2_ilcol_tok_seti(st, &ck, "nsw", p->nsw) != VW2_OK))
         return est_refuse(why, whylen, "the %dx%dx%d row was refused by the store's writers", p->N1, p->N2, p->N3);
+    if (p->T > 1 &&
+        (vw2_ilcol_tok_seti(st, &ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, &ck, "cmts", p->cmts) != VW2_OK ||
+         vw2_ilcol_tok_seti(st, &ck, "cmtf", p->cmtf) != VW2_OK ||
+         (p->cmt == 2 && p->cmtf == 2 && vw2_ilcol_tok_seti(st, &ck, "nsw", p->mtnsw) != VW2_OK)))
+        return est_refuse(why, whylen, "the %dx%dx%d row's threaded verdict was refused by the store's writers", p->N1,
+                          p->N2, p->N3);
     vw2__ilcol_key(&ck, &key);
     if (p->s == 2)
     {

@@ -27,15 +27,20 @@
  *      natural forms on volumes past this machine's L3: a short axis 0 (16 N1 <= L1d / 4) the strips, a
  *      long one (N1 >= 1024) the cycle walk -- the estimate's plan check refuses a plan whose served form
  *      or strip width is not the recipe's, so built is served as the recipe says.
+ *   D3T the D3 cells at T = 8 (est_mt_3d): built with the threaded verdict the recipe writes -- the plan check
+ *      refuses a plan whose served verdict, structure, team, form or strip width is not the recipe's -- and
+ *      correct the same way; with them a tall axis 0 no strip width fits (the cycle walk at T), a flat plane at
+ *      T, and two cells at T = 4 (8x8x8, once refused under the flag, and 64x64x64).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
  *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, howmany 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
- *      at rank 2 and 3 scrambled order, at rank 3 more than one thread, a batch, an axis of length 1, a last axis
+ *      at rank 2 and 3 scrambled order, a batch, an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
  *   E  the environment guard: a variable that steers a plan (VFFT_IL_KV at rank 1, VFFT_IL2D_WL at rank 2,
- *      VFFT_ILND_NF at rank 3, which pins the natural form) refuses the create naming it; a logging one
+ *      VFFT_ILND_NF at rank 3, which pins the natural form, VFFT_ILND_MT at rank 3 on 8 threads, which pins
+ *      the threaded verdict) refuses the create naming it; a logging one
  *      (VFFT_IL2D_LOG) does not; unset again, the same create builds.
  *   W  no wisdom store touched: the store named by wisdom_dir keeps its files (none created), and the
  *      library's own store (VFFT_WISDOM_DIR, pointed at a scratch folder before the first create) gets none.
@@ -614,7 +619,7 @@ static void nd_cell(int rank, int n0, int n1, int n2, int T)
         vfft_config_t c;
         vfft_plan p;
         int measured;
-        if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d %s", n0, n1, n2, ip ? "ip" : "oop");
+        if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d %s T=%d", n0, n1, n2, ip ? "ip" : "oop", T);
         else snprintf(name, sizeof name, "%dx%d %s T=%d", n0, n1, ip ? "ip" : "oop", T);
         memset(&c, 0, sizeof c);
         c.rank = rank;
@@ -675,7 +680,7 @@ int main(int argc, char **argv)
                                  999983, 1000000, 1048573, 1048576, 2 * 3 * 5 * 7 * 11 * 13 * 17 };
     ref_t r;
     long N;
-    int a, i, f0, f1, d0n, d1n, T2;
+    int a, i, f0, f1, d0n, d1n, T2, T3;
     unsigned long long d0, d1, e0, e1;
     unsigned long long z = 0x2545F4914F6CDD1Dull;
     for (a = 1; a + 1 < argc; a++)
@@ -717,8 +722,6 @@ int main(int argc, char **argv)
         refused("rank 2 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.order = VFFT_ORDER_SCRAMBLED;
         refused("rank 3 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
-        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.nthreads = 4;
-        refused("rank 3 nthreads 4", &c, "plans rank 3 on one thread only, not nthreads 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4;
         refused("rank 2 howmany 4", &c, "plans one transform, not a batch of 4");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.batch = VFFT_BATCH_LANE_MAJOR;
@@ -828,9 +831,10 @@ int main(int argc, char **argv)
         sec_end_nd(T2 > 1 ? "D2T" : "D2", b0);
     }
 
-    /* D3: rank 3, natural, one thread, both placements */
-    sec_begin();
+    /* D3: rank 3, natural, one thread, both placements; D3T the same cells at T = 8 */
+    for (T3 = 1; T3 <= 8; T3 += 7)
     {
+        sec_begin();
         static const int D3[][3] = {
             /* powers of two: the scrambled pass's exceptions (512 narrow, 1024 / 4096 / 8192 wide, 8192 narrow),
              * the lead (2048), the band, the plane child's routes, a large plane, long rows */
@@ -851,23 +855,33 @@ int main(int argc, char **argv)
             for (y = 1; y <= 10; y++)
                 for (zz = 1; zz <= 10; zz++)
                     if (x + y + zz <= 12)
-                        nd_cell(3, 1 << x, 1 << y, 1 << zz, 1);
+                        nd_cell(3, 1 << x, 1 << y, 1 << zz, T3);
         for (i = 0; i < (int)(sizeof D3 / sizeof D3[0]); i++)
-            nd_cell(3, D3[i][0], D3[i][1], D3[i][2], 1);
+            nd_cell(3, D3[i][0], D3[i][1], D3[i][2], T3);
+        if (T3 > 1)
+        {   /* at T: a tall axis 0 no strip width fits (16 N1 8 past the L2: the cycle walk), a flat plane (s=2);
+             * at T = 4 the cell the flag once refused (8x8x8) and one that threads */
+            nd_cell(3, 32768, 2, 2, T3);
+            nd_cell(3, 8, 240, 240, T3);
+            nd_cell(3, 8, 8, 8, 4);
+            nd_cell(3, 64, 64, 64, 4);
+        }
         {   /* the natural form (sketch §9) on volumes past this machine's L3 (none reported: past 32 MiB):
-             * axis 0 short, 16 N1 <= L1d / 4, the strips; axis 0 long, N1 >= 1024 and 16 N1 > L1d / 4, the cycle walk */
+             * axis 0 short, 16 N1 <= L1d / 4, the strips; axis 0 long, N1 >= 1024 and 16 N1 > L1d / 4, the cycle walk
+             * at one thread, the strips at T (the door's form wherever its strip pool is not empty) */
             const long l1d = vfft_cpu_l1d_bytes(), l3 = vfft_cpu_l3_bytes();
             const long long past = l3 > 0 ? (long long)l3 : 32LL << 20;
             int s3 = 2, c1 = 1024, c3 = 2;
             while (16LL * 64 * 512 * s3 <= past) s3 *= 2;
             while (16LL * c1 <= (long long)l1d / 4) c1 *= 2;
             while (16LL * c1 * 64 * c3 <= past) c3 *= 2;
-            printf("  D3 the natural form past the L3 (%ld bytes; L1d %ld): 64x512x%d (%lld MiB) the strips, %dx64x%d "
-                   "(%lld MiB) the cycle walk\n", l3, l1d, s3, (16LL * 64 * 512 * s3) >> 20, c1, c3, (16LL * c1 * 64 * c3) >> 20);
-            nd_cell(3, 64, 512, s3, 1);
-            nd_cell(3, c1, 64, c3, 1);
+            printf("  D3%s the natural form past the L3 (%ld bytes; L1d %ld): 64x512x%d (%lld MiB) the strips, %dx64x%d "
+                   "(%lld MiB) %s\n", T3 > 1 ? "T" : "", l3, l1d, s3, (16LL * 64 * 512 * s3) >> 20, c1, c3,
+                   (16LL * c1 * 64 * c3) >> 20, T3 > 1 ? "the strips (the cycle walk at one thread)" : "the cycle walk");
+            nd_cell(3, 64, 512, s3, T3);
+            nd_cell(3, c1, 64, c3, T3);
         }
-        sec_end_nd("D3", b0);
+        sec_end_nd(T3 > 1 ? "D3T" : "D3", b0);
     }
 
     /* E: the environment guard; each variable unset again before the next create */
@@ -888,6 +902,10 @@ int main(int argc, char **argv)
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 64; c.n[1] = 64; c.n[2] = 64;
         refused("3D with VFFT_ILND_NF", &c, "the developer switch VFFT_ILND_NF is set");
         env_set("VFFT_ILND_NF", NULL);
+        env_set("VFFT_ILND_MT", "0");   /* would pin serial over the plane arm the estimate plans here at T = 8 */
+        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 64; c.n[1] = 64; c.n[2] = 64; c.nthreads = 8;
+        refused("3D T=8 with VFFT_ILND_MT", &c, "the developer switch VFFT_ILND_MT is set");
+        env_set("VFFT_ILND_MT", NULL);
         env_set("VFFT_IL2D_LOG", "1");   /* logging only: served */
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 16; c.n[1] = 16;
         p = est_create(&c, &measured);

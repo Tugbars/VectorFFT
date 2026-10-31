@@ -650,13 +650,13 @@ out:
  *   - the 2D door (fft2d_create_il.h, il2d_tier.h, il2d_cols.h), also inside a 1D four-step:
  *     VFFT_IL2D_CHAIN, _FORMS, _BLU, _TPC, _WL, _TFUSE, _WC, _ROWOOP, _CSK, _RB2_KB, _STAGED,
  *     _NO_COLMT, _MTARM;
- *   - the 3D door (fftnd_il.h:1427-1428, 1563-1564): VFFT_ILND_ARM, _WL, _NF, _SW.
+ *   - the 3D door (fftnd_il.h:1427-1430, 1563-1564): VFFT_ILND_ARM, _WL, _NF, _SW, and at T > 1 the
+ *     threaded pins _MT and _PT (fftnd_il.h:1768-1776: they replace the row's threaded verdict).
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_VERBOSE, ...), the execute-time profiling (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the
  * stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate opens none), the real, split and
  * transform-contiguous batch doors' names (the flag refuses those requests), the names no estimate
- * create or execute reads (VFFT_PQ_NO_MT, the batch queues'; VFFT_IL2D_DENSE), the 3D door's threaded
- * pins (VFFT_ILND_MT, VFFT_ILND_PT: inert at the one thread estimate plans rank 3 at), and
+ * create or execute reads (VFFT_PQ_NO_MT, the batch queues'; VFFT_IL2D_DENSE), and
  * VFFT_HIGHN_PLAN, read only inside a race (k1_commit.h:777, 1651). */
 static const char *const est_env_names[] = {
     "VFFT_NO_IL2P", "VFFT_NO_ILBLK", "VFFT_NO_T2B", "VFFT_IL_KV", "VFFT_IL_BKV", "VFFT_ILFD_NO_MSZ",
@@ -665,7 +665,7 @@ static const char *const est_env_names[] = {
     "VFFT_IL2D_CHAIN", "VFFT_IL2D_FORMS", "VFFT_IL2D_BLU", "VFFT_IL2D_TPC", "VFFT_IL2D_WL", "VFFT_IL2D_TFUSE",
     "VFFT_IL2D_WC", "VFFT_IL2D_ROWOOP", "VFFT_IL2D_CSK", "VFFT_IL2D_RB2_KB", "VFFT_IL2D_STAGED",
     "VFFT_IL2D_NO_COLMT", "VFFT_IL2D_MTARM",
-    "VFFT_ILND_ARM", "VFFT_ILND_WL", "VFFT_ILND_NF", "VFFT_ILND_SW",
+    "VFFT_ILND_ARM", "VFFT_ILND_WL", "VFFT_ILND_NF", "VFFT_ILND_SW", "VFFT_ILND_MT", "VFFT_ILND_PT",
 };
 /* the first steering variable set in this process's environment, NULL when none is */
 static inline const char *est_env_steers(void)

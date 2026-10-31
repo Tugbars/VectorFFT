@@ -7,7 +7,8 @@
  *      row: each column chain with the door's resolver, its forms, its natural permutation, its Rader
  *      stage and Bluestein M chain; the row route's kernels (the n1ccs pair at N2 for ro=2, the row
  *      plan's four row-loop twins for ro=3, the turn's and the skew's); the band width's legality;
- *      the 3D strip width in the door's pool; every 1D child by the 1D pre-flight (est__preflight).
+ *      the 3D strip width in the door's pool (one-thread and threaded); the threaded verdict at T; every
+ *      1D child by the 1D pre-flight (est__preflight).
  *      A child the door builds is a nested create, so it is checked without one.
  *   2. THE ROWS. The 2D row, or the 3D row with the 2D row nested under plane_, written with the
  *      store's own writers into a store held in memory (est_put_rows_2d / est_put_rows_3d).
@@ -18,8 +19,8 @@
  *      serves another in silence (an illegal band unbanded, a missing kernel's route re-raced, a
  *      clone set dropped): the column chain, Bluestein, the turned pass, the Rader engine, the
  *      natural leaf, the band, the tile, the row route, the turn, the skew, each child's engine;
- *      at rank 3 the structure, the serial verdict, the natural form and its strip width, and the
- *      plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2).
+ *      at rank 3 the structure, the threaded verdict and its team, the natural form and its strip width,
+ *      and the plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2).
  * An estimate create never hands back a plan that measured.
  *
  * POSITION IN vfft.c: included by c2c_estimate_il.h after the 1D build, whose pre-flight, plan check
@@ -199,30 +200,42 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
         return est_refuse(why, whylen, "%dx%d: a threaded verdict on a one-thread plan", p->N1, p->N2);
     return 0;
 }
-/* The 3D row as the 3D door replays it at one thread (fftnd_il.h:1410-1940): axis 0, the structure
+/* The 3D row as the 3D door replays it (fftnd_il.h:1410-1940): axis 0, the structure
  * written alone (the other arm is not built), the natural form -- the strips take the written width
  * only where the door's strip pool is not empty (fftnd_il.h:1566-1575; else it drops the form and
  * races the band), and serve axis 0 unbanded -- then s=1: the plane plan as a 2D plan; s=2: axis 1 as
- * the natural pass at (N2, w = N3) unbanded and the row plan at N3; the turned pass's child. Returns
- * 0, or -1 with the reason. */
+ * the natural pass at (N2, w = N3) unbanded and the row plan at N3; the turned pass's child; at T > 1 the
+ * threaded verdict (fftnd_il.h:1778-1802): serial, or the plane arm with the one-thread structure (the row
+ * carries that structure's children alone) and a form -- the strips with a width of the door's strip pool
+ * beside them (else the door serves the cycle walk, :1785-1788), the cycle walk with none. Returns 0, or
+ * -1 with the reason. */
 static inline int est__preflight_3d(const est_plan3d_t *p, char *why, size_t whylen)
 {
     char w2[400];
+    int sp[8], n, i, in = 0, inmt = 0;
     if (p->N1 < 2 || p->N2 < 2 || p->N3 < 2 || vfft_policy_c2c_row_refused(p->N3))
         return est_refuse(why, whylen, "%dx%dx%d is not a 3D cell the door serves", p->N1, p->N2, p->N3);
     if ((p->s != 1 && p->s != 2) || (p->nf != 1 && p->nf != 2) || (p->nf == 1 && p->nsw) || (p->nf == 2 && p->col.wl))
         return est_refuse(why, whylen, "%dx%dx%d: s=%d nf=%d nsw=%d wl=%d", p->N1, p->N2, p->N3, p->s, p->nf, p->nsw,
                           p->col.wl);
-    if (p->nf == 2)
-    {   /* the width one of the door's strip pool at this axis 0 */
-        int sp[8], n, i, in = 0;
-        n = est__sw_pool(&p->col, p->N2, p->N3, sp, 8);
-        for (i = 0; i < n; i++)
-            in |= sp[i] == p->nsw;
-        if (!in)
-            return est_refuse(why, whylen, "%dx%dx%d: the strip width %d is not in the door's strip pool", p->N1, p->N2,
-                              p->N3, p->nsw);
+    n = est__sw_pool(&p->col, p->N2, p->N3, sp, 8);
+    for (i = 0; i < n; i++)
+    {
+        in |= sp[i] == p->nsw;
+        inmt |= sp[i] == p->mtnsw;
     }
+    if (p->nf == 2 && !in)   /* the width one of the door's strip pool at this axis 0 */
+        return est_refuse(why, whylen, "%dx%dx%d: the strip width %d is not in the door's strip pool", p->N1, p->N2,
+                          p->N3, p->nsw);
+    if (p->T > 1)
+    {
+        if ((p->cmt != 0 && p->cmt != 2) || p->cmts != p->s || (p->cmtf != 1 && p->cmtf != 2) ||
+            (!p->cmt && (p->cmtf != p->nf || p->mtnsw)) || (p->cmt && (p->cmtf == 2 ? !inmt : p->mtnsw != 0)))
+            return est_refuse(why, whylen, "%dx%dx%d T=%d: cmt=%d cmts=%d cmtf=%d nsw=%d is no threaded verdict the door "
+                              "serves here", p->N1, p->N2, p->N3, p->T, p->cmt, p->cmts, p->cmtf, p->mtnsw);
+    }
+    else if (p->cmt || p->mtnsw)
+        return est_refuse(why, whylen, "%dx%dx%d: a threaded verdict on a one-thread plan", p->N1, p->N2, p->N3);
     if (est__preflight_col(&p->col, w2, sizeof w2))
         return est_refuse(why, whylen, "%dx%dx%d axis 0: %s", p->N1, p->N2, p->N3, w2);
     if (p->col.nat || p->col.w != (long long)p->N2 * p->N3 || p->col.N != p->N1)
@@ -322,18 +335,21 @@ static inline int est__check_2d(const struct vfft_plan_s *h, const est_plan2d_t 
         return -1;
     return 0;
 }
-/* the 3D plan against its recipe: the structure, serial, the natural form (the strips at the recipe's
- * width, or the cycle walk), axis 0, then s=1: the plane plan as a 2D plan; s=2: axis 1 and the row
- * plan; the turned pass's plan */
+/* the 3D plan against its recipe: the thread count, the structure, the threaded verdict and its team (the
+ * full one), the natural form (the strips at the recipe's width, or the cycle walk), axis 0, then s=1: the
+ * plane plan as a 2D plan; s=2: axis 1 and the row plan; the turned pass's plan */
 static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t *p, char *why, size_t whylen)
 {
     const vfft_ilnd_t *d = h ? h->ilnd : NULL;
+    const int T = p->T > 1 ? p->T : 1, mt = T > 1 ? p->cmt : 0, s = mt ? p->cmts : p->s, nf = mt ? p->cmtf : p->nf,
+              nsw = nf != 2 ? 0 : mt ? p->mtnsw : p->nsw;
     if (!d || d->N[0] != p->N1 || d->N[1] != p->N2 || d->N[2] != p->N3)
         return est_refuse(why, whylen, "the door built no 3D plan at %dx%dx%d", p->N1, p->N2, p->N3);
-    if (d->arm != p->s || d->mt != 0 || !d->child != (p->s == 2) || !d->row != (p->s == 1) || d->nf != p->nf ||
-        (p->nf == 2 && d->nsw != p->nsw))
-        return est_refuse(why, whylen, "%dx%dx%d: the door serves structure %d, mt %d, form %d width %d; the recipe %d, "
-                          "serial, %d width %d", p->N1, p->N2, p->N3, d->arm, d->mt, d->nf, d->nsw, p->s, p->nf, p->nsw);
+    if ((T > 1 && h->nthreads != T) || d->arm != s || d->mt != mt || d->ptw != 0 || !d->child != (s == 2) ||
+        !d->row != (s == 1) || d->nf != nf || (nf == 2 && d->nsw != nsw))
+        return est_refuse(why, whylen, "%dx%dx%d: the door serves T=%d structure %d, mt %d team %d, form %d width %d; the "
+                          "recipe T=%d %d, mt %d, the full team, %d width %d", p->N1, p->N2, p->N3, h->nthreads, d->arm,
+                          d->mt, d->ptw, d->nf, d->nsw, T, s, mt, nf, nsw);
     if (est__check_col(&d->ax0, &p->col, why, whylen))
         return -1;
     if (p->s == 2 ? est__check_col(&d->ax1, &p->col1, why, whylen) ||
@@ -350,8 +366,8 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
 
 /* est_build_nd: the recipe of a 2D (p2) or 3D (p3; the other NULL) request -> a plan built with
  * nothing measured, or NULL with the reason in why and the outcome in rep (may be NULL). cfg is the
- * request as the front door translated it: interleaved c2c, rank 2 or 3, howmany 1, natural, rank 2 at
- * the recipe's thread count (est_mt_2d), rank 3 on one thread; its store and save flag are not used.
+ * request as the front door translated it: interleaved c2c, rank 2 or 3, howmany 1, natural, at the
+ * recipe's thread count (est_mt_2d, est_mt_3d); its store and save flag are not used.
  * Holds the create lock from the pre-flight to the end.
  * The caller owns the plan (vfft_destroy). */
 static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const vfft_cfg_t *cfg,
@@ -374,12 +390,13 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
         return NULL;
     }
     if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != rank || cfg->howmany > 1 ||
-        cfg->order == VFI_ORDER_SCRAMBLED || (p3 && cfg->nthreads > 1) ||
+        cfg->order == VFI_ORDER_SCRAMBLED ||
         (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p2->T > 1 ? p2->T : 1))) ||
-        (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3)))
+        (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3 ||
+                (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p3->T > 1 ? p3->T : 1))))
     {
-        est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order, %s", rank,
-                   p3 ? "on one thread" : "at the recipe's thread count");
+        est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order, at the recipe's "
+                   "thread count", rank);
         return NULL;
     }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
@@ -436,7 +453,10 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         if (!p)
             snprintf(why, sizeof why, "out of memory");
         else if (!est_plan_3d(m, cfg->n[0], cfg->n[1], cfg->n[2], p, why, sizeof why))
+        {
+            est_mt_3d(m, cfg->nthreads, p);
             h = est_build_nd(NULL, p, cfg, NULL, why, sizeof why);
+        }
         free(p);
     }
     else
