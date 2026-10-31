@@ -243,8 +243,9 @@ typedef struct est_plan3d_s
 #define EST_ND_MT_TURN_N1_DIV 4
 #define EST_ND_MT_TILE_N1_PER_N2 4
 #define EST_ND_MT_TILE_R0_MAX 32
-/* THE 3D PLAN AT T > 1 (est_mt_3d, 2026-10-31): the one-thread plan -- its axis-0 chain, structure and plane
- * plan unchanged -- threaded with the door's own partition: one thread while the cube, 16 N1 N2 N3 bytes, times
+/* THE 3D PLAN AT T > 1 (est_mt_3d, 2026-10-31): the one-thread plan -- its structure and plane plan unchanged,
+ * its axis-0 chain too but on the strips below -- threaded with the door's own partition: one thread while the
+ * cube, 16 N1 N2 N3 bytes, times
  * the workers that can take part, min(N1, N2 N3, T), fits EST_ND_MT3_SERIAL_KB x T (the bound grows where
  * fewer than T take part: twice it at 4 workers of 8, four times at 2); else the plane arm (axis 0 in column
  * strips on min(N2 N3, T) workers, then the planes on min(N1, T); the door never races the band arm,
@@ -255,16 +256,30 @@ typedef struct est_plan3d_s
  * regions by the cube against the L1d, L2 and L3; cubes, flat, tall and other shapes, half not powers of two,
  * Rader and Bluestein axis 0), one process, 15 rounds, the hyperthread siblings held
  * (docs/research/estimate_threaded/evidence/nd/3d_night/): the threading rules on the planner's own one-thread
- * plans 1.004 (15 cells above 1.10), the estimate as built 1.019 (each region at most 1.047; 55 above 1.10, 41
- * of them the one-thread plan it inherits: the banded walk's width on tall cells, 32768x8x4 1.26, the plane
- * plan on flat cells, 8x8x16384 1.85). Each rule against its rivals: one thread or threads on 94 cells timed
- * both ways (8-512 KB): the cube within 24 KB (L1d / 2, the 2D rule) 1.051 against the faster of the two, the
+ * plans 1.004 (15 cells above 1.10), the estimate before the strips' chain below 1.019 (each region at most
+ * 1.047; 55 above 1.10, 41 of them the plan it keeps from one thread: 29 the axis-0 chain, which the planner
+ * takes otherwise at 8 threads
+ * (on powers of two more, smaller stages with the largest radix last: 2048x8x8 8.8.4.8 against 32.8.8, 1.25,
+ * where its one-thread row banks the estimate's 32.8.8); 8 the plane plan on flat cells, 8x8x16384 1.85; 4 the
+ * structure). Each rule against its rivals: one thread or threads on 94 cells timed both ways (8-512 KB): the
+ * cube within 24 KB (L1d / 2, the 2D rule) 1.051 against the faster of the two, the
  * bound above 1.011 (cells of 34-37 KB stay mixed whatever the bound: 52x7x6 1.41, 63x6x6 1.28); the full
  * team: the half team where a plane passes the L2 cost 8-11 % past 16 MB (7x32x8819 2.4x), it won 3 of 63
  * races, and the old rows that banked it, timed again, 0.995 of the full team; the one-thread structure
  * against always the child 1.009 and 1.046 at 2-16 MB (15x256x256 1.73); every width of the pool timed on 70
  * cells: L2 / 4 1.019 against the best on the 30 it was read off and 1.024 on 40 fresh cells, the one-thread
- * width 1.048, L2 / 2 1.049 (1024x64x32: 16 columns 0.71 of the planner's 128). */
+ * width 1.048, L2 / 2 1.049 (1024x64x32: 16 columns 0.71 of the planner's 128).
+ * THE STRIPS' CHAIN (2026-10-31): where every side is a power of two and axis 0 runs threaded strips with more
+ * columns than workers (N2 N3 > T), its chain is est__pick's radix-8 regime, the chain the 2D estimate gives
+ * its threaded strips (est__unbanded_chain_2d); the planner's 8-thread rows take more, smaller stages there,
+ * while their one-thread rows bank the one-thread chain. Timed on 108 power-of-two cells (the night's 88 and
+ * 20 of 8-32 KB raced fresh), one process, 15 rounds, control 1.002
+ * (docs/research/estimate_threaded/evidence/nd/3d_night/chain_study/): 1.035 -> 1.001 against the planner
+ * (median 1.004; above 1.10 26 -> 15), 48 KB-2 MB 1.085 -> 1.013, tall cells 1.046 -> 0.989; of the 41 cells
+ * it changes 33 faster (2048x8x8 32.8.8 -> 4.8.8.8 0.75), 1 slower. Not with one column per worker (N2 N3 <=
+ * T: 3-10 % slower on 5 of 5, the column pass a 1D transform per worker), nor on the cycle walk at T (1.167 ->
+ * 1.338 on 11 cells), nor past the powers of two (10 cells of the tall shapes it would change, among them
+ * 128x6x5: 5 faster, 4 slower, 0.998). */
 #define EST_ND_MT3_SERIAL_KB 32
 #define EST_ND_MT3_NSW_L2_DIV 4
 
@@ -1050,7 +1065,9 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
  * workers that can take part fits EST_ND_MT3_SERIAL_KB x T; else the plane arm on the full team with the
  * one-thread structure, the strips wherever the door's strip pool at axis 0 is not empty (at the widest width
  * whose scratch fits L2 / EST_ND_MT3_NSW_L2_DIV, else the narrowest), the cycle walk where it is. The recipe
- * itself is not changed. T < 2 leaves p one-thread. */
+ * is kept, but for the strips' chain of a cube whose sides are all powers of two, with more columns than
+ * workers: est__pick's radix-8 regime, the band beside the one-thread cycle walk taken again for it. T < 2
+ * leaves p one-thread. */
 static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
 {
     const long long cube = 16LL * p->N1 * p->N2 * p->N3, cols = (long long)p->N2 * p->N3;
@@ -1077,6 +1094,19 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
             p->mtnsw = sp[i];
     if (n > 0 && !p->mtnsw)
         p->mtnsw = sp[0];
+    if (p->cmtf == 2 && est_is_pow2(p->N1) && est_is_pow2(p->N2) && est_is_pow2(p->N3) && cols > T)
+    {   /* the strips' chain (EST_ND_MT3_*): the radix-8 regime, as the 2D strips take it */
+        est_pool_t P;
+        int R[8], k;
+        est__pool(p->N1, &P);
+        if ((k = est__pick(&P, NULL, 0, p->N1, m, p->col.w, 0, /*wide=*/1, /*single=*/0, R)) >= 2)
+        {
+            memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+            p->col.nst = k;
+            est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(m, &p->col);
+        }
+    }
 }
 
 /* ── the row writer ─────────────────────────────────────────────────────── */

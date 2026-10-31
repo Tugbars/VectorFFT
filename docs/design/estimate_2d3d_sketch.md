@@ -347,9 +347,10 @@ the door has nothing to race: the configuration count is one (fftnd_il.h:1608-16
 written structure is built. The door takes the written `nsw` wherever its strip pool at that
 axis 0 is not empty (fftnd_il.h:1566-1575); the pre-flight checks that `nsw` is one of that pool.
 
-## 9a. The 3D plan at T > 1 (`cmt`, `cmts`, `cmtf`, `nsw`; 2026-10-31)
+## 9a. The 3D plan at T > 1 (`cmt`, `cmts`, `cmtf`, `nsw`, the strips' chain; 2026-10-31)
 
-The one-thread plan above, its axis-0 chain, structure and plane plan unchanged, then how it threads
+The one-thread plan above, its structure and plane plan unchanged, its axis-0 chain too except on the
+threaded strips of a pure power of two (the last row below), then how it threads
 (`est_mt_3d`), written under the key `nthreads=T` with the threaded verdict the door serves from the row
 (fftnd_il.h:1778-1802). Each plane stays a one-thread plan: the door never threads inside a plane. As at
 rank 2, the rules read the data's size against the caches and the count of workers that can take part.
@@ -361,6 +362,7 @@ rank 2, the rules read the data's size against the caches and the count of worke
 | team | the full team: no `cmtp` |
 | `cmtf` | serial: the one-thread `nf`; the plane arm: 2, the strips, wherever the door's strip pool at axis 0 is not empty (a chain of two stages or more, no Bluestein, 16 N1 8 within the L2), else 1, the cycle walk -- the door's own rule (fftnd_il.h:83) |
 | `nsw` | beside the threaded strips: the widest of the pool whose scratch, 16 N1 w bytes, fits L2 / 4, else the narrowest, written over the one-thread width (the row carries one `nsw`, fftnd_il.h:1785-1786) |
+| axis-0 `chain` | where every side is a power of two and the threaded strips have more columns than workers (N2 N3 > T): `est__pick`'s radix-8 regime, the chain of the 2D threaded strips (§8a), with the band beside the one-thread cycle walk taken again for it; elsewhere the one-thread chain |
 
 **Timed** at T = 8 against the planner's plans on 299 cells raced into the store first (1.4 KB to 256 MB in five
 regions: up to 48 KB, 48 KB-2 MB, 2-16 MB, 16-36 MB, past 36 MB; cubes, flat, tall and other shapes, half
@@ -370,13 +372,16 @@ not powers of two, Rader and Bluestein axis 0), one process, 15 rounds, the hype
 | what is timed | up to 48 KB | 48 KB-2 MB | 2-16 MB | 16-36 MB | past 36 MB | all | cells > 1.10 |
 |---|---|---|---|---|---|---|---|
 | the rules on the planner's one-thread plans | 1.013 | 1.009 | 1.005 | 0.985 | 1.003 | 1.004 | 15 |
-| the estimate as built | 1.022 | 1.047 | 1.018 | 1.000 | 0.996 | 1.019 | 55 |
+| the estimate before the strips' chain | 1.022 | 1.047 | 1.018 | 1.000 | 0.996 | 1.019 | 55 |
 
-Of the 55 cells above 1.10, 41 are the one-thread plan the threaded plan inherits: the banded walk's width
-on tall cells (32768x8x4 1.26, 256x64x2 1.30) and the plane plan on flat cells (8x8x16384 1.85). The other
-14: 6 in the one-thread bound's mixed zone (cubes of 24-64 KB: 52x7x6, 63x6x6, 128x6x5), 5 strip widths, 3
-structures. The library's rows were checked against the timed ones on the 299 cells: the same verdict,
-structure, team, form and width served, the forward output bitwise equal, nothing measured.
+Of the 55 cells above 1.10, 41 are the plan the threaded plan keeps from one thread: 29 the axis-0 chain,
+21 of them tall cells, which the planner takes otherwise at 8 threads (on powers of two more, smaller stages
+with the largest radix last: 2048x8x8 8.8.4.8 against the estimate's 32.8.8, 1.25), while its one-thread rows
+bank the estimate's chain on 8 of the 10 such cells that have one; 8 the plane plan on flat cells with large
+planes (8x8x16384 1.85); 4 the structure. The other 14: 6 in the one-thread bound's mixed zone (cubes of
+24-64 KB: 52x7x6, 63x6x6, 128x6x5), 5 strip widths, 3 structures. The library's rows were checked against the
+timed ones on the 299 cells: the same verdict, structure, team, form and width served, the forward output
+bitwise equal, nothing measured.
 
 Each rule against its rivals:
 
@@ -390,6 +395,17 @@ Each rule against its rivals:
 - **The width**: every width of the pool timed on 70 cells: L2 / 4 1.019 against the best on the 30 it was
   read off, 1.024 on 40 fresh cells; the one-thread width 1.048, L2 / 2 1.049 (1024x64x32: 16 columns 0.71 of
   the planner's 128).
+
+**The strips' chain** (later the same day; `.../3d_night/chain_study/`): four chains timed on 108 cells whose
+sides are all powers of two (the night's 88 and 20 of 8-32 KB raced the next day), one process, 15 rounds,
+control 1.002. Against the planner: the one-thread chain 1.035; the radix-8 regime of the 2D strips 1.018 (the
+strips 1.017 -> 0.972, the cycle walk 1.167 -> 1.338); the one-thread rule at the strip's width 1.066; the
+one-thread stages in ascending order 1.012; the planner's own chain 1.007. Taken: the radix-8 regime on the
+threaded strips with more columns than workers (with one column per worker, 8 columns at T = 8, it lost 5 of 5
+by 3-10%): 1.035 -> 1.001, 48 KB-2 MB 1.085 -> 1.013, 41 cells changed, 33 faster, 1 slower. Past the powers
+of two the same chain was neutral (10 cells, 0.998), so they keep the one-thread chain. With it, over 339
+shapes (the 299 and 40 raced the next day: 20 powers of two of 8-32 KB, 20 odd or composite past the L3):
+1.010 against the planner, median 1.006 (`docs/performance/estimate_performance.md`).
 
 Door gaps found on the way, not filled (the report's section 8): the band arm is 1.6-4x faster than the
 cycle walk on the tall cells no strip width fits (N1 above 16384), where the estimate and the planner serve
