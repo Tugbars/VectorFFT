@@ -279,9 +279,20 @@ typedef struct est_plan3d_s
  * it changes 33 faster (2048x8x8 32.8.8 -> 4.8.8.8 0.75), 1 slower. Not with one column per worker (N2 N3 <=
  * T: 3-10 % slower on 5 of 5, the column pass a 1D transform per worker), nor on the cycle walk at T (1.167 ->
  * 1.338 on 11 cells), nor past the powers of two (10 cells of the tall shapes it would change, among them
- * 128x6x5: 5 faster, 4 slower, 0.998). */
+ * 128x6x5: 5 faster, 4 slower, 0.998).
+ * THE CYCLE WALK'S CHAIN (2026-10-31): where every side is a power of two and the threaded plan runs the cycle
+ * walk on a chain of two stages or more (no strip width fits: N1 above 16384), axis 0 takes the pool's chain
+ * ending in EST_ND_MT3_CYCLE_LAST, the door's largest column radix, the stages before it the most balanced,
+ * ascending (32768: 8.8.8.64, the planner's own; 65536: 8.8.16.64). Timed on 57 such cells, N1 17500-262144,
+ * 2-256 MB (40 raced fresh for it), one process, 15 rounds, control 1.006 (.../3d_night/chain_study/): the 27
+ * whose sides are all powers of two 1.118 -> 0.986 against the planner (the planner's own chains 1.003),
+ * faster on 24, slower by more than 2 % on 1 (262144x2x8 0.953 -> 0.979); 2-16 MB 1.158 -> 0.965, 16-36 MB
+ * 1.077 -> 0.993, past 36 MB 1.118 -> 1.003. The radix-8 regime of the strips loses there (1.147), as do the
+ * one-thread stages ascending (1.058) and descending (1.185). The other 30 stand at 0.993 with the one-thread
+ * chain; the largest radix first, the planner's habit on them, is mixed by region, so they keep it. */
 #define EST_ND_MT3_SERIAL_KB 32
 #define EST_ND_MT3_NSW_L2_DIV 4
+#define EST_ND_MT3_CYCLE_LAST 64
 
 /* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
  * another chain; keyed by N and the row regime (1 = narrow) */
@@ -1065,12 +1076,14 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
  * workers that can take part fits EST_ND_MT3_SERIAL_KB x T; else the plane arm on the full team with the
  * one-thread structure, the strips wherever the door's strip pool at axis 0 is not empty (at the widest width
  * whose scratch fits L2 / EST_ND_MT3_NSW_L2_DIV, else the narrowest), the cycle walk where it is. The recipe
- * is kept, but for the strips' chain of a cube whose sides are all powers of two, with more columns than
- * workers: est__pick's radix-8 regime, the band beside the one-thread cycle walk taken again for it. T < 2
- * leaves p one-thread. */
+ * is kept, but for the axis-0 chain of a cube whose sides are all powers of two: on the strips with more
+ * columns than workers est__pick's radix-8 regime, on the cycle walk the pool's chain ending in
+ * EST_ND_MT3_CYCLE_LAST with the stages before it the most balanced, ascending; the band beside the one-thread
+ * cycle walk taken again for either. T < 2 leaves p one-thread. */
 static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
 {
     const long long cube = 16LL * p->N1 * p->N2 * p->N3, cols = (long long)p->N2 * p->N3;
+    const int pow2 = est_is_pow2(p->N1) && est_is_pow2(p->N2) && est_is_pow2(p->N3);
     long long w = T;
     int sp[8], n, i;
     p->T = T > 1 ? T : 1;
@@ -1094,7 +1107,7 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
             p->mtnsw = sp[i];
     if (n > 0 && !p->mtnsw)
         p->mtnsw = sp[0];
-    if (p->cmtf == 2 && est_is_pow2(p->N1) && est_is_pow2(p->N2) && est_is_pow2(p->N3) && cols > T)
+    if (p->cmtf == 2 && pow2 && cols > T)
     {   /* the strips' chain (EST_ND_MT3_*): the radix-8 regime, as the 2D strips take it */
         est_pool_t P;
         int R[8], k;
@@ -1103,6 +1116,37 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
         {
             memcpy(p->col.R, R, sizeof(int) * (size_t)k);
             p->col.nst = k;
+            est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
+            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(m, &p->col);
+        }
+    }
+    else if (p->cmtf == 1 && pow2 && p->col.nst >= 2)
+    {   /* the cycle walk's chain (EST_ND_MT3_*): the pool's chain ending in EST_ND_MT3_CYCLE_LAST, the stages
+         * before it the least sum of (log2 R)^2, then the fewest out of ascending order, then the pool's order */
+        est_pool_t P;
+        int best = -1, bi = 0;
+        double bs = 0.0;
+        est__pool(p->N1, &P);
+        for (i = 0; i < P.n; i++)
+        {
+            const int k = P.len[i];
+            double s;
+            int inv;
+            if (k < 2 || P.c[i][k - 1] != EST_ND_MT3_CYCLE_LAST)
+                continue;
+            s = est__sumsq(P.c[i], k - 1);
+            inv = est__inversions(P.c[i], k - 1, 1);
+            if (best < 0 || s < bs - 1e-9 || (s < bs + 1e-9 && inv < bi))
+            {
+                best = i;
+                bs = s;
+                bi = inv;
+            }
+        }
+        if (best >= 0)
+        {
+            memcpy(p->col.R, P.c[best], sizeof(int) * (size_t)P.len[best]);
+            p->col.nst = P.len[best];
             est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
             p->col.wl = p->nf == 2 ? 0 : est_wl_3d(m, &p->col);
         }
