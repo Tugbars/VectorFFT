@@ -1,7 +1,7 @@
 /* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/estimate/estimate_il.h,
  * il/estimate/c2c_estimate_il.h, and at rank 2 and 3 il/estimate/estimate_nd_il.h,
- * il/estimate/c2c_estimate_nd_il.h): an interleaved c2c transform planned by formulas, nothing measured,
- * and a contiguous batch of them.
+ * il/estimate/c2c_estimate_nd_il.h, il/estimate/c2c_estimate_lm_il.h): an interleaved c2c transform planned by
+ * formulas, nothing measured, and a contiguous or a lane-major batch of them.
  *
  * Every create goes through the public API with the flag and names the gate's scratch store:
  *   A  correct against a long-double DFT: every bin up to N = 4096 (scrambled: the sorted multiset of the
@@ -41,11 +41,18 @@
  *      the way the estimate's rule says (est_batch_whole; a 1D four-step plan has no copies): whole
  *      transforms per thread exactly when the batch's split engaged (vfft_tc_mt_dispatches,
  *      vfft_pq_mt_passes).
+ *   LM a lane-major batch (element i of transform t at z[2 (i K + t)]; il/estimate/c2c_estimate_lm_il.h): LM1
+ *      rank 1 in the four order x placement cells, LM2 and LM3 rank 2 and 3 natural in both placements, on one
+ *      thread, and LM1T, LM2T, LM3T on 8 threads. The batch and the one-transform plan built with nothing
+ *      measured (the build itself refuses a plan whose column pass, serial tile, threaded verdict or block child
+ *      is not the recipe's); each lane gathered and run through the one-transform plan, forward and backward,
+ *      the batch within TOL of it; the round trip within TOL (scrambled: the round trip alone, the batch's order
+ *      being its column chain's). The count of batches whose column pass ran threaded is reported.
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, a lane-major batch (rank 1, 2 and 3), SPLIT,
- *      the flag with VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
- *      at rank 2 and 3 scrambled order, an axis of length 1, a last axis
+ *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, SPLIT, the flag with VFFT_FLAG_RECALIBRATE and
+ *      with VFFT_FLAG_PATIENT;
+ *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
  *   E  the environment guard: a variable that steers a plan (VFFT_IL_KV at rank 1, VFFT_IL2D_WL at rank 2,
@@ -837,6 +844,107 @@ static void sec_end_b(const char *name, long b0)
     printf("SECTION %-3s: %d checks, %d failed; %ld batches built and served as the estimate planned them -> %s\n", name,
            g_checks - s_checks, f, g_b_built - b0, f ? "FAIL" : "PASS");
 }
+/* ── LM: lane-major batches. Element i of transform t at z[2 (i K + t)]; the estimate's batch (its own build
+ * checks the plan the door served against the recipe, est__check_lm) and the one-transform plan of the same request,
+ * both built with nothing measured; each lane gathered and run through the one-transform plan, forward and
+ * backward, the batch within TOL of it; the round trip within TOL. A scrambled batch's order is its column chain's
+ * comb, not the one-transform plan's: the round trip alone. ── */
+static long g_lm_built = 0, g_lm_mt = 0;
+static void lm_lane(const double *z, double *a, long P, int K, int t, int out)
+{   /* lane t of the batch z to the block a (out = 0), or the block a into lane t of z (out = 1) */
+    long i;
+    for (i = 0; i < P; i++)
+    {
+        double *zz = (double *)z + 2 * ((size_t)i * K + t);
+        if (out) { zz[0] = a[2 * i]; zz[1] = a[2 * i + 1]; }
+        else { a[2 * i] = zz[0]; a[2 * i + 1] = zz[1]; }
+    }
+}
+static void lm_cell(int rank, int n0, int n1, int n2, int K, int T, int ip, int scr)
+{
+    const long P = (long)n0 * (rank >= 2 ? n1 : 1) * (rank == 3 ? n2 : 1);
+    const size_t nd = (size_t)2 * P * K, nb = nd * sizeof(double), n1b = (size_t)2 * P * sizeof(double);
+    char name[96];
+    vfft_config_t c;
+    vfft_plan p1 = NULL, pb;
+    int m1 = 0, mb, t;
+    if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d x %d %s %s T=%d", n0, n1, n2, K, scr ? "scr" : "nat", ip ? "ip" : "oop", T);
+    else if (rank == 2) snprintf(name, sizeof name, "%dx%d x %d %s %s T=%d", n0, n1, K, scr ? "scr" : "nat", ip ? "ip" : "oop", T);
+    else snprintf(name, sizeof name, "%d x %d %s %s T=%d", n0, K, scr ? "scr" : "nat", ip ? "ip" : "oop", T);
+    memset(&c, 0, sizeof c);
+    c.rank = rank;
+    c.n[0] = n0;
+    if (rank >= 2) c.n[1] = n1;
+    if (rank == 3) c.n[2] = n2;
+    c.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
+    c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    c.nthreads = T;
+    if (!scr)
+    {
+        c.howmany = 1;
+        p1 = est_create(&c, &m1);
+        CHECK(p1 && !m1, "LM %s: the one-transform plan %s", name, m1 ? "MEASURED" : vfft_error());
+    }
+    c.howmany = (size_t)K;
+    c.batch = VFFT_BATCH_LANE_MAJOR;
+    pb = est_create(&c, &mb);
+    CHECK(pb && !mb, "LM %s: the batch %s", name, mb ? "MEASURED" : vfft_error());
+    if (pb && !mb && (scr || (p1 && !m1)))
+    {
+        double *x = (double *)vfft_malloc(nb), *y = (double *)vfft_malloc(nb), *z = ip ? y : (double *)vfft_malloc(nb);
+        double *w = (double *)vfft_malloc(nb), *a = (double *)vfft_malloc(n1b), *b = ip ? a : (double *)vfft_malloc(n1b);
+        long double sx = 0.0L, m = 0.0L;
+        double df = 0.0, dbk = 0.0, er;
+        const long e0 = vfft_il2d_col_mt_passes();
+        size_t i;
+        int ok;
+        if (!x || !y || !z || !w || !a || !b) { printf("out of memory\n"); exit(2); }
+        g_rng = 0x9E3779B97F4A7C15ull ^ ((unsigned long long)P << 12) ^ (unsigned long long)K;
+        for (i = 0; i < nd; i++) { x[i] = rnd(); sx += (long double)x[i] * x[i]; }
+        if (!scr)
+            for (t = 0; t < K; t++)   /* the one-transform plan's forward, lane by lane */
+            {
+                lm_lane(x, a, P, K, t, 0);
+                vfft_execute(p1, VFFT_FORWARD, a, b);
+                lm_lane(w, b, P, K, t, 1);
+            }
+        if (ip) memcpy(y, x, nb);
+        vfft_execute(pb, VFFT_FORWARD, ip ? y : x, y);
+        if (!scr)
+        {
+            df = rel_diff(w, y, nd);
+            for (t = 0; t < K; t++)   /* its backward of the batch's forward */
+            {
+                lm_lane(y, a, P, K, t, 0);
+                vfft_execute(p1, VFFT_BACKWARD, a, b);
+                lm_lane(w, b, P, K, t, 1);
+            }
+        }
+        vfft_execute(pb, VFFT_BACKWARD, y, z);
+        if (!scr) dbk = rel_diff(w, z, nd);
+        for (i = 0; i < nd; i++)
+        {
+            const long double d = fabsl((long double)z[i] / P - x[i]);
+            if (!(d <= m)) m = d;
+        }
+        er = (double)(m / sqrtl(sx / ((long double)P * K)));
+        ok = df <= TOL && dbk <= TOL && er <= TOL;
+        CHECK(ok, "LM %s: the batch against the one-transform plan lane by lane: forward %.1e, backward %.1e%s; round trip "
+              "%.2e", name, df, dbk, scr ? " (scrambled: not compared)" : "", er);
+        g_lm_built += ok;
+        g_lm_mt += vfft_il2d_col_mt_passes() != e0;
+        vfft_free(x); vfft_free(y); vfft_free(w); vfft_free(a);
+        if (!ip) { vfft_free(z); vfft_free(b); }
+    }
+    vfft_destroy(pb);
+    vfft_destroy(p1);
+}
+static void sec_end_lm(const char *name, long b0, long mt0)
+{
+    const int f = g_fail - s_fail;
+    printf("SECTION %-3s: %d checks, %d failed; %ld lane-major batches built and correct, %ld of them threaded -> %s\n",
+           name, g_checks - s_checks, f, g_lm_built - b0, g_lm_mt - mt0, f ? "FAIL" : "PASS");
+}
 
 /* the environment, set or cleared */
 static void env_set(const char *name, const char *val)
@@ -910,9 +1018,8 @@ int main(int argc, char **argv)
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.order = VFFT_ORDER_SCRAMBLED;
         refused("rank 3 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.batch = VFFT_BATCH_LANE_MAJOR;
-        refused("rank 2 howmany 4 lane-major", &c, "plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR");
-        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.batch = VFFT_BATCH_LANE_MAJOR;
-        refused("rank 3 howmany 2 lane-major", &c, "plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR");
+        c.order = VFFT_ORDER_SCRAMBLED;
+        refused("rank 2 howmany 4 lane-major scrambled", &c, "plans rank 2 and 3 in natural order only");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 1; c.n[1] = 64;
         refused("rank 2 1x64", &c, "every axis of at least 2 points");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 1; c.n[2] = 8;
@@ -922,8 +1029,6 @@ int main(int argc, char **argv)
         /* 53 * 59 * 2^18: no column chain, its Bluestein length 2^31 (the create used to loop forever) */
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 819724288; c.n[1] = 2;
         refused("rank 2 819724288x2", &c, "N = 819724288 has no column chain and its Bluestein length 2147483648 none either");
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.batch = VFFT_BATCH_LANE_MAJOR;
-        refused("howmany 4 lane-major", &c, "plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.layout = VFFT_LAYOUT_SPLIT;
         refused("SPLIT", &c, "plans the INTERLEAVED layout only");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.flags = VFFT_FLAG_RECALIBRATE;
@@ -1105,6 +1210,45 @@ int main(int argc, char **argv)
         }
     }
 
+    /* LM1, LM2, LM3: lane-major batches on one thread; LM1T, LM2T, LM3T on 8 threads. Rank 1 in the four order x
+     * placement cells over powers of two, smooth and odd lengths, a Rader prime (131) and Bluestein-sized ones
+     * (1031, 12005); rank 2 and 3 natural in both placements, with odd sides and a prime column */
+    {
+        static const int L1[] = { 2, 3, 8, 16, 64, 100, 131, 256, 1000, 1031, 4096, 12005 };
+        static const int L2[][2] = { { 2, 2 }, { 8, 8 }, { 16, 16 }, { 9, 15 }, { 64, 64 }, { 131, 16 }, { 8, 100 },
+                                     { 100, 8 }, { 2, 256 } };
+        static const int L3[][3] = { { 2, 2, 2 }, { 4, 8, 16 }, { 8, 8, 8 }, { 16, 16, 16 }, { 5, 7, 9 }, { 8, 8, 131 } };
+        static const int KL1[4] = { 2, 3, 8, 32 }, KL2[3] = { 2, 3, 8 }, KL3[2] = { 2, 3 };
+        int TL, k, ip, scr;
+        for (TL = 1; TL <= 8; TL += 7)
+        {
+            long b0 = g_lm_built, t0 = g_lm_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof L1 / sizeof L1[0]); i++)
+                for (k = 0; k < 4; k++)
+                    for (scr = 0; scr < 2; scr++)
+                        for (ip = 0; ip < 2; ip++)
+                            lm_cell(1, L1[i], 0, 0, KL1[k], TL, ip, scr);
+            sec_end_lm(TL > 1 ? "LM1T" : "LM1", b0, t0);
+            b0 = g_lm_built;
+            t0 = g_lm_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof L2 / sizeof L2[0]); i++)
+                for (k = 0; k < 3; k++)
+                    for (ip = 0; ip < 2; ip++)
+                        lm_cell(2, L2[i][0], L2[i][1], 0, KL2[k], TL, ip, 0);
+            sec_end_lm(TL > 1 ? "LM2T" : "LM2", b0, t0);
+            b0 = g_lm_built;
+            t0 = g_lm_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof L3 / sizeof L3[0]); i++)
+                for (k = 0; k < 2; k++)
+                    for (ip = 0; ip < 2; ip++)
+                        lm_cell(3, L3[i][0], L3[i][1], L3[i][2], KL3[k], TL, ip, 0);
+            sec_end_lm(TL > 1 ? "LM3T" : "LM3", b0, t0);
+        }
+    }
+
     /* E: the environment guard; each variable unset again before the next create */
     sec_begin();
     {
@@ -1149,7 +1293,8 @@ int main(int argc, char **argv)
     CHECK(d0n == 0 && d1n == 0 && e0 == e1, "W  the library's own store (VFFT_WISDOM_DIR): %d file(s) after", d1n);
     sec_end("W");
 
-    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld batches\n%s\n",
-           g_checks, g_fail, g_built, g_nd_built, g_b_built, g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
+    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld contiguous and %ld lane-major "
+           "batches\n%s\n", g_checks, g_fail, g_built, g_nd_built, g_b_built, g_lm_built,
+           g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

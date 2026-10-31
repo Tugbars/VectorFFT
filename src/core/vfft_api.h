@@ -158,8 +158,8 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     if (p->flags & VFFT_FLAG_ESTIMATE)
     {   /* an INTERLEAVED C2C transform: 1D in any order on any thread count, rank 2 and 3 in natural
          * order on any thread count (il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h), and a contiguous
-         * batch of them; any other request under the flag is refused here, never planned by measuring
-         * instead */
+         * or a lane-major batch of them (c2c_estimate_lm_il.h); any other request under the flag is refused
+         * here, never planned by measuring instead */
         if (p->flags & VFFT_FLAG_RECALIBRATE)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE: estimate measures nothing and "
@@ -187,12 +187,6 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not "
                        "VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)");
-            return 0;
-        }
-        if (p->howmany > 1 && p->batch == VFFT_BATCH_LANE_MAJOR)
-        {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR (drop "
-                       "the flag to plan it by measuring)");
             return 0;
         }
         if (p->layout != VFFT_LAYOUT_INTERLEAVED)

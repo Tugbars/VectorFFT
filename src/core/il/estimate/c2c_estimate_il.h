@@ -696,6 +696,8 @@ out:
 
 /* rank 2 and 3: the formulas and the build one rank up, on this file's pieces */
 #include "il/estimate/c2c_estimate_nd_il.h"
+/* the lane-major batches at rank 1 to 3, on the column pieces of the 2D and 3D build */
+#include "il/estimate/c2c_estimate_lm_il.h"
 
 /* ── the environment guard ──────────────────────────────────────────────── */
 
@@ -767,6 +769,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
+    if (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
+        return _vfft_create_estimate_lm(&m, cfg);
     if (cfg->dims >= 2)
         return _vfft_create_estimate_nd(&m, cfg);
     memset(&rq, 0, sizeof rq);
