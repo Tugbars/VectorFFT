@@ -1,4 +1,4 @@
-# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform, natural order, any thread count)
+# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform or a contiguous batch on one thread, natural order, any thread count)
 
 2026-10-22. The design of `VFFT_FLAG_ESTIMATE` at rank 2 and 3, written before the code that follows
 it (`src/core/il/estimate/estimate_nd_il.h`, `src/core/il/estimate/c2c_estimate_nd_il.h`). Nothing was
@@ -15,7 +15,7 @@ the banked rows, **[I]** interpretation.
 | axis | served | refused, with a reason |
 |---|---|---|
 | rank | 2 and 3 (1 as before) | 4 |
-| batch | one transform (howmany 1) | howmany > 1 |
+| batch | one transform (howmany 1); a contiguous batch on one thread (2026-10-31): the plan of one transform, run once per transform (§11) | a batch on more than one thread; a lane-major batch |
 | order | natural (the default) | scrambled at rank 2 and 3 |
 | threads | any: rank 2 (§8a, 2026-10-29), rank 3 (§9a, 2026-10-31) | — |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
@@ -468,13 +468,22 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
    one-thread ones -- the axis-0 descriptor the same way, and its plane plan checked as a 2D plan (`s=1`)
    or axis 1 and the row plan (`s=2`).
 
+**A contiguous batch on one thread** (2026-10-31) is built the same way: the rows of one transform,
+then the door's batch create, the plane or the volume queue (`_vfft_create_pq_il`,
+il/rank2/fft2d_create_il.h:72-324), whose one-transform plan (`pq_inner`) replays those rows. At one
+thread the queue builds no clone and races nothing (its clones and its verdict between the loop and
+the clones are T > 1's). The plan check reads `pq_inner` as above, and the queue must have built no
+clone (`pq_wn`, `pq_gn` 0) and kept the loop (`pq_mt` 0): the batch is the plan of one transform, run
+once per transform (`est__batch_one`).
+
 ## 12. Refusals (the front door, `_vfft_api_translate`)
 
 | request under the flag | message |
 |---|---|
 | rank 4 | `vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank 4 (drop the flag to plan it by measuring)` |
 | rank 2 or 3, scrambled | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)` |
-| howmany > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans one transform, not a batch of %zu (drop the flag to plan it by measuring)` (as before) |
+| howmany > 1, lane-major (any rank) | `vfft_create: VFFT_FLAG_ESTIMATE plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR (drop the flag to plan it by measuring)` |
+| howmany > 1 on more than one thread (any rank) | `vfft_create: VFFT_FLAG_ESTIMATE plans a batch on one thread only, not a batch of %zu on %d threads (drop the flag to plan it by measuring)` |
 | any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a plan-steering switch is set (unset it: estimate plans from formulas only)` |
 
 The formulas refuse, with the reason, an axis of length 1, a last axis the row guard refuses, a

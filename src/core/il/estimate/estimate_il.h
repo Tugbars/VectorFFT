@@ -8,7 +8,9 @@
  * a banked verdict then builds the plan. No wisdom store is read or written.
  *
  * SCOPE: one 1D interleaved c2c transform (howmany 1), either order, either placement, any thread
- * count. The front door refuses every other request under the flag (vfft_api.h).
+ * count; a contiguous batch of them on one thread is that transform's plan, run once per transform
+ * (c2c_estimate_il.h, est__batch_one). The front door refuses every other request under the flag
+ * (vfft_api.h).
  *
  * THE FORMULAS ARE PURE: est_plan_1d reads the machine and the request only -- no clock, no store,
  * no allocation. The facts they need are the library's own: the radix lists of the IL registry

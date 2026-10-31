@@ -20,10 +20,12 @@ replay code.
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
 
-The flag serves one interleaved c2c transform (howmany 1): 1D in any order, placement and thread count;
+The flag serves an interleaved c2c transform: 1D in any order, placement and thread count;
 rank 2 and 3 (2026-10-22, `docs/design/estimate_2d3d_sketch.md`; at any thread count since 2026-10-29 at
-rank 2 and 2026-10-31 at rank 3) in natural order, either placement. It refuses real, real-to-real, rank 4,
-howmany > 1, SPLIT, scrambled order at rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or
+rank 2 and 2026-10-31 at rank 3) in natural order, either placement; and since 2026-10-31 a contiguous
+batch of them on one thread, the plan of one transform run once per transform. It refuses real,
+real-to-real, rank 4, a batch on more than one thread, a lane-major batch, SPLIT, scrambled order at
+rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or
 `VFFT_FLAG_PATIENT`, and any create while an
 environment variable that steers a plan is set (`est_env_names`). At rank 2 and 3 the formulas also
 refuse an axis of length 1, a last axis with no 1D engine, and a column with no chain whose Bluestein
@@ -200,8 +202,9 @@ On the final binary every check cell is built and correct, or refused with an in
 
 Each is marked "open decision N, default" in the code that relies on it.
 
-1. **One transform only** (howmany = 1). Batches are refused. The request has no batch field, and
-   the glue always creates howmany = 1.
+1. **One transform only** (howmany = 1) in this folder's tools: the request has no batch field, and
+   the glue always creates howmany = 1. (The library's flag also serves a contiguous batch on one
+   thread since 2026-10-31: the plan of one transform, run once per transform.)
 2. **Any T > 1 uses the T = 8 fitted rules.** They are marked unfitted for T != 8. The glue writes
    the T row the recipe gives, and checks that its threaded arm took.
 3. **The ZTURN-T tile is clamped** to the planner's raced ladder {1024, 2048}

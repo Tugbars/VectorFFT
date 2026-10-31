@@ -92,7 +92,9 @@ ZTT_ODD alone in the odd band, and the four-step + flat (+ prime) in the non-pow
 four-step band. Everywhere else it also admits the natural writers. The list sends a scrambled
 request in each band only to that band's members.
 
-**Scope:** one transform (howmany = 1). Batches are not covered (see Open decisions).
+**Scope:** one transform (howmany = 1). A contiguous batch on one thread is that transform's plan, run
+once per transform (the owner, 2026-10-31); a batch on more than one thread and the lane-major batch are
+not covered (see Open decisions).
 
 ## 4. Parameter formulas
 
@@ -466,9 +468,11 @@ the raced plan.
 
 ## 12. Open decisions (for the owner)
 
-1. **Batches.** Is howmany > 1 in the 1D estimate's scope? That covers the lane-major 1D batch
-   (`il/rank1/lm_batch_il.h`, `policy_il.h:232-258`), which is the real batch's DEFAULT geometry,
-   and the transform-contiguous batch. This sketch covers one transform only.
+1. **Batches.** Answered in part (the owner, 2026-10-31): the contiguous batch on one thread is in
+   scope, served as the plan of one transform, run once per transform (the door's transform-contiguous
+   wrapper). Still open: the contiguous batch on more than one thread (the loop of one threaded plan
+   against slabs of transforms, one per worker: `_tc_mt_decide`, vfft.c) and the lane-major 1D batch
+   (`il/rank1/lm_batch_il.h`, `policy_il.h:232-258`), which is the real batch's DEFAULT geometry.
 2. **Thread counts.** What should estimate do at T = AUTO, and at T other than 1 and 8? Every thread
    rule here was fitted at T = 8 on one CPU. The 2·L1d serial bound rests, for the flat DIT, on
    rows up to N = 2002 only (EVIDENCE.md:512).

@@ -145,10 +145,11 @@ extern "C"
     VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths and this
                                             machine's caches: nothing is measured at create,
                                             no wisdom is read or written, and wisdom_dir is
-                                            not opened. One VFFT_C2C transform, INTERLEAVED:
+                                            not opened. A VFFT_C2C transform, INTERLEAVED:
                                             1D in any order, placement and nthreads; rank 2
                                             and 3 in natural order at any nthreads, either
-                                            placement.
+                                            placement; and a contiguous batch of them
+                                            (howmany > 1) on one thread.
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment

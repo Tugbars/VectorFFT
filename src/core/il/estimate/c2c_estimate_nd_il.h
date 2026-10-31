@@ -20,7 +20,9 @@
  *      clone set dropped): the column chain, Bluestein, the turned pass, the Rader engine, the
  *      natural leaf, the band, the tile, the row route, the turn, the skew, each child's engine;
  *      at rank 3 the structure, the threaded verdict and its team, the natural form and its strip width,
- *      and the plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2).
+ *      and the plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2). A contiguous batch on one
+ *      thread is the plane or the volume queue over the plan of one transform, run once per transform,
+ *      with no clone built; the checks read the plan it wraps (est__batch_one).
  * An estimate create never hands back a plan that measured.
  *
  * POSITION IN vfft.c: included by c2c_estimate_il.h after the 1D build, whose pre-flight, plan check
@@ -366,9 +368,9 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
 
 /* est_build_nd: the recipe of a 2D (p2) or 3D (p3; the other NULL) request -> a plan built with
  * nothing measured, or NULL with the reason in why and the outcome in rep (may be NULL). cfg is the
- * request as the front door translated it: interleaved c2c, rank 2 or 3, howmany 1, natural, at the
- * recipe's thread count (est_mt_2d, est_mt_3d); its store and save flag are not used.
- * Holds the create lock from the pre-flight to the end.
+ * request as the front door translated it: interleaved c2c, rank 2 or 3, natural, at the recipe's
+ * thread count (est_mt_2d, est_mt_3d), one transform or a contiguous batch of them on one thread; its
+ * store and save flag are not used. Holds the create lock from the pre-flight to the end.
  * The caller owns the plan (vfft_destroy). */
 static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const vfft_cfg_t *cfg,
                                                est_build_report_t *rep, char *why, size_t whylen)
@@ -376,6 +378,7 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL;
     struct vfft_plan_s *h = NULL;
+    const struct vfft_plan_s *h1;
     est__meter_t m0;
     const int rank = p3 ? 3 : 2;
     if (!rep)
@@ -389,14 +392,14 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
         est_refuse(why, whylen, "no recipe or configuration");
         return NULL;
     }
-    if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != rank || cfg->howmany > 1 ||
+    if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != rank || !est__batch_ok(cfg) ||
         cfg->order == VFI_ORDER_SCRAMBLED ||
         (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p2->T > 1 ? p2->T : 1))) ||
         (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3 ||
                 (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p3->T > 1 ? p3->T : 1))))
     {
         est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order, at the recipe's "
-                   "thread count", rank);
+                   "thread count, or a contiguous batch of them on one thread", rank);
         return NULL;
     }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
@@ -413,7 +416,8 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     if (p2 ? est_put_rows_2d(&S->vw2, p2, why, whylen) : est_put_rows_3d(&S->vw2, p3, why, whylen))
         goto out;
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && (p2 ? est__check_2d(h, p2, why, whylen) : est__check_3d(h, p3, why, whylen)))
+    if (h && (est__batch_one(h, cfg, &h1, why, whylen) ||
+              (p2 ? est__check_2d(h1, p2, why, whylen) : est__check_3d(h1, p3, why, whylen))))
     {
         rep->status = EST_NOPLAN;
         vfft_destroy((vfft_plan)h);

@@ -12,7 +12,9 @@
  *
  * SCOPE: one transform (howmany 1), natural order, either placement (the 2D and 3D rows are
  * placement-blind: one recipe serves both), every axis >= 2, any thread count (est_mt_2d and est_mt_3d
- * thread the one-thread plan). Rank 3 is the 2D plan per plane then
+ * thread the one-thread plan); a contiguous batch of them on one thread is that transform's plan, run
+ * once per transform (the plane or the volume queue, c2c_estimate_il.h, est__batch_one). Rank 3 is the
+ * 2D plan per plane then
  * axis 0 (s=1), or on the even planes near the L2 and the planes with an odd side the flat tier (s=2,
  * est__flat_plane). The front door
  * refuses the rest under the flag (vfft_api.h).

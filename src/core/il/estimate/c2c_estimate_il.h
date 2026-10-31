@@ -29,7 +29,10 @@
  *      with the row written: a changed payload means the plan is not the recipe, so it is
  *      destroyed and the create refused as well.
  *   5. THE RECIPE'S PLAN. The handle must carry the recipe's engine, and every threaded arm the
- *      recipe names must have bound (a bind that declines leaves the plan serial in silence).
+ *      recipe names must have bound (a bind that declines leaves the plan serial in silence). A
+ *      contiguous batch on one thread (howmany > 1) is the door's wrapper over the plan of one
+ *      transform, run once per transform: it must have built no clone and chosen no threaded form,
+ *      and the recipe is checked against the plan it wraps (est__batch_one).
  * An estimate create never hands back a plan that measured.
  *
  * The store detector sees a FIRST load of the library's store only: once the process has loaded it
@@ -408,6 +411,31 @@ static inline int est__check_plan(const struct vfft_plan_s *h, const est_recipe_
     return 1;
 }
 
+/* a request the build serves: one transform, or a contiguous batch of them on one thread */
+static inline int est__batch_ok(const vfft_cfg_t *cfg)
+{
+    return cfg->howmany <= 1 || (cfg->batch_geom != VFFT_BATCH_LANE_MAJOR && cfg->nthreads <= 1);
+}
+/* THE BATCH (howmany > 1, contiguous, one thread): the door serves it as a wrapper over the plan of one
+ * transform, run once per transform -- at rank 1 the transform-contiguous wrapper (tcb, vfft.c:2011-2157),
+ * at rank 2 and 3 the plane or the volume queue (pq_inner, fft2d_create_il.h:72-324) -- with no clone
+ * built and no threaded form chosen at one thread (the clones and the verdict between the loop and the
+ * clones are T > 1's: _tc_mt_decide, _pq_mt_replay_or_race). *one is the plan of one transform the recipe
+ * is checked against: the handle itself at howmany 1. Returns 0, or -1 with the reason. */
+static inline int est__batch_one(const struct vfft_plan_s *h, const vfft_cfg_t *cfg, const struct vfft_plan_s **one,
+                                 char *why, size_t whylen)
+{
+    *one = h;
+    if (cfg->howmany <= 1)
+        return 0;
+    if (cfg->dims < 2 ? !h->tcb || h->K != cfg->howmany || h->tcbw_n || h->tcb0 || h->tc_mt
+                      : !h->pq_inner || h->pq_n != cfg->howmany || h->pq_wn || h->pq_gn || h->pq_mt)
+        return est_refuse(why, whylen, "the door did not serve the batch of %zu as the plan of one transform, run once "
+                          "per transform on one thread", cfg->howmany);
+    *one = cfg->dims < 2 ? h->tcb : h->pq_inner;
+    return 0;
+}
+
 /* ── the rows as written ────────────────────────────────────────────────── */
 
 /* a row's payload as one text: its payload tokens (section 1, wisdom2.h:182) "name=value", sorted and
@@ -573,15 +601,16 @@ static inline struct vfft_plan_s *est__replay(struct vfft_wisdom_s *S, const vff
 
 /* est_build_c2c: the recipe of rq -> a plan built with nothing measured, or NULL with the reason in
  * why and the outcome in rep (may be NULL). cfg is the request as the front door translated it
- * (vfft_cfg_t: 1D interleaved c2c, howmany 1); its store and save flag are not used. Holds the create
- * lock from the pre-flight to the end. The caller owns the plan (vfft_destroy); the caller's pin of a
- * threaded plan is vfft_create's to arm (vfft_api.h). */
+ * (vfft_cfg_t: 1D interleaved c2c, one transform or a contiguous batch on one thread); its store and
+ * save flag are not used. Holds the create lock from the pre-flight to the end. The caller owns the
+ * plan (vfft_destroy); the caller's pin of a threaded plan is vfft_create's to arm (vfft_api.h). */
 static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const est_request_t *rq, const vfft_cfg_t *cfg,
                                                 est_build_report_t *rep, char *why, size_t whylen)
 {
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL;
     struct vfft_plan_s *h = NULL;
+    const struct vfft_plan_s *h1;
     est__meter_t m0;
     int serial = 0;
     if (!rep)
@@ -596,9 +625,10 @@ static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const es
         return NULL;
     }
     if (rq->transform != VFFT_C2C || cfg->transform != VFFT_C2C || cfg->dims > 1 || cfg->n[0] != rq->N ||
-        cfg->howmany > 1 || cfg->layout != VFI_LAYOUT_IL)
+        !est__batch_ok(cfg) || cfg->layout != VFI_LAYOUT_IL)
     {
-        est_refuse(why, whylen, "estimate builds one 1D interleaved c2c transform");
+        est_refuse(why, whylen, "estimate builds one 1D interleaved c2c transform, or a contiguous batch of them on "
+                   "one thread");
         return NULL;
     }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
@@ -615,7 +645,7 @@ static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const es
     if (est_put_rows(&S->vw2, rc, rq, 1, why, whylen))
         goto out;
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && !est__check_plan(h, rc, rq, &serial, why, whylen))
+    if (h && (est__batch_one(h, cfg, &h1, why, whylen) || !est__check_plan(h1, rc, rq, &serial, why, whylen)))
     {
         rep->status = serial ? EST_SERIAL : EST_NOPLAN;
         vfft_destroy((vfft_plan)h);
@@ -654,10 +684,12 @@ out:
  *     threaded pins _MT and _PT (fftnd_il.h:1768-1776: they replace the row's threaded verdict).
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_VERBOSE, ...), the execute-time profiling (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the
- * stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate opens none), the real, split and
- * transform-contiguous batch doors' names (the flag refuses those requests), the names no estimate
- * create or execute reads (VFFT_PQ_NO_MT, the batch queues'; VFFT_IL2D_DENSE), and
- * VFFT_HIGHN_PLAN, read only inside a race (k1_commit.h:777, 1651). */
+ * stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate opens none), the real and split doors'
+ * names (the flag refuses those requests), the batch doors' threading names, read only where a batch
+ * has clones, at T > 1, where the flag refuses a batch (VFFT_NO_TCMT and VFFT_TCMT, the 1D wrapper's,
+ * vfft.c:2082, 1569; VFFT_PQ_NO_MT, the queues', plane_queue.h:301, 358), the names no estimate create
+ * or execute reads (VFFT_IL2D_DENSE), and VFFT_HIGHN_PLAN, read only inside a race (k1_commit.h:777,
+ * 1651). */
 static const char *const est_env_names[] = {
     "VFFT_NO_IL2P", "VFFT_NO_ILBLK", "VFFT_NO_T2B", "VFFT_IL_KV", "VFFT_IL_BKV", "VFFT_ILFD_NO_MSZ",
     "VFFT_ILFD_NO_GL", "VFFT_ILFD_NO_GORD", "VFFT_ILFD_NO_GEN2", "VFFT_ILFD_MT", "VFFT_ZTT_MT", "VFFT_K1_FS",
