@@ -126,8 +126,11 @@ The timing tool holds, in one process, inside one measurement scope (so the libr
   batches a sample is about 1 µs, and the loop runs right after the queue has moved the data to the other
   cores: at 2D 8x8 with K = 8 it timed the loop at 1,500 ns against 330 ns steady, and picked the queue,
   which is 3x slower. Fixed on 2026-10-31 with the owner's approval: the race now samples as the 1D batch
-  race does (about 32768 points a sample out of place, the minimum of 7 rounds, 9 in place). Its check, the
-  study's 2D and 3D cells raced again and scored on the forced timings above, waits for a quiet machine.
+  race does (about 32768 points a sample out of place, the minimum of 7 rounds, 9 in place). Checked the same
+  day on a quiet machine, every batch raced again and scored on the study's forced timings: on the study's 176
+  2D and 3D batches the planner's pick now loses 1.004 against the faster way (1.030 before; 3 batches above
+  1.10, 16 before; the worst 1.17, 3.12 before); on the 40 unseen ones 1.009 (1.004 before; 2 above 1.10, 1
+  before; the worst 1.17 both times).
 
 ## 7. Risks
 
@@ -173,3 +176,12 @@ B2T and B3T check every batch at 8 threads runs the way the rule says.
   MiB 1.026, 4.5 - 36 MiB 0.854, past 36 MiB 0.992. Of the 14 cells above 1.10, 3 take another way than the
   planner (one transform of 512 KiB - 4 MiB at K = 3 or 12, where whole transforms per thread are faster); in
   the other 11 both take the same way, and the difference is the plans of one transform inside the batch.
+- Timed again on 2026-10-31 at commit 80e3d1d2 (the 512 KiB bound for K above T; the 2D and 3D batches raced
+  again with the fixed race first): geomean 0.976, median 1.014; 27 within 5%, 13 more than 5% faster, 20
+  more than 5% slower, 11 above 1.10. By region: up to 48 KiB 0.968, 48 KiB - 2 MiB 1.058, 2 - 4.5 MiB
+  1.001, 4.5 - 36 MiB 0.851, past 36 MiB 0.978; the 48 KiB - 2 MiB region stays above the 1.05 bar of
+  section 5. Of the 11 above 1.10, 2 take another way than the planner: 1D 32768 at K = 3 (whole transforms
+  per thread are 1.45 times faster there; at 512 KiB the rule gives them only when K is above T or a multiple
+  of T) and
+  one where the two ways tie; in the other 9 both take the same way. These numbers are the section
+  "Contiguous batches at 8 threads" of [`estimate_performance.md`](../performance/estimate_performance.md).

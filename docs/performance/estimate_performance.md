@@ -9,9 +9,9 @@ do they compare with MKL? Over
 estimate plan takes 1.007 times the measured plan's time at the median (geometric mean 1.019); 207
 are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 
-> **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread (the two sections at 8 threads say so)
+> **Platform:** Intel Core i9-14900KF (P-core, AVX2), DDR5, GCC 15.2, single thread (the three sections at 8 threads say so)
 > **Contract (every section):** complex-to-complex FP64 (the 1D real section: real-to-complex and
-> complex-to-real), interleaved, natural order, out of place, K = 1
+> complex-to-real), interleaved, natural order, out of place, K = 1 (the batch section: K of 3 to 24)
 > **Arms:** the measured plan, replayed from the shipped wisdom
 > ([`src/wisdom/14900KF`](../../src/wisdom/14900KF), with the rows the planner raced on 2026-10-26 and 2026-10-27);
 > the estimate plan; the measured plan created a second time, as a control
@@ -26,8 +26,9 @@ are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 > Bluestein lengths and the primes from 1,031 to 4,099 on 2026-10-27 at commit 55c75923; 59 of the
 > 2D and 3D other shapes (the rows of a prime above 1,000, and the shapes with an odd side from 75 to
 > 945) on 2026-10-27 at commit 0d702e36; the real transforms on 2026-10-28 at commit 0d702e36; the 3D
-> shapes at 8 threads on 2026-10-31 (the plans with the axis-0 chains of that day); every
-> other section on 2026-10-27 at commit a61b778c. The changes between them leave the plans of the
+> shapes at 8 threads on 2026-10-31 (the plans with the axis-0 chains of that day); the contiguous
+> batches at 8 threads on 2026-10-31 at commit 80e3d1d2; every other section on 2026-10-27 at commit
+> a61b778c. The changes between them leave the plans of the
 > earlier sections as they were
 
 A ratio above 1 means the estimate plan is slower.
@@ -687,6 +688,50 @@ By shape and by the lengths:
 | Other | 70 | 0.996 | 0.990 | 42 | 15 | 13 |
 | Every side a power of two | 128 | 0.990 | 1.000 | 58 | 40 | 30 |
 | A side that is not | 251 | 1.014 | 1.009 | 148 | 37 | 66 |
+
+## Contiguous batches at 8 threads: 60 batches from 3 KiB to 384 MiB
+
+Not counted in the totals above, which are single-threaded.
+
+> **Arms:** the planner's batch at 8 threads, replayed from [`src/wisdom/14900KF`](../../src/wisdom/14900KF)
+> (the 60 batches raced there at 8 threads on 2026-10-31, the 2D and 3D ones with the batch race of commit
+> 80e3d1d2); the estimate's batch at 8 threads, the plan `VFFT_FLAG_ESTIMATE` builds; the planner's batch
+> created a second time, as a control  
+> **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, a contiguous batch of K
+> transforms, 8 threads  
+> **Method:** the three plans in one process; the process on the P-cores, the caller on one P-core inside one
+> measurement scope with the library's sibling guards; every plan warmed for 5 ms, then 15 rounds of blocks
+> of about 10 ms run back to back, the plan order shuffled each round; each ratio is the median of the 15
+> per-round ratios (the control against the planner: 1.009, geometric mean)  
+> **Batches:** 20 per rank, each its own shape with one K: 3 (15 batches), 6 (20), 12 (11) or 24 (14); one
+> transform from 512 bytes to 64 MiB. They were drawn at random after the estimate's batch rule was set, from
+> shapes the rule was not fitted on; the rule's 512 KiB bound for K above T was added after their first
+> timing. The rule and the study behind it:
+> [`threaded_batch_estimate_plan.md`](../roadmap/threaded_batch_estimate_plan.md)
+
+Over the 60 batches the estimate's plan takes 0.976 times the planner's at the geometric mean and 1.014 at the
+median; 27 are within 5%, 13 more than 5% faster and 20 more than 5% slower. The two split the batch the same
+way (whole transforms per thread, or all threads on each transform in turn) on 54 of the 60.
+
+By one transform's bytes (16 times its points) against the caches (L1d 48 KiB, L2 2 MiB, L3 36 MiB; 4.5 MiB
+is one thread's share of the L3 at 8 threads):
+
+| One transform | Batches | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
+|---|---|---|---|---|---|---|
+| up to 48 KiB | 19 | 0.968 | 1.034 | 6 | 5 | 8 |
+| 48 KiB to 2 MiB | 14 | 1.058 | 1.014 | 9 | 0 | 5 |
+| 2 to 4.5 MiB | 10 | 1.001 | 1.041 | 4 | 3 | 3 |
+| 4.5 to 36 MiB | 9 | 0.851 | 0.983 | 5 | 3 | 1 |
+| past 36 MiB | 8 | 0.978 | 1.012 | 3 | 2 | 3 |
+| **all** | **60** | **0.976** | **1.014** | **27** | **13** | **20** |
+
+By rank:
+
+| Rank | Batches | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
+|---|---|---|---|---|---|---|
+| 1D | 20 | 0.969 | 1.014 | 7 | 6 | 7 |
+| 2D | 20 | 0.937 | 1.019 | 8 | 5 | 7 |
+| 3D | 20 | 1.025 | 1.011 | 12 | 2 | 6 |
 
 ---
 
