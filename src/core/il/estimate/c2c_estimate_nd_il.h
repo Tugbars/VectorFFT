@@ -20,9 +20,11 @@
  *      clone set dropped): the column chain, Bluestein, the turned pass, the Rader engine, the
  *      natural leaf, the band, the tile, the row route, the turn, the skew, each child's engine;
  *      at rank 3 the structure, the threaded verdict and its team, the natural form and its strip width,
- *      and the plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2). A contiguous batch on one
- *      thread is the plane or the volume queue over the plan of one transform, run once per transform,
- *      with no clone built; the checks read the plan it wraps (est__batch_one).
+ *      and the plane plan as a 2D plan (s=1) or axis 1 and the row plan (s=2). A contiguous batch is the
+ *      plane or the volume queue over the plan of one transform: on one thread with no copy, run once per
+ *      transform; on T threads the way the row at T says (pq=, est_batch_whole), its copies on the
+ *      one-thread recipe's rows. The checks read the plan it wraps, and with whole transforms per thread
+ *      the first copy against the one-thread recipe (est__batch_one).
  * An estimate create never hands back a plan that measured.
  *
  * POSITION IN vfft.c: included by c2c_estimate_il.h after the 1D build, whose pre-flight, plan check
@@ -369,11 +371,14 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
 /* est_build_nd: the recipe of a 2D (p2) or 3D (p3; the other NULL) request -> a plan built with
  * nothing measured, or NULL with the reason in why and the outcome in rep (may be NULL). cfg is the
  * request as the front door translated it: interleaved c2c, rank 2 or 3, natural, at the recipe's
- * thread count (est_mt_2d, est_mt_3d), one transform or a contiguous batch of them on one thread; its
- * store and save flag are not used. Holds the create lock from the pre-flight to the end.
- * The caller owns the plan (vfft_destroy). */
-static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const vfft_cfg_t *cfg,
-                                               est_build_report_t *rep, char *why, size_t whylen)
+ * thread count (est_mt_2d, est_mt_3d), one transform or a contiguous batch of them; its store and save
+ * flag are not used. A batch on T threads also takes the one-thread recipe its queue's copies replay
+ * (q2 or q3: est_mt_2d / est_mt_3d at one thread) and the recipe's way (pq), both on the rows as the
+ * queue reads them: the copies' one-thread row, and pq= pqn= on the row at T (plane_queue.h:290-322).
+ * Holds the create lock from the pre-flight to the end. The caller owns the plan (vfft_destroy). */
+static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const est_plan2d_t *q2,
+                                               const est_plan3d_t *q3, const vfft_cfg_t *cfg, est_build_report_t *rep,
+                                               char *why, size_t whylen)
 {
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL;
@@ -381,6 +386,7 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     const struct vfft_plan_s *h1;
     est__meter_t m0;
     const int rank = p3 ? 3 : 2;
+    int T, batch, whole;
     if (!rep)
         rep = &lrep;
     memset(rep, 0, sizeof *rep);
@@ -392,14 +398,19 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
         est_refuse(why, whylen, "no recipe or configuration");
         return NULL;
     }
+    T = cfg->nthreads > 1 ? cfg->nthreads : 1;
+    batch = cfg->howmany > 1 && T > 1;   /* the queue's copies, on the one-thread plan */
+    whole = batch ? (p2 ? p2->pq : p3->pq) : 0;
     if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != rank || !est__batch_ok(cfg) ||
         cfg->order == VFI_ORDER_SCRAMBLED ||
-        (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p2->T > 1 ? p2->T : 1))) ||
-        (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3 ||
-                (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p3->T > 1 ? p3->T : 1))))
+        (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || T != (p2->T > 1 ? p2->T : 1))) ||
+        (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3 || T != (p3->T > 1 ? p3->T : 1))) ||
+        (batch && (p2 ? !q2 || q2->T > 1 || q2->N1 != p2->N1 || q2->N2 != p2->N2
+                      : !q3 || q3->T > 1 || q3->N1 != p3->N1 || q3->N2 != p3->N2 || q3->N3 != p3->N3)))
     {
         est_refuse(why, whylen, "estimate builds one %dD interleaved c2c transform in natural order, at the recipe's "
-                   "thread count, or a contiguous batch of them on one thread", rank);
+                   "thread count, or a contiguous batch of them (on more than one thread with its copies' one-thread "
+                   "recipe)", rank);
         return NULL;
     }
     vfft_env_init();          /* env.h:96: the pre-flight's tables in the create's FP mode */
@@ -408,6 +419,8 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     est__meter_read(&m0);
     if (p2 ? est__preflight_2d(p2, why, whylen) : est__preflight_3d(p3, why, whylen))
         goto out;
+    if (batch && (p2 ? est__preflight_2d(q2, why, whylen) : est__preflight_3d(q3, why, whylen)))
+        goto out;
     if (!(S = vfft_child_store_new()))
     {
         est_refuse(why, whylen, "out of memory");
@@ -415,10 +428,28 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     }
     if (p2 ? est_put_rows_2d(&S->vw2, p2, why, whylen) : est_put_rows_3d(&S->vw2, p3, why, whylen))
         goto out;
+    if (batch)
+    {   /* the copies' one-thread row; the way on the row at T, as _pq_mt_replay_or_race reads it */
+        vw2_ilcol_key_t ck;
+        vw2_key_t key;
+        char b[32];
+        if (p2 ? est_put_rows_2d(&S->vw2, q2, why, whylen) : est_put_rows_3d(&S->vw2, q3, why, whylen))
+            goto out;
+        est__colkey(&ck, rank, cfg->n[0], cfg->n[1], rank == 3 ? cfg->n[2] : 0);
+        ck.nthreads = T;
+        vw2__ilcol_key(&ck, &key);
+        snprintf(b, sizeof b, "%zu", cfg->howmany);
+        if (vw2_update_field(&S->vw2, &key, "pqn", b) != VW2_OK || vw2_update_field(&S->vw2, &key, "pq", whole ? "1" : "0") != VW2_OK)
+        {
+            est_refuse(why, whylen, "the batch's way (pq, pqn) was refused on the row at %d threads", T);
+            goto out;
+        }
+    }
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && (est__batch_one(h, cfg, &h1, why, whylen) ||
-              (p2 ? est__check_2d(h1, p2, why, whylen) : est__check_3d(h1, p3, why, whylen))))
-    {
+    if (h && (est__batch_one(h, cfg, whole, &h1, why, whylen) ||
+              (p2 ? est__check_2d(h1, p2, why, whylen) : est__check_3d(h1, p3, why, whylen)) ||
+              (whole && (p2 ? est__check_2d(h->pq_w[0], q2, why, whylen) : est__check_3d(h->pq_w[0], q3, why, whylen)))))
+    {   /* with whole transforms per thread the first copy is the one-thread recipe's plan too */
         rep->status = EST_NOPLAN;
         vfft_destroy((vfft_plan)h);
         h = NULL;
@@ -439,29 +470,47 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
 {
     char why[640];
     struct vfft_plan_s *h = NULL;
+    const int batch = cfg->howmany > 1 && cfg->nthreads > 1;   /* the queue's copies want the one-thread recipe */
     if (cfg->dims == 2)
     {
-        est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p);
-        if (!p)
+        est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p), *q = batch ? (est_plan2d_t *)malloc(sizeof *q) : NULL;
+        if (!p || (batch && !q))
             snprintf(why, sizeof why, "out of memory");
         else if (!est_plan_2d(m, cfg->n[0], cfg->n[1], p, why, sizeof why))
         {
+            if (q)
+            {
+                *q = *p;
+                est_mt_2d(m, 1, q);
+            }
             est_mt_2d(m, cfg->nthreads, p);
-            h = est_build_nd(p, NULL, cfg, NULL, why, sizeof why);
+            if (q)
+                p->pq = est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1], cfg->howmany, cfg->nthreads);
+            h = est_build_nd(p, NULL, q, NULL, cfg, NULL, why, sizeof why);
         }
         free(p);
+        free(q);
     }
     else if (cfg->dims == 3)
     {
-        est_plan3d_t *p = (est_plan3d_t *)malloc(sizeof *p);
-        if (!p)
+        est_plan3d_t *p = (est_plan3d_t *)malloc(sizeof *p), *q = batch ? (est_plan3d_t *)malloc(sizeof *q) : NULL;
+        if (!p || (batch && !q))
             snprintf(why, sizeof why, "out of memory");
         else if (!est_plan_3d(m, cfg->n[0], cfg->n[1], cfg->n[2], p, why, sizeof why))
         {
+            if (q)
+            {
+                *q = *p;
+                est_mt_3d(m, 1, q);
+            }
             est_mt_3d(m, cfg->nthreads, p);
-            h = est_build_nd(NULL, p, cfg, NULL, why, sizeof why);
+            if (q)
+                p->pq = est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1] * (size_t)cfg->n[2], cfg->howmany,
+                                        cfg->nthreads);
+            h = est_build_nd(NULL, p, NULL, q, cfg, NULL, why, sizeof why);
         }
         free(p);
+        free(q);
     }
     else
         snprintf(why, sizeof why, "rank %d: estimate plans ranks 1 to 3", cfg->dims);

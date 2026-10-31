@@ -21,7 +21,8 @@
  *   - VFFT_FLAG_ESTIMATE plans an INTERLEAVED C2C transform by formulas, measuring nothing
  *     (il/estimate/c2c_estimate_il.h): 1D in any order on any thread count, rank 2 and 3 in natural
  *     order on any thread count (il/estimate/c2c_estimate_nd_il.h), and a contiguous batch of them on
- *     one thread (the one-transform plan, run once per transform); every other request under it is
+ *     any thread count (the one-transform plan per transform; on T threads either way, est_batch_whole);
+ *     every other request under it is
  *     refused, as is the flag beside VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE or while an
  *     environment variable that steers a plan is set (est_env_names), and wisdom_dir is not opened;
  *   - the other flags become recalibrate, destroy_input and owned_buffers;
@@ -157,8 +158,8 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     if (p->flags & VFFT_FLAG_ESTIMATE)
     {   /* an INTERLEAVED C2C transform: 1D in any order on any thread count, rank 2 and 3 in natural
          * order on any thread count (il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h), and a contiguous
-         * batch of them on one thread; any other request under the flag is refused here, never planned by
-         * measuring instead */
+         * batch of them; any other request under the flag is refused here, never planned by measuring
+         * instead */
         if (p->flags & VFFT_FLAG_RECALIBRATE)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE: estimate measures nothing and "
@@ -192,12 +193,6 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR (drop "
                        "the flag to plan it by measuring)");
-            return 0;
-        }
-        if (p->howmany > 1 && p->nthreads > 1)
-        {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans a batch on one thread only, not a batch of %zu on %d "
-                       "threads (drop the flag to plan it by measuring)", p->howmany, p->nthreads);
             return 0;
         }
         if (p->layout != VFFT_LAYOUT_INTERLEAVED)

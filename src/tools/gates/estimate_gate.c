@@ -1,7 +1,7 @@
 /* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/estimate/estimate_il.h,
  * il/estimate/c2c_estimate_il.h, and at rank 2 and 3 il/estimate/estimate_nd_il.h,
  * il/estimate/c2c_estimate_nd_il.h): an interleaved c2c transform planned by formulas, nothing measured,
- * and a contiguous batch of them on one thread.
+ * and a contiguous batch of them.
  *
  * Every create goes through the public API with the flag and names the gate's scratch store:
  *   A  correct against a long-double DFT: every bin up to N = 4096 (scrambled: the sorted multiset of the
@@ -32,15 +32,19 @@
  *      refuses a plan whose served verdict, structure, team, form or strip width is not the recipe's -- and
  *      correct the same way; with them a tall axis 0 no strip width fits (the cycle walk at T), a flat plane at
  *      T, and two cells at T = 4 (8x8x8, once refused under the flag, and 64x64x64).
- *   B  a contiguous batch on one thread (B1 rank 1 in the four order x placement cells, B2 and B3 rank 2 and 3
- *      in both placements; K = 2 and an odd K): the batch and the one-transform plan of the same request built
- *      with nothing measured, the one-transform plan correct as in A and D, and the batch on K blocks drawn
- *      apart bitwise that plan's output on each block, both directions -- the batch is the one-transform
- *      plan, run once per transform -- with its round trip within TOL.
+ *   B  a contiguous batch (B1 rank 1 in the four order x placement cells, B2 and B3 rank 2 and 3 in both
+ *      placements): the batch and the one-transform plan of the same request built with nothing measured, the
+ *      one-transform plan correct as in A and D, the batch on K blocks drawn apart against that plan block by
+ *      block, both directions, with its round trip within TOL. On one thread (K = 2 and an odd K) bitwise its
+ *      output: the batch is that plan, run once per transform. On 8 threads (B1T, B2T, B3T; K = 2, 8 and 9)
+ *      within TOL of it (the copies run the one-thread form, at rank 2 and 3 the one-thread recipe), and run
+ *      the way the estimate's rule says (est_batch_whole; a 1D four-step plan has no copies): whole
+ *      transforms per thread exactly when the batch's split engaged (vfft_tc_mt_dispatches,
+ *      vfft_pq_mt_passes).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, a batch on 8 threads and a lane-major batch
- *      (rank 1, 2 and 3), SPLIT, the flag with VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
+ *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, a lane-major batch (rank 1, 2 and 3), SPLIT,
+ *      the flag with VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order, an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
@@ -657,18 +661,46 @@ static void sec_end_nd(const char *name, long b0)
            "-> %s\n", name, g_checks - s_checks, f, g_nd_built - b0, g_nd_eb, g_nd_er, f ? "FAIL" : "PASS");
     g_nd_eb = g_nd_er = 0.0;
 }
-/* ── B: contiguous batches on one thread ── */
+/* ── B: contiguous batches ── */
 static long g_b_built = 0;
+/* the estimate's rule for a batch on T threads (est_batch_whole, il/estimate/estimate_il.h), stated again: whole
+ * transforms per thread when the batch carries at least 16 KiB and one transform fits a core's L2 / 8 (L2 / 4
+ * when K is above T), or the L2 when K is a multiple of T; a 1D four-step plan (route "fs") has no copies */
+static int batch_whole(long long bytes, int K, int T, const char *route)
+{
+    const long long l2 = (long long)vfft_cpu_l2_bytes();
+    if (T < 2 || K < 2 || (long long)K * bytes < (16LL << 10) || l2 <= 0 || (route && !strcmp(route, "fs")))
+        return 0;
+    if (bytes <= l2 / (K > T ? 4 : 8))
+        return 1;
+    return K % T == 0 && bytes <= l2;
+}
+/* the largest |a - b| over the rms of a, n doubles */
+static double rel_diff(const double *a, const double *b, size_t n)
+{
+    long double s = 0.0L, m = 0.0L;
+    size_t i;
+    for (i = 0; i < n; i++)
+    {
+        const long double d = fabsl((long double)a[i] - b[i]);
+        s += (long double)a[i] * a[i];
+        if (!(d <= m)) m = d;
+    }
+    return s > 0 ? (double)(m / sqrtl(s / n)) : (double)m;
+}
 /* a batch of K transforms of len complex points (pb) against the one-transform plan of the same request (p1):
  * K blocks drawn with a seed of their own, the one-transform plan run on an aligned copy of each block; both
- * directions bitwise its output (the batch is that plan, run once per transform), the round trip within TOL */
-static void batch_check(const char *name, vfft_plan pb, vfft_plan p1, long len, int K, int ip)
+ * directions bitwise its output on one thread (the batch is that plan, run once per transform), within TOL on
+ * T threads; the round trip within TOL. On T threads the batch's split (whole transforms per thread) engaged
+ * exactly when `whole` (rank 1: vfft_tc_mt_dispatches; 2 and 3: vfft_pq_mt_passes). */
+static void batch_check(const char *name, vfft_plan pb, vfft_plan p1, long len, int K, int ip, int T, int rank, int whole)
 {
     const size_t nd = (size_t)2 * len, nb = nd * sizeof(double), all = nb * (size_t)K;
     double *x = (double *)vfft_malloc(all), *y = (double *)vfft_malloc(all), *z = ip ? y : (double *)vfft_malloc(all);
     double *w = (double *)vfft_malloc(all), *a = (double *)vfft_malloc(nb), *b = ip ? a : (double *)vfft_malloc(nb);
     long double sx = 0.0L, m = 0.0L;
-    double er;
+    double er, df, dbk;
+    long c0, c1;
     size_t i;
     int t, fsame, bsame;
     if (!x || !y || !z || !w || !a || !b) { printf("out of memory\n"); exit(2); }
@@ -681,8 +713,11 @@ static void batch_check(const char *name, vfft_plan pb, vfft_plan p1, long len, 
         memcpy(w + nd * t, b, nb);
     }
     if (ip) memcpy(y, x, all);
+    c0 = rank == 1 ? vfft_tc_mt_dispatches() : vfft_pq_mt_passes();
     vfft_execute(pb, VFFT_FORWARD, ip ? y : x, y);
-    fsame = !memcmp(w, y, all);
+    c1 = rank == 1 ? vfft_tc_mt_dispatches() : vfft_pq_mt_passes();
+    df = rel_diff(w, y, nd * K);
+    fsame = T > 1 ? df <= TOL : !memcmp(w, y, all);
     for (t = 0; t < K; t++)   /* its backward of the batch's forward */
     {
         memcpy(a, y + nd * t, nb);
@@ -690,16 +725,22 @@ static void batch_check(const char *name, vfft_plan pb, vfft_plan p1, long len, 
         memcpy(w + nd * t, b, nb);
     }
     vfft_execute(pb, VFFT_BACKWARD, y, z);
-    bsame = !memcmp(w, z, all);
+    dbk = rel_diff(w, z, nd * K);
+    bsame = T > 1 ? dbk <= TOL : !memcmp(w, z, all);
     for (i = 0; i < nd * K; i++)
     {
         const long double d = fabsl((long double)z[i] / len - x[i]);
         if (!(d <= m)) m = d;
     }
     er = (double)(m / sqrtl(sx / ((long double)len * K)));
+    if (T > 1)
+        CHECK((c1 != c0) == whole, "B  %s: the batch ran %s, the rule says %s", name,
+              c1 != c0 ? "whole transforms per thread" : "all threads on each transform",
+              whole ? "whole transforms per thread" : "all threads on each transform");
     CHECK(fsame && bsame && er <= TOL, "B  %s: the batch's forward %s and its backward %s the one-transform plan's, "
-          "block by block; round trip %.2e", name, fsame ? "is" : "is NOT", bsame ? "is" : "is NOT", er);
-    g_b_built += fsame && bsame && er <= TOL;
+          "block by block (%s; forward %.1e, backward %.1e); round trip %.2e", name, fsame ? "is" : "is NOT",
+          bsame ? "is" : "is NOT", T > 1 ? "within TOL" : "bitwise", df, dbk, er);
+    g_b_built += fsame && bsame && er <= TOL && (T < 2 || (c1 != c0) == whole);
     vfft_free(x);
     vfft_free(y);
     vfft_free(w);
@@ -718,8 +759,8 @@ static void bnd_correct(vfft_plan p, const void *r, int scr, int ip, double *eb,
     nd_errors(p, (const ndref_t *)r, ip, eb, er);
 }
 /* the request c as one transform and as a batch of K, both built with nothing measured; the one-transform plan
- * correct against the reference, the batch against it */
-static void batch_cell(const char *name, vfft_config_t c, long len, int K, int scr, int ip, correct_fn correct,
+ * correct against the reference, the batch against it, on c.nthreads threads */
+static void batch_cell(const char *name, vfft_config_t c, int rank, long len, int K, int scr, int ip, correct_fn correct,
                        const void *ref)
 {
     vfft_plan p1, pb;
@@ -733,63 +774,66 @@ static void batch_cell(const char *name, vfft_config_t c, long len, int K, int s
     if (p1 && pb && !m1 && !mb)
     {
         double eb, er;
+        const int T = c.nthreads > 1 ? c.nthreads : 1;
         correct(p1, ref, scr, ip, &eb, &er);
         CHECK(eb <= TOL && er <= TOL, "B  %s: the one-transform plan: forward %.2e, round trip %.2e (tolerance %.0e)", name,
               eb, er, TOL);
-        batch_check(name, pb, p1, len, K, ip);
+        batch_check(name, pb, p1, len, K, ip, T, rank,
+                    batch_whole(16LL * len, K, T, rank == 1 ? vfft_plan_route(p1) : NULL));
     }
     vfft_destroy(pb);
     vfft_destroy(p1);
 }
-/* B1: one length in the four cells at K = 2 and K = 5 (K = 2 alone past 2^18 points) */
-static void b1_len(long N)
+/* B1: one length in the four cells at T threads, each K of Ks (the first K alone past 2^18 points) */
+static void b1_len(long N, int T, const int *Ks, int nK)
 {
     ref_t r;
     int scr, ip, k;
-    static const int Ks[2] = { 2, 5 };
     ref_make(&r, N);
     for (scr = 0; scr < 2; scr++)
         for (ip = 0; ip < 2; ip++)
-            for (k = 0; k < (N <= (1L << 18) ? 2 : 1); k++)
+            for (k = 0; k < (N <= (1L << 18) ? nK : 1); k++)
             {
                 char name[96];
                 vfft_config_t c;
-                snprintf(name, sizeof name, "N=%ld K=%d %s %s", N, Ks[k], scr ? "scr" : "nat", ip ? "ip" : "oop");
+                snprintf(name, sizeof name, "N=%ld K=%d %s %s T=%d", N, Ks[k], scr ? "scr" : "nat", ip ? "ip" : "oop", T);
                 memset(&c, 0, sizeof c);
                 c.n[0] = (int)N;
                 c.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
                 c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
-                batch_cell(name, c, N, Ks[k], scr, ip, b1_correct, &r);
+                c.nthreads = T;
+                batch_cell(name, c, 1, N, Ks[k], scr, ip, b1_correct, &r);
             }
     ref_free(&r);
 }
-/* B2, B3: one shape in both placements at K = 2 and K = 3 */
-static void bnd_shape(int rank, int n0, int n1, int n2)
+/* B2, B3: one shape in both placements at T threads, each K of Ks */
+static void bnd_shape(int rank, int n0, int n1, int n2, int T, const int *Ks, int nK)
 {
     const int n[3] = { n0, n1, n2 };
     ndref_t r;
-    int ip, K;
+    int ip, k;
     ndref_make(&r, rank, n);
     for (ip = 0; ip < 2; ip++)
-        for (K = 2; K <= 3; K++)
+        for (k = 0; k < nK; k++)
         {
             char name[96];
             vfft_config_t c;
-            if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d K=%d %s", n0, n1, n2, K, ip ? "ip" : "oop");
-            else snprintf(name, sizeof name, "%dx%d K=%d %s", n0, n1, K, ip ? "ip" : "oop");
+            if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d K=%d %s T=%d", n0, n1, n2, Ks[k], ip ? "ip" : "oop", T);
+            else snprintf(name, sizeof name, "%dx%d K=%d %s T=%d", n0, n1, Ks[k], ip ? "ip" : "oop", T);
             memset(&c, 0, sizeof c);
             c.rank = rank;
             c.n[0] = n0; c.n[1] = n1; c.n[2] = rank == 3 ? n2 : 0;
             c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
-            batch_cell(name, c, r.P, K, 0, ip, bnd_correct, &r);
+            c.nthreads = T;
+            batch_cell(name, c, rank, r.P, Ks[k], 0, ip, bnd_correct, &r);
         }
     ndref_free(&r);
 }
 static void sec_end_b(const char *name, long b0)
 {
     const int f = g_fail - s_fail;
-    printf("SECTION %-3s: %d checks, %d failed; %ld batches built, each the one-transform plan run once per transform "
-           "-> %s\n", name, g_checks - s_checks, f, g_b_built - b0, f ? "FAIL" : "PASS");
+    printf("SECTION %-3s: %d checks, %d failed; %ld batches built and served as the estimate planned them -> %s\n", name,
+           g_checks - s_checks, f, g_b_built - b0, f ? "FAIL" : "PASS");
 }
 
 /* the environment, set or cleared */
@@ -863,10 +907,6 @@ int main(int argc, char **argv)
         refused("rank 2 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.order = VFFT_ORDER_SCRAMBLED;
         refused("rank 3 scrambled", &c, "plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED");
-        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.nthreads = 8;
-        refused("rank 2 howmany 4 T=8", &c, "plans a batch on one thread only, not a batch of 4 on 8 threads");
-        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.nthreads = 8;
-        refused("rank 3 howmany 2 T=8", &c, "plans a batch on one thread only, not a batch of 2 on 8 threads");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.batch = VFFT_BATCH_LANE_MAJOR;
         refused("rank 2 howmany 4 lane-major", &c, "plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.batch = VFFT_BATCH_LANE_MAJOR;
@@ -880,8 +920,6 @@ int main(int argc, char **argv)
         /* 53 * 59 * 2^18: no column chain, its Bluestein length 2^31 (the create used to loop forever) */
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 819724288; c.n[1] = 2;
         refused("rank 2 819724288x2", &c, "N = 819724288 has no column chain and its Bluestein length 2147483648 none either");
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.nthreads = 8;
-        refused("howmany 4 T=8", &c, "plans a batch on one thread only, not a batch of 4 on 8 threads");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.batch = VFFT_BATCH_LANE_MAJOR;
         refused("howmany 4 lane-major", &c, "plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.layout = VFFT_LAYOUT_SPLIT;
@@ -1031,7 +1069,8 @@ int main(int argc, char **argv)
         sec_end_nd(T3 > 1 ? "D3T" : "D3", b0);
     }
 
-    /* B1, B2, B3: contiguous batches on one thread, over the routes of A and the shapes of D */
+    /* B1, B2, B3: contiguous batches over the routes of A and the shapes of D, on one thread (bitwise the
+     * one-transform plan), and B1T, B2T, B3T on 8 threads (K = 2, 8, 9: the rule's two bounds and an uneven K) */
     {
         static const long B1[] = { 2, 3, 16, 64, 100, 997, 1000, 1009, 2048, 4096, 4099, 6000, 12288, 50000, 65536, 65537,
                                    131072, 300000, 1048576 };
@@ -1042,21 +1081,26 @@ int main(int argc, char **argv)
                                      { 1024, 16, 16 }, { 2048, 2, 2 }, { 2, 512, 512 }, { 8, 2, 2048 }, { 9, 15, 27 },
                                      { 5, 7, 9 }, { 100, 3, 5 }, { 53, 8, 8 }, { 643, 4, 4 }, { 4, 53, 8 }, { 8, 8, 131 },
                                      { 2, 131, 256 } };
-        long b0 = g_b_built;
-        sec_begin();
-        for (i = 0; i < (int)(sizeof B1 / sizeof B1[0]); i++)
-            b1_len(B1[i]);
-        sec_end_b("B1", b0);
-        b0 = g_b_built;
-        sec_begin();
-        for (i = 0; i < (int)(sizeof B2 / sizeof B2[0]); i++)
-            bnd_shape(2, B2[i][0], B2[i][1], 0);
-        sec_end_b("B2", b0);
-        b0 = g_b_built;
-        sec_begin();
-        for (i = 0; i < (int)(sizeof B3 / sizeof B3[0]); i++)
-            bnd_shape(3, B3[i][0], B3[i][1], B3[i][2]);
-        sec_end_b("B3", b0);
+        static const int K1[2] = { 2, 5 }, Knd[2] = { 2, 3 }, KT[3] = { 2, 8, 9 };
+        int TB;
+        for (TB = 1; TB <= 8; TB += 7)
+        {
+            long b0 = g_b_built;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof B1 / sizeof B1[0]); i++)
+                b1_len(B1[i], TB, TB > 1 ? KT : K1, TB > 1 ? 3 : 2);
+            sec_end_b(TB > 1 ? "B1T" : "B1", b0);
+            b0 = g_b_built;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof B2 / sizeof B2[0]); i++)
+                bnd_shape(2, B2[i][0], B2[i][1], 0, TB, TB > 1 ? KT : Knd, TB > 1 ? 3 : 2);
+            sec_end_b(TB > 1 ? "B2T" : "B2", b0);
+            b0 = g_b_built;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof B3 / sizeof B3[0]); i++)
+                bnd_shape(3, B3[i][0], B3[i][1], B3[i][2], TB, TB > 1 ? KT : Knd, TB > 1 ? 3 : 2);
+            sec_end_b(TB > 1 ? "B3T" : "B3", b0);
+        }
     }
 
     /* E: the environment guard; each variable unset again before the next create */
@@ -1103,7 +1147,7 @@ int main(int argc, char **argv)
     CHECK(d0n == 0 && d1n == 0 && e0 == e1, "W  the library's own store (VFFT_WISDOM_DIR): %d file(s) after", d1n);
     sec_end("W");
 
-    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld batches on one thread\n%s\n",
+    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld batches\n%s\n",
            g_checks, g_fail, g_built, g_nd_built, g_b_built, g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

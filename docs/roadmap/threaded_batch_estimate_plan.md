@@ -120,6 +120,14 @@ The timing tool holds, in one process, inside one measurement scope (so the libr
 - MKL's 3D split (whole transforms per thread, then the K mod T left over on all threads) has no counterpart.
 - A 1D four-step plan cannot run as a one-thread copy at T > 1, so its batches always take the first way.
 - The 1D batch verdict is filed without the thread count, so a verdict raced at 8 threads is replayed at 4.
+- At rank 2 and 3 the store keeps one batch verdict per shape and thread count (`pq`, `pqn` on the row at T):
+  racing another K replaces it, and the next create at the first K races again.
+- The rank-2 and rank-3 race kept the minimum of 3 samples of one execute each (`_pq_mt_race`). On tiny
+  batches a sample is about 1 µs, and the loop runs right after the queue has moved the data to the other
+  cores: at 2D 8x8 with K = 8 it timed the loop at 1,500 ns against 330 ns steady, and picked the queue,
+  which is 3x slower. Fixed on 2026-10-31 with the owner's approval: the race now samples as the 1D batch
+  race does (about 32768 points a sample out of place, the minimum of 7 rounds, 9 in place). Its check, the
+  study's 2D and 3D cells raced again and scored on the forced timings above, waits for a quiet machine.
 
 ## 7. Risks
 
@@ -131,3 +139,37 @@ The timing tool holds, in one process, inside one measurement scope (so the libr
   machine.
 - The races of missing one-transform rows take most of the time; the pilot sets the budget and drops the largest
   cells if needed.
+
+## 8. The result (2026-10-31)
+
+Steps 1-5 ran on 2026-10-31 (the owner kept the 4-thread cells): 269 cells in 42 minutes on a quiet machine,
+the controls within 5% on all but 7, no timed arm measured at create, every arm engaged as asked. Time lost
+against the faster way, geomean over the 269 cells: the planner's own batch races 1.021 (16 cells above 1.10,
+the worst 3.12); the L3 / T bound of section 4, 1.11 out of place and 1.31 in place; the rule below 1.010
+(14 cells above 1.10, the worst 1.40).
+
+**The rule (approved by the owner 2026-10-31; `est_batch_whole`, `src/core/il/estimate/estimate_il.h`):**
+1. A batch of fewer than 16 KiB in all: all threads on each transform (its plan at T runs on one thread
+   there, so the batch runs on one thread).
+2. One transform of at most 256 KiB (a core's L2 / 8), or 512 KiB (L2 / 4) when K is above T: whole
+   transforms per thread. (The 512 KiB bound for K above T was added on 2026-10-31 after the unseen cells,
+   with the owner's approval: 1.0097 -> 1.0093 on the study's cells, 1.016 -> 1.011 on the unseen ones.)
+3. One transform of at most a core's L2 (2 MiB) with K a multiple of T: whole transforms per thread.
+4. Otherwise all threads on each transform.
+
+The bound is a core's L2, not L3 / T: a worker that takes whole transforms runs each through its own L2, and
+past it one transform threaded over T cores keeps its pieces in T L2s together. At 4 threads the fixed bounds
+and bounds scaled by 8 / T tie (1.018 and 1.019); the plain form is kept. Tools and logs:
+`docs/research/estimate_threaded/evidence/batch/`.
+
+**Built** (2026-10-31): the estimate plans a contiguous batch on any thread count; the gate's sections B1T,
+B2T and B3T check every batch at 8 threads runs the way the rule says.
+
+**The unseen cells** (step 8, 2026-10-31; 60 cells, 20 per rank at 8 threads, each its own shape with K = 3,
+6, 12 or 24):
+- The rule against the faster way: 1.016 (4 cells above 1.10), against 1.010 on the study's cells.
+- The estimate's batch plan against the planner's: geomean 0.984, median 1.004; 28 within 5%, 12 more than 5%
+  faster, 20 more than 5% slower, 14 above 1.10. By region: up to 48 KiB 0.959, 48 KiB - 2 MiB 1.078, 2 - 4.5
+  MiB 1.026, 4.5 - 36 MiB 0.854, past 36 MiB 0.992. Of the 14 cells above 1.10, 3 take another way than the
+  planner (one transform of 512 KiB - 4 MiB at K = 3 or 12, where whole transforms per thread are faster); in
+  the other 11 both take the same way, and the difference is the plans of one transform inside the batch.

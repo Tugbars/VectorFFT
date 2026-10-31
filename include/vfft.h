@@ -149,7 +149,7 @@ extern "C"
                                             1D in any order, placement and nthreads; rank 2
                                             and 3 in natural order at any nthreads, either
                                             placement; and a contiguous batch of them
-                                            (howmany > 1) on one thread.
+                                            (howmany > 1).
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment

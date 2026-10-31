@@ -199,8 +199,9 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
-/* ── the loop-vs-queue(-vs-groups) race (create-time, min-of-3, A then B
- * then C, on scratch). The queue also self-gates: no pool, no clones, or a
+/* ── the loop-vs-queue(-vs-groups) race (create-time, on scratch, the 1D
+ * batch race's protocol: samples of about 32768 points, the minimum of 7
+ * rounds, 9 in place). The queue also self-gates: no pool, no clones, or a
  * clone failing the BITWISE probe against the primary => pq_mt stays 0 and
  * the loop serves (the primary keeps its own intra-MT verdicts); the groups
  * arm is in the race only when its clone set was built (pq_gn == K). */
@@ -391,7 +392,15 @@ static void _pq_mt_race(struct vfft_plan_s *h)
         const vfft_race_arm_t arms[3] = { { "loop", _pq_mt_arm_loop, &c },
                                           { "queue", _pq_mt_arm_queue, &c },
                                           { "groups", _pq_mt_arm_groups, &c } };
-        vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 0 }; /* min-of-3, A then B then C */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        /* the 1D batch race's protocol (_tc_mt_decide, vfft.c): out of place a sample runs the batch until it
+         * covers about 32768 points (some 30 us), in place one pass after the reset; the minimum of 7 rounds
+         * (9 in place), the order reversed every other round, one untimed pass first. With one pass a sample a
+         * tiny batch is timed at the clock's step, and each loop sample pays for pulling the batch back from the
+         * queue's cores: at 2D 8x8 x 8 on 8 threads the loop was timed at 1500 ns against 330 ns steady and the
+         * queue won, three times slower (2026-10-31). THREADED arms: never paused (VFFT_RACE_PACE_MS). */
+        const size_t pts = h->pq_n * (h->pq_sdist / 2);
+        vfft_race_proto_t proto = { ip ? 9 : 7, ip ? 1 : (int)(32768u / (pts ? pts : 1)) + 1, VFFT_RACE_MIN, 1, 1,
+                                    NULL, NULL, 0, 0 };
         _il2d_ip_reset_t rs;
         double ns[3];
         (void)r;

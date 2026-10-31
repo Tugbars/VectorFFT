@@ -8,9 +8,9 @@
  * a banked verdict then builds the plan. No wisdom store is read or written.
  *
  * SCOPE: one 1D interleaved c2c transform (howmany 1), either order, either placement, any thread
- * count; a contiguous batch of them on one thread is that transform's plan, run once per transform
- * (c2c_estimate_il.h, est__batch_one). The front door refuses every other request under the flag
- * (vfft_api.h).
+ * count; a contiguous batch of them is that transform's plan, run once per transform on one thread, and
+ * on T threads either way est_batch_whole picks (c2c_estimate_il.h, est__batch_one). The front door
+ * refuses every other request under the flag (vfft_api.h).
  *
  * THE FORMULAS ARE PURE: est_plan_1d reads the machine and the request only -- no clock, no store,
  * no allocation. The facts they need are the library's own: the radix lists of the IL registry
@@ -56,6 +56,7 @@ typedef struct est_request_s
     int order;      /* VFFT_ORDER_NATURAL | VFFT_ORDER_SCRAMBLED -> ord=nat | scr */
     int placement;  /* VFFT_PLACEMENT_OUT | VFFT_PLACEMENT_IN -> place=oop | ip */
     int nthreads;   /* T; 0 or 1 = one thread -> nthreads=T on a T > 1 row */
+    size_t howmany; /* K transforms of a contiguous batch; 0 or 1 = one -> q=K on the batch's own row */
 } est_request_t;
 
 /* The recipe: the c2c K=1 row's payload, each field named as the record names it
@@ -101,6 +102,9 @@ typedef struct est_recipe_s
         int in_tw;                 /* [in_tw] the ZTURN-T inner's tile, 0 = untiled */
     } prime;                       /* the prime cell's method row (vw2_prime_method_bank,
                                     * wisdom2_oop_il.h:554); its route row says il_route=prime il_kv=0 */
+    int tcmt;                      /* [tcmt] the batch's own row (eng=tcb, q=K), a batch on T threads whose
+                                    * plan has copies (not the four-step): 1 whole transforms per thread,
+                                    * 0 all threads on each transform (est_batch_whole) */
 } est_recipe_t;
 
 /* ── code facts ─────────────────────────────────────────────────────────── */
@@ -1484,6 +1488,37 @@ ztt:
     return 0;
 }
 
+/* ── the contiguous batch on T threads ──────────────────────────────────── */
+
+/* THE BATCH'S TWO WAYS (docs/roadmap/threaded_batch_estimate_plan.md; the study of 2026-10-31, 269 cells at
+ * rank 1, 2 and 3, 8 and 4 threads, both placements, docs/research/estimate_threaded/evidence/batch/). The
+ * door runs K transforms on T threads either way: all threads on each transform in turn (the plan of one
+ * transform at T, K times: the serial loop of the 1D wrapper, the queue's loop at rank 2 and 3), or whole
+ * transforms per thread (each worker on a one-thread copy of the plan: the 1D slabs, the queue). Whole
+ * transforms per thread while one transform fits a core's L2 / EST_BATCH_L2_DIV (twice that when K is
+ * above T), or the whole L2 when K is a multiple of T: a worker runs its transforms through its own core's
+ * L2, and past it one transform threaded over T cores keeps its pieces in T L2s; with K below T, or not a
+ * multiple of it, workers idle at the end, the fewer the larger K is. A batch of fewer than EST_BATCH_FLOOR
+ * bytes in all keeps the first way (its plan at T runs on one thread there): handing out the transforms
+ * costs more than the work. Time lost against the faster way, geomean over the 269 cells: 1.009 (the
+ * planner's own races 1.021; a bound of L3 / T on one transform, counted twice out of place, 1.11 out of
+ * place and 1.31 in place); over 60 cells drawn after the rule, 1.011. Bounds scaled by 8 / T tie with the
+ * fixed ones at 4 threads (1.019 against 1.018), and counting a transform twice out of place changes
+ * nothing at these cells: the plain form is kept. */
+#define EST_BATCH_FLOOR (16 << 10)
+#define EST_BATCH_L2_DIV 8
+
+/* 1: whole transforms per thread for K transforms of `bytes` each (16 per point) on T threads; 0: all
+ * threads on each transform in turn */
+static inline int est_batch_whole(const est_machine_t *m, size_t bytes, size_t K, int T)
+{
+    if (T < 2 || K < 2 || (double)K * (double)bytes < EST_BATCH_FLOOR || m->l2 <= 0)
+        return 0;
+    if (bytes <= (size_t)m->l2 / (K > (size_t)T ? EST_BATCH_L2_DIV / 2 : EST_BATCH_L2_DIV))
+        return 1;
+    return K % (size_t)T == 0 && bytes <= (size_t)m->l2;
+}
+
 /* est_plan_1d: the machine and the request -> the recipe. Returns 0 with *out filled, or -1 with
  * the reason in why (cut to whylen; why may be NULL when whylen is 0). Pure. Refused besides the
  * lengths est_c2c refuses: a transform other than VFFT_C2C and a machine of another lane count than
@@ -1512,6 +1547,8 @@ static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, e
         return -1;
     if (T == 1 && out->k1_il_route == VFFT_K1_IL_FLAT)
         est_rader_window(rq->N, out);
+    if (rq->howmany > 1 && T > 1 && out->k1_il_route != VFFT_K1_IL_FS)
+        out->tcmt = est_batch_whole(m, 16 * (size_t)rq->N, rq->howmany, T);
     return 0;
 }
 

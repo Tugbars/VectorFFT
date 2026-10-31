@@ -12,8 +12,9 @@
  *
  * SCOPE: one transform (howmany 1), natural order, either placement (the 2D and 3D rows are
  * placement-blind: one recipe serves both), every axis >= 2, any thread count (est_mt_2d and est_mt_3d
- * thread the one-thread plan); a contiguous batch of them on one thread is that transform's plan, run
- * once per transform (the plane or the volume queue, c2c_estimate_il.h, est__batch_one). Rank 3 is the
+ * thread the one-thread plan); a contiguous batch of them is that transform's plan run once per
+ * transform on one thread, and on T threads the plane or the volume queue runs it the way est_batch_whole
+ * picks, its copies on the one-thread plan (c2c_estimate_nd_il.h, est_build_nd). Rank 3 is the
  * 2D plan per plane then
  * axis 0 (s=1), or on the even planes near the L2 and the planes with an odd side the flat tier (s=2,
  * est__flat_plane). The front door
@@ -80,6 +81,8 @@ typedef struct est_plan2d_s
     est_recipe_t turnp;    /* [turn_] N1, in place, natural: has_turn */
     est_recipe_t cskp;     /* [csk_]  N2, out of place, natural: has_csk */
     est_recipe_t tpcp;     /* [tpc_]  N1, in place, natural: col.tpc == 1 */
+    int pq;                /* [pq] a batch on T threads: 1 whole transforms per thread (the plane queue's copies),
+                            * 0 all threads on each transform (est_batch_whole) */
 } est_plan2d_t;
 
 /* The 3D plan's row: axis 0, the structure, the natural form, the plane child. */
@@ -102,6 +105,8 @@ typedef struct est_plan3d_s
     int cmtf;              /* [cmtf] T > 1: the natural form at T, 1 the cycle walk, 2 the strips */
     int mtnsw;             /* [nsw] cmt = 2 with the strips: their width at T, written over the one-thread nsw
                             * (the row carries one nsw; fftnd_il.h:1785-1786); 0 otherwise */
+    int pq;                /* [pq] a batch on T threads: 1 whole transforms per thread (the volume queue's copies),
+                            * 0 all threads on each transform (est_batch_whole) */
 } est_plan3d_t;
 
 /* ── the estimate's constants (docs/design/estimate_2d3d_sketch.md) ────── */
