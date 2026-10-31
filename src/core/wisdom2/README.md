@@ -189,10 +189,11 @@ OOP) and the COMPONENT recipe (`role=comp`; banked by an in-place or odd
 race — and by the offline planner for every odd-mid cell — which must never
 attach an OOP route by fiat). A comp row may also carry the cascade's per-T
 MT verdict (`zt_mt_t=`/`zt_mt=`), as may the verdict row. A K>1 interleaved
-batch has its own row at `q=K` (`eng=tcb tcmt=0|1 tcmtt=<T raced at>`): the
-transform-contiguous wrapper's serial-vs-slabs verdict, T-free because each
-core runs a whole transform; `eng=tcb` fails every family gate, so no reader
-can serve it as a plan. An in-place caller
+batch has its own row at `q=K` and the plan's thread count (`eng=tcb
+tcmt=0|1`, keyed `nthreads=T` since 2026-11-01): the transform-contiguous
+wrapper's serial-vs-slabs verdict, which moves with T because a slab is
+ceil(K/T) transforms; `eng=tcb` fails every family gate, so no reader can
+serve it as a plan. An in-place caller
 replays comp first, then the verdict; its mode row's `ref=` names whichever
 served. A mode row never carries the caller's classic chain as its own —
 that chain is a SPLIT caller's plan (the served recipe only for the tape
@@ -358,12 +359,13 @@ store's memory → the guarded save persists it.
   and reuses `row*` for the innermost pass, plus `ablock=` (LOCAL; absent
   = builder heuristic). Variant vocabulary: `flat/log3/t1s/buf`.
 - A contiguous batch (`howmany > 1`) through the plane or volume queue
-  (`il/rank2/plane_queue.h`) banks its loop-vs-queue verdict on the primary
-  K=1 plan's own row at the plan's thread count: `pq=0|1 pqn=<P>` (the
-  plane count it was raced at; a P mismatch re-races). A real cell's row is
-  direction-shared (keyed `t=r2c`), so the c2r queue's verdict has its own
-  names there, `pq_c2r= pqn_c2r=`, as the tiers' `cmt_c2r=` (2026-10-19);
-  `pq= pqn=` stay the r2c's and the c2c's.
+  (`il/rank2/plane_queue.h`) banks its loop-vs-queue verdict on the batch's
+  own row (2026-11-01; `vw2_pq_bank`, `il/wisdom/wisdom2_2d_il_reader.h`):
+  key `t=` the request's transform (`c2c`, `r2c` or `c2r`), the shape,
+  `q=K`, the request's order class and placement, `lay=il`, `nthreads=T`;
+  payload `pq=0|1|2` (the loop, the queue, the groups), `ran=K`. One row
+  per shape, K, thread count, placement, order and direction: racing
+  another K never displaces a verdict. The K=1 rows carry no queue verdict.
 - `ns= metric=fwd1 units=ns` means one call of the KEYED transform (a
   `t=c2r` row's ns is a c2r call). 3D extraction banks are MEASURE-LESS
   (no ns token): the store serves the recipe; a measured verdict can

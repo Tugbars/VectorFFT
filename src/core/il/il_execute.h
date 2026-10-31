@@ -527,8 +527,8 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
         const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
         /* The THREADING verdict (h->tc_mt): raced serial-vs-slabs at create
-         * on this cell, or replayed from its eng=tcb row; T-free (one
-         * transform per core). No verdict => the serial loop. */
+         * on this cell, or replayed from its eng=tcb row at the plan's
+         * thread count. No verdict => the serial loop. */
         if (T > 1 && h->tc_mt)
         {
             _vfft_pool_arm(h->nthreads); /* re-assert snapshot pool */

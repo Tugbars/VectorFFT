@@ -320,8 +320,8 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
     "r2c" / "c2r"): its own row in wisdom2_real.txt (the zr2c route or the
     odd-N bridge verdict) and the zr2c child's c2c(N/2) row; a 2D real shape
     the direction-shared t=r2c row in wisdom2_2d.txt. A 1D real batch (k > 1)
-    adds the batch's own threading verdict, eng=tcb tcmt= on its q=K row, which
-    is thread-count-free (no nthreads= token at any T). Returns key -> payload."""
+    adds the batch's own threading verdict, eng=tcb tcmt= on its q=K row, keyed
+    by the thread count like the others (2026-11-01). Returns key -> payload."""
     out = {}
     pl = "ip" if ip else "oop"
     want_t = int(threads) if int(threads) > 1 else 0
@@ -330,7 +330,10 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
         if os.path.isfile(p):
             t = io.open(p, encoding="utf-8", errors="ignore").read()
             for m in re.finditer(r"@cell t=%s n=%d q=%d [^|\n]*place=%s[^|\n]*\| (eng=tcb[^\n]*)" % (real, n, int(k), pl), t):
-                out[m.group(0).split(" | ")[0]] = re.sub(r" date=\S+", "", m.group(1))
+                key = m.group(0).split(" | ")[0]
+                mt = re.search(r" nthreads=(\d+)", key)
+                if (int(mt.group(1)) if mt else 0) == want_t:
+                    out[key] = re.sub(r" date=\S+", "", m.group(1))
     if real and is2d(n):
         # the direction-shared t=r2c row: wisdom2_2d.txt for a plane, wisdom2_3d.txt for a cube (the rank-3 real tier, 2026-10-07)
         pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)

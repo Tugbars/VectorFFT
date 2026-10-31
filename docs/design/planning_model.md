@@ -315,7 +315,7 @@ every process. A **gap** pending the wisdom2 1D key convention — see §16.
 ```mermaid
 flowchart TD
     MT{"what are the<br/>cores doing?"}
-    MT -->|"one transform per core<br/>(TC batches, plane queue)"| A["nothing about the plan<br/>depends on T<br/><b>bank T-free</b>"]
+    MT -->|"one transform per core<br/>(TC batches, plane queue)"| A["the plan does not depend on T,<br/>how K transforms share<br/>T workers does<br/><b>bank per-T and per-K</b>"]
     MT -->|"cores share one transform<br/>(2D column pass, cascade walk)"| B["T decides how the work<br/>is CUT: band counts,<br/>worker clamps, row widths<br/><b>bank per-T</b>"]
     B --> C["a cut that wins at T=2<br/>can lose at T=8<br/>&rarr; re-race on T mismatch"]
 
@@ -323,18 +323,20 @@ flowchart TD
     style B fill:#5f3a1f,color:#fff
 ```
 
-More cores running *separate* transforms changes nothing about any one plan, so that
-verdict is valid at any thread count. Cores *cooperating* on one transform is different:
-the thread count determines how the work is divided, and the best division at 2 threads can
-be the wrong division at 8.
+More cores running *separate* transforms changes nothing about any one plan, but it
+changes how K transforms divide among T workers: 4 transforms on 8 threads leave four
+workers idle, on 4 threads none. So that verdict is keyed by the thread count and by K
+(2026-11-01). Cores *cooperating* on one transform is the other class: the thread count
+determines how the work is divided, and the best division at 2 threads can be the wrong
+division at 8.
 
 **The MT verdicts, one per site.** Every place the library can thread carries a raced,
 banked verdict; none threads on a rule.
 
 | site | who shares a transform | verdict | class | row |
 |---|---|---|---|---|
-| K>1 transform-contiguous batch | one transform per core | serial loop vs slabs of `ceil(K/T)` transforms over per-worker clones | T-free | the batch's own `q=K` interleaved row: `eng=tcb tcmt=<0 or 1> tcmtt=<T raced at>` |
-| 2D plane queue (`howmany > 1`) | one plane per core | loop the plan vs hand planes to clones | T-free | `pq` tokens on the primary plane's row |
+| K>1 transform-contiguous batch | one transform per core | serial loop vs slabs of `ceil(K/T)` transforms over per-worker clones | per-T | the batch's own `q=K` interleaved row keyed `nthreads=T`: `eng=tcb tcmt=<0 or 1>` |
+| 2D plane queue, 3D volume queue (`howmany > 1`) | one plane per core | loop the plan vs hand planes to clones (vs groups of `T/K` threads, 3D real) | per-T | the batch's own `q=K` row keyed `nthreads=T` and the placement: `pq=<0, 1 or 2>` |
 | 2D route (axis) race | cores share the plane | every route in its threaded AND serial form: the chain, the turn, the skewed column pass (`il2d_c2c_mt.md`) | per-T | `axt rot wlt swt rbkt turnt cskt axns` beside the one-thread `ro wl sw rbk turn csk` |
 | 2D column pass | cores share the plane | the banked route's threaded walk vs serial (the chain: block, the strips ladder and the tile partition; the turn and the skewed pass: their row-slab walks) | per-T | `cmt mtarm msw nls` on the row keyed `nthreads=T` (r2c and c2r each their own set) |
 | K=1 cascade walk | cores share the transform | threaded walk vs serial | per-T | `zt_mt_t zt_mt` (in-place: `zt_mt_ip_*`) on the kind-4 recipe row |
@@ -344,9 +346,9 @@ store-served K=1 inner (the plan is the inner's; the wrapper adds no plan of its
 When worker clones exist, create races the wrapper's two executions on the cell's own
 buffers, placement-honest (in-place arms are aliased and reseeded before every sample),
 and banks the winner. No clones means no arm: the wrapper runs its serial loop by
-construction, and nothing is banked. A replay at any thread count serves the banked
-verdict; `tcmtt=` is provenance, not a validity key, because each core runs whole
-transforms and the plan never depends on T. `VFFT_TCMT=0|1` pins the verdict for a
+construction, and nothing is banked. A replay serves the row at the plan's own thread
+count; another thread count races its own row, since a slab is `ceil(K/T)` transforms.
+`VFFT_TCMT=0|1` pins the verdict for a
 process without replaying or banking; `VFFT_NO_TCMT` builds no clones at all. There is
 no engage floor: the former 2048-complex-point threshold was an offline table, and the
 verdicts it replaced flip it in both directions (a 1024-point out-of-place cell threads,
@@ -1075,13 +1077,13 @@ interleaved-family engine, sharing no code with Part III.
 **Transform-contiguous batch (`tcb`)** — when K transforms lie one after another, a batch
 handle processes them with block strides derived arithmetically from (transform,
 placement). The clone count is whatever passed an equivalence check, not a raced value;
-whether the slabs run is a raced verdict (serial loop vs slabs at create, banked T-free as
-`eng=tcb tcmt=` on the batch's own `q=K` row - one transform per core, see the MT rule).
+whether the slabs run is a raced verdict (serial loop vs slabs at create, banked as
+`eng=tcb tcmt=` on the batch's own `q=K` row at the plan's thread count - see the MT rule).
 
 **Plane queue (`pq`)** — for 2D with `howmany > 1`: either loop the single plan over the
 planes sequentially (each keeping its own intra-transform MT verdicts), or hand planes to
-worker clones from a queue. Raced at create and banked (2026-09-02) on the primary plane's
-own row at the plan's thread count as `pq=`/`pqn=`, valid for the plane count it was raced at.
+worker clones from a queue. Raced at create and banked as `pq=` on the batch's own row:
+`q=K`, the request's placement and order, the plan's thread count (2026-11-01).
 
 **`mtunsafe`** — not a timing race at all. A *correctness* self-check: the whole-batch
 reference output versus a sequential replay of every slab size threading might pick. It

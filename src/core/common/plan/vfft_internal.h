@@ -271,7 +271,7 @@ struct vfft_plan_s
     struct vfft_plan_s *tcb0;
     /* The THREADING verdict for the wrapper: 1 = slabs over the clones,
      * 0 = the serial loop. Raced at create (serial vs slabs on this cell)
-     * or replayed from its eng=tcb row; T-free (one transform per core).
+     * or replayed from its eng=tcb row at the plan's thread count.
      * Without clones it is 0 by construction. See _tc_mt_decide. */
     int tc_mt;
     /* Per-transform block strides IN DOUBLES for the wrapper loop. C2C has

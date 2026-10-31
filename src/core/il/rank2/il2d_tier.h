@@ -40,8 +40,9 @@
  * the chain at one thread, the skewed pass at eight). A threaded plan's row
  * is therefore its own, keyed by the plan's thread count and complete on its
  * own: the plain tokens are its verdict, raced at that T. Nothing serves
- * across thread counts. (The other MT class, one transform per core, banks
- * T-free; nothing about those plans depends on T.)
+ * across thread counts. (The other MT class, one transform per core, keys
+ * its verdict by T too: its plans do not depend on T, but how K transforms
+ * share T workers does.)
  *
  * ONE ASYMMETRY THAT LOOKS LIKE A BUG AND IS NOT
  * ----------------------------------------------

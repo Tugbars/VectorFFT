@@ -33,6 +33,11 @@
  *      to serial and STILL be bitwise. Every block carries different data,
  *      so a worker running the wrong slab (or two workers sharing scratch)
  *      cannot cancel out.
+ *   8. The threading verdict is keyed by the thread count (eng=tcb on the
+ *      q=K row with nthreads=T, 2026-11-01): after the 8-thread creates of
+ *      arm 7, a create at 4 threads banks its own row beside the 8-thread
+ *      one, and a second create at either count replays (no new
+ *      measurement scope). Read off the scratch store's oop shard.
  *
  * Run:   vfft_tcbatch_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_tcbatch_gate.c --vfft --compile
@@ -42,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -239,6 +245,69 @@ static vfft_plan mkt(const char *W, int N, size_t K, int inplace, int nth)
     return vfft_create(&cfg);
 }
 
+/* arm 8: the batch's own row at T in the scratch store's oop shard; its payload to buf */
+static int tcb_row(const char *W, int N, size_t K, int T, char *buf, size_t sz)
+{
+    static char line[4096];
+    char path[1024], head[96], nt[32];
+    FILE *f;
+    int found = 0;
+    buf[0] = 0;
+    snprintf(path, sizeof path, "%s/wisdom2_oop.txt", W);
+    snprintf(head, sizeof head, "@cell t=c2c n=%d q=%zu ", N, K);
+    snprintf(nt, sizeof nt, " nthreads=%d | ", T);
+    if (!(f = fopen(path, "r")))
+        return 0;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, head, strlen(head)) && strstr(line, " place=oop ") && strstr(line, nt) && strstr(line, "eng=tcb"))
+        {
+            snprintf(buf, sz, "%s", strstr(line, "eng=tcb"));
+            buf[strcspn(buf, "|\r\n")] = 0;
+            found = 1;
+            break;
+        }
+    fclose(f);
+    return found;
+}
+
+static int run_t_rows(const char *W, int N, size_t K)
+{
+    char r8[256], r4[256];
+    vfft_plan p;
+    long s0;
+    int have8, have4, replayed, ok;
+    p = mkt(W, N, K, 0, 8);
+    if (!p)
+    {
+        printf("N=%-5d K=%-3zu the 8-thread create refused   *** FAIL ***\n", N, K);
+        return 0;
+    }
+    if (vfft_plan_tc_workers(p) == 0)
+    {   /* no copies: no way to choose, no row */
+        printf("N=%-5d K=%-3zu no copies at 8 threads: no verdict row (nothing to key)\n", N, K);
+        vfft_destroy(p);
+        return 1;
+    }
+    vfft_destroy(p);
+    p = mkt(W, N, K, 0, 4);
+    if (p)
+        vfft_destroy(p);
+    have8 = tcb_row(W, N, K, 8, r8, sizeof r8);
+    have4 = tcb_row(W, N, K, 4, r4, sizeof r4);
+    s0 = vfft_measure_scopes();
+    p = mkt(W, N, K, 0, 8);
+    if (p)
+        vfft_destroy(p);
+    p = mkt(W, N, K, 0, 4);
+    if (p)
+        vfft_destroy(p);
+    replayed = vfft_measure_scopes() == s0;
+    ok = have8 && have4 && replayed;
+    printf("N=%-5d K=%-3zu row at 8 threads: %-14s at 4: %-14s second creates %s%s\n", N, K, have8 ? r8 : "MISSING",
+           have4 ? r4 : "MISSING", replayed ? "replayed" : "RACED", ok ? "" : "   *** FAIL ***");
+    return ok;
+}
+
 static int run_mt_cell(const char *W, int N, size_t K)
 {
     const size_t tot = (size_t)N * K;
@@ -394,6 +463,10 @@ int main(int argc, char **argv)
     if (!run_mt_cell(W, 96, 43)) fails++;   /* chain3 odd N; ragged K slabs  */
     if (!run_mt_cell(W, 512, 5)) fails++;   /* K-1 < workers -> 4 clones     */
     if (!run_mt_cell(W, 256, 2)) fails++;   /* tiny batch: the verdict decides */
+
+    printf("--- the threading verdict's row per thread count ---\n");
+    if (!run_t_rows(W, 256, 16)) fails++;
+    if (!run_t_rows(W, 512, 5)) fails++;    /* 5 over 8 workers vs over 4 */
 
     /* SPLIT is lane-major only: DEFAULT must build (resolving to lane-major),
      * an EXPLICIT transform-contiguous request must be refused, not ignored. */

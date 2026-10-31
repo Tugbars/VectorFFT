@@ -676,4 +676,56 @@ static inline int vw2_2d_forms_rebank(vw2_store_t *s, int is_real, int N1,
     return vw2_ilcol_forms_rebank(s, &ck, forms);
 }
 
+/* ═══ THE CONTIGUOUS BATCH's WAY at rank 2 and 3 (the plane and volume queue,
+ * il/rank2/plane_queue.h; 2026-11-01). The batch's own row, as the 1D batch's
+ * eng=tcb row (wisdom2_stride_reader.h): key {t = the request's transform
+ * (c2c, r2c or c2r), n = the shape, q = K, ord = the request's order class,
+ * pl = its placement, lay = its layout, nthreads = T}; payload pq=0|1|2 (the
+ * loop, the queue, the groups); ran = K, ns = the winning way's time a batch.
+ * One verdict per shape, K, thread count, placement, order and direction:
+ * another of any of them is another row, and nothing serves across them. The
+ * K = 1 rows carry no queue verdict. ═══ */
+static inline void vw2__pq_key(vw2_key_t *k, int t, int rank, int n0, int n1, int n2, size_t K, int ord, int pl,
+                               uint8_t lay, int T)
+{
+    vw2__2d_key(k, t, rank, n0, n1, n2, ord, lay, T);
+    k->q = (int64_t)K;
+    k->pl = (int8_t)pl;
+}
+/* the banked way (0, 1 or 2); -1 = no row */
+static inline int vw2_pq_lookup(const vw2_store_t *s, const vw2_key_t *k)
+{
+    const vw2_rec_t *r = vw2_lookup(s, k);
+    const char *v = r ? vw2_rec_get(r, "pq") : NULL;
+    return v ? atoi(v) : -1;
+}
+/* bank the batch's row, or replace it; ns <= 0 = measure-less (the estimate's rows) */
+static inline int vw2_pq_bank(vw2_store_t *st, const vw2_key_t *k, int pq, double ns)
+{
+    vw2_rec_t rec;
+    char b[48];
+    memset(&rec, 0, sizeof rec);
+    rec.key = *k;
+    snprintf(b, sizeof b, "%d", pq == 2 ? 2 : pq ? 1 : 0);
+    if (vw2_rec_set(&rec, 1, "pq", b) != VW2_OK)
+        goto refused;
+    snprintf(b, sizeof b, "%lld", (long long)k->q);
+    if (vw2_rec_set(&rec, 2, "ran", b) != VW2_OK)
+        goto refused;
+    if (ns > 0.0)
+    {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&rec, 2, "ns", b) != VW2_OK || vw2_rec_set(&rec, 2, "metric", "fwd1") != VW2_OK ||
+            vw2_rec_set(&rec, 2, "units", "ns") != VW2_OK)
+            goto refused;
+    }
+    if (vw2_rec_set(&rec, 2, "src", "race") != VW2_OK)
+        goto refused;
+    vw2__2d_stamp_date(&rec);
+    return vw2__2d_bank(st, &rec, 0);
+refused:
+    vw2_rec_free(&rec);
+    return -1;
+}
+
 #endif /* VFFT_WISDOM2_2D_IL_READER_H */

@@ -357,7 +357,8 @@ At ranks 2 and 3 the DEFAULT is contiguous planes and contiguous volumes for eve
 plane queue and the volume queue (`il/rank2/plane_queue.h`, `vfft_policy_il2d_ip_batch_ok`,
 `vfft_policy_ilndr_batch_ok`, `vfft_policy_ilnd_batch_ok`) run the cell's K = 1 plan over the K
 blocks in either placement (in place: K padded planes or volumes, every row 2(N_last/2+1) doubles,
-one after another) and bank their loop-versus-queue verdict (`pq= pqn=`) on that plan's row.
+one after another) and bank their loop-versus-queue verdict (`pq=`) on the batch's own row (`q=K`,
+the request's placement and order, the plan's thread count).
 Lane-major when named is each rank's own door (`il/rank2/lm_batch2d_il.h`, `lm_batch2dr_il.h`,
 `il/rank3/lm_batch3d_il.h`, `lm_batch3dr_il.h`; `vfft_policy_batch_lane_major`): C2C at every
 extent >= 2; R2C and C2R at an even last extent >= 4 with the leading extents >= 2 (in place: N1
@@ -384,8 +385,9 @@ than of a slab; dispatch is therefore all-or-nothing
 ([vfft.c:5838-5845](../../src/core/vfft.c#L5838-L5845)).
 
 Whether the slabs run at all is the wrapper's **threading verdict** (`h->tc_mt`): serial loop
-versus slabs raced at create on the batch's own cell and banked T-free as `eng=tcb tcmt=` on its
-`q=K` row (`_tc_mt_decide`, measurement_arms B5). The 2048-complex-point scalar floor is retired.
+versus slabs raced at create on the batch's own cell and banked as `eng=tcb tcmt=` on its `q=K`
+row at the plan's thread count (`_tc_mt_decide`, measurement_arms B5). The 2048-complex-point
+scalar floor is retired.
 
 The K=1 IL engines are **not reentrant**, so a worker runs its own clone
 ([vfft.c:289-300](../../src/core/vfft.c#L289-L300)). A clone is accepted only if everything

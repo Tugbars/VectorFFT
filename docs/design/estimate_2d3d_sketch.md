@@ -475,7 +475,8 @@ races nothing: the batch is the plan of one transform, run once per transform. O
 builds one-thread copies of the plan and runs the batch one of two ways: all threads on each transform
 in turn (`pq=0`, its loop), or whole transforms per thread (`pq=1`, the copies). The estimate writes
 the copies' one-thread rows (the one-thread recipe, `est_mt_2d` / `est_mt_3d` at one thread) and the
-way on the row at T as the queue reads it (`pq=`, `pqn=K`; plane_queue.h:290-322), chosen by the batch
+way on the batch's own row as the queue reads it (`pq=` at `q=K`, the request's placement, `nthreads=T`;
+`vw2_pq_bank`), chosen by the batch
 rule `est_batch_whole` (il/estimate/estimate_il.h): whole transforms per thread when the batch carries
 at least 16 KiB and one transform fits a core's L2 / 8 (L2 / 4 when K is above T), or the whole L2 when
 K is a multiple of T (docs/roadmap/threaded_batch_estimate_plan.md: 269 cells, 1.009 against the faster

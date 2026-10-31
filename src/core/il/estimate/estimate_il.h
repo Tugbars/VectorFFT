@@ -102,7 +102,7 @@ typedef struct est_recipe_s
         int in_tw;                 /* [in_tw] the ZTURN-T inner's tile, 0 = untiled */
     } prime;                       /* the prime cell's method row (vw2_prime_method_bank,
                                     * wisdom2_oop_il.h:554); its route row says il_route=prime il_kv=0 */
-    int tcmt;                      /* [tcmt] the batch's own row (eng=tcb, q=K), a batch on T threads whose
+    int tcmt;                      /* [tcmt] the batch's own row (eng=tcb, q=K, nthreads=T), a batch on T threads whose
                                     * plan has copies (not the four-step): 1 whole transforms per thread,
                                     * 0 all threads on each transform (est_batch_whole) */
 } est_recipe_t;

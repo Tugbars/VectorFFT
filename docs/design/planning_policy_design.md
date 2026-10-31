@@ -435,10 +435,10 @@ tier and the plane queue — is the whole of what these sites share. What
 stayed at the sites: `recalibrate`, which is written at the site in
 `k1_commit.h` and `fftnd_il.h` but sits UPSTREAM in the lookup for the 2D
 tiers and is order-scoped (`scr_recalib`) elsewhere; "the row carries a
-verdict", which is three different tests; and the plane queue's second
-fence on the plane count. Deliberately excluded: the T-FREE `tcmt`/`tcmtt`
-(the batch verdict RECORDS T and never compares it — the fence would refuse
-every replay at another T), the execute-side clamps, and
+verdict", which is three different tests. The batch verdicts (`tcmt`,
+`pq`) need no fence: since 2026-11-01 their rows are keyed by K and T, so a
+lookup can only find a verdict raced at the request's own. Deliberately
+excluded: the execute-side clamps, and
 `fftnd_wisdom.h`'s filter, the only site that NORMALIZES the requested T.
 
 **L5 → the existing L4 laws, six sites.** There is no new helper: the

@@ -453,29 +453,29 @@ static inline int vw2_stride_rec_from_nat_mig(vw2_rec_t *r,
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict ──────────────
- * The K>1 interleaved tier's one arm (lane-major is refused, so geometry
- * is not an axis): the serial loop vs slabs over the worker clones, raced
- * at create on the batch's OWN cell. Key = (t, n=N, q=K, ord, place,
- * lay=il); payload eng=tcb tcmt=0|1 tcmtt=<T raced at>. One transform per
- * core => nothing about the plan depends on T => the verdict is T-FREE
- * (planning_model 'The MT rule') and replays at any thread count; tcmtt is
- * provenance only. eng=tcb keeps the row out of every natx reader (their
+ * The contiguous batch's one arm: the serial loop vs slabs over the worker
+ * clones, raced at create on the batch's OWN cell. Key = (t, n=N, q=K, ord,
+ * place, lay=il, nthreads=T); payload eng=tcb tcmt=0|1. The thread count is
+ * a key axis like every threaded verdict's (v1.3): the slabs are ceil(K/T)
+ * transforms a worker, so which way wins moves with T (K = 4 leaves half of
+ * eight workers idle). eng=tcb keeps the row out of every natx reader (their
  * family gate rejects it), so a batch row can never be served as a plan. */
 static inline void vw2__tcmt_key(vw2_key_t *k, int t, int N, size_t K,
-                                 int ord, int pl, uint8_t lay)
+                                 int ord, int pl, uint8_t lay, int T)
 {
     vw2__stride_key(k, t, N, K, ord, pl);
     k->lay = lay;
+    k->nthreads = (uint8_t)(T > 1 ? T : 0);
 }
 
 static inline int vw2_stride_lookup_tcmt(const vw2_store_t *s, int t, int N,
                                          size_t K, int ord, int pl,
-                                         uint8_t lay, int *tcmt, int *tcmtt)
+                                         uint8_t lay, int T, int *tcmt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *eng, *v;
-    vw2__tcmt_key(&k, t, N, K, ord, pl, lay);
+    vw2__tcmt_key(&k, t, N, K, ord, pl, lay, T);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     eng = vw2_rec_get(r, "eng");
@@ -483,7 +483,6 @@ static inline int vw2_stride_lookup_tcmt(const vw2_store_t *s, int t, int N,
     v = vw2_rec_get(r, "tcmt");
     if (!v) return 0;
     *tcmt = atoi(v) ? 1 : 0;
-    if (tcmtt) { const char *tv = vw2_rec_get(r, "tcmtt"); *tcmtt = tv ? atoi(tv) : 0; }
     return 1;
 }
 
@@ -492,14 +491,11 @@ static inline int vw2_stride_bank_tcmt(vw2_store_t *st, int t, int N,
                                        int tcmt, int T, double ns)
 {
     vw2_rec_t rec;
-    char b[32];
     const char *why = NULL;
     memset(&rec, 0, sizeof rec);
-    vw2__tcmt_key(&rec.key, t, N, K, ord, pl, lay);
-    snprintf(b, sizeof b, "%d", T);
+    vw2__tcmt_key(&rec.key, t, N, K, ord, pl, lay, T);
     if (vw2_rec_set(&rec, 1, "eng", "tcb") != VW2_OK ||
-        vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK ||
-        vw2_rec_set(&rec, 1, "tcmtt", b) != VW2_OK) {
+        vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK) {
         vw2_rec_free(&rec);
         fprintf(stderr, "[wisdom2] tcmt bank refused (token-refused)\n");
         return -1;

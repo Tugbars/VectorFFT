@@ -374,7 +374,8 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
  * thread count (est_mt_2d, est_mt_3d), one transform or a contiguous batch of them; its store and save
  * flag are not used. A batch on T threads also takes the one-thread recipe its queue's copies replay
  * (q2 or q3: est_mt_2d / est_mt_3d at one thread) and the recipe's way (pq), both on the rows as the
- * queue reads them: the copies' one-thread row, and pq= pqn= on the row at T (plane_queue.h:290-322).
+ * queue reads them: the copies' one-thread row, and pq= on the batch's own row (q = K, the request's
+ * placement, nthreads = T; vw2_pq_bank, wisdom2_2d_il_reader.h).
  * Holds the create lock from the pre-flight to the end. The caller owns the plan (vfft_destroy). */
 static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est_plan3d_t *p3, const est_plan2d_t *q2,
                                                const est_plan3d_t *q3, const vfft_cfg_t *cfg, est_build_report_t *rep,
@@ -429,19 +430,16 @@ static inline struct vfft_plan_s *est_build_nd(const est_plan2d_t *p2, const est
     if (p2 ? est_put_rows_2d(&S->vw2, p2, why, whylen) : est_put_rows_3d(&S->vw2, p3, why, whylen))
         goto out;
     if (batch)
-    {   /* the copies' one-thread row; the way on the row at T, as _pq_mt_replay_or_race reads it */
-        vw2_ilcol_key_t ck;
+    {   /* the copies' one-thread row; the way on the batch's own row, as _pq_mt_replay_or_race reads it */
         vw2_key_t key;
-        char b[32];
         if (p2 ? est_put_rows_2d(&S->vw2, q2, why, whylen) : est_put_rows_3d(&S->vw2, q3, why, whylen))
             goto out;
-        est__colkey(&ck, rank, cfg->n[0], cfg->n[1], rank == 3 ? cfg->n[2] : 0);
-        ck.nthreads = T;
-        vw2__ilcol_key(&ck, &key);
-        snprintf(b, sizeof b, "%zu", cfg->howmany);
-        if (vw2_update_field(&S->vw2, &key, "pqn", b) != VW2_OK || vw2_update_field(&S->vw2, &key, "pq", whole ? "1" : "0") != VW2_OK)
+        vw2__pq_key(&key, VW2_T_C2C, rank, cfg->n[0], cfg->n[1], rank == 3 ? cfg->n[2] : 0, cfg->howmany,
+                    vfft_policy_ord_rankn(cfg), cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP,
+                    _vw2_lay_of(cfg), T);
+        if (vw2_pq_bank(&S->vw2, &key, whole, 0.0) != VW2_OK)
         {
-            est_refuse(why, whylen, "the batch's way (pq, pqn) was refused on the row at %d threads", T);
+            est_refuse(why, whylen, "the batch's row (pq) was refused at %d threads", T);
             goto out;
         }
     }

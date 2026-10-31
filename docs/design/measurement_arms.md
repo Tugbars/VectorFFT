@@ -68,7 +68,8 @@ FP         fingerprint field, or "none" (= invisible to the safety harness)
 Owner ruling on MT specifically:
 
 * **one transform per core** (TC batches, plane queue) - nothing about the plan depends
-  on T, so bank **T-free**, valid at any T.
+  on T, but how K transforms share T workers does, so bank **per-T and per-K**
+  (2026-11-01; until then these verdicts were filed without T, or with one K a shape).
 * **cores sharing one transform** (2D column passes, the cascade walk) - T decides how
   the work is *cut* (band counts, worker clamps, legal row widths), and a cut that wins
   at T=2 can lose at T=8. Bank **per-T**; only this class re-races on a T mismatch.
@@ -608,10 +609,10 @@ B5.1 tcmt - serial loop vs slabs   RACED, BANKED (2026-09-04). The K>1
              No clones (no pool, inner not pool-free, K=1 workers) => no arm,
              serial by construction.
      BANK    the batch's OWN row: t=c2c|r2c|c2r n=N q=K ord=scr|nat place=ip|oop
-             lay=il | eng=tcb tcmt=0|1 tcmtt=<T raced at>. T-FREE: one transform
-             per core, nothing about the plan depends on T (planning_model 'The
-             MT rule'); tcmtt is provenance. eng=tcb fails every natx family gate,
-             so the row can never be served as a plan.
+             lay=il nthreads=T | eng=tcb tcmt=0|1. Per-T: a slab is ceil(K/T)
+             transforms, so the verdict moves with T (planning_model 'The MT
+             rule'). eng=tcb fails every natx family gate, so the row can never
+             be served as a plan.
      ENV     VFFT_TCMT=0|1 pins (never replays, never banks); VFFT_NO_TCMT = no
              clones at all (kill switch); VFFT_TCMT_LOG / VFFT_TCMT_VERBOSE log.
      RETIRED the 2048-complex-point scalar floor (an offline 2026-08-22 table,
@@ -1143,11 +1144,12 @@ F1.6 the NATURAL class               ITS OWN ord=nat CELL (2026-09-07,
 ## 8. Cross-cutting
 
 ```
-X1 pqmt - plane queue loop vs queue  RACED, BANKED (2026-09-02). dims=2, howmany>1.
-                                     pq=<0|1> pqn=<P> pqt=<T> on the primary
-                                     plane's own row (IL c2c / IL real / split);
-                                     replays on a (P, T) match, re-races on a
-                                     mismatch; VFFT_PQ_NO_MT pins, never banks.
+X1 pqmt - plane queue loop vs queue  RACED, BANKED. dims=2 or 3, howmany>1.
+                                     pq=<0|1|2> on the batch's own row (t = the
+                                     request's transform, q=K, its placement and
+                                     order, nthreads=T; 2026-11-01): replays on
+                                     a key match, a miss races and banks its
+                                     own row; VFFT_PQ_NO_MT pins, never banks.
 X2 pqw / pqn                         STRUCTURAL. pq_n = K unconditionally; pq_wn is
                                      the clone count after clamping.
 X3 tcbw                              STRUCTURAL. The number of clones that built AND
@@ -1196,7 +1198,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 
 * **MT verdicts** - closed 2026-09-02 for the cascade (`zt_mt`/`zt_mt_t`, both
   placements), the 2D column pass (`cmt`/`cmtt`, both real directions) and the plane
-  queue (`pq`/`pqn`/`pqt`); the shipped store carries them for the seeded cells (T=8),
+  queue (`pq`, on the batch's own row since 2026-11-01); the shipped store carries them for the seeded cells (T=8),
   other cells and thread counts race once on first use and bank themselves.
 * **RACED-NOT-BANKED** - none left as of 2026-09-02 (B1.4, B4, R1.4/R1.5 bank now).
   Cells and thread counts the shipped store has not seen race once on first use and

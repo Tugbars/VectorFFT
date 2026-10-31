@@ -246,7 +246,7 @@ batching, and where.
   natord + exact kernel pointers, else it is destroyed — one batch must
   never mix two scrambled combs), and the `VFFT_NO_TCMT` kill switch.
   Engage = the batch's RACED threading verdict (serial vs slabs at create,
-  banked T-free as eng=tcb tcmt= on its q=K row, measurement_arms B5); the
+  banked as eng=tcb tcmt= on its q=K row, measurement_arms B5); the
   2048-point scalar floor and VFFT_TCMT_FLOOR are retired (2026-09-04).
 - [x] **The K-across-SIMD campaign (chartered earlier the same day) is
   CLOSED UNBUILT.** Its premise — that K≥2 interleaved needs its own

@@ -120,8 +120,11 @@ The timing tool holds, in one process, inside one measurement scope (so the libr
 - MKL's 3D split (whole transforms per thread, then the K mod T left over on all threads) has no counterpart.
 - A 1D four-step plan cannot run as a one-thread copy at T > 1, so its batches always take the first way.
 - The 1D batch verdict is filed without the thread count, so a verdict raced at 8 threads is replayed at 4.
+  Fixed on 2026-11-01 with the owner's approval: the row is keyed by the thread count.
 - At rank 2 and 3 the store keeps one batch verdict per shape and thread count (`pq`, `pqn` on the row at T):
-  racing another K replaces it, and the next create at the first K races again.
+  racing another K replaces it, and the next create at the first K races again. The c2c row also ignores the
+  placement, so in place and out of place share one verdict. Fixed on 2026-11-01 with the owner's approval:
+  the batch has its own row, keyed by K, the thread count, the placement, the order and the direction.
 - The rank-2 and rank-3 race kept the minimum of 3 samples of one execute each (`_pq_mt_race`). On tiny
   batches a sample is about 1 µs, and the loop runs right after the queue has moved the data to the other
   cores: at 2D 8x8 with K = 8 it timed the loop at 1,500 ns against 330 ns steady, and picked the queue,

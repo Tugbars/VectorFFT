@@ -256,8 +256,8 @@ long _vfft_create_race_count = 0;
 
 /* the 2D plane queue's loop-vs-queue race, defined with its executor;
  * called from the dims==2 howmany>1 create branch through the replay-or-
- * race wrapper (banked per (P, T) on the primary's row, 2026-09-02). */
-static void _pq_mt_race(struct vfft_plan_s *h);
+ * race wrapper (banked on the batch's own row, plane_queue.h). */
+static double _pq_mt_race(struct vfft_plan_s *h);
 static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
                                   const vfft_cfg_t *cfg);
@@ -1513,13 +1513,12 @@ static void _tc_slab_role(struct vfft_plan_s *c)
 }
 
 /* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
- * The one arm of the K>1 interleaved tier (lane-major is refused, so
- * geometry is not an axis): the SERIAL loop vs SLABS over the worker
- * clones, raced at create on the batch's own cell and banked as
- * eng=tcb tcmt= on its q=K row (vw2_stride_bank_tcmt). One transform per
- * core => nothing about the plan depends on T => the verdict is T-FREE
- * and replays at any thread count (planning_model 'The MT rule'); tcmtt=
- * records the T it was raced at. No clones (no pool, inner not pool-free,
+ * The one arm of the contiguous batch: the SERIAL loop vs SLABS over the
+ * worker clones, raced at create on the batch's own cell and banked as
+ * eng=tcb tcmt= on its q=K row at the plan's thread count
+ * (vw2_stride_bank_tcmt; nthreads= since 2026-11-01: a slab is ceil(K/T)
+ * transforms, so the verdict moves with T and a lookup never crosses it).
+ * No clones (no pool, inner not pool-free,
  * K=1 workers) => no arm: serial by construction. VFFT_TCMT=0|1 pins the
  * verdict (the tcut law: an env pin never replays and never banks);
  * VFFT_NO_TCMT (no clones at all) stays the create-time kill switch.
@@ -1581,13 +1580,13 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     }
     if (W && !cfg->recalibrate)
     {
-        int v = 0, vt = 0;
-        if (vw2_stride_lookup_tcmt(&W->vw2, t, N, K, ord, pl, lay, &v, &vt))
+        int v = 0;
+        if (vw2_stride_lookup_tcmt(&W->vw2, t, N, K, ord, pl, lay, T, &v))
         {
             h->tc_mt = v;
             if (lg)
-                fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d: replay tcmt=%d (raced at T=%d) src=wisdom\n",
-                        tn, N, K, T, v, vt);
+                fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d: replay tcmt=%d src=wisdom\n",
+                        tn, N, K, T, v);
             return;
         }
     }

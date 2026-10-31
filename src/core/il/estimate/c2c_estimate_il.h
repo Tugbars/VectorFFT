@@ -716,8 +716,8 @@ out:
  *   - the 3D door (fftnd_il.h:1427-1430, 1563-1564): VFFT_ILND_ARM, _WL, _NF, _SW, and at T > 1 the
  *     threaded pins _MT and _PT (fftnd_il.h:1768-1776: they replace the row's threaded verdict);
  *   - the batch doors at T > 1: VFFT_NO_TCMT (no copies, vfft.c:2082) and VFFT_TCMT (pins the 1D
- *     batch's way over its row, vfft.c:1569), VFFT_PQ_NO_MT (pins the queue's way over its row,
- *     plane_queue.h:301, 358).
+ *     batch's way over its row, vfft.c _tc_mt_decide), VFFT_PQ_NO_MT (pins the queue's way over its
+ *     row, plane_queue.h _pq_mt_replay_or_race and _pq_mt_race).
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_TCMT_LOG, VFFT_TCMT_VERBOSE, VFFT_VERBOSE, ...), the execute-time profiling
  * (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate

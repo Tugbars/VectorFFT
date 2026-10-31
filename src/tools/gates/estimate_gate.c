@@ -758,23 +758,25 @@ static void bnd_correct(vfft_plan p, const void *r, int scr, int ip, double *eb,
     (void)scr;
     nd_errors(p, (const ndref_t *)r, ip, eb, er);
 }
-/* the request c as one transform and as a batch of K, both built with nothing measured; the one-transform plan
- * correct against the reference, the batch against it, on c.nthreads threads */
-static void batch_cell(const char *name, vfft_config_t c, int rank, long len, int K, int scr, int ip, correct_fn correct,
+/* the request c as one transform and as a batch of K (c->howmany set here), both built with nothing measured; the
+ * one-transform plan correct against the reference, the batch against it, on c->nthreads threads. c by pointer:
+ * a config passed by value is copied into a stack slot GCC aligns to 32 bytes, which the 16-byte Win64 stack does
+ * not guarantee, and its aligned store faulted in some processes (2026-11-01) */
+static void batch_cell(const char *name, vfft_config_t *c, int rank, long len, int K, int scr, int ip, correct_fn correct,
                        const void *ref)
 {
     vfft_plan p1, pb;
     int m1, mb;
-    c.howmany = 1;
-    p1 = est_create(&c, &m1);
+    c->howmany = 1;
+    p1 = est_create(c, &m1);
     CHECK(p1 && !m1, "B  %s: the one-transform plan %s", name, m1 ? "MEASURED" : vfft_error());
-    c.howmany = (size_t)K;
-    pb = est_create(&c, &mb);
+    c->howmany = (size_t)K;
+    pb = est_create(c, &mb);
     CHECK(pb && !mb, "B  %s: the batch %s", name, mb ? "MEASURED" : vfft_error());
     if (p1 && pb && !m1 && !mb)
     {
         double eb, er;
-        const int T = c.nthreads > 1 ? c.nthreads : 1;
+        const int T = c->nthreads > 1 ? c->nthreads : 1;
         correct(p1, ref, scr, ip, &eb, &er);
         CHECK(eb <= TOL && er <= TOL, "B  %s: the one-transform plan: forward %.2e, round trip %.2e (tolerance %.0e)", name,
               eb, er, TOL);
@@ -802,7 +804,7 @@ static void b1_len(long N, int T, const int *Ks, int nK)
                 c.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
                 c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
                 c.nthreads = T;
-                batch_cell(name, c, 1, N, Ks[k], scr, ip, b1_correct, &r);
+                batch_cell(name, &c, 1, N, Ks[k], scr, ip, b1_correct, &r);
             }
     ref_free(&r);
 }
@@ -825,7 +827,7 @@ static void bnd_shape(int rank, int n0, int n1, int n2, int T, const int *Ks, in
             c.n[0] = n0; c.n[1] = n1; c.n[2] = rank == 3 ? n2 : 0;
             c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
             c.nthreads = T;
-            batch_cell(name, c, rank, r.P, Ks[k], 0, ip, bnd_correct, &r);
+            batch_cell(name, &c, rank, r.P, Ks[k], 0, ip, bnd_correct, &r);
         }
     ndref_free(&r);
 }

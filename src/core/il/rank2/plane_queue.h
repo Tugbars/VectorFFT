@@ -45,30 +45,26 @@
  * WHICH MT CLASS THIS IS
  * ----------------------
  * ONE TRANSFORM PER CORE: each worker owns whole planes, so nothing about any
- * single plane's plan depends on the thread count. That is the T-FREE class -
- * a verdict here is valid at any T. Contrast the 2D column pass, where the
- * cores SHARE one transform, T decides how the work is cut, and the verdict
- * is keyed by the plan's thread count like every threaded verdict (v1.3).
+ * single plane's plan depends on the thread count. The VERDICT does: K planes
+ * over T workers leave K mod T of them a plane short (at K = 9 on 8 threads
+ * one worker runs two planes while seven wait), and the groups arm exists
+ * only at 2 <= K <= T / 2. So the verdict is keyed by K and by T.
  *
  * BANKED
  * ------
- * The loop-vs-queue-vs-groups verdict rides the PRIMARY plane's own wisdom
- * row as pq=<0|1|2> pqn=<P> (2 = the groups arm; G = T / P is implied, the
- * row being keyed by T) — the row is keyed by the plan's thread count, and the
- * plane count it was raced at is its validity condition (a P mismatch
- * re-races and re-banks; a banked 2 also needs this plan's G clone set, else
- * the race decides again). A real cell's row is direction-shared (keyed
- * t=r2c), so the c2r queue's verdict has its own names there, pq_c2r=
- * pqn_c2r=, as the tiers' cmt_c2r= (2026-10-19): the two directions never
- * replay or overwrite each other's. The row is whichever one the inner howmany=1 create banked
- * (IL c2c, IL real, or the split-tier row; at rank 3 the single-volume row
- * of the 3D shard; an in-place real cell its own place=ip row, as the real
- * tiers key it), found by lookup and merged
- * into with vw2_update_field; a cold cell with no row banks nothing (loud
- * under VFFT_IL2D_LOG). Kill/force switch VFFT_PQ_NO_MT pins and never
- * replays or banks: 1 kills (the loop), 0 pins the queue, 2 pins the groups
- * (an absent set: the loop). Engagement counters: vfft_pq_mt_passes() for
- * the queue, vfft_pq_grp_passes() for the groups.
+ * The loop-vs-queue-vs-groups verdict has the batch's OWN row (2026-11-01;
+ * il/wisdom/wisdom2_2d_il_reader.h, vw2_pq_bank): key t = the request's
+ * transform, n = the plane's shape, q = K, the request's order class,
+ * placement and layout, nthreads = T; payload pq=<0|1|2> (2 = the groups
+ * arm, G = T / K). One verdict per shape, K, thread count, placement, order
+ * and direction: racing another K, placement or direction banks another row
+ * and displaces none, so an r2c batch and a c2r batch of one cell never
+ * replay each other's way. A banked 2 also needs this plan's G clone set,
+ * else the race decides again. The K = 1 rows carry no queue verdict.
+ * Kill/force switch VFFT_PQ_NO_MT pins and never replays or banks: 1 kills
+ * (the loop), 0 pins the queue, 2 pins the groups (an absent set: the
+ * loop). Engagement counters: vfft_pq_mt_passes() for the queue,
+ * vfft_pq_grp_passes() for the groups.
  *
  * INCLUSION CONTRACT
  * ------------------
@@ -234,115 +230,54 @@ static const char *_pq_shape(const struct vfft_plan_s *h, char *b, size_t n)
         snprintf(b, n, "%dx%d", h->N, h->N2);
     return b;
 }
-/* the primary plane's own row: the first key that resolves, in the order
- * the tiers bank them. NULL-safe: a miss means "nothing to ride". */
-static int _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg,
-                       const vw2_store_t *st, vw2_key_t *k)
+/* the batch's own row (vw2__pq_key): the request's transform, order class, placement and layout, the
+ * plane's shape, q = K, nthreads = the plan's T */
+static void _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg, vw2_key_t *k)
 {
-    const int il = (cfg->layout == (int)VFI_LAYOUT_IL);
-    const int real = (h->transform != VFFT_C2C);
-    const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
-    const int rank = (h->N3 > 0) ? 3 : 2;   /* the volume queue rides the single-volume row of the 3D shard (2026-10-18) */
-    const int ip = real && (h->placement == VFFT_INPLACE);   /* the in-place REAL cell's own row (pl=ip), as the 2D and
-                                                               * 3D real tiers key it; the c2c rows are placement-blind */
-    int i;
-    for (i = 0; i < 5; i++)
-    {
-        memset(k, 0, sizeof *k);
-        switch (i)
-        {
-        /* the IL rows. The plane-queue verdict (queue vs loop) is SHARED by
-         * both order classes, so it rides whichever IL row the cell has, in
-         * this FIXED order -- scr first, then nat -- and both the replay and
-         * the bank walk the same order, so exactly one verdict is ever
-         * consulted or written (a store that has only seen NATURAL requests
-         * still finds its row, rather than re-racing on every create). */
-        case 0: if (!il) continue;
-            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, rank, h->N, h->N2, h->N3,
-                        VW2_ORD_SCR, VW2_LAY_IL, h->nthreads);
-            if (ip) k->pl = VW2_PL_IP;
-            break;
-        case 1: if (!il) continue;
-            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, rank, h->N, h->N2, h->N3,
-                        VW2_ORD_NAT, VW2_LAY_IL, h->nthreads);
-            if (ip) k->pl = VW2_PL_IP;
-            break;
-        case 2:                               /* split c2c, this order */
-            if (real) continue;
-            vw2__2d_key(k, VW2_T_C2C, rank, h->N, h->N2, h->N3,
-                        nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY, h->nthreads);
-            break;
-        case 3:                               /* split real (ord=nat rows) */
-            if (!real) continue;
-            vw2__2d_key(k, h->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C,
-                        rank, h->N, h->N2, h->N3, VW2_ORD_NAT, VW2_LAY_ANY, h->nthreads);
-            break;
-        default:
-            continue;
-        }
-        if (vw2_lookup(st, k)) return 1;
-    }
-    return 0;
+    const int t = h->transform == VFFT_C2C ? VW2_T_C2C : h->transform == VFFT_R2C ? VW2_T_R2C : VW2_T_C2R;
+    vw2__pq_key(k, t, h->N3 > 0 ? 3 : 2, h->N, h->N2, h->N3, h->pq_n, vfft_policy_ord_rankn(cfg),
+                h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), h->nthreads);
 }
 
-static void _pq_mt_race(struct vfft_plan_s *h);
+static double _pq_mt_race(struct vfft_plan_s *h);
 
-/* replay-or-race: the verdict is valid for the (P, T) it was raced at */
+/* replay-or-race on the batch's own row */
 static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   struct vfft_wisdom_s *W,
                                   const vfft_cfg_t *cfg)
 {
     vw2_key_t k;
-    const vw2_rec_t *r;
     char sb[40];
-    /* the pair by direction: a real cell's row is direction-shared (keyed t=r2c), so the
-     * c2r queue reads and banks pq_c2r= pqn_c2r= there, as the tiers' cmt_c2r= (2026-10-19) */
-    const int c2r = (h->transform == VFFT_C2R);
-    const char *tk_pq = c2r ? "pq_c2r" : "pq", *tk_pqn = c2r ? "pqn_c2r" : "pqn";
-    const int have = (W && !getenv("VFFT_PQ_NO_MT") &&
-                      _pq_row_key(h, cfg, &W->vw2, &k));
-    if (have && !cfg->recalibrate && (r = vw2_lookup(&W->vw2, &k)) != NULL)
+    const int pin = getenv("VFFT_PQ_NO_MT") != NULL;
+    double ns;
+    _pq_row_key(h, cfg, &k);
+    if (W && !pin && !cfg->recalibrate)
     {
-        const char *v = vw2_rec_get(r, tk_pq);
-        const char *vn = vw2_rec_get(r, tk_pqn);
-        if (v && vn && (size_t)atol(vn) == h->pq_n)   /* the row is the plan's own T (v1.3) */
+        const int pv = vw2_pq_lookup(&W->vw2, &k);
+        /* a banked 2 (the groups arm) needs this plan's G clone set; without it the race decides again */
+        if (pv >= 0 && (pv != 2 || (h->pq_gn > 0 && (size_t)h->pq_gn == h->pq_n)))
         {
-            const int pv = atoi(v);
-            /* a banked 2 (the groups arm) needs this plan's G clone set; without it the
-             * race decides again, as a P mismatch does */
-            if (pv != 2 || (h->pq_gn > 0 && (size_t)h->pq_gn == h->pq_n))
-            {
-                h->pq_mt = pv == 2 ? 2 : pv ? 1 : 0;
-                if (getenv("VFFT_IL2D_LOG"))
-                    fprintf(stderr, "[pq] %s P=%zu T=%d: replay %s src=wisdom\n",
-                            _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn,
-                            h->pq_mt == 2 ? "GROUPS" : h->pq_mt ? "QUEUE" : "loop");
-                return;
-            }
+            h->pq_mt = pv == 2 ? 2 : pv ? 1 : 0;
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[pq] %s P=%zu T=%d: replay %s src=wisdom\n",
+                        _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn,
+                        h->pq_mt == 2 ? "GROUPS" : h->pq_mt ? "QUEUE" : "loop");
+            return;
         }
     }
-    _pq_mt_race(h);
-    if (have)
+    ns = _pq_mt_race(h);
+    if (W && !pin && ns > 0.0)
     {
-        char b[24];
-        int rc;
-        snprintf(b, sizeof b, "%zu", h->pq_n);
-        rc = vw2_update_field(&W->vw2, &k, tk_pqn, b);
-        rc |= vw2_update_field(&W->vw2, &k, tk_pq, h->pq_mt == 2 ? "2" : h->pq_mt ? "1" : "0");
-        if (rc == VW2_OK)
+        if (vw2_pq_bank(&W->vw2, &k, h->pq_mt, ns) == VW2_OK)
             _vw2_persist(W, cfg);
         else if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[pq] %s P=%zu T=%d: verdict NOT banked (the "
-                            "primary row is a wildcard/migrated row: no "
-                            "exact key to merge into)\n",
+            fprintf(stderr, "[pq] %s P=%zu T=%d: the verdict's row was refused by the store\n",
                     _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn);
     }
-    else if (getenv("VFFT_IL2D_LOG") && !getenv("VFFT_PQ_NO_MT"))
-        fprintf(stderr, "[pq] %s P=%zu T=%d: no primary row to bank the "
-                        "verdict on\n", _pq_shape(h, sb, sizeof sb), h->pq_n, h->pq_wn);
 }
 
-static void _pq_mt_race(struct vfft_plan_s *h)
+/* the race; returns the winning way's time a batch, 0 when no race ran (pinned, no buffers, no workers) */
+static double _pq_mt_race(struct vfft_plan_s *h)
 {
     const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
     const int ip = (h->placement == VFFT_INPLACE);   /* in place (2026-10-18): one buffer, in == out, as the queue runs it */
@@ -364,14 +299,14 @@ static void _pq_mt_race(struct vfft_plan_s *h)
         vfft_aligned_free(src);
         if (!ip) vfft_aligned_free(dst);
         vfft_aligned_free(seed);
-        return;
+        return 0.0;
     }
     if (!src || !dst || (ip && !seed) || h->pq_wn <= 0)
     {
         vfft_aligned_free(src);
         if (!ip) vfft_aligned_free(dst);
         vfft_aligned_free(seed);
-        return; /* loop serves */
+        return 0.0; /* loop serves */
     }
     for (i = 0; i < sb; i++)
         src[i] = 1.0 + 1e-6 * (double)(i & 511);
@@ -428,6 +363,7 @@ static void _pq_mt_race(struct vfft_plan_s *h)
     vfft_aligned_free(src);
     if (!ip) vfft_aligned_free(dst);
     vfft_aligned_free(seed);
+    return h->pq_mt == 2 ? tg : h->pq_mt ? tq : tl;
 }
 
 #endif /* VFFT_TRANSFORMS_FFT2D_PLANE_QUEUE_H */

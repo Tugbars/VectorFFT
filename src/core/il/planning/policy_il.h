@@ -850,7 +850,8 @@ static inline int vfft_policy_ilndr_ip_ok(const vfft_cfg_t *cfg, size_t howmany,
  * every dim >= 2. Served by the queue over the K = 1 plan (the primary at the
  * caller's T, serial clones for the queue arm), which reads the single-volume
  * rows only -- place=oop or place=ip as the request is -- and banks its
- * loop-vs-queue verdict there (pq= pqn=). A law of its own, never a widening
+ * loop-vs-queue verdict on the batch's own row (pq=, q = K; plane_queue.h).
+ * A law of its own, never a widening
  * of the two above: door 2 (vfft.c, _vfft_create_outer) admits through
  * ilndr_ip_ok and reads the tier's descriptor off the plan, which the queue's
  * wrapper has not. The lane-major geometry is not this law's: named, it is
@@ -987,8 +988,8 @@ static inline int vfft_policy_k1fs_inner_order(void)
  * threaded verdict was a payload token tagged with the T it was raced at.
  * Since wisdom2 v1.3 the thread count is a KEY axis (nthreads=): a threaded
  * plan's row is its own and a lookup at the plan's T can only find a
- * verdict raced at that T. The K>1 batch verdict (tcmt) stays T-free by
- * design and never keyed on it. */
+ * verdict raced at that T. The K>1 batch verdicts (tcmt, pq) are keyed by
+ * it as well since 2026-11-01. */
 
 /* -- L6. ENGINE PRESENCE: "a K=1 interleaved handle exists for this cell" -
  * THREE doors ask this; one list, so a new engine cannot be built and
