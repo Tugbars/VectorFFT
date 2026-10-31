@@ -26,7 +26,7 @@ are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 > Bluestein lengths and the primes from 1,031 to 4,099 on 2026-10-27 at commit 55c75923; 59 of the
 > 2D and 3D other shapes (the rows of a prime above 1,000, and the shapes with an odd side from 75 to
 > 945) on 2026-10-27 at commit 0d702e36; the real transforms on 2026-10-28 at commit 0d702e36; the 3D
-> shapes at 8 threads on 2026-10-31 (the plans with the strips' chain of that day); every
+> shapes at 8 threads on 2026-10-31 (the plans with the axis-0 chains of that day); every
 > other section on 2026-10-27 at commit a61b778c. The changes between them leave the plans of the
 > earlier sections as they were
 
@@ -643,39 +643,39 @@ shapes are the same.
 
 Over the 25 shapes: 1.004 (geometric mean), 22 within 5%.
 
-## 3D at 8 threads: 339 shapes from 1.4 KiB to 256 MiB
+## 3D at 8 threads: 379 shapes from 1.4 KiB to 256 MiB
 
 Not counted in the totals above, which are single-threaded.
 
 > **Arms:** the planner's plan at 8 threads, replayed from [`src/wisdom/14900KF`](../../src/wisdom/14900KF)
-> (the 339 shapes were raced there at 8 threads on 2026-10-31, with the library's sibling guards on); the
-> estimate's plan at 8 threads, the plan `VFFT_FLAG_ESTIMATE` builds with the strips' chain of 2026-10-31
+> (the 379 shapes were raced there at 8 threads on 2026-10-31, with the library's sibling guards on); the
+> estimate's plan at 8 threads, the plan `VFFT_FLAG_ESTIMATE` builds with the axis-0 chains of 2026-10-31
 > (checked on every shape: the same plan served, the same output bit for bit); the planner's plan created a
 > second time, as a control  
 > **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1, 8 threads  
 > **Method:** the three plans in one process; the process on the P-cores, the caller on one P-core inside one
 > measurement scope with the library's sibling guards; every plan warmed for 5 ms, then 15 rounds of blocks
 > of about 10 ms run back to back, the plan order shuffled each round; each ratio is the median of the 15
-> per-round ratios (the control against the planner: 1.002, geometric mean). Each shape's ratio comes from
-> one such process: the 41 shapes the strips' chain changed were timed again with it the same day.
+> per-round ratios (the control against the planner: 1.003, geometric mean). Each shape's ratio comes from
+> one such process: the shapes the axis-0 chains changed were timed again with them the same day.
 > [`estimate_race_nd.c`](../../src/estimate/estimate_race_nd.c) runs this protocol with `T=8`  
-> **Shapes:** 49 cubes (the longest side at most twice the shortest), 98 flat (N1 of 16 or less), 122 tall
-> (N1 at least 8 times the longer plane side, or a plane of at most 128 points), 70 other; 108 with every
+> **Shapes:** 49 cubes (the longest side at most twice the shortest), 98 flat (N1 of 16 or less), 162 tall
+> (N1 at least 8 times the longer plane side, or a plane of at most 128 points), 70 other; 128 with every
 > side a power of two
 
-Over the 339 shapes the estimate's plan takes 1.010 times the planner's at the geometric mean and 1.006 at
-the median; 181 are within 5%, 68 more than 5% faster and 90 more than 5% slower.
+Over the 379 shapes the estimate's plan takes 1.006 times the planner's at the geometric mean and 1.006 at
+the median; 206 are within 5%, 77 more than 5% faster and 96 more than 5% slower.
 
 By the cube's bytes (16 N1 N2 N3) against the caches (L1d 48 KiB, L2 2 MiB, L3 36 MiB):
 
 | Cube | Shapes | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
 |---|---|---|---|---|---|---|
 | up to 48 KiB | 84 | 1.026 | 1.006 | 64 | 3 | 17 |
-| 48 KiB to 2 MiB | 74 | 1.018 | 1.014 | 39 | 13 | 22 |
-| 2 to 16 MiB | 61 | 1.010 | 1.018 | 22 | 14 | 25 |
-| 16 to 36 MiB | 46 | 0.984 | 0.987 | 20 | 17 | 9 |
-| past 36 MiB | 74 | 1.002 | 1.003 | 36 | 21 | 17 |
-| **all** | **339** | **1.010** | **1.006** | **181** | **68** | **90** |
+| 48 KiB to 2 MiB | 74 | 1.017 | 1.014 | 40 | 13 | 21 |
+| 2 to 16 MiB | 74 | 0.990 | 1.006 | 29 | 19 | 26 |
+| 16 to 36 MiB | 54 | 0.978 | 0.980 | 25 | 19 | 10 |
+| past 36 MiB | 93 | 1.008 | 1.004 | 48 | 23 | 22 |
+| **all** | **379** | **1.006** | **1.006** | **206** | **77** | **96** |
 
 By shape and by the lengths:
 
@@ -683,10 +683,10 @@ By shape and by the lengths:
 |---|---|---|---|---|---|---|
 | Cubes | 49 | 0.995 | 0.998 | 26 | 12 | 11 |
 | Flat | 98 | 1.055 | 1.021 | 61 | 6 | 31 |
-| Tall | 122 | 0.989 | 1.011 | 52 | 35 | 35 |
+| Tall | 162 | 0.984 | 1.005 | 77 | 44 | 41 |
 | Other | 70 | 0.996 | 0.990 | 42 | 15 | 13 |
-| Every side a power of two | 108 | 1.000 | 1.002 | 42 | 34 | 32 |
-| A side that is not | 231 | 1.015 | 1.009 | 139 | 34 | 58 |
+| Every side a power of two | 128 | 0.990 | 1.000 | 58 | 40 | 30 |
+| A side that is not | 251 | 1.014 | 1.009 | 148 | 37 | 66 |
 
 ---
 

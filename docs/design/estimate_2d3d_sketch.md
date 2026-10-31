@@ -349,8 +349,8 @@ axis 0 is not empty (fftnd_il.h:1566-1575); the pre-flight checks that `nsw` is 
 
 ## 9a. The 3D plan at T > 1 (`cmt`, `cmts`, `cmtf`, `nsw`, the strips' chain; 2026-10-31)
 
-The one-thread plan above, its structure and plane plan unchanged, its axis-0 chain too except on the
-threaded strips of a pure power of two (the last row below), then how it threads
+The one-thread plan above, its structure and plane plan unchanged, its axis-0 chain too except where a
+pure power of two threads (the last row below), then how it threads
 (`est_mt_3d`), written under the key `nthreads=T` with the threaded verdict the door serves from the row
 (fftnd_il.h:1778-1802). Each plane stays a one-thread plan: the door never threads inside a plane. As at
 rank 2, the rules read the data's size against the caches and the count of workers that can take part.
@@ -362,7 +362,7 @@ rank 2, the rules read the data's size against the caches and the count of worke
 | team | the full team: no `cmtp` |
 | `cmtf` | serial: the one-thread `nf`; the plane arm: 2, the strips, wherever the door's strip pool at axis 0 is not empty (a chain of two stages or more, no Bluestein, 16 N1 8 within the L2), else 1, the cycle walk -- the door's own rule (fftnd_il.h:83) |
 | `nsw` | beside the threaded strips: the widest of the pool whose scratch, 16 N1 w bytes, fits L2 / 4, else the narrowest, written over the one-thread width (the row carries one `nsw`, fftnd_il.h:1785-1786) |
-| axis-0 `chain` | where every side is a power of two and the threaded strips have more columns than workers (N2 N3 > T): `est__pick`'s radix-8 regime, the chain of the 2D threaded strips (§8a), with the band beside the one-thread cycle walk taken again for it; elsewhere the one-thread chain |
+| axis-0 `chain` | where every side is a power of two: on the threaded strips with more columns than workers (N2 N3 > T), `est__pick`'s radix-8 regime, the chain of the 2D threaded strips (§8a); on the threaded cycle walk (no strip width fits: N1 above 16384), the pool's chain ending in 64, its largest radix, the stages before it the most balanced, ascending (32768: 8.8.8.64); either with the band beside the one-thread cycle walk taken again for it. Elsewhere the one-thread chain |
 
 **Timed** at T = 8 against the planner's plans on 299 cells raced into the store first (1.4 KB to 256 MB in five
 regions: up to 48 KB, 48 KB-2 MB, 2-16 MB, 16-36 MB, past 36 MB; cubes, flat, tall and other shapes, half
@@ -405,7 +405,17 @@ threaded strips with more columns than workers (with one column per worker, 8 co
 by 3-10%): 1.035 -> 1.001, 48 KB-2 MB 1.085 -> 1.013, 41 cells changed, 33 faster, 1 slower. Past the powers
 of two the same chain was neutral (10 cells, 0.998), so they keep the one-thread chain. With it, over 339
 shapes (the 299 and 40 raced the next day: 20 powers of two of 8-32 KB, 20 odd or composite past the L3):
-1.010 against the planner, median 1.006 (`docs/performance/estimate_performance.md`).
+1.010 against the planner, median 1.006.
+
+**The cycle walk's chain** (the same day; `chain_study/`): 57 very tall cells on the threaded cycle walk (N1
+17500-262144, 2-256 MB; 40 raced for it), one process, 15 rounds, control 1.006. On the 27 whose sides are all
+powers of two the one-thread chain ran 1.118 against the planner; the pool's chain ending in 64 with the stages
+before it the most balanced, ascending, 0.986 (faster on 24, slower by more than 2% on 1; 2-16 MB 1.158 ->
+0.965, 16-36 MB 1.077 -> 0.993, past 36 MB 1.118 -> 1.003), the planner's own chains 1.003. The strips' radix-8
+regime lost there (1.147), as did the one-thread stages ascending (1.058) and descending (1.185). The other 30
+stood at 0.993 with the one-thread chain; the largest radix first, the planner's habit on them, was mixed by
+region, so they keep it. With both chains, over 379 shapes: 1.006 against the planner, median 1.006; every
+side a power of two 0.990 (`docs/performance/estimate_performance.md`).
 
 Door gaps found on the way, not filled (the report's section 8): the band arm is 1.6-4x faster than the
 cycle walk on the tall cells no strip width fits (N1 above 16384), where the estimate and the planner serve
