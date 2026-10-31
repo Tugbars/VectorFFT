@@ -1,8 +1,8 @@
 /* estimate_race_nd.c -- the estimate method's 2D and 3D plans against the banked plans, TIMED (tracked, not
  * wired into the library; the 1D twin is estimate_race.c).
  *
- * For each cell (2D N1xN2 or 3D N1xN2xN3, c2c, natural order, out of place, one thread) three plans in one
- * process:
+ * For each cell (2D N1xN2 or 3D N1xN2xN3, c2c, natural order, out of place, one thread or T threads) three plans
+ * in one process:
  *   B   the banked plan: vfft_create from a scratch copy of the store (a complete row replays)
  *   E   the estimate plan: vfft_create with VFFT_FLAG_ESTIMATE (the library's formulas and build: a private
  *       in-memory store, no measuring, no store read; docs/design/estimate_2d3d_sketch.md)
@@ -13,8 +13,14 @@
  * HIGH priority; R rounds, the arms in a rotated order, 200 ms apart; each block = warm executes, then
  * REPS timed executes with REPS sized to ~80 ms. Reported per cell: each arm's median over the rounds, and
  * the per-round ratios E/B and B2/B with their range; at the end the geometric mean of E/B.
+ * At T > 1 (T=n; the threaded protocol of the planner's own races): the process on the P-cores with their
+ * hyperthread siblings (vfft_measure_confine(0)), the caller on logical CPU 0 inside one measurement scope with
+ * the library's guard (it holds the sibling of every core the pool uses); every arm warmed at least 5 ms, REPS
+ * sized to ~10 ms on B, the arm order shuffled each round (seeded), never paused (a pause parks the pool's
+ * workers and the next block times their wake). Each arm's engagement is reported (the door's threaded pass
+ * counter, vfft_il2d_col_mt_passes / vfft_ilnd_mt_passes): a threaded verdict that did not run threaded shows.
  *
- *   estimate_race_nd <store dir> [rounds=15] cell...     (cell = N1xN2 or N1xN2xN3; none: the list below)
+ *   estimate_race_nd <store dir> [rounds=15] [T=n] cell...   (cell = N1xN2 or N1xN2xN3; none: the list below)
  * Build: python gauntlet/build.py --compile --src src/estimate/estimate_race_nd.c   (no --vfft)
  * Run it on a quiet machine only, against a scratch COPY of the store (a cell whose row is incomplete races
  * at its banked create and saves into the directory named). */
@@ -52,14 +58,16 @@ static double qpc_ns(void)
 }
 static int cmpd(const void *a, const void *b) { const double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 
-/* the banked row's verdicts for one cell (the 2D or 3D shard of the store), as its tokens */
+/* the banked row's verdicts for one cell (the 2D or 3D shard of the store) at T threads, as its tokens */
 static char *g_shard[2];
-static void banked_tokens(const char *store, const int *n, int rank, char *out, size_t cap)
+static void banked_tokens(const char *store, const int *n, int rank, int T, char *out, size_t cap)
 {
     static const char *want2[] = { "chain=", "forms=", "blu=", "tpc=", "rd=", "rdw=", "wl=", "ro=", "sw=", "rbk=", "turn=",
-                                   "csk=", "rp_1_il_route=", NULL };
-    static const char *want3[] = { "chain=", "forms=", "blu=", "tpc=", "rd=", "wl=", "s=", "nf=", "nsw=", "plane_1_chain=",
-                                   "plane_1_wl=", "plane_1_ro=", "plane_1_turn=", "plane_1_csk=", NULL };
+                                   "csk=", "cmt=", "mtarm=", "msw=", "nls=", "rp_1_il_route=", NULL };
+    static const char *want3[] = { "chain=", "forms=", "blu=", "tpc=", "rd=", "wl=", "s=", "nf=", "nsw=", "cmt=", "cmts=",
+                                   "cmtf=", "cmtp=", "plane_1_chain=", "plane_1_wl=", "plane_1_ro=", "plane_1_turn=",
+                                   "plane_1_csk=", NULL };
+    char thr[24] = "";
     const char **want = rank == 3 ? want3 : want2;
     char key[160];
     char **sh = &g_shard[rank == 3];
@@ -78,10 +86,12 @@ static void banked_tokens(const char *store, const int *n, int rank, char *out, 
         (*sh)[sz] = 0;
         fclose(f);
     }
+    if (T > 1)
+        snprintf(thr, sizeof thr, " nthreads=%d", T);   /* a threaded plan's own row (wisdom2 v1.3) */
     if (rank == 3)
-        snprintf(key, sizeof key, "@cell t=c2c n=%dx%dx%d q=1 ord=nat place=oop lay=il |", n[0], n[1], n[2]);
+        snprintf(key, sizeof key, "@cell t=c2c n=%dx%dx%d q=1 ord=nat place=oop lay=il%s |", n[0], n[1], n[2], thr);
     else
-        snprintf(key, sizeof key, "@cell t=c2c n=%dx%d q=1 ord=nat place=oop lay=il |", n[0], n[1]);
+        snprintf(key, sizeof key, "@cell t=c2c n=%dx%d q=1 ord=nat place=oop lay=il%s |", n[0], n[1], thr);
     if (!(l = strstr(*sh, key))) { snprintf(out, cap, "(no row)"); return; }
     e = strchr(l, '\n');
     p = strchr(l, '|') + 1;
@@ -103,29 +113,39 @@ static void chain_s(char *o, size_t cap, const int *R, int n)
     o[0] = 0;
     for (int i = 0; i < n && l < cap; i++) l += snprintf(o + l, cap - l, "%s%d", i ? "." : "", R[i]);
 }
-/* the estimate's recipe, from the library's formulas */
-static int est_tokens(const est_machine_t *m, const int *n, int rank, char *out, size_t cap, char *why, size_t whylen)
+/* the estimate's recipe at T threads, from the library's formulas */
+static int est_tokens(const est_machine_t *m, const int *n, int rank, int T, char *out, size_t cap, char *why, size_t whylen)
 {
     char c0[64], c1[64];
+    size_t l;
     if (rank == 2)
     {
         est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p);
         if (!p || est_plan_2d(m, n[0], n[1], p, why, whylen)) { free(p); return -1; }
+        est_mt_2d(m, T, p);
         chain_s(c0, sizeof c0, p->col.R, p->col.nst);
-        snprintf(out, cap, "chain=%s%s%s blu=%d tpc=%d wl=%d ro=%d sw=%d rbk=%d turn=%d csk=%d rp=%s", c0,
-                 p->col.forms[0] ? " forms=" : "", p->col.forms, p->col.blu, p->col.tpc, p->col.wl, p->ro, p->sw, p->rbk,
-                 p->turn, p->csk, vw2_oop_il_name[p->rp.k1_il_route]);
+        l = (size_t)snprintf(out, cap, "chain=%s%s%s blu=%d tpc=%d wl=%d ro=%d sw=%d rbk=%d turn=%d csk=%d rp=%s", c0,
+                             p->col.forms[0] ? " forms=" : "", p->col.forms, p->col.blu, p->col.tpc, p->col.wl, p->ro, p->sw,
+                             p->rbk, p->turn, p->csk, vw2_oop_il_name[p->rp.k1_il_route]);
+        if (T > 1 && l < cap)
+            snprintf(out + l, cap - l, " cmt=%d mtarm=%d msw=%d nls=%d", p->cmt, p->mtarm, p->msw, p->nls);
         free(p);
         return 0;
     }
     {
         est_plan3d_t *p = (est_plan3d_t *)malloc(sizeof *p);
         if (!p || est_plan_3d(m, n[0], n[1], n[2], p, why, whylen)) { free(p); return -1; }
+        est_mt_3d(m, T, p);
         chain_s(c0, sizeof c0, p->col.R, p->col.nst);
         chain_s(c1, sizeof c1, p->plane.col.R, p->plane.col.nst);
-        snprintf(out, cap, "chain=%s%s%s blu=%d wl=%d s=%d nf=%d | plane chain=%s wl=%d ro=%d turn=%d csk=%d", c0,
-                 p->col.forms[0] ? " forms=" : "", p->col.forms, p->col.blu, p->col.wl, p->s, p->nf, c1, p->plane.col.wl,
-                 p->plane.ro, p->plane.turn, p->plane.csk);
+        l = (size_t)snprintf(out, cap, "chain=%s%s%s blu=%d wl=%d s=%d nf=%d", c0, p->col.forms[0] ? " forms=" : "",
+                             p->col.forms, p->col.blu, p->col.wl, p->s, p->nf);
+        if (T > 1 && l < cap)
+            l += (size_t)snprintf(out + l, cap - l, " cmt=%d cmts=%d cmtf=%d nsw=%d", p->cmt, p->cmts, p->cmtf,
+                                  p->cmt ? p->mtnsw : p->nf == 2 ? p->nsw : 0);
+        if (l < cap)
+            snprintf(out + l, cap - l, " | plane chain=%s wl=%d ro=%d turn=%d csk=%d", c1, p->plane.col.wl, p->plane.ro,
+                     p->plane.turn, p->plane.csk);
         free(p);
         return 0;
     }
@@ -136,14 +156,20 @@ int main(int argc, char **argv)
     static int cells[MAXCELL][3];
     static char line[MAXCELL][360];
     static double t[NARM][128];
-    int nc = 0;
-    if (argc < 2) { printf("usage: estimate_race_nd <store dir> [rounds] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
+    int nc = 0, T = 1;
+    if (argc < 2) { printf("usage: estimate_race_nd <store dir> [rounds] [T=n] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
     const char *store = argv[1];
     const int R = argc > 2 ? atoi(argv[2]) : 15;
     if (R < 1 || R > 128) { printf("rounds: 1..128\n"); return 2; }
     for (int i = 3; i < argc && nc < MAXCELL; i++)
     {
         int a = 0, b = 0, c = 0;
+        if (!strncmp(argv[i], "T=", 2))
+        {
+            T = atoi(argv[i] + 2);
+            if (T < 1 || T > 1024) { printf("threads: 1..1024\n"); return 2; }
+            continue;
+        }
         const int k = sscanf(argv[i], "%dx%dx%d", &a, &b, &c);
         if (k < 2) { printf("bad cell %s\n", argv[i]); return 2; }
         cells[nc][0] = a; cells[nc][1] = b; cells[nc][2] = k == 3 ? c : 0;
@@ -160,12 +186,28 @@ int main(int argc, char **argv)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
-    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d\n", m.lanes, m.l1d, m.l2, m.l3, m.cores,
-           store, R);
+    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d\n", m.lanes, m.l1d, m.l2,
+           m.l3, m.cores, store, R, T);
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
-    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << 2);
-    printf("# HIGH priority: %s; caller on CPU %lu\n", SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) ? "ok" : "REFUSED",
-           GetCurrentProcessorNumber());
+    if (T > 1)
+    {   /* the threaded protocol: the caller on logical CPU 0 in one measurement scope, the library's guard */
+        vfft_measure_config_t mc;
+        char d[320];
+        memset(&mc, 0, sizeof mc);
+        mc.pin = VFFT_MEASURE_PIN_CORE;
+        mc.pin_core = 0;
+        mc.guard = VFFT_MEASURE_GUARD_DEFAULT;
+        mc.priority = VFFT_MEASURE_PRIORITY_LEAVE;
+        vfft_measure_configure(&mc);
+        const int f = vfft_measure_begin();
+        printf("# measurement scope: %s%s\n", vfft_measure_describe(d, sizeof d), f ? " (not clean)" : "");
+    }
+    else
+    {
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << 2);
+        printf("# HIGH priority: %s; caller on CPU %lu\n", SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) ? "ok" : "REFUSED",
+               GetCurrentProcessorNumber());
+    }
 
     double sumB = 0, sumE = 0;
     int nTimed = 0;
@@ -178,17 +220,17 @@ int main(int argc, char **argv)
         if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d", n[0], n[1], n[2]);
         else snprintf(name, sizeof name, "%dx%d", n[0], n[1]);
         line[k][0] = 0;
-        banked_tokens(store, n, rank, bt, sizeof bt);
+        banked_tokens(store, n, rank, T, bt, sizeof bt);
         for (int a = 0; a < NARM; a++)
         {
             vfft_config_t c;
             memset(&c, 0, sizeof c);
             c.rank = rank;
             memcpy(c.n, n, sizeof(int) * 3);
-            c.nthreads = 1;
+            c.nthreads = T;
             if (a == 1)
             {   /* E: the estimate, through the public flag; the recipe printed from the library's formulas */
-                if (est_tokens(&m, n, rank, et, sizeof et, why, sizeof why)) { printf("%-12s estimate refused (formula): %s\n", name, why); goto next; }
+                if (est_tokens(&m, n, rank, T, et, sizeof et, why, sizeof why)) { printf("%-12s estimate refused (formula): %s\n", name, why); goto next; }
                 c.flags = VFFT_FLAG_ESTIMATE;
             }
             else
@@ -212,28 +254,65 @@ int main(int argc, char **argv)
             double emax = 0, mag = 0;
             for (int a = 1; a < NARM; a++)
                 for (long i = 0; i < 2L * P; i++) { const double e = fabs(out[a][i] - out[0][i]); if (e > emax) emax = e; if (fabs(out[0][i]) > mag) mag = fabs(out[0][i]); }
-            /* size the block to ~80 ms from a short probe of B */
+            /* size the block to ~80 ms (T > 1: ~10 ms) from a short probe of B */
             double t0 = qpc_ns();
             for (int i = 0; i < 3; i++) vfft_execute(p[0], VFFT_FORWARD, in, out[0]);
             const double one = (qpc_ns() - t0) / 3;
-            int reps = (int)(80e6 / one); if (reps < 3) reps = 3; if (reps > 200000) reps = 200000;
+            int reps = (int)((T > 1 ? 10e6 : 80e6) / one); if (reps < 3) reps = 3; if (reps > 200000) reps = 200000;
             int warm = reps / 10; if (warm < 2) warm = 2;
-            for (int r = 0; r < R; r++)
-                for (int j = 0; j < NARM; j++)
+            int thr[NARM] = { 0 };
+            if (T > 1)
+            {   /* every arm warmed at least 5 ms, then the blocks back to back, the order shuffled each round (seeded) */
+                unsigned rs = ((unsigned)n[0] * 73856093u ^ (unsigned)n[1] * 19349663u ^ (unsigned)n[2] * 83492791u) | 1u;
+                for (int a = 0; a < NARM; a++)
                 {
-                    const int a = (j + r) % NARM;
-                    for (int w = 0; w < warm; w++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                    int w = 0;
                     t0 = qpc_ns();
-                    for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
-                    t[a][r] = (qpc_ns() - t0) / reps;
-                    Sleep(200);
+                    while (qpc_ns() - t0 < 5e6 || w < 2) { vfft_execute(p[a], VFFT_FORWARD, in, out[a]); w++; }
                 }
+                for (int r = 0; r < R; r++)
+                {
+                    int ord[NARM];
+                    for (int j = 0; j < NARM; j++) ord[j] = j;
+                    for (int j = NARM - 1; j > 0; j--)
+                    {
+                        rs = rs * 1664525u + 1013904223u;
+                        const int x = (int)((rs >> 8) % (unsigned)(j + 1)), y = ord[j];
+                        ord[j] = ord[x];
+                        ord[x] = y;
+                    }
+                    for (int j = 0; j < NARM; j++)
+                    {
+                        const int a = ord[j];
+                        const long c0 = rank == 3 ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes();
+                        t0 = qpc_ns();
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        t[a][r] = (qpc_ns() - t0) / reps;
+                        if ((rank == 3 ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes()) != c0) thr[a] = 1;
+                    }
+                }
+            }
+            else
+                for (int r = 0; r < R; r++)
+                    for (int j = 0; j < NARM; j++)
+                    {
+                        const int a = (j + r) % NARM;
+                        for (int w = 0; w < warm; w++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        t0 = qpc_ns();
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        t[a][r] = (qpc_ns() - t0) / reps;
+                        Sleep(200);
+                    }
             double med[NARM], re[128], rc2[128];
             for (int a = 0; a < NARM; a++) { double v[128]; memcpy(v, t[a], sizeof(double) * R); qsort(v, R, sizeof(double), cmpd); med[a] = v[R / 2]; }
             for (int r = 0; r < R; r++) { re[r] = t[1][r] / t[0][r]; rc2[r] = t[2][r] / t[0][r]; }
             qsort(re, R, sizeof(double), cmpd); qsort(rc2, R, sizeof(double), cmpd);
-            snprintf(line[k], sizeof line[k], "%-12s  B %11.1f  E %11.1f  B2 %11.1f   E/B %.3f [%.3f..%.3f]   B2/B %.3f [%.3f..%.3f]   agree %.0e",
-                     name, med[0], med[1], med[2], re[R / 2], re[0], re[R - 1], rc2[R / 2], rc2[0], rc2[R - 1], mag > 0 ? emax / mag : emax);
+            {
+                const int l = snprintf(line[k], sizeof line[k], "%-12s  B %11.1f  E %11.1f  B2 %11.1f   E/B %.3f [%.3f..%.3f]   B2/B %.3f [%.3f..%.3f]   agree %.0e",
+                                       name, med[0], med[1], med[2], re[R / 2], re[0], re[R - 1], rc2[R / 2], rc2[0], rc2[R - 1], mag > 0 ? emax / mag : emax);
+                if (T > 1 && l > 0 && (size_t)l < sizeof line[k])   /* engaged: the arm ran the door's threaded pass */
+                    snprintf(line[k] + l, sizeof line[k] - (size_t)l, "   threaded B/E/B2 %d/%d/%d", thr[0], thr[1], thr[2]);
+            }
             printf("%s\n              banked: %s\n              estimate: %s\n", line[k], bt, et);
             fflush(stdout);
             sumB += log(med[0]); sumE += log(med[1]); nTimed++;
@@ -246,5 +325,7 @@ int main(int argc, char **argv)
     printf("\n# summary (ns per forward execute; E/B < 1 = estimate faster):\n");
     for (int k = 0; k < nc; k++) if (line[k][0]) printf("%s\n", line[k]);
     if (nTimed) printf("# geometric mean E/B over %d cells: %.3f\n", nTimed, exp((sumE - sumB) / nTimed));
+    if (T > 1)
+        vfft_measure_end();
     return 0;
 }

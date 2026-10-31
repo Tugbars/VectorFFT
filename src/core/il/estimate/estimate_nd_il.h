@@ -251,7 +251,7 @@ typedef struct est_plan3d_s
  * fftnd_il.h:80) on the full team, with the one-thread structure; the natural form the door's own, the strips
  * wherever its strip pool is not empty and the cycle walk where it is (fftnd_il.h:83), the strips' width the
  * widest of the pool whose scratch, 16 N1 w bytes, fits L2 / EST_ND_MT3_NSW_L2_DIV, else the narrowest.
- * Timed at T = 8 against the planner's plans on 299 cells raced into the store first (8 KB to 256 MB in five
+ * Timed at T = 8 against the planner's plans on 299 cells raced into the store first (1.4 KB to 256 MB in five
  * regions by the cube against the L1d, L2 and L3; cubes, flat, tall and other shapes, half not powers of two,
  * Rader and Bluestein axis 0), one process, 15 rounds, the hyperthread siblings held
  * (docs/research/estimate_threaded/evidence/nd/3d_night/): the threading rules on the planner's own one-thread

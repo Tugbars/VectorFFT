@@ -1,4 +1,4 @@
-# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform, natural order; rank 2 at any thread count)
+# 2D and 3D estimate: the sketch (interleaved c2c, FP64, one transform, natural order, any thread count)
 
 2026-10-22. The design of `VFFT_FLAG_ESTIMATE` at rank 2 and 3, written before the code that follows
 it (`src/core/il/estimate/estimate_nd_il.h`, `src/core/il/estimate/c2c_estimate_nd_il.h`). Nothing was
@@ -17,10 +17,10 @@ the banked rows, **[I]** interpretation.
 | rank | 2 and 3 (1 as before) | 4 |
 | batch | one transform (howmany 1) | howmany > 1 |
 | order | natural (the default) | scrambled at rank 2 and 3 |
-| threads | rank 2: any (§8a, 2026-10-29); rank 3: one | nthreads > 1 at rank 3 |
+| threads | any: rank 2 (§8a, 2026-10-29), rank 3 (§9a, 2026-10-31) | — |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
 | lengths | every axis >= 2, powers of two, odd, composites, primes: the column Bluestein (`blu=M`), the turned prime pass (`tpc`), the Rader stage (`rd`/`rdw`) | an axis of length 1; a last axis the row guard refuses (`vfft_policy_c2c_row_refused`, policy_il.h:511); a column with no chain whose Bluestein length M the column pool cannot chain (M above 2^24: N above 2^23, every N whose M passes an int among them, §5) |
-| rank-3 structure | always `s=1`: the 2D plan per plane, then axis 0 | the flat structure is never planned |
+| rank-3 structure | `s=1`, the 2D plan per plane, then axis 0; or `s=2`, the flat tier, on the planes `est__flat_plane` names (§9) | — |
 
 The 1D plans inside a 2D or 3D plan (the children `rp_`, `turn_`, `csk_`, `tpc_`, and the `plane_`
 child's own) are the 1D estimate's `est_plan_1d`, unchanged. Estimate never measures at create,
@@ -35,7 +35,7 @@ never reads or writes the user's wisdom, and is never a fallback.
 | L2 | the band widths (2D and 3D); the 3D strip width | `vfft_cpu_l2_bytes()` |
 | L3 | the 3D natural form: the strips only on a volume past it (no L3 reported counts as past, as the 1D estimate reads it) | `vfft_cpu_l3_bytes()` |
 | lane count | refuse a machine whose lane count is not this build's (as at rank 1); the 1D children | `VFFT_IL_VW` |
-| thread count | rank 2 at T > 1: the strip ladder's floor of T strips and the turn's bound (§8a); the threads themselves are the request's (`nthreads`) | the request |
+| thread count | rank 2 at T > 1: the strip ladder's floor of T strips and the turn's bound (§8a); rank 3 at T > 1: the one-thread bound over the workers that can take part, min(N1, N2 N3, T) (§9a); the threads themselves are the request's (`nthreads`) | the request |
 | core count | not used | — |
 
 ## 3. What is written
@@ -48,7 +48,7 @@ writes the rank-3 row `n=N1xN2xN3`, whose `plane_` child is a whole 2D row with 
 | row | tokens | children |
 |---|---|---|
 | 2D | `chain` `forms` (when a stage has rival forms) `blu` (N1 not a power of two) `bluforms` (a Bluestein M chain with rival forms) `tpc` (Bluestein) `rd` `rdw` (a Rader stage) `wl` `tf` `ro` `sw` `rbk` `turn` `csk` | `rp_` always; `turn_` when the door builds the turn plan; `csk_` when it builds the skewed pass's row plan; `tpc_` when `tpc=1` |
-| 3D | `chain` `forms` `blu` `bluforms` `tpc` `rd` `rdw` (axis 0) `wl` `tf` (the cycle walk only) `s=1` `nf` `nsw` (the strips only) | `plane_` (the 2D row at N2 x N3, natural, with its children); `tpc_` when axis 0 is `tpc=1` |
+| 3D | `chain` `forms` `blu` `bluforms` `tpc` `rd` `rdw` (axis 0) `wl` `tf` (the cycle walk only) `s` `nf` `nsw` (the strips only); `s=2`: `chain1` `forms1` `blu1` (axis 1); at T > 1 `cmt` `cmts` `cmtf`, and `nsw` beside the threaded strips (§9a) | `s=1`: `plane_` (the 2D row at N2 x N3, natural, one thread, with its children); `s=2`: `rp_` (the row plan at N3); `tpc_` when axis 0 is `tpc=1` |
 
 Every token the door would race behind is written explicitly: on a complete row nothing is timed
 [V]. `ro`, `sw`, `rbk`, `turn`, `csk` are written on a Bluestein row too, though the door reads
@@ -336,16 +336,65 @@ keeps 5 (the best share of its pool).
 
 | token | formula | [M] against the 1,288 natural one-thread rows |
 |---|---|---|
-| `s` | 1: the 2D plan per plane (the owner's ruling) | 1,008 (78%) |
+| `s` | 1: the 2D plan per plane; 2: the flat tier (axis 1's natural pass, unbanded, and the row plan) on the planes `est__flat_plane` names (2026-10-26/27: a plain column chain, the plane within 125% of the L2, 75% past the L3, and either even, not both sides powers of two, at least 40% of the L2, or with an odd side, no skewed column pass and rows that are not one odd solo kernel; the evidence beside `EST_ND_FLAT_*` in `estimate_nd_il.h`) | `s=1` alone: 1,008 (78%) |
 | axis-0 `chain` | §4 on the scrambled pass at (N1, w = N2 N3), with the table | 1,039 (81%) |
 | axis-0 `wl`, `tf` | with the cycle walk: 0 on a one-stage or Bluestein axis 0; otherwise the widest legal width below N1 (`_ilnd_wl_pool`, fftnd_il.h:1133) whose band fits the L2, 16 wl N2 N3 <= L2, else the narrowest legal width; `tf` = (wl > 0). With the strips: not written (below) | given the banked chain: 607 of 1,201 rows that carry a width (51%); banded or not: 1,014 (84%). The race's own repeatability of this width: 41% |
 | `nf`, `nsw` | the owner's rule (2026-10-23). The strips, `nf=2`, when the volume passes the L3, 16 N1 N2 N3 > L3 (no L3 reported counts as past, as at rank 1), and axis 0 is short, 16 N1 <= L1d / 4 (N1 <= 768 at a 48 KiB L1d: 512 among the powers of two); `nsw` = the widest of the door's strip widths (`_ilnd_sw_pool`, fftnd_il.h:826-836: 8 to 1024 columns, powers of two, the strip scratch 16 N1 w within the L2, w within the plane) whose scratch fits half the L2, 16 N1 nsw <= L2 / 2. The strips serve axis 0 unbanded (the door applies no band beside them, fftnd_il.h:1619), and `wl`, `tf` are not written: the race banks the band only where the cycle form won (fftnd_il.h:1733). Otherwise the cycle walk, `nf=1`, no `nsw` -- also on a one-stage or Bluestein axis 0 (the door's strip pool is empty there) and where no width fits | against the 796 rows that carry the race's `nf`: 739 (92.8%); the cycle walk always: 709 (89.1%). The misses: 43 rows where the strips won at volumes up to 32 MiB (19 at 32 MiB), and 14 at 64 MiB where the cycle walk won. The strip width: exact at 43 of the 87 strip rows (41 without the door's w <= plane bound) |
 | `plane_` | the 2D plan at N2 x N3, natural, by §3-§8 | see the 2D rows |
 
 At one thread with `s` and `nf` banked, and `wl` beside the cycle walk or `nsw` beside the strips,
-the door has nothing to race: the configuration count is one (fftnd_il.h:1608-1621) and no flat
-structure is built (`want2` = 0). The door takes the written `nsw` wherever its strip pool at that
+the door has nothing to race: the configuration count is one (fftnd_il.h:1608-1621) and only the
+written structure is built. The door takes the written `nsw` wherever its strip pool at that
 axis 0 is not empty (fftnd_il.h:1566-1575); the pre-flight checks that `nsw` is one of that pool.
+
+## 9a. The 3D plan at T > 1 (`cmt`, `cmts`, `cmtf`, `nsw`; 2026-10-31)
+
+The one-thread plan above, its axis-0 chain, structure and plane plan unchanged, then how it threads
+(`est_mt_3d`), written under the key `nthreads=T` with the threaded verdict the door serves from the row
+(fftnd_il.h:1778-1802). Each plane stays a one-thread plan: the door never threads inside a plane. As at
+rank 2, the rules read the data's size against the caches and the count of workers that can take part.
+
+| token | formula |
+|---|---|
+| `cmt` | 0 (serial, the one-thread plan) while the cube, 16 N1 N2 N3 bytes, times the workers that can take part, min(N1, N2 N3, T), fits 32 KB x T: 32 KB with all T workers, twice that with T/2 of them; else 2, the plane arm (axis 0 in column strips on min(N2 N3, T) workers, then the planes on min(N1, T)). The band arm (`cmt=1`) is not written: the door never races it (fftnd_il.h:80) |
+| `cmts` | the one-thread `s`; the row carries that structure's children alone |
+| team | the full team: no `cmtp` |
+| `cmtf` | serial: the one-thread `nf`; the plane arm: 2, the strips, wherever the door's strip pool at axis 0 is not empty (a chain of two stages or more, no Bluestein, 16 N1 8 within the L2), else 1, the cycle walk -- the door's own rule (fftnd_il.h:83) |
+| `nsw` | beside the threaded strips: the widest of the pool whose scratch, 16 N1 w bytes, fits L2 / 4, else the narrowest, written over the one-thread width (the row carries one `nsw`, fftnd_il.h:1785-1786) |
+
+**Timed** at T = 8 against the planner's plans on 299 cells raced into the store first (1.4 KB to 256 MB in five
+regions: up to 48 KB, 48 KB-2 MB, 2-16 MB, 16-36 MB, past 36 MB; cubes, flat, tall and other shapes, half
+not powers of two, Rader and Bluestein axis 0), one process, 15 rounds, the hyperthread siblings held
+(`docs/research/estimate_threaded/evidence/nd/3d_night/`; the planner's plan against itself 1.003):
+
+| what is timed | up to 48 KB | 48 KB-2 MB | 2-16 MB | 16-36 MB | past 36 MB | all | cells > 1.10 |
+|---|---|---|---|---|---|---|---|
+| the rules on the planner's one-thread plans | 1.013 | 1.009 | 1.005 | 0.985 | 1.003 | 1.004 | 15 |
+| the estimate as built | 1.022 | 1.047 | 1.018 | 1.000 | 0.996 | 1.019 | 55 |
+
+Of the 55 cells above 1.10, 41 are the one-thread plan the threaded plan inherits: the banded walk's width
+on tall cells (32768x8x4 1.26, 256x64x2 1.30) and the plane plan on flat cells (8x8x16384 1.85). The other
+14: 6 in the one-thread bound's mixed zone (cubes of 24-64 KB: 52x7x6, 63x6x6, 128x6x5), 5 strip widths, 3
+structures. The library's rows were checked against the timed ones on the 299 cells: the same verdict,
+structure, team, form and width served, the forward output bitwise equal, nothing measured.
+
+Each rule against its rivals:
+
+- **One thread or threads**, 94 cells timed both ways (8-512 KB): the cube within L1d / 2 (24 KB, the 2D
+  rule) 1.051 against the faster of the two; within 32 KB 1.024; the bound above 1.011. One thread wins every
+  cube up to 24 KB; from 24 to 64 KB it wins where few workers can take part (N1 of 2-4, tall cells with few
+  columns: 512x2x2 and 1024x2x2 by 2.5x).
+- **The full team**: the half team where a plane passes the L2 cost 8-11% past 16 MB (7x32x8819 2.4x); it won
+  3 of 63 races, and the old rows that banked it, timed again, ran 0.995 of the full team.
+- **The one-thread structure** against always the child: 1.009 and 1.046 at 2-16 MB (15x256x256 1.73).
+- **The width**: every width of the pool timed on 70 cells: L2 / 4 1.019 against the best on the 30 it was
+  read off, 1.024 on 40 fresh cells; the one-thread width 1.048, L2 / 2 1.049 (1024x64x32: 16 columns 0.71 of
+  the planner's 128).
+
+Door gaps found on the way, not filled (the report's section 8): the band arm is 1.6-4x faster than the
+cycle walk on the tall cells no strip width fits (N1 above 16384), where the estimate and the planner serve
+the cycle walk; the cycle walk wins 11 of the 18 cells of 8-37 MB where the door runs the strips; the
+planner's threaded race keeps the one-thread strip width (fftnd_il.h:1751) and Rader batch width.
 
 ## 10. The 1D children
 
@@ -359,7 +408,7 @@ its own and moved onto the parent row under its prefix with the door's `vfft_chi
 | `turn_` | N1, in place, natural | the turn plan is built (§3) |
 | `csk_` | N2, out of place, natural | the skewed pass's row plan is built (§3) |
 | `tpc_` | N1, in place, natural | `tpc=1` |
-| `plane_` (3D) | the whole 2D row at N2 x N3 with its own `rp_` `turn_` `csk_` `tpc_` | always (`s=1`) |
+| `plane_` (3D) | the whole 2D row at N2 x N3 with its own `rp_` `turn_` `csk_` `tpc_`, one thread | `s=1` (with `s=2` the 3D row carries `rp_` at N3 instead) |
 
 [M] `est_plan_1d` is exact on 4,260 of the 5,980 banked forward child rows (71%), most of the rest
 in ZTURN-T stage order.
@@ -388,8 +437,10 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
    `blu`, `tpc`, the Rader engine, the natural leaf, `wl`, `wc`, `il2d_rowb` / `il2d_rowb2` / the
    two-pass tile, `il2d_turn`, `il2d_csk`, at T > 1 the thread count and the served verdict (`colmt`,
    `natarm`, `msw`, `natst`), and every built child's engine (`est__check_plan`); the 3D
-   handle's `arm == 1`, `mt == 0`, the natural form `nf` (and with the strips the width `nsw`), the
-   axis-0 descriptor the same way, and its plane plan checked as a 2D plan.
+   handle's thread count, structure (`arm`), threaded verdict (`mt`), team (`ptw` 0, the full team), the
+   natural form `nf` (and with the strips the width `nsw`) -- at T > 1 the threaded ones, serial the
+   one-thread ones -- the axis-0 descriptor the same way, and its plane plan checked as a 2D plan (`s=1`)
+   or axis 1 and the row plan (`s=2`).
 
 ## 12. Refusals (the front door, `_vfft_api_translate`)
 
@@ -397,7 +448,6 @@ The 1D build's steps, one rank up (`src/core/il/estimate/c2c_estimate_nd_il.h`):
 |---|---|
 | rank 4 | `vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank 4 (drop the flag to plan it by measuring)` |
 | rank 2 or 3, scrambled | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)` |
-| rank 3, nthreads > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 3 on one thread only, not nthreads %d (drop the flag to plan it by measuring)` |
 | howmany > 1 | `vfft_create: VFFT_FLAG_ESTIMATE plans one transform, not a batch of %zu (drop the flag to plan it by measuring)` (as before) |
 | any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a plan-steering switch is set (unset it: estimate plans from formulas only)` |
 
@@ -415,14 +465,14 @@ sweep at create, never at execute), each read on a path an estimate create runs:
   `VFFT_NO_K1PLAN`, `VFFT_NO_NAT_ILP`;
 - the 2D door (also inside a 1D four-step): `VFFT_IL2D_CHAIN`, `_FORMS`, `_BLU`, `_TPC`, `_WL`,
   `_TFUSE`, `_WC`, `_ROWOOP`, `_CSK`, `_RB2_KB`, `_STAGED`, `_NO_COLMT`, `_MTARM`;
-- the 3D door: `VFFT_ILND_ARM`, `_WL`, `_NF`, `_SW`.
+- the 3D door: `VFFT_ILND_ARM`, `_WL`, `_NF`, `_SW`, and at T > 1 the threaded pins `_MT` and `_PT`
+  (they replace the row's threaded verdict, fftnd_il.h:1768-1776).
 
 Left out: the logging names (`VFFT_IL2D_LOG`, `VFFT_NAT_LOG`, `VFFT_ILPR_LOG`, `VFFT_IL_DP_VERBOSE`,
 `VFFT_RACE_LOG`, `VFFT_VERBOSE`, ...), the execute-time profiling (`VFFT_IL2D_PHASES`,
 `VFFT_ILND_PROF`), the stores' names, the real, split and transform-contiguous batch doors' names
 (the flag refuses those requests), the names no estimate create or execute reads (`VFFT_PQ_NO_MT`,
-the batch queues'; `VFFT_IL2D_DENSE`), the 3D door's threaded pins (`VFFT_ILND_MT`, `VFFT_ILND_PT`:
-inert at the one thread estimate plans rank 3 at), the thread pool's (`VFFT_PIN_STRIDE`,
+the batch queues'; `VFFT_IL2D_DENSE`), the thread pool's (`VFFT_PIN_STRIDE`,
 `VFFT_THREAD_BLOCK_MS`), and `VFFT_HIGHN_PLAN`, read only inside a race (k1_commit.h:777, 1651).
 
 ## 13. How to validate it later (on a quiet machine; the owner runs it)
@@ -431,7 +481,9 @@ inert at the one thread estimate plans rank 3 at), the thread pool's (`VFFT_PIN_
 banked plan from a scratch copy of the store, the estimate plan through the public flag, the banked
 plan again as the control), the 1D tool's protocol (`vfft_measure_confine`, the caller on logical
 CPU 2, HIGH priority, rounds with the arm order rotated 200 ms apart, medians and per-round ratio
-ranges, the geometric mean). The cells that price the open choices: the 2D natural chains where the
+ranges, the geometric mean); with `T=n` the threaded protocol of §9a's timing (one measurement scope
+with the library's guards, the blocks back to back with the arm order shuffled each round, each arm's
+engagement). The cells that price the open choices: the 2D natural chains where the
 standalone and `plane_` races disagree (512x16, 1024x8, 2048x4), N2 = 16 (`ro=2` against the banked
 two-pass rows), the 3D band widths at volumes 4-64 MiB, the natural form at volumes around the L3
 (the strips rule's misses: strips that won at 32 MiB, the cycle walk at 64 MiB), and the Rader
