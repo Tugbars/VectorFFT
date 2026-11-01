@@ -1,7 +1,8 @@
 /* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/estimate/estimate_il.h,
  * il/estimate/c2c_estimate_il.h, and at rank 2 and 3 il/estimate/estimate_nd_il.h,
- * il/estimate/c2c_estimate_nd_il.h, il/estimate/c2c_estimate_lm_il.h): an interleaved c2c transform planned by
- * formulas, nothing measured, and a contiguous or a lane-major batch of them.
+ * il/estimate/c2c_estimate_nd_il.h, il/estimate/c2c_estimate_lm_il.h, and the real transforms
+ * il/estimate/real_estimate_il.h): an interleaved c2c transform planned by formulas, nothing measured, a contiguous or
+ * a lane-major batch of them, and one 1D R2C or C2R transform.
  *
  * Every create goes through the public API with the flag and names the gate's scratch store:
  *   A  correct against a long-double DFT: every bin up to N = 4096 (scrambled: the sorted multiset of the
@@ -48,14 +49,24 @@
  *      is not the recipe's); each lane gathered and run through the one-transform plan, forward and backward,
  *      the batch within TOL of it; the round trip within TOL (scrambled: the round trip alone, the batch's order
  *      being its column chain's). The count of batches whose column pass ran threaded is reported.
+ *   RL one 1D real transform, R2C and C2R (il/estimate/real_estimate_il.h), both placements, one thread: every N
+ *      in 2..512 and every 7th N in 513..4096, the powers of two 8192..2^21 (the real four-step from 2^20), and 60
+ *      lengths past 4096 drawn with a fixed seed (40 any N, 20 primes); RLT on 8 threads, 30 lengths over every
+ *      engine and its threaded arm. Both plans built with nothing measured (the build itself refuses a plan whose
+ *      engine or threaded arm is not the recipe's, or that lacks the lean door's entry); the R2C against a
+ *      long-double DFT of a real input (every bin of the half to N = 4096, above it 32 of them), the C2R to 4096
+ *      from the exact half spectrum against N x, above it the round trip through the R2C plan. The count of
+ *      executes that ran a threaded arm is reported.
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: R2C, C2R, a real-to-real transform, rank 4, SPLIT, the flag with VFFT_FLAG_RECALIBRATE and
- *      with VFFT_FLAG_PATIENT;
+ *   R  the refusals: a real transform at rank 2 or in a batch, a scrambled real one, the real four-step's lengths
+ *      at T > 1 (a gap of the sketch), a real-to-real transform, rank 4, SPLIT, the flag with
+ *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
  *      returns): NULL, vfft_error() naming the reason, nothing measured.
- *   E  the environment guard: a variable that steers a plan (VFFT_IL_KV at rank 1, VFFT_IL2D_WL at rank 2,
+ *   E  the environment guard: a variable that steers a plan (VFFT_IL_KV at rank 1, VFFT_ZRP on a 1D R2C,
+ *      VFFT_IL2D_WL at rank 2,
  *      VFFT_ILND_NF at rank 3, which pins the natural form, VFFT_ILND_MT at rank 3 on 8 threads, which pins
  *      the threaded verdict) refuses the create naming it; a logging one
  *      (VFFT_IL2D_LOG) does not; unset again, the same create builds.
@@ -947,6 +958,143 @@ static void sec_end_lm(const char *name, long b0, long mt0)
 }
 
 /* the environment, set or cleared */
+/* ── RL: one 1D real transform, R2C and C2R (il/estimate/real_estimate_il.h). Out of place the R2C reads N reals and
+ * writes N/2 + 1 bins, the C2R the reverse; in place one buffer of 2 (N/2 + 1) doubles, the reals first and the
+ * bins over them (include/vfft.h). ── */
+static long g_rl_built = 0, g_rl_mt = 0;
+static long rl_mt_passes(void)
+{
+    return vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_zrb_mt_passes() + vfft_zr2c_fold_mt_passes() +
+           vfft_ilpr_mt_passes();
+}
+/* the R2C plan's bins of a real input against the long-double DFT (every bin to N = FULL_N, else NBINS of them, the
+ * edges and a fixed seed), and the C2R plan: to FULL_N from the exact half spectrum against N x, above it the round
+ * trip C2R(R2C(x)) / N against x; both relative, as in A. Both built with nothing measured. */
+static void rl_cell(long N, int ip, int T)
+{
+    const long H = N / 2 + 1;
+    const size_t nb = (size_t)2 * H * sizeof(double);
+    double *x = (double *)malloc((size_t)N * sizeof(double)), *xc = (double *)calloc((size_t)2 * N, sizeof(double));
+    double *a = (double *)vfft_malloc(nb), *b = ip ? a : (double *)vfft_malloc(nb);
+    long double *Xr = (long double *)malloc((size_t)H * sizeof(long double)), *Xi = (long double *)malloc((size_t)H * sizeof(long double));
+    long double sx = 0.0L, m = 0.0L, rms;
+    long k[NBINS], i, f, mt0;
+    int nk = 0, j, mf, mb;
+    char name[96];
+    vfft_config_t c;
+    vfft_plan pf, pb;
+    if (!x || !xc || !a || !b || !Xr || !Xi) { printf("out of memory\n"); exit(2); }
+    g_rng = 0x9E3779B97F4A7C15ull ^ ((unsigned long long)N << 17) ^ 0x5DEECE66Dull;
+    for (i = 0; i < N; i++) { x[i] = rnd(); xc[2 * i] = x[i]; sx += (long double)x[i] * x[i]; }
+    rms = sqrtl(sx);   /* the rms of |X| over the whole spectrum (Parseval) */
+    if (N <= FULL_N)
+    {
+        long double *cs = (long double *)malloc((size_t)N * sizeof *cs), *sn = (long double *)malloc((size_t)N * sizeof *sn);
+        if (!cs || !sn) { printf("out of memory\n"); exit(2); }
+        for (i = 0; i < N; i++) { cs[i] = cosl(2.0L * PI_L * i / N); sn[i] = -sinl(2.0L * PI_L * i / N); }
+        for (f = 0; f < H; f++)
+        {
+            long double sr = 0.0L, si = 0.0L;
+            long idx = 0;
+            for (i = 0; i < N; i++)
+            {
+                sr += x[i] * cs[idx];
+                si += x[i] * sn[idx];
+                idx += f;
+                if (idx >= N) idx -= N;
+            }
+            Xr[f] = sr;
+            Xi[f] = si;
+        }
+        free(cs);
+        free(sn);
+    }
+    else
+    {   /* the edges, then bins of the half drawn with a fixed seed */
+        const long fixed[4] = { 0, 1, H / 2, H - 1 };
+        unsigned long long z = 0xD1B54A32D192ED03ull ^ (unsigned long long)N;
+        for (j = 0; j < 4; j++) k[nk++] = fixed[j];
+        while (nk < NBINS)
+        {
+            long v;
+            int dup = 0;
+            z ^= z >> 12; z ^= z << 25; z ^= z >> 27;
+            v = (long)((z * 2685821657736338717ull) % (unsigned long long)H);
+            for (j = 0; j < nk; j++) if (k[j] == v) dup = 1;
+            if (!dup) k[nk++] = v;
+        }
+        for (j = 0; j < nk; j++) dft_one(xc, N, k[j], &Xr[j], &Xi[j]);
+    }
+    snprintf(name, sizeof name, "N=%ld %s T=%d", N, ip ? "ip" : "oop", T);
+    memset(&c, 0, sizeof c);
+    c.n[0] = (int)N;
+    c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    c.nthreads = T;
+    c.transform = VFFT_R2C;
+    pf = est_create(&c, &mf);
+    c.transform = VFFT_C2R;
+    pb = est_create(&c, &mb);
+    CHECK(!mf && !mb, "M  RL %s: a create MEASURED (R2C %d, C2R %d)", name, mf, mb);
+    CHECK(pf != NULL, "RL %s: R2C refused: %s", name, pf ? "" : vfft_error());
+    CHECK(pb != NULL, "RL %s: C2R refused: %s", name, pb ? "" : vfft_error());
+    if (pf)
+    {   /* R2C */
+        memcpy(a, x, (size_t)N * sizeof(double));
+        mt0 = rl_mt_passes();
+        vfft_execute(pf, VFFT_FORWARD, a, b);
+        g_rl_mt += rl_mt_passes() != mt0;
+        for (j = 0; j < (N <= FULL_N ? H : nk); j++)
+        {
+            const long fb = N <= FULL_N ? j : k[j];
+            const long double d = hypotl(b[2 * fb] - Xr[j], b[2 * fb + 1] - Xi[j]);
+            if (!(d <= m)) m = d;
+        }
+        CHECK(m / rms <= TOL, "RL %s: R2C route %s, bins %.2e (tolerance %.0e)", name, vfft_plan_route(pf),
+              (double)(m / rms), TOL);
+        g_rl_built++;
+    }
+    if (pb && (N <= FULL_N || pf))
+    {   /* C2R: from the exact spectrum, or from the R2C plan's (its bins checked above) */
+        if (N <= FULL_N)
+            for (f = 0; f < H; f++)
+            {
+                b[2 * f] = (double)Xr[f];
+                b[2 * f + 1] = (f == 0 || 2 * f == N) ? 0.0 : (double)Xi[f];
+            }
+        else
+        {
+            memcpy(a, x, (size_t)N * sizeof(double));
+            vfft_execute(pf, VFFT_FORWARD, a, b);
+        }
+        mt0 = rl_mt_passes();
+        vfft_execute(pb, VFFT_BACKWARD, b, a);
+        g_rl_mt += rl_mt_passes() != mt0;
+        m = 0.0L;
+        for (i = 0; i < N; i++)
+        {
+            const long double d = fabsl((long double)a[i] / N - x[i]);
+            if (!(d <= m)) m = d;
+        }
+        CHECK(m / sqrtl(sx / N) <= TOL, "RL %s: C2R route %s, %s %.2e (tolerance %.0e)", name, vfft_plan_route(pb),
+              N <= FULL_N ? "from the exact spectrum" : "round trip", (double)(m / sqrtl(sx / N)), TOL);
+        g_rl_built++;
+    }
+    vfft_destroy(pf);
+    vfft_destroy(pb);
+    free(x);
+    free(xc);
+    free(Xr);
+    free(Xi);
+    vfft_free(a);
+    if (!ip) vfft_free(b);
+}
+static void sec_end_rl(const char *name, long b0, long mt0)
+{
+    const int f = g_fail - s_fail;
+    printf("SECTION %-3s: %d checks, %d failed; %ld real plans built and correct, %ld executes ran a threaded arm -> %s\n",
+           name, g_checks - s_checks, f, g_rl_built - b0, g_rl_mt - mt0, f ? "FAIL" : "PASS");
+}
+
 static void env_set(const char *name, const char *val)
 {
 #ifdef _WIN32
@@ -975,7 +1123,7 @@ int main(int argc, char **argv)
                                  999983, 1000000, 1048573, 1048576, 2 * 3 * 5 * 7 * 11 * 13 * 17 };
     ref_t r;
     long N;
-    int a, i, f0, f1, d0n, d1n, T2, T3;
+    int a, i, f0, f1, d0n, d1n, T2, T3, TR;
     unsigned long long d0, d1, e0, e1;
     unsigned long long z = 0x2545F4914F6CDD1Dull;
     for (a = 1; a + 1 < argc; a++)
@@ -996,21 +1144,27 @@ int main(int argc, char **argv)
 #endif
     d0 = dir_digest(g_W, &f0);
     e0 = dir_digest(g_D, &d0n);
-    printf("ESTIMATE GATE: VFFT_FLAG_ESTIMATE, C2C at rank 1, 2 and 3; store %s (%d file(s)); the library's store %s\n",
+    printf("ESTIMATE GATE: VFFT_FLAG_ESTIMATE, C2C at rank 1, 2 and 3, R2C and C2R at rank 1; store %s (%d file(s)); "
+           "the library's store %s\n",
            g_W, f0, g_D);
 
     /* R first, on the cold store */
     sec_begin();
     {
         vfft_config_t c;
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C;
-        refused("R2C", &c, "plans VFFT_C2C only, not VFFT_R2C");
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_C2R;
-        refused("C2R", &c, "plans VFFT_C2C only, not VFFT_C2R");
+        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.transform = VFFT_R2C;
+        refused("R2C rank 2", &c, "plans one VFFT_R2C transform at rank 1, not rank 2 or 3");
+        memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.transform = VFFT_C2R;
+        refused("C2R howmany 4", &c, "plans one VFFT_C2R transform at rank 1, not a batch");
+        memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C; c.order = VFFT_ORDER_SCRAMBLED;
+        refused("R2C scrambled", &c, "a real plan is natural order only");
+        /* the real four-step's lengths at T > 1: the sketch has no threaded rule for zfsr (a gap, reported) */
+        memset(&c, 0, sizeof c); c.n[0] = 1 << 20; c.transform = VFFT_R2C; c.nthreads = 8;
+        refused("R2C 2^20 T=8", &c, "the sketch has no threaded rule for zfsr");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DCT2;
-        refused("DCT2", &c, "plans VFFT_C2C only, not VFFT_DCT2");
+        refused("DCT2", &c, "plans VFFT_C2C, VFFT_R2C and VFFT_C2R only, not VFFT_DCT2");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DHT;
-        refused("DHT", &c, "plans VFFT_C2C only, not VFFT_DHT");
+        refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C and VFFT_C2R only, not VFFT_DHT");
         memset(&c, 0, sizeof c); c.rank = 4; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8;
         refused("rank 4", &c, "plans ranks 1 to 3, not rank 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.order = VFFT_ORDER_SCRAMBLED;
@@ -1087,6 +1241,41 @@ int main(int argc, char **argv)
         ref_free(&r);
     }
     sec_end("A4");
+
+    /* RL: one real transform (R2C and C2R), both placements, one thread; RLT on 8 threads, every engine and its
+     * threaded arm (the real four-step from N = 2^20 is refused at T > 1: R) */
+    for (TR = 1; TR <= 8; TR += 7)
+    {
+        static const long RT[] = { 64, 100, 128, 1000, 1024, 1280, 2048, 4050, 6000, 8192, 65536, 100000, 131072,
+                                   262144, 524288, 1000000, 262, 2062, 8198, 100042, 105, 945, 1035, 3375, 59049,
+                                   531441, 131, 1031, 4099, 50021 };
+        const long b0 = g_rl_built, t0 = g_rl_mt;
+        int ip;
+        sec_begin();
+        if (TR == 1)
+        {
+            for (N = 2; N <= FULL_N; N += (N < 512 ? 1 : 7))
+                for (ip = 0; ip < 2; ip++)
+                    rl_cell(N, ip, 1);
+            for (N = 8192; N <= (1L << 21); N *= 2)
+                for (ip = 0; ip < 2; ip++)
+                    rl_cell(N, ip, 1);
+            for (i = 0; i < 60; i++)
+            {   /* 40 any N past 4096, 20 primes, a fixed seed */
+                z ^= z >> 12; z ^= z << 25; z ^= z >> 27;
+                N = 4097 + (long)((z * 2685821657736338717ull) % (unsigned long long)((1L << 20) - 4097));
+                if (i >= 40)
+                    while (!is_prime(N)) N = N > 4097 ? N - 1 : 1048573;
+                for (ip = 0; ip < 2; ip++)
+                    rl_cell(N, ip, 1);
+            }
+        }
+        else
+            for (i = 0; i < (int)(sizeof RT / sizeof RT[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    rl_cell(RT[i], ip, TR);
+        sec_end_rl(TR > 1 ? "RLT" : "RL", b0, t0);
+    }
 
     /* D2: rank 2, natural, one thread, both placements; D2T the same cells at T = 8 */
     for (T2 = 1; T2 <= 8; T2 += 7)
@@ -1259,6 +1448,10 @@ int main(int argc, char **argv)
         memset(&c, 0, sizeof c); c.n[0] = 64;
         refused("1D with VFFT_IL_KV", &c, "the developer switch VFFT_IL_KV is set");
         env_set("VFFT_IL_KV", NULL);
+        env_set("VFFT_ZRP", "4.16");   /* the real door's engine pin beats the row */
+        memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C;
+        refused("1D R2C with VFFT_ZRP", &c, "the developer switch VFFT_ZRP is set");
+        env_set("VFFT_ZRP", NULL);
         env_set("VFFT_IL2D_WL", "8");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64;
         refused("2D with VFFT_IL2D_WL", &c, "the developer switch VFFT_IL2D_WL is set");
@@ -1293,8 +1486,8 @@ int main(int argc, char **argv)
     CHECK(d0n == 0 && d1n == 0 && e0 == e1, "W  the library's own store (VFFT_WISDOM_DIR): %d file(s) after", d1n);
     sec_end("W");
 
-    printf("%d checks, %d failed; %ld 1D and %ld rank-2/3 plans built and correct, %ld contiguous and %ld lane-major "
-           "batches\n%s\n", g_checks, g_fail, g_built, g_nd_built, g_b_built, g_lm_built,
+    printf("%d checks, %d failed; %ld 1D, %ld 1D real and %ld rank-2/3 plans built and correct, %ld contiguous and %ld "
+           "lane-major batches\n%s\n", g_checks, g_fail, g_built, g_rl_built, g_nd_built, g_b_built, g_lm_built,
            g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

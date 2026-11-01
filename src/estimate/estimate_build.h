@@ -1,17 +1,10 @@
-/* estimate_build.h -- the 1D estimate's build for ANY request: c2c through the LIBRARY's build, r2c / c2r
- * through this folder's real build. Tracked, not wired into the library.
- *
- * THE C2C BUILD IS THE LIBRARY'S (src/core/il/estimate/c2c_estimate_il.h, est_build_c2c): the pre-flight,
- * the rows into a private store held in memory, the door's replay with wisdom_write = 0, the
- * no-measurement detectors (est__meter_read, est__replay) and the check of the plan the door built.
- * est_build_any_ex hands a c2c recipe to it on the front door's own translation of the request
+/* estimate_build.h -- the 1D estimate's build of ANY request for this folder's tools: c2c through the library's
+ * est_build_c2c (src/core/il/estimate/c2c_estimate_il.h), r2c / c2r through the library's est_build_real
+ * (src/core/il/estimate/real_estimate_il.h, moved there from this file on 2026-11-01). Both take the same
+ * steps: the pre-flight, the rows into a private store held in memory, the door's replay with
+ * wisdom_write = 0, the no-measurement detectors (est__meter_read, est__replay) and the check of the plan the
+ * door built. est_build_any_ex hands the recipe to them on the front door's own translation of the request
  * (_vfft_api_translate, vfft_api.h).
- *
- * THE REAL BUILD lives here, in the same shape, on the library's pieces: est__meter_read before the
- * pre-flight; the real pre-flight (the door's real builders at T = 1, then vfft_destroy -- at one
- * thread the release is a no-op, vfft_execute.h:401, threads.h:553-559; REPLAY_API section 2.0); the
- * real rows through the library's writers (vw2_real_il_bank_*); est__replay (disown, the snapshot of
- * the rows, the nested create, the detectors); the real plan's check.
  *
  * WHAT THIS FOLDER ADDS FOR BOTH (the tool's guards, not the library's):
  * - the clock probe: est_clock_reads, fed by VFFT_CLOCK_PROBE (race_scope.h:636-642) at every library

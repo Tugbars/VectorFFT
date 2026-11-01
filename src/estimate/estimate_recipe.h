@@ -1,21 +1,22 @@
-/* estimate_recipe.h -- the 1D estimate's REAL-TRANSFORM recipe and this folder's contracts
- * (tracked, not wired into the library).
+/* estimate_recipe.h -- the recipe of any 1D request and this folder's contracts (the tools'; the formulas and
+ * builds are the library's, the real ones in il/estimate/real_estimate_il.h since 2026-11-01).
  *
- * THE COMPLEX PART IS THE LIBRARY'S (released 2026-10-22 as VFFT_FLAG_ESTIMATE, 1D c2c only):
+ * THE FORMULAS AND BUILDS ARE THE LIBRARY'S (VFFT_FLAG_ESTIMATE):
  *   src/core/il/estimate/estimate_il.h  the machine (est_machine_t), the request (est_request_t), the
  *                                       c2c recipe (est_recipe_t), the c2c formulas (est_plan_1d) and
  *                                       the c2c row writer (est_put_rows), plus every helper the real
- *                                       formulas below share (est_c2c, the ZTURN-T / pair / four-step
+ *                                       formulas share (est_c2c, the ZTURN-T / pair / four-step
  *                                       / prime-inner helpers, est_fs_child, est__fs_text ...);
  *   src/core/il/estimate/c2c_estimate_il.h the c2c build (est_build_c2c: pre-flight, private store, the
  *                                       door's replay, the detectors est__meter_read / est__replay,
- *                                       est__fs_preflight) and the front door's _vfft_create_estimate.
- * This folder adds r2c / c2r on top of it -- the real formulas (estimate_1d.h), the real build
- * (estimate_build.h) -- and the tools. Nothing here is part of the library or its build.
+ *                                       est__fs_preflight) and the front door's _vfft_create_estimate;
+ *   src/core/il/estimate/real_estimate_il.h the real recipe (est_real_recipe_t), formulas (est_plan_real),
+ *                                       row writer (est_put_rows_real) and build (est_build_real).
+ * This folder adds the tools. Nothing here is part of the library or its build.
  *
- * The recipe of ANY request (c2c or real) is est_any_recipe_t: the library's c2c recipe as its member
- * `c`, plus the real engines' fields. For a c2c request `c` is the whole recipe; for a zr2c real
- * request it is the c2c child at N/2; zfsr's split child and zrb's four-step inner use `c.fs`.
+ * The recipe of ANY request (c2c or real) is est_any_recipe_t, the library's est_real_recipe_t: the c2c
+ * recipe as its member `c`, plus the real engines' fields. For a c2c request `c` is the whole recipe; for
+ * a zr2c real request it is the c2c child at N/2; zfsr's split child and zrb's four-step inner use `c.fs`.
  *
  * Specification: docs/design/estimate_1d_sketch.md. Paths are relative to src/core/ unless they
  * start with include/ or docs/. Zero means "absent" unless a comment says otherwise.

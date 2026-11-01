@@ -782,10 +782,10 @@ By rank and by thread count:
 
 ## 1D real transforms (R2C and C2R): a first sample
 
-Not counted in the totals above, and not in the library yet: `vfft_create` refuses
-`VFFT_FLAG_ESTIMATE` on R2C and C2R. The estimate arm here is the real formulas of
-[`src/estimate/estimate_1d.h`](../../src/estimate/estimate_1d.h), built by
-[`src/estimate/estimate_build.h`](../../src/estimate/estimate_build.h) through the same private store
+Not counted in the totals above. The estimate arm here is the real formulas, then in `src/estimate/`
+and since 2026-11-01 the library's
+([`il/estimate/real_estimate_il.h`](../../src/core/il/estimate/real_estimate_il.h), unchanged by the move;
+`VFFT_FLAG_ESTIMATE` serves one 1D R2C or C2R transform), built through the same private store
 and replay as the library's C2C estimate, measuring nothing at create. An even length that runs as a
 complex transform of N/2 (zr2c) takes the library's C2C estimate for that half. Measured on
 2026-10-28 at commit 0d702e36 with [`src/estimate/estimate_race.c`](../../src/estimate/estimate_race.c)

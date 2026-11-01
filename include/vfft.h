@@ -149,7 +149,9 @@ extern "C"
                                             1D in any order, placement and nthreads; rank 2
                                             and 3 in natural order at any nthreads, either
                                             placement; and a batch of them (howmany > 1),
-                                            contiguous or lane-major.
+                                            contiguous or lane-major. One 1D VFFT_R2C or
+                                            VFFT_C2R transform, either placement, any
+                                            nthreads.
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment

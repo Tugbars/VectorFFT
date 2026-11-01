@@ -1,8 +1,8 @@
-# src/estimate -- the 1D estimate planning method: the real transforms and the tools
+# src/estimate -- the estimate planning method's tools
 
-This folder is tracked but not wired: nothing in the library, the build, the gates or the gauntlet
-includes or builds it. The library refuses `VFFT_FLAG_ESTIMATE` on R2C and C2R (`_vfft_api_translate`,
-`src/core/vfft_api.h`). Lifting that refusal and wiring this folder's real build is left to the user.
+This folder holds the estimate's tools. Nothing in the library, the build, the gates or the gauntlet
+includes or builds it. The formulas and builds are the library's (`src/core/il/estimate/`); since
+2026-11-01 that includes the 1D real transforms (`real_estimate_il.h`), which this folder held before.
 
 Estimate is a planning method the user selects. It is never a fallback. From N, the request and
 the machine's cache sizes it computes the recipe a race would have banked: the route and every
@@ -17,6 +17,7 @@ replay code.
 | `src/core/il/estimate/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check), the environment guard `est_env_names` / `est_env_steers`, and the front door's `_vfft_create_estimate` |
 | `src/core/il/estimate/estimate_nd_il.h` | rank 2 and 3: the recipes `est_plan2d_t` / `est_plan3d_t`, the formulas `est_plan_2d` / `est_plan_3d` (the column chain from the door's pool, the N-arm, the bands, the 2D row route, the 3D natural form; the 1D children by `est_plan_1d`) and how they thread, `est_mt_2d` / `est_mt_3d`, the row writers `est_put_rows_2d` / `est_put_rows_3d` |
 | `src/core/il/estimate/c2c_estimate_nd_il.h` | rank 2 and 3: the build `est_build_nd` (pre-flight, rows, the door's replay, the plan check) and `_vfft_create_estimate_nd` |
+| `src/core/il/estimate/real_estimate_il.h` | one 1D R2C or C2R transform (2026-11-01): the real recipe `est_real_recipe_t`, the formulas `est_plan_real` / `est_real` (the sketch's sections 6 and 7), the row writer `est_put_rows_real`, the pre-flight, the plan check (the engine, its threaded arm, the lean door's entry), the build `est_build_real` and `_vfft_create_estimate_real` |
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
 
@@ -25,15 +26,16 @@ rank 2 and 3 (2026-10-22, `docs/design/estimate_2d3d_sketch.md`; at any thread c
 rank 2 and 2026-10-31 at rank 3) in natural order, either placement; and since 2026-10-31 a contiguous
 batch of them, the plan of one transform run once per transform on one thread and on T threads the way
 the batch rule picks (`est_batch_whole`); since 2026-11-01 a lane-major batch of them, the column pass
-over the lanes (`il/estimate/c2c_estimate_lm_il.h`). It refuses real, real-to-real, rank 4,
+over the lanes (`il/estimate/c2c_estimate_lm_il.h`); and since 2026-11-01 one 1D R2C or C2R transform in
+either placement on any thread count (`il/estimate/real_estimate_il.h`; at T > 1 the real four-step's
+lengths are refused, a gap of the sketch). It refuses a real transform at rank 2 or 3 or in a batch, real-to-real, rank 4,
 SPLIT, scrambled order at rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or
 `VFFT_FLAG_PATIENT`, and any create while an
 environment variable that steers a plan is set (`est_env_names`). At rank 2 and 3 the formulas also
 refuse an axis of length 1, a last axis with no 1D engine, and a column with no chain whose Bluestein
 length the column pool cannot chain (above 2^24). It never opens `wisdom_dir`.
 
-**This folder keeps what is not released:** the r2c / c2r formulas and build, built on top of the
-tracked c2c part, and the tools.
+**This folder keeps the tools** around the library's formulas and builds.
 
 - Estimate never reads the user's wisdom store. The raced rows are only the evidence the formulas
   were fitted to.
@@ -43,9 +45,9 @@ tracked c2c part, and the tools.
 
 | file | what it is |
 |---|---|
-| `estimate_recipe.h` | The recipe of any request, `est_any_recipe_t`: the library's c2c recipe as its member `c`, plus the real engines' fields. It declares this folder's contracts. It needs the library's types: include it only after `vfft.c`. |
-| `estimate_1d.h` | The real formulas and the contracts `est_plan_any` (c2c: the library's `est_plan_1d`) and `est_recipe_print`. Pure: no clock, no store, no allocation. |
-| `estimate_build.h` | The build of any request: `est_build_any`, and `est_build_any_ex`, which also returns a report. c2c goes through the library's `est_build_c2c`; real through the real build here, on the library's detectors. It compiles only inside a TU that includes `vfft.c`. |
+| `estimate_recipe.h` | The recipe of any request, `est_any_recipe_t`: the library's real recipe (`est_real_recipe_t`), whose member `c` holds a c2c request's whole recipe. It declares this folder's contracts. It needs the library's types: include it only after `vfft.c`. |
+| `estimate_1d.h` | The contracts `est_plan_any` (c2c: the library's `est_plan_1d`; real: the library's `est_plan_real`) and `est_recipe_print`. Pure: no clock, no store, no allocation. |
+| `estimate_build.h` | The build of any request: `est_build_any`, and `est_build_any_ex`, which also returns a report. c2c goes through the library's `est_build_c2c`, real through the library's `est_build_real`. It compiles only inside a TU that includes `vfft.c`. |
 | `estimate_tool.c` | The tool: `show`, `check`, `compare` (below). The TU includes `src/core/vfft.c` itself. |
 | `estimate_selftest.c` | The recipe printer with its own law pass. Now a library TU too: the c2c formulas read the library's facts. |
 | `estimate_race.c` | Timed: the banked plans against the estimate plans (E through the public flag). |
@@ -80,10 +82,11 @@ tracked c2c part, and the tools.
 clock read, `VFFT_CLOCK_PROBE`: a read during a build is `EST_MEASURED`), the environment guard (any
 create-steering `VFFT_*` variable refuses the build; REPLAY_API 1.3), and the caller's pin.
 
-**Real** follows the same steps on the library's pieces (`est__meter_read`, `est__replay`,
-`est__fs_preflight`, `est__fs_text`): the real pre-flight builds the door's real builders at T = 1 against
-an empty private store; the rows are the real writers' (`vw2_real_il_bank_*`); a four-step child (zfsr,
-zrb's four-step inner, a zr2c four-step child) is checked without a create, as above.
+**Real (the library, `src/core/il/estimate/real_estimate_il.h`)** follows the same steps on the c2c build's
+pieces (`est__meter_read`, `est__replay`, `est__fs_preflight`, `est__fs_text`): the real pre-flight builds the
+door's real builders at T = 1 against an empty private store; the row is the real writers' (`vw2_real_il_bank_*`);
+a four-step child (zfsr, zrb's four-step inner, a zr2c four-step child) is checked without a create, as above;
+the plan check also requires the lean door's entry (`k1_go`) in the transform's direction.
 
 ## Build and run
 

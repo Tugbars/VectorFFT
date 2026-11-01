@@ -13,7 +13,11 @@
  *
  * THE RECIPE (est_plan_real -> est_real): the engine by the sketch's section 6, the threaded arms by its
  * section 7 (fitted at T = 8). The zr2c half is the c2c estimate at N/2 (est_c2c), so the c2c rules reach it.
- * Refused: zfsr at T > 1 (section 7 has no rule for it: a gap of the sketch, reported).
+ * The sketch's open decisions (its section 12) take these defaults: every T > 1 takes the rules fitted at
+ * T = 8; the formulas follow the build's lanes (an 8-lane recipe is planned by an AVX-512 build only).
+ * Gaps of the sketch, reported and not filled: zfsr at T > 1 is refused (section 7 has no rule for it); the
+ * zr2c prime child's serial bound reads at its M as section 7 words it; zrf's LEVELS arm only where the
+ * library can bind it (est_real).
  *
  * THE BUILD (est_build_real) takes est_build_c2c's steps: the pre-flight (the door's real builders at one
  * thread against an empty store, then destroyed; a nested four-step checked by est__fs_preflight), the row
@@ -262,7 +266,7 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
          * A COMPROMISE FOR THE OWNER TO CONFIRM: section 7 says mt=2 above the bound with no test on T;
          * written literally, a cell where LEVELS cannot bind gets a silently serial plan, which the
          * build refuses (EST_SERIAL). The T in the test is the library's own bind law
-         * (_zrf_mt_level_ok, zrf_mt.h:133-136), not a fitted rule (TEST_LOG.md bug 3). */
+         * (_zrf_mt_level_ok, zrf_mt.h:133-136), not a fitted rule (src/estimate/TEST_LOG.md, bug 3). */
         if (T > 1 && !est_serial(m, N / 2) && o->zrf.tile > 0)
         {
             const long long D = N / c[0], h = c[0] / 2;
@@ -667,7 +671,7 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
 }
 
 /* 1 when the handle is the recipe's real engine and every threaded arm the recipe asked for took
- * (REPLAY_API section 2.16: the binds decline silently and leave the plan serial) */
+ * (a bind that declines leaves the plan serial in silence), and the lean door's entry is bound */
 static inline int est__check_plan_real(const struct vfft_plan_s *h, const est_real_recipe_t *rc, const est_request_t *rq,
                                        int *serial, char *why, size_t whylen)
 {

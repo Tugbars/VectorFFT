@@ -1,24 +1,12 @@
-/* estimate_1d.h -- the 1D estimate's REAL-TRANSFORM formulas (r2c / c2r), on top of the library's c2c
- * formulas (src/core/il/estimate/estimate_il.h), and the recipe printer. Tracked, not wired into the library.
+/* estimate_1d.h -- the recipe of ANY 1D request for this folder's tools, and the recipe printer. The formulas
+ * are the library's: c2c est_plan_1d (src/core/il/estimate/estimate_il.h), r2c / c2r est_plan_real
+ * (src/core/il/estimate/real_estimate_il.h, moved there from this file on 2026-11-01; the sketch
+ * docs/design/estimate_1d_sketch.md sections 6 and 7, its defaults and gaps noted in that file).
  *
- * Implements est_plan_any and est_recipe_print (the contracts are in estimate_recipe.h) as the sketch
- * docs/design/estimate_1d_sketch.md specifies them (section 6 real, section 7 threads). The c2c
- * procedure, its helpers and the code facts it reads are the LIBRARY's: est_c2c, est_fs_child,
- * est_ztt_ok, est_inner_pair, est_blue_inner, est_inner_ztt, est_inner_fs, est_inner_mt, est_fs_split,
- * est_odd_stages, est_merge10, est_mincounts ... (estimate_il.h). This file adds only what the real
- * transforms need. Sections cited as "section n" are the sketch's; library behaviour is cited
- * file:line, relative to src/core/.
+ * Implements est_plan_any and est_recipe_print (the contracts are in estimate_recipe.h). Library behaviour
+ * is cited file:line, relative to src/core/.
  *
- * PURE: reads only the machine and the request. No clock, no store, no allocation, no I/O.
- *
- * The sketch's open decisions (section 12) take these defaults where the real rules meet them:
- *   1  one transform only (howmany = 1).
- *   2  every T > 1 takes the T = 8 fitted rules; at T != 8 they are UNFITTED.
- *   7  the 8-lane rules: the library's formulas follow the build's lanes (est_plan_1d refuses a
- *      machine of another count), so an 8-lane recipe is planned by an AVX-512 build only.
- * Gaps of the text, reported and not filled: zfsr at T > 1 is refused (section 7 has no zfsr row);
- * the zr2c prime child's serial bound reads at its M as section 7 words it. One compromise for the
- * owner to confirm: zrf's LEVELS arm only where the library can bind it (est_real). */
+ * PURE: reads only the machine and the request. No clock, no store, no allocation, no I/O. */
 #ifndef EST_1D_H
 #define EST_1D_H
 
