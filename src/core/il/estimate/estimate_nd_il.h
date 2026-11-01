@@ -668,6 +668,29 @@ static inline void est__col_single_under_prime_rows(est_col_t *c)
             return;
         }
 }
+/* the column Bluestein of c (its N, w and order kept, everything else replaced): M the power of two from 16 past
+ * 2 N - 2, its inner chain (est_blu_chain), the turned prime pass marked -- the column where no chain exists, and
+ * the lane-major batch's few-lane prime column (est_plan_lm); 0, or -1 with the reason */
+static inline int est__col_blu(const est_machine_t *m, est_col_t *c, char *why, size_t whylen)
+{
+    const int N = c->N, nat = c->nat;
+    const long long w = c->w;
+    long long M = 16;
+    memset(c, 0, sizeof *c);
+    c->N = N;
+    c->w = w;
+    c->nat = nat;
+    c->blu = -1;
+    c->tpc = -1;
+    while (M < 2LL * N - 1)
+        M <<= 1;
+    if (M > INT_MAX || (c->nst = est_blu_chain(m, (int)M, w, c->R)) < 1)
+        return est_refuse(why, whylen, "N = %d has no column chain and its Bluestein length %lld none either", N, M);
+    c->blu = (int)M;
+    c->tpc = 1;
+    est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
+    return 0;
+}
 static inline int est_col_plan(const est_machine_t *m, int N, long long w, int nat, est_col_t *c, char *why,
                                size_t whylen)
 {
@@ -680,25 +703,29 @@ static inline int est_col_plan(const est_machine_t *m, int N, long long w, int n
     if (N < 2 || w < 1)
         return est_refuse(why, whylen, "a column of %d rows over %lld lanes", N, w);
     c->nst = est_col_chain(m, N, w, nat, c->R);
-    if (c->nst > 0)
-    {
-        c->blu = est_is_pow2(N) ? -1 : 0;
-        if (VFFT_IL2D_RADER_RADIX(c->R[0]) && est__rader(c, c->R[0]))
-            return est_refuse(why, whylen, "N = %d: the Rader stage at %d has no inner chain of %d", N, c->R[0],
-                              c->R[0] - 1);
-    }
-    else
-    {
-        long long M = 16;
-        while (M < 2LL * N - 1)
-            M <<= 1;
-        if (M > INT_MAX || (c->nst = est_blu_chain(m, (int)M, w, c->R)) < 1)
-            return est_refuse(why, whylen, "N = %d has no column chain and its Bluestein length %lld none either", N, M);
-        c->blu = (int)M;
-        c->tpc = 1;
-    }
+    if (c->nst < 1)
+        return est__col_blu(m, c, why, whylen);
+    c->blu = est_is_pow2(N) ? -1 : 0;
+    if (VFFT_IL2D_RADER_RADIX(c->R[0]) && est__rader(c, c->R[0]))
+        return est_refuse(why, whylen, "N = %d: the Rader stage at %d has no inner chain of %d", N, c->R[0], c->R[0] - 1);
     est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
     return 0;
+}
+/* the unbanded walk's chain for the column c (est__unbanded_chain_2d's pick, est__pick wide, no single stage); a
+ * Rader stage or a Bluestein column keeps its own. 1 = c's chain replaced, 0 = kept */
+static inline int est__col_unbanded(const est_machine_t *m, est_col_t *c)
+{
+    est_pool_t P;
+    int R[8], k;
+    if (c->blu > 0 || c->rd_n)
+        return 0;
+    est__pool(c->N, &P);
+    if ((k = est__pick(&P, NULL, 0, c->N, m, c->w, c->nat, /*wide=*/1, /*single=*/0, R)) < 1)
+        return 0;
+    memcpy(c->R, R, sizeof(int) * (size_t)k);
+    c->nst = k;
+    est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
+    return 1;
 }
 /* the 2D band (sketch §7): none beside the skew or the turn, on a one-stage or Bluestein chain, or
  * while the plane fits L2 / plane_div (EST_ND_2D_PLANE_DIV, or EST_ND_3D_PLANE_DIV for the 3D plan's plane

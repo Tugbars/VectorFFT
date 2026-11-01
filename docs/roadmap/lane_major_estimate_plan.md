@@ -92,3 +92,109 @@ lane-major batch under the flag. `estimate_gate` sections LM1, LM2, LM3 (one thr
 threads): 540 lane-major batches built with nothing measured, served as the recipe wrote them, and correct against
 the one-transform plan lane by lane; 102 of the 270 at 8 threads ran their column pass threaded. The gate passes in
 full (15,907 checks).
+
+## 7. The study (2026-11-01, 01:10 – 01:59): verdict and proposals
+
+Steps 4 and 5 ran on a quiet machine. **One thread is complete** (88 cells). **Eight threads is not:** the planner's
+own lane-major create crashed at 12005 x 32 (see the defects), so 28 of 88 cells were timed, all 1D. Tools and logs:
+`docs/research/estimate_threaded/evidence/lane_major/`.
+
+**Verdict at one thread** (88 cells; the control P2/P 1.003, 5 cells off by more than 5%): the estimate's batch
+takes 1.023 times the planner's at the geometric mean and 1.003 at the median; 25 within 5%, 29 more than 5%
+faster, 34 more than 5% slower. By rank: 1D 1.093, 2D 0.977, 3D 0.909. By the batch's bytes: up to 48 KiB 0.895,
+48 KiB - 2 MiB 1.050, 2 - 36 MiB 1.083, past 36 MiB 0.934. The losses gather in two places:
+- **A prime N at small K.** The estimate takes the Rader stage; the planner takes Bluestein with the turned prime
+  pass: 1.75 (131 x 2), 1.97 (1031 x 2), 2.12 (4099 x 2), 1.18 - 1.57 at K = 4. At K = 32 and 256 the planner
+  takes the Rader stage too (1031 at 8 threads).
+- **Some smooth 1D chains.** The estimate leads with large radices where the planner leads with 4 or 8: 256 x 32
+  (16.16 against 4.64) 1.62, 1024 x 32 1.29, 4096 x 4 1.25, 65536 x 4 and x 32 1.24, 256x16 x 2 and x 8 1.56 - 1.75.
+
+The estimate is faster at the smallest batches (8x8, 8x8x8, 64 x 32: 0.53 - 0.73), where the planner tiles.
+
+**The serial lane tile:** on the 57 cells whose chain tiles, the walk (the build's `sw=0`) loses 1.061 against the
+best width forced per cell (E/P 0.966; the best width would give 0.913). No simple rule beats the walk: the
+narrowest width 1.292, the widest 1.111, the widest within the L1d 1.149, L1d / 2 1.161, L2 / 8 1.129, L2 / 4
+1.121, the 2D strips' width rule 1.119.
+
+**Verdict at 8 threads** (28 cells, 1D only; the control 1.000): 1.291 at the geometric mean, 1.073 at the median.
+The carried-over strips rule fails where each worker gets few lanes: at K = 4 the strips are 3.5 - 5.8 times
+slower than the planner's threaded walk (1000, 1024, 4096, 16384, 65536 x 4), and at a long column with K = 32 1.60
+(65536 x 32). At K = 32 and 256 on shorter columns the two are close (0.98 - 1.24).
+
+**Defects found** (both fixed on 2026-11-01, below):
+1. **A crash in the planner's lane-major create** (12005 x 32 and 4099 x 32 at 8 threads; reproduced in three
+   processes; gdb: a pool worker in `_il2d_cmt_body` -> `_il2d_blu_cols_range` -> memset). `_lm_race`
+   (`il/rank1/lm_batch_il.h`) added its plain threaded arm for a column through the turned prime pass; once the
+   lanes were wide enough to split, the threaded column pass ran the Bluestein columns over tables the turned pass had
+   dropped. The 2D door keeps such a column serial. A user who planned these batches by measuring crashed.
+2. **The lane-major race picked threaded where serial wins.** At 100 x 4 on 8 threads it banked the threaded walk,
+   6.7 times slower than serial (also 16 x 4, 256 x 4).
+3. The study tool lost the 131 x 4, 32 and 256 races (its parser; fixed).
+
+The owner's decisions (2026-11-01): keep the serial tile at the walk; fix 1 and 2; give the race the 1D batch race's
+protocol; a prime at small K as Bluestein with the turned pass, the Rader stage above; the strips only when each
+worker gets enough lanes; try the unbanded chain pick in 1D -- "today I will verify the results".
+
+## 8. The fixes and the rules (2026-11-01, built overnight; uncommitted)
+
+**The planner (`_lm_race`, `il/rank1/lm_batch_il.h`):**
+- A column through the turned prime pass gets no threaded arm and no threaded replay. The four cells that crashed
+  build (12005 x 32 and x 256, 4099 x 32 and x 64 at 8 threads).
+- The real cause of defect 2 was a missing arm, not the sample size: a c2c batch racing its tile widths has no walk
+  arm, and with fewer than 8 lanes there is no width either, so only threaded arms ran. The walk is now the serial
+  arm wherever no width exists.
+- The 1D batch race's rounds: the minimum of 7 (9 in place), the order reversed every other round. The samples were
+  already longer than the 1D race's (about 0.3 ms each, `_il2d_race_reps`) and stay so. The lane-major real batches
+  share this race and get the same.
+- `lmbatch_gate` passes. The store's lane-major rows of 2026-11-01 (raced before the fix) were removed and raced
+  again: 212 study cells and 60 unseen ones, 247 rows in `src/wisdom/14900KF`.
+
+**The estimate (`il/estimate/c2c_estimate_lm_il.h`; each rule fitted on recipe variants of the estimate's own
+plan, built by `est_build_lm`, against the best variant of each cell):**
+1. **A prime column on few lanes:** a column the chain plan gives a Rader stage runs as Bluestein with the turned
+   prime pass while its lanes are at most max(2, N / 128). The switch grows with N: 131 at 2 lanes, 1031 at 4
+   (a tie at 8), 4099 up to 32 at 8 threads and at every K on one thread. Loss against the better form over 50
+   prime cells: 1.009 (a fixed 4 lanes: 1.039).
+2. **The strips at T > 1** only when every worker gets a vector of lanes (lanes at least 2 T on AVX2), on a chain
+   with no Rader stage whose 8-lane strip fits the L2; else the threaded walk. Loss against the best of serial, walk
+   and strips over 103 cells at 8 threads: 1.019 (the carried-over rule: 1.188).
+3. **The 1D chain past the L1d:** the unbanded walk's pick (`est__col_unbanded`). Over the 40 one-thread cells where
+   the picks differ: 1.091 -> 1.018 against the better; at 8 threads 1.046 -> 1.042. Below the L1d the chain plan's
+   pick stays (the unbanded one lost 1.215 there).
+`estimate_gate` passes in full with the rules (the LM sections cover a prime switch, both threaded forms and the 1D
+chain).
+
+**The estimate against the planner** (the planner raced with the fixed race; the control 0.997 - 1.002):
+
+| | Before the rules | With the rules |
+|---|---|---|
+| Study, one thread (106 cells) | 1.046, median 1.018 | 0.985, median 1.001 |
+| — 1D / 2D / 3D | 1.126 / 0.957 / 0.894 | 1.026 / 0.932 / 0.910 |
+| Study, 8 threads (106 cells) | 1.189, median 1.038 | 1.004, median 1.004 |
+| — 1D / 2D / 3D | 1.317 / 1.034 / 0.982 | 1.007 / 1.013 / 0.978 |
+| Cells above 1.10 (one thread / 8 threads) | 38 / 41 | 19 / 21 |
+
+**The unseen cells** (60, drawn after the rules with a fixed seed: 20 per rank, none of the study's shapes, K the
+study did not use, 32 at one thread and 28 at 8): 0.991 at the geometric mean, 0.994 at the median; 24 within 5%, 18
+more than 5% faster, 18 more than 5% slower, 11 above 1.10. One thread 0.962, 8 threads 1.025; 1D 1.004, 2D 0.940,
+3D 1.030. By the batch's bytes: up to 48 KiB 0.993, 48 KiB - 2 MiB 0.924, 2 - 36 MiB 1.102 (above the 1.05 bar),
+past 36 MiB 0.974.
+
+**What the cells above 1.10 show** (study and unseen):
+- **A prime whose p - 1 is smooth** wants the Rader stage sooner: 2003 x 6 at 8 threads, 2.07 (2002 = 2 7 11 13;
+  the Rader stage threads, the turned pass runs serial). The study's primes that favour the turned pass have a
+  large prime in p - 1 (1030 = 2 5 103, 4098 = 2 3 683); 131 (130 = 2 5 13) switches at 2 lanes. Proposal: the
+  bound max(2, N / 128) only where p - 1 has a prime factor above 47; else 2 lanes. It changes no study cell and
+  this one unseen cell, so it waits for the owner.
+- **3D at 8 threads:** the strips at 256 lanes where the planner takes 16 - 64 or the walk (32x24x60, 24x24x40,
+  80x24x60: 1.12 - 1.35). The strips' width rule (`est__msw_2d`) is the 2D plane's; a narrower bound for lane-major
+  passes is the next fit.
+- **The first axis's chain at rank 2 and 3** (256x16 x 2 and x 8: 1.60 - 1.84; 256x197 x 3: 1.69): the unbanded
+  pick applies at rank 1 only, as asked.
+- **16384 and 65536 in 1D** (1.12 - 1.47 at both thread counts): the planner pairs a radix of 32 or 64 with small
+  ones (8.4.64.8, 16.8.8.64), the unbanded pick balances 16s.
+- 30x30x30 (1.19 - 1.55, the planner tiles at 16 lanes; the walk stays as decided) and 6007 x 96 at 8 threads
+  (1.72, both the Rader stage: its inner and window).
+
+Next (the owner's): verify the above; the p - 1 proposal; the 3D strips' width; then the section on
+`estimate_performance.md`. Tools and logs: `docs/research/estimate_threaded/evidence/lane_major/`.

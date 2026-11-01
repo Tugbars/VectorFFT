@@ -489,10 +489,16 @@ whole transforms per thread checks the first copy against the one-thread recipe 
 rows over K lanes; rank 2 one pass of N1 rows over N2 K lanes, then N1 blocks of the 1D lane-major batch at
 (N2, K); rank 3 one pass over N2 N3 K lanes, then N1 blocks of the 2D lane-major batch. The estimate writes
 the batch's own row (`lay=lm`, `q=K`, `nthreads=T`) from this sketch's formulas: the column pass
-(`est_col_plan` at w = the lanes, unbanded), the serial lane tile `sw=0` (the walk) until a width rule is
-approved, at T > 1 the plane's threaded test of §8a with the strips at its width (the threaded walk on a
-Bluestein column), and the block child's rows under `rp_`, one thread, natural, in place. The plan check
-(`est__check_lm`) reads the column pass, the tile, the threaded verdict and the block child.
+(`est_col_plan` at w = the lanes, unbanded), the serial lane tile `sw=0` (the walk: no width rule beat it), at
+T > 1 the plane's threaded test of §8a, and the block child's rows under `rp_`, one thread, natural, in place.
+Three rules of its own (the owner's, 2026-11-01; `docs/roadmap/lane_major_estimate_plan.md` section 8):
+- a column the chain plan gives a Rader stage of prime p runs as Bluestein with the turned prime pass while its
+  lanes are at most max(2, N / 128) when p - 1 has a prime factor above 47, else at most 2: the turned pass wins
+  on few lanes, the switch grows with N, and a smooth p - 1 makes the Rader stage cheap sooner;
+- at T > 1 the strips only when every worker gets a vector of lanes (2 T on AVX2), on a chain with no Rader stage
+  whose 8-lane strip fits the L2; else the threaded walk;
+- a 1D batch past the L1d takes the unbanded walk's chain (`est__col_unbanded`, the pick of §8a's strips).
+The plan check (`est__check_lm`) reads the column pass, the tile, the threaded verdict and the block child.
 
 ## 12. Refusals (the front door, `_vfft_api_translate`)
 

@@ -12,13 +12,15 @@
  * under tpc_), the serial lane tile sw= and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race), the block
  * child under rp_.
  *
- * THE RECIPE (est_plan_lm), the 2D plane's formulas carried over, with no rule of its own:
+ * THE RECIPE (est_plan_lm), the 2D plane's formulas carried over, with the three rules below:
  *   - the column pass: est_col_plan at w = the lanes (K, N2 K, N2 N3 K), natural for a natural request (the
- *     first axis leaves the cell's class, vfft_policy_lm_axis_nat), unbanded (the doors run no band);
- *   - the serial lane tile: sw = 0, the walk, until the owner approves a width rule (the plan's step 7);
+ *     first axis leaves the cell's class, vfft_policy_lm_axis_nat), unbanded (the doors run no band); at rank 1
+ *     past the L1d the unbanded walk's chain; a Rader-stage column on few lanes as Bluestein with the turned pass;
+ *   - the serial lane tile: sw = 0, the walk (the owner, 2026-11-01: no width rule beat it);
  *   - at T > 1, est_mt_2d's test: threaded once the plane, 16 N1 lanes bytes, passes
  *     L1d / EST_ND_MT_SERIAL_L1_DIV, except a column of 2 and a column through the turned prime pass; then the
- *     strips at est__msw_2d's width where the doors run strips (no Bluestein), else the threaded walk;
+ *     strips at est__msw_2d's width where every worker gets a vector of lanes (the rule below), else the
+ *     threaded walk;
  *   - the block child: the lower-rank lane-major recipe on one thread, natural, in place.
  * THE BUILD (est_build_lm) takes the steps of c2c_estimate_nd_il.h: the pre-flight, the rows into a store held
  * in memory, the door's replay (est__replay), and the plan the door built checked against the recipe
@@ -27,6 +29,27 @@
  * POSITION IN vfft.c: included by c2c_estimate_il.h after c2c_estimate_nd_il.h, whose pieces it reuses. */
 #ifndef VFFT_IL_C2C_ESTIMATE_LM_IL_H
 #define VFFT_IL_C2C_ESTIMATE_LM_IL_H
+
+/* THE THREE LANE-MAJOR RULES (the owner's, 2026-11-01; docs/roadmap/lane_major_estimate_plan.md section 8; each fitted
+ * on the study's variant arms -- the estimate's own recipe changed in one place and built by est_build_lm -- against
+ * the best arm of each cell, 212 cells at 1 and 8 threads):
+ *   - A PRIME COLUMN ON FEW LANES: a column the chain plan gives a Rader stage runs as Bluestein with the turned
+ *     prime pass while its lanes are at most est__lm_tpc_lanes: max(2, N / EST_LM_TPC_DIV) where p - 1 has a prime
+ *     factor no chain radix carries, else 2. The switch grows with N where the stage's inner is costly: the turned
+ *     pass won to 4 lanes (a tie at 8) at 1031 (1030 = 2 5 103), to 32 at 8 threads and every K at one thread at
+ *     4099 (4098 = 2 3 683); where p - 1 is smooth the Rader stage wins from 3 lanes (131, 130 = 2 5 13; 2003 x 6
+ *     at 8 threads, 2002 = 2 7 11 13: the turned pass 2.07 times the planner, an unseen cell, the p - 1 test added
+ *     after it). Loss against the better of the two over the study's 50 prime cells: 1.009 (a fixed 4 lanes: 1.039).
+ *   - THE STRIPS AT T > 1 only when every worker gets a vector of lanes (lanes >= the vector's complex count x T:
+ *     2 x T on AVX2; 4 per worker scored 1.021),
+ *     on a chain with no Rader stage (those walk faster threaded) whose strip of EST_LM_STRIP_MIN lanes fits the
+ *     L2 (65536 rows walk); else the threaded walk. Loss against the best of serial, walk and strips over 103 cells
+ *     at 8 threads: 1.019 (strips wherever no Bluestein: 1.188; at K = 4 the strips ran 3.5 - 7 times slower).
+ *   - THE 1D CHAIN past the L1d: the unbanded walk's pick (est__col_unbanded) where the batch passes the L1d. Over the
+ *     40 one-thread cells where the picks differ: 1.091 -> 1.018 against the better; at 8 threads 1.046 -> 1.042.
+ *     Below the L1d est_col_plan's chain stays (the unbanded pick lost 1.215 there). */
+#define EST_LM_TPC_DIV 128
+#define EST_LM_STRIP_MIN 8
 
 /* The lane-major batch's row, tokens in [brackets]. */
 typedef struct est_planlm_s
@@ -63,6 +86,13 @@ static inline const char *est__lm_shape(const est_planlm_t *p, char *b, size_t n
         snprintf(b, n, "%dx%dx%d x %zu", p->N1, p->N2, p->N3, p->K);
     return b;
 }
+/* the lanes up to which a column with a Rader stage at the prime p runs as Bluestein with the turned prime pass:
+ * max(2, N / EST_LM_TPC_DIV) when p - 1 has a prime factor no chain radix carries (the stage's inner needs a prime
+ * engine of its own, vfft_policy_prime_cell), else 2 */
+static inline long long est__lm_tpc_lanes(int N, int p)
+{
+    return vfft_policy_prime_cell(p - 1) && N / EST_LM_TPC_DIV > 2 ? N / EST_LM_TPC_DIV : 2;
+}
 /* the recipe's block children, freed */
 static inline void est_free_lm(est_planlm_t *p)
 {
@@ -98,11 +128,16 @@ static inline int est_plan_lm(const est_machine_t *m, int rank, int N1, int N2, 
         return est_refuse(why, whylen, "a lane-major batch of %lld lanes: past the doors' lane count", lanes);
     if (est_col_plan(m, N1, lanes, nat, &out->col, why, whylen))
         return -1;
+    if (rank == 1 && 16LL * N1 * lanes > m->l1d)
+        (void)est__col_unbanded(m, &out->col);
+    if (out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) && est__col_blu(m, &out->col, why, whylen))
+        return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
     if (out->T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2 && out->col.tpc != 1)
     {
-        const int strips = out->col.blu <= 0;
+        const int strips = out->col.blu <= 0 && !out->col.rd_n && lanes >= (long long)(m->lanes / 2) * out->T &&
+                           16LL * N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
         out->cmt = 1;
         out->mtarm = strips;
         out->msw = strips ? est__msw_2d(m, N1, (int)lanes, out->T) : 0;

@@ -194,8 +194,12 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     need_sw = plain && bsw < 0;
     if (bsw >= 0)
         c->wc = bsw;
-    need_mt = workers >= 2 && !(usable && bcmt >= 0);
-    if (workers >= 2 && !need_mt)
+    /* a column through the turned prime pass runs serial, as the 2D door runs it (il2d_tier.h, _il2d_c2c_mt): the
+     * threaded column pass would run the Bluestein columns over tables the turned pass dropped (a pool worker's
+     * memset into freed scratch: 12005 x 32 and 4099 x 32 at 8 threads, 2026-11-01). No threaded arm, no threaded
+     * replay. */
+    need_mt = workers >= 2 && !c->tpc && !(usable && bcmt >= 0);
+    if (workers >= 2 && !need_mt && !c->tpc)
     {   /* the threaded verdict from the row at this T */
         c->colmt = bcmt > 0;
         c->natarm = c->colmt ? vw2_ilcol_tok_geti(&W->vw2, key, "mtarm", 0) : 0;
@@ -224,18 +228,25 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         ac[na].msw = (SW_); ac[na].wc = (WC_); ac[na].ok = 1; \
         snprintf(ac[na].name, sizeof ac[na].name, "%s", NAME_); \
         arms[na].name = ac[na].name; arms[na].run = _lm_arm_run; arms[na].ctx = &ac[na]; na++; } while (0)
-    if (!(c2c && need_sw))   /* a c2c batch racing its tile widths has no walk arm (the law) */
-        _LM_ARM("serial", 0, 0, 0, bsw >= 0 ? bsw : 0);
-    if (need_sw)
-    {   /* the serial lane tiles: the ladder's widths that divide K and keep a tile in L2 */
-        nl = _il2d_sw_ladder(N, K, 1, lad, 6);
-        for (i = 0; i < nl && na < 14; i++)
+    {   /* the serial lane tiles: the ladder's widths that divide K and keep a tile in L2. A c2c batch racing its
+         * tile widths has no walk arm (the law), but where no width exists (fewer than eight lanes) the walk is the
+         * serial arm: without it the race had threaded arms alone and banked one (100 x 4 on 8 threads: the
+         * threaded walk, 6.7 times slower than the serial pass, 2026-11-01) */
+        int wid[6], nw = 0;
+        if (need_sw)
+        {
+            nl = _il2d_sw_ladder(N, K, 1, lad, 6);
+            for (i = 0; i < nl; i++)
+                if (!c2c || vfft_policy_lm_tile_ok(lad[i], K, c->nat))
+                    wid[nw++] = lad[i];
+        }
+        if (!(c2c && need_sw && nw > 0))
+            _LM_ARM("serial", 0, 0, 0, bsw >= 0 ? bsw : 0);
+        for (i = 0; i < nw && na < 14; i++)
         {
             char nm[24];
-            if (c2c && !vfft_policy_lm_tile_ok(lad[i], K, c->nat))
-                continue;
-            snprintf(nm, sizeof nm, "sw%d", lad[i]);
-            _LM_ARM(nm, 0, 0, 0, lad[i]);
+            snprintf(nm, sizeof nm, "sw%d", wid[i]);
+            _LM_ARM(nm, 0, 0, 0, wid[i]);
         }
     }
     if (need_mt)
@@ -267,10 +278,13 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         _LM_ARM("walk", 0, 0, 0, 0);
 #undef _LM_ARM
     if (na > 1)
-    {
+    {   /* the 1D batch race's rounds (_tc_mt_decide, vfft.c; the plane queue's since 2026-10-31): the minimum of 7
+         * rounds, 9 in place, the order reversed every other round; a sample sized to ~0.3 ms of the first arm's
+         * work (_il2d_race_reps), longer than the 1D race's 32768 points */
+        const int rounds = ip ? 9 : 7;
         vfft_race_proto_t proto = need_mt
-            ? (vfft_race_proto_t){ 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }   /* threaded arms: two untimed passes first, never paused */
-            : (vfft_race_proto_t){ 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL, 1 };  /* single-thread arms: paced */
+            ? (vfft_race_proto_t){ rounds, 1, VFFT_RACE_MIN, 1, 2, NULL, NULL, 0 }   /* threaded arms: two untimed passes first, never paused */
+            : (vfft_race_proto_t){ rounds, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 };  /* single-thread arms: paced */
         if (ip) { proto.reset = _il2d_ip_reset; proto.reset_ctx = &rs; }
         if (ip) memcpy(z, seed, (PN + 8) * sizeof(double));
         proto.reps = _il2d_race_reps(_lm_arm_run, &ac[0], ip ? (double)N : 0.0);
