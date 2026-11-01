@@ -698,6 +698,8 @@ out:
 #include "il/estimate/c2c_estimate_nd_il.h"
 /* the lane-major batches at rank 1 to 3, on the column pieces of the 2D and 3D build */
 #include "il/estimate/c2c_estimate_lm_il.h"
+/* one 1D real transform (R2C and C2R), on this file's replay and detectors */
+#include "il/estimate/real_estimate_il.h"
 
 /* ── the environment guard ──────────────────────────────────────────────── */
 
@@ -719,11 +721,15 @@ out:
  *     threaded pins _MT and _PT (fftnd_il.h:1768-1776: they replace the row's threaded verdict);
  *   - the batch doors at T > 1: VFFT_NO_TCMT (no copies, vfft.c:2082) and VFFT_TCMT (pins the 1D
  *     batch's way over its row, vfft.c _tc_mt_decide), VFFT_PQ_NO_MT (pins the queue's way over its
- *     row, plane_queue.h _pq_mt_replay_or_race and _pq_mt_race).
+ *     row, plane_queue.h _pq_mt_replay_or_race and _pq_mt_race);
+ *   - the 1D real doors (il/estimate/real_estimate_il.h): VFFT_ZRM, VFFT_ZRF, VFFT_ZFSR (zrp_build.h:178,
+ *     271, 365), VFFT_ZRP and VFFT_ZTTR (zrp_build.h:975, 991: an engine pin beats the row), VFFT_ZRB
+ *     (odd_build.h:328), VFFT_ZR2C_ROUTE (zr2c_build.h:720).
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_TCMT_LOG, VFFT_TCMT_VERBOSE, VFFT_VERBOSE, ...), the execute-time profiling
  * (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate
- * opens none), the real and split doors' names (the flag refuses those requests), the names no
+ * opens none), the split doors' names and the real lane-major Bluestein's VFFT_ZRBL (the flag refuses
+ * those requests), the names no
  * estimate create or execute reads (VFFT_IL2D_DENSE), and VFFT_HIGHN_PLAN, read only inside a race
  * (k1_commit.h:777, 1651). */
 static const char *const est_env_names[] = {
@@ -735,6 +741,7 @@ static const char *const est_env_names[] = {
     "VFFT_IL2D_NO_COLMT", "VFFT_IL2D_MTARM",
     "VFFT_ILND_ARM", "VFFT_ILND_WL", "VFFT_ILND_NF", "VFFT_ILND_SW", "VFFT_ILND_MT", "VFFT_ILND_PT",
     "VFFT_NO_TCMT", "VFFT_TCMT", "VFFT_PQ_NO_MT",
+    "VFFT_ZRM", "VFFT_ZRP", "VFFT_ZTTR", "VFFT_ZFSR", "VFFT_ZRF", "VFFT_ZRB", "VFFT_ZR2C_ROUTE",
 };
 /* the first steering variable set in this process's environment, NULL when none is */
 static inline const char *est_env_steers(void)
@@ -769,6 +776,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
+    if (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
+        return _vfft_create_estimate_real(&m, cfg);
     if (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_estimate_lm(&m, cfg);
     if (cfg->dims >= 2)
