@@ -94,8 +94,9 @@ request in each band only to that band's members.
 
 **Scope:** one transform (howmany = 1). A contiguous batch (the owner, 2026-10-31) is that transform's
 plan: on one thread run once per transform, on T threads either way the batch rule picks
-(`est_batch_whole`, docs/roadmap/threaded_batch_estimate_plan.md). The lane-major batch is not covered
-(see Open decisions).
+(`est_batch_whole`, docs/roadmap/threaded_batch_estimate_plan.md). A lane-major batch (2026-11-01) is
+the column pass of N rows over K lanes, planned from the 2D sketch's column formulas
+(`il/estimate/c2c_estimate_lm_il.h`; docs/design/estimate_2d3d_sketch.md §11).
 
 ## 4. Parameter formulas
 
@@ -472,9 +473,11 @@ the raced plan.
 1. **Batches.** Answered for the contiguous batch (the owner, 2026-10-31): the plan of one transform
    through the door's transform-contiguous wrapper; on T threads the wrapper's two ways (the loop of the
    threaded plan, or slabs of whole transforms per worker: `_tc_mt_decide`, vfft.c) chosen by the batch
-   rule `est_batch_whole` and written on the batch's own row (`eng=tcb tcmt=`). Still open: the
-   lane-major 1D batch (`il/rank1/lm_batch_il.h`, `policy_il.h:232-258`), which is the real batch's
-   DEFAULT geometry.
+   rule `est_batch_whole` and written on the batch's own row (`eng=tcb tcmt=`). Answered for the
+   lane-major c2c batch (the owner, 2026-11-01): the column pass over the lanes
+   (`il/estimate/c2c_estimate_lm_il.h`; the serial lane tile's rule waits for its study,
+   docs/roadmap/lane_major_estimate_plan.md). The real lane-major batch, the real batch's DEFAULT
+   geometry, waits for a real estimate in the library.
 2. **Thread counts.** What should estimate do at T = AUTO, and at T other than 1 and 8? Every thread
    rule here was fitted at T = 8 on one CPU. The 2·L1d serial bound rests, for the flat DIT, on
    rows up to N = 2002 only (EVIDENCE.md:512).

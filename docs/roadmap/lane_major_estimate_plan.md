@@ -81,3 +81,14 @@ Quiet machine in total: about 2 – 3 h, in two windows.
 
 1. The scope is C2C lane-major at ranks 1 – 3, as above.
 2. The thread counts are 1 and 8. 4 threads would add about 40 minutes.
+
+The owner approved the plan on 2026-11-01 ("yes please"; the thread counts stay 1 and 8, 4 can be added).
+
+## 6. Built (2026-11-01)
+
+Step 2: `il/estimate/c2c_estimate_lm_il.h` (the recipe `est_plan_lm`, the pre-flight, the row writer, the plan
+check `est__check_lm`, the build), wired from `_vfft_create_estimate`; the front door no longer refuses a
+lane-major batch under the flag. `estimate_gate` sections LM1, LM2, LM3 (one thread) and LM1T, LM2T, LM3T (8
+threads): 540 lane-major batches built with nothing measured, served as the recipe wrote them, and correct against
+the one-transform plan lane by lane; 102 of the 270 at 8 threads ran their column pass threaded. The gate passes in
+full (15,907 checks).

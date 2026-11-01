@@ -15,7 +15,7 @@ the banked rows, **[I]** interpretation.
 | axis | served | refused, with a reason |
 |---|---|---|
 | rank | 2 and 3 (1 as before) | 4 |
-| batch | one transform (howmany 1); a contiguous batch (2026-10-31): on one thread the plan of one transform, run once per transform; on T threads the way the batch rule picks (§11) | a lane-major batch |
+| batch | one transform (howmany 1); a contiguous batch (2026-10-31): on one thread the plan of one transform, run once per transform; on T threads the way the batch rule picks (§11); a lane-major batch (2026-11-01, §11) | — |
 | order | natural (the default) | scrambled at rank 2 and 3 |
 | threads | any: rank 2 (§8a, 2026-10-29), rank 3 (§9a, 2026-10-31) | — |
 | placement | both, one recipe: the 2D and 3D rows are placement-blind (`place=oop` in the key, il2d_tier.h:3982-3985, fftnd_il.h:1431-1437) | — |
@@ -484,13 +484,22 @@ way; 60 cells drawn after it, 1.011). The plan
 check reads `pq_inner` as above, then the queue's way (`pq_mt`) and its copies (`pq_wn`), and with
 whole transforms per thread checks the first copy against the one-thread recipe (`est__batch_one`).
 
+**A lane-major batch** (2026-11-01; `il/estimate/c2c_estimate_lm_il.h`,
+`docs/roadmap/lane_major_estimate_plan.md`) is a column pass over lanes at every rank: rank 1 one pass of N
+rows over K lanes; rank 2 one pass of N1 rows over N2 K lanes, then N1 blocks of the 1D lane-major batch at
+(N2, K); rank 3 one pass over N2 N3 K lanes, then N1 blocks of the 2D lane-major batch. The estimate writes
+the batch's own row (`lay=lm`, `q=K`, `nthreads=T`) from this sketch's formulas: the column pass
+(`est_col_plan` at w = the lanes, unbanded), the serial lane tile `sw=0` (the walk) until a width rule is
+approved, at T > 1 the plane's threaded test of §8a with the strips at its width (the threaded walk on a
+Bluestein column), and the block child's rows under `rp_`, one thread, natural, in place. The plan check
+(`est__check_lm`) reads the column pass, the tile, the threaded verdict and the block child.
+
 ## 12. Refusals (the front door, `_vfft_api_translate`)
 
 | request under the flag | message |
 |---|---|
 | rank 4 | `vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank 4 (drop the flag to plan it by measuring)` |
 | rank 2 or 3, scrambled | `vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)` |
-| howmany > 1, lane-major (any rank) | `vfft_create: VFFT_FLAG_ESTIMATE plans a contiguous batch only, not VFFT_BATCH_LANE_MAJOR (drop the flag to plan it by measuring)` |
 | any rank, while an environment variable that steers a plan is set (the owner's ruling of 2026-10-22) | `vfft_create: VFFT_FLAG_ESTIMATE: the developer switch %s is set; estimate refuses while a plan-steering switch is set (unset it: estimate plans from formulas only)` |
 
 The formulas refuse, with the reason, an axis of length 1, a last axis the row guard refuses, a
