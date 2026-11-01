@@ -32,32 +32,9 @@
 #include <stddef.h>
 
 /* ---------------------------------------------------------------- the recipe of any request */
-typedef struct est_any_recipe_s
-{
-    char eng[8];          /* [eng] the row's engine: "k1" for c2c; zrm | zrp | zttr | zr2c | zfsr | zrf | zrb */
-    est_recipe_t c;       /* c2c: the recipe (est_plan_1d). zr2c: the child at N/2, natural, T = 1, mapped
-                           * 1:1 onto vw2_zr2c_child_t (wisdom2_real_il.h:388-406; c.il_mt = the prime
-                           * child's threaded arm). zfsr / zrb kind 4: c.fs holds the four-step child. */
-
-    /* ---- real: one row per (r2c|c2r, N, placement, T), ord=nat (wisdom2_real_il.h:1-44) ------- */
-    struct { int R1, R2, form; } zrp;    /* [pair=R1.R2 leaf=n1t|r2z] form 0 A (n1t), 1 B (r2z);
-                                          * 4 lanes only (sketch 6)                             */
-    struct { int chain[8], nf; size_t tile; int stk, mt; } zttr;
-                                         /* [chain= tile= stk= mt=] the chain at M = N/2, 2..8
-                                          * stages; stk = 3; mt 0 = absent; 4 lanes only         */
-    struct { int route, fold_mt; } zr2c; /* [route=child_oop_il|child_nat_ip fold=st|mt] route =
-                                          * the CHILD's placement, 0 child_oop_il, 1 child_nat_ip;
-                                          * fold_mt only on a T > 1 row                          */
-    struct { int n1, n2; } zfsr;         /* [split=n1xn2] the split of N/2; its child = c.fs      */
-    struct { int chain[10], K, nomsz, tile, mt; } zrf;
-                                         /* [chain= msz= tile= mt=] odd radices ascending, 2..10
-                                          * (zrf.h:228); nomsz = !msz; tile = the budget in
-                                          * complex, 0 = untiled; mt 2 LEVELS on a T > 1 row     */
-    struct { int M; char kind[8], shape[64]; int tw, mt; } zrb;
-                                         /* [m= in= in_sh= in_tw= mt=] the convolution length and
-                                          * its inner, the prime row's spelling; a kind-4 inner's
-                                          * child goes in c.fs; mt 0 = serial                    */
-} est_any_recipe_t;
+/* The recipe of ANY request is the library's real recipe (il/estimate/real_estimate_il.h, est_real_recipe_t):
+ * for a c2c request its member c is the whole recipe and eng is "k1"; for a real request it is the library's. */
+typedef est_real_recipe_t est_any_recipe_t;
 
 /* ---------------------------------------------------------------- the contracts */
 
