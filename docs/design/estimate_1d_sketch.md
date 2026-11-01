@@ -329,7 +329,8 @@ the i9, 4096 on Zen4.
 | four-step | always threaded. `il_pair` stays the one-thread split; `il_mt` = the threaded split's N1_T: N/2048 up to 2^20, then 4096 (other N: the most balanced legal split, smaller column side). `il_mtsb=8.64.8` when natural, 16N > L3, N1_T = 4096 and N2_T % 16 = 0 (`k1_fourstep.h:955-958`); else 0. **The row's child is the threaded split's**, because it is seeded under (N1_T, N2_T, T) and replays only as "the verdict AND its child at T" (`k1_commit.h:1538-1552,1595-1620`); otherwise it races. So: `fs_chain` at N1_T, `fs_wl`/`fs_tf` by the L2 test at (N1_T, N2_T), the row plan at N2_T (4.5), the T = 1 switches, and the T > 1 tokens of 5.7 |
 | zrf | `mt=2` (LEVELS) |
 | zr2c | token `fold=mt` (the race arm `zr2c+foldmt`, `il/real/zrp_build.h:795-818`) when N ≥ 64 and above the bound, else `fold=st` (`wisdom2_real_il.h:7-8,434`). A non-prime child stays one-thread (`il/real/zr2c_build.h:38-41`). A prime child under `fold=mt` also takes its own threaded arm, `il_mt` on the row (`wisdom2_real_il.h:402-403`). That arm follows the prime-inner rule above at the child's M: 2 or 1 on a ZTURN-T inner, and absent (serial) otherwise |
-| pair, chain3, mono, zrb, zrp, zttr | serial: the first three have no threaded form; zrb, zrp and zttr have no threaded row |
+| zttr | the ZTURN-T row above at the real data, M = N/2: serial under the bound, else `mt=2` (TILES) with at least 2 tiles, else `mt=1` (BLOCKS) (the owner, 2026-11-01; `docs/roadmap/real_estimate_plan.md` section 7) |
+| pair, chain3, mono, zrb, zrp | serial: the first three have no threaded form; zrb and zrp have no threaded row |
 
 ## 8. Expected quality: how often estimate names the banked winner
 

@@ -12,7 +12,8 @@
  * zrf chain= msz= tile= [mt=]; zrb m= in= in_sh= in_tw= [mt=].
  *
  * THE RECIPE (est_plan_real -> est_real): the engine by the sketch's section 6, the threaded arms by its
- * section 7 (fitted at T = 8). The zr2c half is the c2c estimate at N/2 (est_c2c), so the c2c rules reach it.
+ * section 7 (fitted at T = 8), except zttr's threaded arm: the c2c ZTURN-T rule at M = N/2 (est_inner_mt; the
+ * owner, 2026-11-01). The zr2c half is the c2c estimate at N/2 (est_c2c), so the c2c rules reach it.
  * The sketch's open decisions (its section 12) take these defaults: every T > 1 takes the rules fitted at
  * T = 8; the formulas follow the build's lanes (an 8-lane recipe is planned by an AVX-512 build only).
  * Gaps of the sketch, reported and not filled: zfsr at T > 1 is refused (section 7 has no rule for it); the
@@ -345,7 +346,16 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
             o->zttr.nf = k;
             o->zttr.tile = tile;
             o->zttr.stk = 3;
-            o->zttr.mt = 0;   /* section 7: zttr has no threaded row */
+            {   /* the c2c ZTURN-T rule at the real data M = N/2 (the owner, 2026-11-01): serial under the bound, else
+                 * TILES with at least 2 tiles, else BLOCKS (est_inner_mt; zttr_mt.h binds the same law). Against the
+                 * planner at 8 threads (docs/roadmap/real_estimate_plan.md section 7): serial at 1024 and 4096 (BLOCKS
+                 * there 1.6 - 8.3 x slower), TILES from 16384 (1.55 - 5.2 -> 0.96 - 1.29, BLOCKS 1.03 - 1.46) */
+                est_inner_t in;
+                memset(&in, 0, sizeof in);
+                in.ztt = 1;
+                in.tw = (int)tile;
+                o->zttr.mt = est_inner_mt(m, &in, N / 2, N / 2, T);
+            }
             return 0;
         }
     }

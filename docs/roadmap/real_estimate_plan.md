@@ -196,7 +196,19 @@ cell race first.
   lengths in place), the planner's creates into the store, then the timing (P, E and a control in one process, 15
   rounds). It waits for the owner to say the machine is quiet.
 
-## 7. Noticed, not filled (unverified)
+## 7. Stage 1 study: verdict and proposals (2026-11-01, 14:22 – 15:48)
+
+**Run:** the planner's 188 creates into `src/wisdom/14900KF` (126 raced: every 8-thread cell and the one-thread
+lengths without a row; the two real four-step rows without their child were raced whole and banked complete), then
+the 188 cells timed: the planner's plan (P), the estimate's (E) and P again as the control, one process, 15 rounds.
+The control 0.997; no arm measured; every arm bound its lean entry; the outputs agree within 9e-16. Tools and logs:
+`docs/research/estimate_real/evidence/stage1/`.
+
+| | Cells | Geomean | Median | Within 5% | More than 5% slower | Above 1.10 |
+|---|---|---|---|---|---|---|
+| One thread, R2C | 48 | 1.027 | 1.019 | 31 | 15 | 10 |
+
+## 8. Noticed, not filled (unverified)
 - The 1D lane-major real Bluestein path (`_vfft_create_real_lanes`, rows `eng=zrbl`) looks unreachable for an
   interleaved batch: `vfft.c` serves or refuses every lane-major K > 1 before `_vfft_create_real`.
 - `fftnd_real_il.h` seeds the 3D plane from the 2D row keyed at `nthreads=T`, but creates the plane child at one

@@ -5436,3 +5436,9 @@
 @cell t=c2r n=105 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=15.7 msz=1 tile=0 | ran=1 src=race ns=75.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=1035 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=861.3 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=1031 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=2048 in=ztt in_sh=4.4.8.4.4 in_tw=1024 | ran=1 src=race ns=4804.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=50021 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=81920 in=ztt in_sh=8.5.8.8.4.8 in_tw=512 mt=2 | ran=1 src=race ns=69750.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=97 q=1 ord=nat place=oop | eng=zrb m=160 in=2p in_sh=16.10 in_tw=0 | ran=1 src=race ns=264.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-28417423-dirty
+@cell t=r2c n=2295 q=1 ord=nat place=oop | eng=zrf chain=17.3.9.5 msz=0 tile=0 | ran=1 src=race ns=2117.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-28417423-dirty
+@cell t=r2c n=4485 q=1 ord=nat place=oop | eng=zrf chain=13.23.15 msz=1 tile=0 | ran=1 src=race ns=6636.4 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-28417423-dirty
+@cell t=r2c n=7425 q=1 ord=nat place=oop | eng=zrf chain=9.5.11.15 msz=0 tile=512 | ran=1 src=race ns=8063.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-28417423-dirty
+@cell t=r2c n=6615 q=1 ord=nat place=oop | eng=zrf chain=15.7.7.9 msz=0 tile=0 | ran=1 src=race ns=7080.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-28417423-dirty
