@@ -123,10 +123,11 @@ A create writes only its own direction's verdicts, into its private store.
 **Call overhead.** The estimate runs only inside `vfft_create`, as the C2C one does. It writes rows into a
 private store, the door's own create replays them, and the handle handed back is the door's. The estimate keeps
 no wrapper and adds no call to the execute path. Each stage checks this three ways:
-- the gate creates each cell twice, by the estimate and by the plain create replaying the same rows, and the two
-  handles must bind the same execute (the same executor and engines);
-- the timing includes the small cells where a call costs the most (`zrm` 12, `zrp` 64, planes 4x4 to 16x16),
-  where a leak would show as a ratio above 1 on the same recipe;
+- the build's plan check refuses a plan that is not entered by the lean door's jump (`k1_go` in the transform's
+  direction, which every 1D real executor of one transform binds), so the gate's every estimate plan has it;
+- the study tool prints, per arm, the engine served and whether its lean entry is bound, and the timing includes
+  the small cells where a call costs the most (`zrm` 12, `zrp` 64, planes 4x4 to 16x16), where a leak would show
+  as a ratio above 1 on the same recipe;
 - at 2D, the door binds its lean two-kernel executor only for some verdicts (one thread, `rx=lm`, a leaf `cx`,
   no threaded columns), so the rules for `rx` and `cx` weigh what they cost per call, not only per point.
 
@@ -176,7 +177,26 @@ cell race first.
    Both placements.
 6. **The thread counts are 1 and 8**, as in the C2C studies.
 
-## 6. Noticed, not filled (unverified)
+## 6. Stage 1, step 1: built (2026-11-01)
+
+- **The library:** `il/estimate/real_estimate_il.h` holds the 1D real estimate, moved from `src/estimate/` with no
+  rule changed: the recipe `est_real_recipe_t`, the formulas `est_plan_real` / `est_real`, the row writer, the
+  pre-flight, the plan check (now also the lean entry) and the build `est_build_real`, reached from
+  `_vfft_create_estimate`. The front door serves one 1D R2C or C2R transform under the flag and refuses a real
+  transform at rank 2 or 3 or in a batch, each with its own message. The real door's seven steering variables
+  (`VFFT_ZRM`, `VFFT_ZRP`, `VFFT_ZTTR`, `VFFT_ZFSR`, `VFFT_ZRF`, `VFFT_ZRB`, `VFFT_ZR2C_ROUTE`) joined the guard.
+  `src/estimate/` keeps the tools, calling the library.
+- **Same plans as before the move:** the prototype's check over 2..4096 (16,380 cells), the powers of two
+  262,144..2^24 at 1 and 8 threads (56) and 300 random lengths to 2,000,000 at 1 and 8 threads (2,400) gives the
+  same results before and after: every cell built and correct with nothing measured, except the 20 real four-step
+  cells at 8 threads, which the formulas refuse.
+- **`estimate_gate`** passes in full (27,130 checks): the new sections RL (4,368 real plans at one thread, both
+  placements) and RLT (120 at 8 threads, 20 executes on a threaded arm), the new refusals and the `VFFT_ZRP` guard.
+- **The study, ready to run:** 188 cells (section 4's lengths, both directions, out of place at 1 and 8 threads, 12
+  lengths in place), the planner's creates into the store, then the timing (P, E and a control in one process, 15
+  rounds). It waits for the owner to say the machine is quiet.
+
+## 7. Noticed, not filled (unverified)
 - The 1D lane-major real Bluestein path (`_vfft_create_real_lanes`, rows `eng=zrbl`) looks unreachable for an
   interleaved batch: `vfft.c` serves or refuses every lane-major K > 1 before `_vfft_create_real`.
 - `fftnd_real_il.h` seeds the 3D plane from the 2D row keyed at `nthreads=T`, but creates the plane child at one

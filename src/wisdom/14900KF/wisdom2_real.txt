@@ -18,9 +18,9 @@
 @cell t=c2r n=32768 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.8.8 tile=2048 stk=3 | ran=1 src=race ns=20700.0 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=32768 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=25300.0 metric=bwd1 units=ns date=2026-08-22
 @cell t=r2c n=65536 q=1 ord=nat place=oop | eng=zttr chain=8.4.4.8.8.4 tile=1024 stk=3 | ran=1 src=race ns=47550.0 metric=fwd1 units=ns date=2026-09-29
-@cell t=r2c n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=50050.0 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=65536 q=1 ord=nat place=ip | eng=zttr chain=8.4.4.8.8.4 tile=2048 stk=2 | ran=1 src=race ns=49800.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=65536 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.8.8.4 tile=2048 stk=0 | ran=1 src=race ns=48350.0 metric=bwd1 units=ns date=2026-09-29
-@cell t=c2r n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=54250.0 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=65536 q=1 ord=nat place=ip | eng=zttr chain=4.4.4.4.4.8.4 tile=1024 stk=3 | ran=1 src=race ns=51266.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=r2c n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=2p il_pair=4.32 il_kv=64 il_bkv=0 | ran=1 src=race ns=101.9 metric=fwd1 units=ns date=2026-10-03
 @cell t=r2c n=256 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=160.9 metric=fwd1 units=ns date=2026-08-22
 @cell t=c2r n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.4.8 il_kv=0 il_bkv=0 | ran=1 src=race ns=107.2 metric=bwd1 units=ns date=2026-10-03
@@ -30,9 +30,9 @@
 @cell t=c2r n=512 q=1 ord=nat place=oop | eng=zttr chain=4.8.8 tile=0 stk=1 | ran=1 src=race ns=234.4 metric=bwd1 units=ns date=2026-09-29
 @cell t=c2r n=512 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=318.8 metric=bwd1 units=ns date=2026-08-22
 @cell t=r2c n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=2p il_pair=32.16 il_kv=51 il_bkv=0 | ran=1 src=race ns=462.3 metric=fwd1 units=ns date=2026-10-03
-@cell t=r2c n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=431.2 metric=fwd1 units=ns date=2026-08-22
+@cell t=r2c n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_oop_il il_route=2p il_pair=16.32 il_kv=67 il_bkv=0 | ran=1 src=race ns=454.6 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=1024 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.4 tile=0 stk=1 | ran=1 src=race ns=484.4 metric=bwd1 units=ns date=2026-09-29
-@cell t=c2r n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=550.0 metric=bwd1 units=ns date=2026-08-22
+@cell t=c2r n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=ztt il_ztt=4.8.4.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=461.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=r2c n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.8.8.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=968.2 metric=fwd1 units=ns date=2026-10-03
 @cell t=r2c n=2048 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=race ns=1081.8 metric=fwd1 units=ns date=2026-08-22
 @cell t=c2r n=2048 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.4 tile=0 stk=3 | ran=1 src=race ns=1035.9 metric=bwd1 units=ns date=2026-09-29
@@ -2214,16 +2214,16 @@
 @cell t=r2c n=131072 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=8.4.4.8.8.8 il_tw=2048 il_kv=0 il_bkv=0 | ran=1 src=race ns=114700.0 metric=fwd1 units=ns date=2026-10-03
 @cell t=r2c n=262144 q=1 ord=nat place=oop | eng=zttr chain=8.8.8.4.8.8 tile=2048 stk=3 | ran=1 src=race ns=264050.0 metric=fwd1 units=ns date=2026-09-30
 @cell t=r2c n=524288 q=1 ord=nat place=oop | eng=zttr chain=8.8.4.4.8.8.4 tile=1024 stk=3 | ran=1 src=race ns=717000.0 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=1048576 q=1 ord=nat place=oop | eng=zfsr split=512x1024 | ran=1 src=race ns=1756450.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=1048576 q=1 ord=nat place=oop | eng=zfsr split=512x1024 fs_chain=8.8.8 fs_wl=64 fs_tf=1 fs_ro=0 fs_sw=0 fs_rbk=8 fs_turn=0 fs_csk=0 fs_rp_k1=t=c2c,n=1024,q=1,ord=nat,place=ip,role=comp,lay=il fs_rp_1_eng=k1 fs_rp_1_il_route=ztt fs_rp_1_il_ztt=4.4.4.4.4 fs_rp_1_il_kv=0 fs_rp_k2=t=c2c,n=1024,q=1,ord=scr,place=ip,role=comp,lay=il fs_rp_2_eng=k1 fs_rp_2_il_route=ztt fs_rp_2_il_ztt=4.8.4.8 fs_rp_2_il_kv=0 | ran=1 src=race ns=1656150.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=r2c n=2097152 q=1 ord=nat place=oop | eng=zfsr split=2048x512 | ran=1 src=race ns=4194000.0 metric=fwd1 units=ns date=2026-09-30
-@cell t=r2c n=4194304 q=1 ord=nat place=oop | eng=zfsr split=2048x1024 | ran=1 src=race ns=9200650.0 metric=fwd1 units=ns date=2026-09-30
+@cell t=r2c n=4194304 q=1 ord=nat place=oop | eng=zfsr split=1024x2048 fs_chain=16.8.8 fs_wl=64 fs_tf=1 fs_ro=0 fs_sw=0 fs_rbk=8 fs_turn=0 fs_csk=0 fs_rp_k1=t=c2c,n=2048,q=1,ord=nat,place=ip,role=comp,lay=il fs_rp_1_eng=k1 fs_rp_1_il_route=ztt fs_rp_1_il_ztt=8.4.8.8 fs_rp_1_il_tw=1024 fs_rp_1_il_kv=0 fs_rp_k2=t=c2c,n=2048,q=1,ord=scr,place=ip,role=comp,lay=il fs_rp_2_eng=k1 fs_rp_2_il_route=ztt fs_rp_2_il_ztt=8.8.4.8 fs_rp_2_il_kv=0 | ran=1 src=race ns=9673350.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=r2c n=8388608 q=1 ord=nat place=oop | eng=zfsr split=4096x1024 | ran=1 src=race ns=21968200.0 metric=fwd1 units=ns date=2026-09-30
 @cell t=c2r n=131072 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.8.4.8 tile=2048 stk=3 | ran=1 src=race ns=122250.0 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=262144 q=1 ord=nat place=oop | eng=zttr chain=4.8.8.8.8.8 tile=2048 stk=3 | ran=1 src=race ns=325100.0 metric=bwd1 units=ns date=2026-09-30
 @cell t=c2r n=524288 q=1 ord=nat place=oop | eng=zttr chain=4.8.4.4.8.8.8 tile=1024 stk=3 | ran=1 src=race ns=815650.0 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=1048576 q=1 ord=nat place=oop | eng=zfsr split=512x1024 | ran=1 src=race ns=2150250.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=1048576 q=1 ord=nat place=oop | eng=zfsr split=512x1024 fs_chain=8.8.8 fs_wl=64 fs_tf=1 fs_ro=0 fs_sw=0 fs_rbk=8 fs_turn=0 fs_csk=0 fs_rp_k1=t=c2c,n=1024,q=1,ord=nat,place=ip,role=comp,lay=il fs_rp_1_eng=k1 fs_rp_1_il_route=ztt fs_rp_1_il_ztt=4.8.8.4 fs_rp_1_il_kv=0 fs_rp_k2=t=c2c,n=1024,q=1,ord=scr,place=ip,role=comp,lay=il fs_rp_2_eng=k1 fs_rp_2_il_route=ztt fs_rp_2_il_ztt=4.8.4.8 fs_rp_2_il_kv=0 | ran=1 src=race ns=2047350.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=2097152 q=1 ord=nat place=oop | eng=zfsr split=256x4096 | ran=1 src=race ns=5057100.0 metric=bwd1 units=ns date=2026-09-30
-@cell t=c2r n=4194304 q=1 ord=nat place=oop | eng=zfsr split=512x4096 | ran=1 src=race ns=12184450.0 metric=bwd1 units=ns date=2026-09-30
+@cell t=c2r n=4194304 q=1 ord=nat place=oop | eng=zfsr split=512x4096 fs_chain=8.8.8 fs_wl=64 fs_tf=1 fs_ro=0 fs_sw=0 fs_rbk=8 fs_turn=0 fs_csk=0 fs_rp_k1=t=c2c,n=4096,q=1,ord=nat,place=ip,role=comp,lay=il fs_rp_1_eng=k1 fs_rp_1_il_route=ztt fs_rp_1_il_ztt=8.8.8.8 fs_rp_1_il_tw=1024 fs_rp_1_il_kv=0 fs_rp_k2=t=c2c,n=4096,q=1,ord=scr,place=ip,role=comp,lay=il fs_rp_2_eng=k1 fs_rp_2_il_route=ztt fs_rp_2_il_ztt=8.8.8.8 fs_rp_2_il_tw=1024 fs_rp_2_il_kv=0 | ran=1 src=race ns=12281250.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
 @cell t=c2r n=8388608 q=1 ord=nat place=oop | eng=zfsr split=1024x4096 | ran=1 src=race ns=26853250.0 metric=bwd1 units=ns date=2026-09-30
 @cell t=r2c n=33 q=1 ord=nat place=oop | eng=zrf chain=11.3 msz=1 tile=0 | ran=1 src=race ns=34.6 metric=fwd1 units=ns date=2026-10-01
 @cell t=r2c n=35 q=1 ord=nat place=oop | eng=zrf chain=7.5 msz=1 tile=0 | ran=1 src=race ns=38.3 metric=fwd1 units=ns date=2026-10-01
@@ -5321,3 +5321,118 @@
 @cell t=r2c n=4092 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=chain3 il_pair=341.6 il_chain=6.31.11 il_kv=0 il_bkv=0 | ran=1 src=race ns=4413.6 metric=fwd1 units=ns date=2026-10-10 bld=0.1.0-e7ef23cf-dirty
 @cell t=r2c n=4094 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=8.8.4.4.4 il_prime_tw=1024 il_kv=0 il_bkv=0 | ran=1 src=race ns=11246.2 metric=fwd1 units=ns date=2026-10-10 bld=0.1.0-e7ef23cf-dirty
 @cell t=r2c n=64 q=4 ord=nat place=oop lay=lm | chain=32 forms=b84 sw=0 | ran=1 ns=49.5 metric=fwd1 units=ns src=race date=2026-10-14 bld=0.1.0-051df35f
+@cell t=r2c n=6000 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip il_route=chain3 il_pair=150.20 il_chain=20.15.10 il_kv=5 il_bkv=0 | ran=1 src=race ns=7167.4 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=12000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.15.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=8733.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=100000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.5.5.5.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=92700.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=8198 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.15.7.5.4 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=29040.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=15625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5 msz=0 tile=512 | ran=1 src=race ns=18740.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=61 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=559.2 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=131 q=1 ord=nat place=oop | eng=zrb m=196 in=2p in_sh=14.14 in_tw=0 | ran=1 src=race ns=361.9 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=120 q=1 ord=nat place=ip | eng=zr2c route=child_oop_il il_route=2p il_pair=6.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=55.8 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1000 q=1 ord=nat place=ip | eng=zr2c route=child_oop_il il_route=chain3 il_pair=50.10 il_chain=10.5.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=629.9 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1280 q=1 ord=nat place=ip | eng=zttr chain=4.8.5.4 tile=0 stk=0 | ran=1 src=race ns=623.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=4050 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=chain3 il_pair=135.15 il_chain=15.15.9 il_kv=1285 il_bkv=0 | ran=1 src=race ns=3465.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=262144 q=1 ord=nat place=ip | eng=zttr chain=8.4.4.8.4.8.4 tile=2048 stk=3 | ran=1 src=race ns=330200.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=105 q=1 ord=nat place=ip | eng=zrf chain=7.3.5 msz=0 tile=0 | ran=1 src=race ns=90.4 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1035 q=1 ord=nat place=ip | eng=zrf chain=9.23.5 msz=1 tile=0 | ran=1 src=race ns=928.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1031 q=1 ord=nat place=ip | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race ns=4603.2 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=50021 q=1 ord=nat place=ip | eng=zrb m=81920 in=ztt in_sh=8.8.5.8.4.8 in_tw=1024 | ran=1 src=race ns=340700.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=6000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=chain3 il_pair=200.15 il_chain=15.20.10 il_kv=0 il_bkv=1280 | ran=1 src=race ns=5605.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=12000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.15.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=9637.5 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=100000 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=ztt il_ztt=4.5.5.5.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=116300.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1000000 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip il_route=flat il_flat=5.5.4.5.5.8.25 il_forms=t.t.t.m.t.o il_tw=100000 il_kv=0 il_bkv=0 | ran=1 src=race ns=2312500.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=2062 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.4.7.5.4 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=6260.4 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=8198 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.15.7.5.4 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=29750.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=15625 q=1 ord=nat place=oop | eng=zrf chain=5.5.5.5.5.5 msz=0 tile=256 | ran=1 src=race ns=17530.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=61 q=1 ord=nat place=oop | eng=zrm | ran=1 src=race ns=549.6 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=131 q=1 ord=nat place=oop | eng=zrb m=196 in=2p in_sh=14.14 in_tw=0 | ran=1 src=race ns=375.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=64 q=1 ord=nat place=ip | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=27.3 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=120 q=1 ord=nat place=ip | eng=zrp pair=12.10 leaf=r2z | ran=1 src=race ns=54.6 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1000 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=chain3 il_pair=50.10 il_chain=10.5.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=535.2 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1280 q=1 ord=nat place=ip | eng=zttr chain=4.8.5.4 tile=0 stk=3 | ran=1 src=race ns=635.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=4050 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=flat il_flat=9.5.9.5 il_forms=t.t.n il_kv=0 il_bkv=0 | ran=1 src=race ns=3931.1 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=262144 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=ztt il_ztt=8.4.8.8.8.8 il_tw=2048 il_kv=0 il_bkv=0 | ran=1 src=race ns=376450.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=105 q=1 ord=nat place=ip | eng=zrf chain=15.7 msz=1 tile=0 | ran=1 src=race ns=77.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1035 q=1 ord=nat place=ip | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=859.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1031 q=1 ord=nat place=ip | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race ns=4680.3 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=50021 q=1 ord=nat place=ip | eng=zrb m=81920 in=ztt in_sh=8.8.5.4.8.8 in_tw=1024 | ran=1 src=race ns=349650.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=16 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=9.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=64 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=26.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=256 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=2p il_pair=4.32 il_kv=64 il_bkv=0 | ran=1 src=race ns=101.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1024 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=2p il_pair=16.32 il_kv=67 il_bkv=0 | ran=1 src=race ns=437.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=4096 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=8.8.8.4 il_tw=1024 il_kv=0 il_bkv=0 | ran=1 src=race ns=2132.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=16384 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=8.4.8.4.8 tile=1024 mt=2 stk=2 | ran=1 src=race ns=6920.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=65536 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.4.8.4.8.8 tile=1024 mt=2 stk=1 | ran=1 src=race ns=17000.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=262144 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=8.4.8.8.8.8 tile=2048 mt=2 stk=3 | ran=1 src=race ns=59150.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=12 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=7.4 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=60 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=6.10 leaf=r2z | ran=1 src=race ns=28.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=120 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=12.10 leaf=r2z | ran=1 src=race ns=53.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=chain3 il_pair=50.10 il_chain=10.5.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=577.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1280 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.8.5.4 tile=0 stk=1 | ran=1 src=race ns=615.6 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=4050 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=chain3 il_pair=135.15 il_chain=15.15.9 il_kv=1285 il_bkv=0 | ran=1 src=race ns=3636.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=6000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=chain3 il_pair=150.20 il_chain=20.10.15 il_kv=80 il_bkv=0 | ran=1 src=race ns=4492.4 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=12000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=4.15.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=8928.6 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=100000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=4.5.5.5.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=98000.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=262 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=prime il_prime=rader il_prime_in=2p il_prime_sh=13.10 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=392.2 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=2062 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=8.7.5.8 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=6052.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=8198 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=mt il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.15.7.5.4 il_prime_tw=0 il_mt=1 il_kv=0 il_bkv=0 | ran=1 src=race ns=21960.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=945 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=7.3.9.5 msz=0 tile=0 | ran=1 src=race ns=659.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1035 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=901.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=15625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5 msz=0 tile=128 | ran=1 src=race ns=18766.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=13 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=13.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=61 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=557.8 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=131 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=196 in=2p in_sh=14.14 in_tw=0 | ran=1 src=race ns=362.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1031 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race ns=4644.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=50021 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=81920 in=ztt in_sh=8.8.5.8.4.8 in_tw=1024 mt=2 | ran=1 src=race ns=63500.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=64 q=1 ord=nat place=ip nthreads=8 | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=28.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=120 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=2p il_pair=6.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=56.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1000 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=chain3 il_pair=50.10 il_chain=10.10.5 il_kv=0 il_bkv=0 | ran=1 src=race ns=552.1 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1024 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=2p il_pair=16.32 il_kv=67 il_bkv=0 | ran=1 src=race ns=428.3 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1280 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.5.8.4 tile=0 stk=1 | ran=1 src=race ns=616.6 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=4050 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=chain3 il_pair=135.15 il_chain=15.15.9 il_kv=1285 il_bkv=0 | ran=1 src=race ns=3482.9 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=65536 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=8.4.8.4.8.4 tile=2048 mt=2 stk=3 | ran=1 src=race ns=22566.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=262144 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.4.8.4.4.8.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=80400.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=105 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=7.3.5 msz=0 tile=0 | ran=1 src=race ns=92.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1035 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=891.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=1031 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race ns=4625.8 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=r2c n=50021 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=81920 in=ztt in_sh=8.5.8.4.8.8 in_tw=2048 mt=2 | ran=1 src=race ns=63766.7 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=16 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=4.4 leaf=n1t | ran=1 src=race ns=9.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=64 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=25.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=256 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=4.4.8 il_kv=0 il_bkv=0 | ran=1 src=race ns=108.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1024 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=ztt il_ztt=4.8.4.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=472.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=4096 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.8.4.4.4 tile=0 stk=1 | ran=1 src=race ns=2127.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=16384 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.4.4.4.4.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=5375.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=65536 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.4.4.4.4.4.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=17650.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=262144 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.4.4.8.4.8.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=62650.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=12 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=8.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=60 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=6.10 leaf=r2z | ran=1 src=race ns=29.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=120 q=1 ord=nat place=oop nthreads=8 | eng=zrp pair=12.10 leaf=r2z | ran=1 src=race ns=53.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=chain3 il_pair=50.10 il_chain=10.5.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=705.4 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1280 q=1 ord=nat place=oop nthreads=8 | eng=zttr chain=4.8.5.4 tile=0 stk=0 | ran=1 src=race ns=627.5 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=4050 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=flat il_flat=9.9.5.5 il_forms=t.t.n il_kv=0 il_bkv=0 | ran=1 src=race ns=4316.2 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=6000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=chain3 il_pair=300.10 il_chain=10.20.15 il_kv=0 il_bkv=0 | ran=1 src=race ns=5939.2 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=12000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=4.15.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=9584.2 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=100000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=mt il_route=ztt il_ztt=4.5.5.5.5.5.4 il_kv=0 il_bkv=0 | ran=1 src=race ns=106950.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1000000 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=mt il_route=flat il_flat=5.5.5.4.5.8.25 il_forms=m.m.t.t.t.o il_tw=100000 il_kv=0 il_bkv=0 | ran=1 src=race ns=2368300.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=262 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=prime il_prime=rader il_prime_in=2p il_prime_sh=13.10 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=428.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=2062 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.4.7.5.4 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=6472.1 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=8198 q=1 ord=nat place=oop nthreads=8 | eng=zr2c route=child_nat_ip fold=mt il_route=prime il_prime=bluestein il_prime_in=ztt il_prime_sh=4.15.7.5.4 il_prime_tw=0 il_mt=1 il_kv=0 il_bkv=0 | ran=1 src=race ns=23640.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=945 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=9.3.7.5 msz=0 tile=0 | ran=1 src=race ns=634.6 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1035 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=921.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=15625 q=1 ord=nat place=oop nthreads=8 | eng=zrf chain=5.5.5.5.5.5 msz=0 tile=2048 mt=1 | ran=1 src=race ns=9458.3 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=13 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=14.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=61 q=1 ord=nat place=oop nthreads=8 | eng=zrm | ran=1 src=race ns=549.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=131 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=196 in=2p in_sh=14.14 in_tw=0 | ran=1 src=race ns=375.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1031 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=0 | ran=1 src=race ns=4709.1 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=50021 q=1 ord=nat place=oop nthreads=8 | eng=zrb m=81920 in=ztt in_sh=8.5.8.8.8.4 in_tw=1024 mt=2 | ran=1 src=race ns=68950.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=64 q=1 ord=nat place=ip nthreads=8 | eng=zrp pair=4.16 leaf=r2z | ran=1 src=race ns=28.5 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=120 q=1 ord=nat place=ip nthreads=8 | eng=zrp pair=12.10 leaf=r2z | ran=1 src=race ns=54.6 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1000 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=chain3 il_pair=50.10 il_chain=10.5.10 il_kv=0 il_bkv=0 | ran=1 src=race ns=549.2 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1024 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_oop_il fold=st il_route=ztt il_ztt=4.4.4.8 il_kv=0 il_bkv=0 | ran=1 src=race ns=463.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1280 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.8.5.4 tile=0 stk=2 | ran=1 src=race ns=660.6 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=4050 q=1 ord=nat place=ip nthreads=8 | eng=zr2c route=child_nat_ip fold=st il_route=flat il_flat=9.5.9.5 il_forms=t.t.n il_kv=0 il_bkv=0 | ran=1 src=race ns=3888.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=65536 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.4.4.8.8.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=19550.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=262144 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.4.4.8.8.4.8 tile=1024 mt=2 stk=3 | ran=1 src=race ns=86700.0 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=105 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=15.7 msz=1 tile=0 | ran=1 src=race ns=75.7 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1035 q=1 ord=nat place=ip nthreads=8 | eng=zrf chain=5.23.9 msz=1 tile=0 | ran=1 src=race ns=861.3 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
+@cell t=c2r n=1031 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=2048 in=ztt in_sh=4.4.8.4.4 in_tw=1024 | ran=1 src=race ns=4804.9 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-991ee221-dirty
