@@ -135,7 +135,7 @@ The owner's decisions (2026-11-01): keep the serial tile at the walk; fix 1 and 
 protocol; a prime at small K as Bluestein with the turned pass, the Rader stage above; the strips only when each
 worker gets enough lanes; try the unbanded chain pick in 1D -- "today I will verify the results".
 
-## 8. The fixes and the rules (2026-11-01, built overnight; uncommitted)
+## 8. The fixes and the rules (2026-11-01, built overnight; commit 3ff2d127)
 
 **The planner (`_lm_race`, `il/rank1/lm_batch_il.h`):**
 - A column through the turned prime pass gets no threaded arm and no threaded replay. The four cells that crashed
@@ -183,9 +183,11 @@ past 36 MiB 0.974.
 **What the cells above 1.10 show** (study and unseen):
 - **A prime whose p - 1 is smooth** wants the Rader stage sooner: 2003 x 6 at 8 threads, 2.07 (2002 = 2 7 11 13;
   the Rader stage threads, the turned pass runs serial). The study's primes that favour the turned pass have a
-  large prime in p - 1 (1030 = 2 5 103, 4098 = 2 3 683); 131 (130 = 2 5 13) switches at 2 lanes. Proposal: the
-  bound max(2, N / 128) only where p - 1 has a prime factor above 47; else 2 lanes. It changes no study cell and
-  this one unseen cell, so it waits for the owner.
+  large prime in p - 1 (1030 = 2 5 103, 4098 = 2 3 683); 131 (130 = 2 5 13) switches at 2 lanes. **Built
+  (the owner, 2026-11-01; commit 3ff2d127):** the bound max(2, N / 128) only where p - 1 has a prime factor above
+  47 (`est__lm_tpc_lanes`), else 2 lanes. It changes no study cell and, of the unseen ones, only 2003 x 6: 2.07 ->
+  1.13 (both now the Rader stage; the planner threads it as strips, the estimate as the threaded walk, which the
+  strips rule keeps for a Rader column; strips there time at 1.00).
 - **3D at 8 threads:** the strips at 256 lanes where the planner takes 16 - 64 or the walk (32x24x60, 24x24x40,
   80x24x60: 1.12 - 1.35). The strips' width rule (`est__msw_2d`) is the 2D plane's; a narrower bound for lane-major
   passes is the next fit.
@@ -196,5 +198,17 @@ past 36 MiB 0.974.
 - 30x30x30 (1.19 - 1.55, the planner tiles at 16 lanes; the walk stays as decided) and 6007 x 96 at 8 threads
   (1.72, both the Rader stage: its inner and window).
 
-Next (the owner's): verify the above; the p - 1 proposal; the 3D strips' width; then the section on
-`estimate_performance.md`. Tools and logs: `docs/research/estimate_threaded/evidence/lane_major/`.
+**Verified 2026-11-01 (12:35 - 13:06), with the p - 1 test in:** the CMake library builds with no new warning;
+`lmbatch_gate`, `estimate_gate`, `api_matrix_gate`, `il3d_real_batch_gate`, `vfft_tcbatch_gate` and
+`dfti_shim_gate` pass; the store's lane-major rows have no duplicate key, no threaded row on a column through the
+turned prime pass, and 100 x 4 at 8 threads holds the serial verdict. The unseen 60 timed again: 0.990 at the
+geometric mean, 1.007 at the median (the control 0.999); 25 within 5%, 15 more than 5% faster, 20 more than 5%
+slower, 11 above 1.10. Besides 2003 x 6, the cells that moved more than 5% kept their plans (run-to-run spread).
+The 11 above 1.10 are the gaps listed above: 6007 x 96 (1.71), the first axis's chain at rank 2 (256x197 x 3,
+1.69; 32x256 x 24, 1.19), the 3D strips at 256 lanes (32x24x60 x 6, 24x24x40 x 12, 40x40x64 x 12, 32x80x40 x 12:
+1.15 - 1.37), 2003 x 6 (1.13), two 3D cells at one thread with the planner's column chain (8x48x8 x 12, 40x20x32 x
+12: 1.18 - 1.30, the difference in the forms or the block child) and 48 x 3 (1.10). The section on
+`estimate_performance.md` is written.
+
+Next (the owner's): the 3D strips' width and the first axis's chain at rank 2 and 3 are the largest gaps left.
+Tools and logs: `docs/research/estimate_threaded/evidence/lane_major/`.
