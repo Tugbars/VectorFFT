@@ -207,6 +207,67 @@ The control 0.997; no arm measured; every arm bound its lean entry; the outputs 
 | | Cells | Geomean | Median | Within 5% | More than 5% slower | Above 1.10 |
 |---|---|---|---|---|---|---|
 | One thread, R2C | 48 | 1.027 | 1.019 | 31 | 15 | 10 |
+| One thread, C2R | 48 | 1.046 | 1.039 | 25 | 22 | 9 |
+| One thread, in place | 24 | 1.060 | 1.065 | 11 | 13 | 8 |
+| **One thread** | **96** | **1.037** | **1.022** | **56** | **37** | **19** |
+| 8 threads | 92 | 1.263 | 1.075 | 38 | 50 | 30 |
+| — where the planner threads `zttr` or `zrb` and the estimate does not | 14 | 3.551 | 4.779 | 0 | 14 | 14 |
+| — the other 78 | 78 | 1.049 | 1.040 | 38 | 36 | 16 |
+
+**Proposals (each the owner's to approve):**
+1. **Threaded `zttr` and `zrb`.** The estimate keeps them on one thread: the 1D sketch's section 7 says they have
+   no threaded row, which is no longer so. Proposed: the C2C ZTURN-T rule of that section at the real data, N/2:
+   above the serial bound (16 N/2 > 2 L1d) TILES (`mt=2`) when tiled with at least 2 tiles, else BLOCKS
+   (`mt=1`); `zrb` only on a ZTURN-T inner. It fits all 42 `zttr` and `zrb` rows of the store at 8 threads (`zttr`
+   one thread at 1,280 and 4,096, `mt=2` from 16,384; `zrb` one thread up to 4,099, `mt=2` at 50,021). The
+   estimate's `zrb` inner at 50,021 is untiled where the planner's has a tile of 512 to 2,048, so it would take
+   BLOCKS; a forced arm checks TILES against BLOCKS there.
+2. **One thread: the first sample's misses**, each fitted on forced arms of the estimate's own recipe (one change,
+   built by the library's `est_build_real`): the Bluestein length (the C2C rule of 55c75923, the shortest length
+   whose inner runs ZTURN-T; 1,031 at 1.12 – 1.16, 131 at 1.14); the odd chain's order (the planner leads with a
+   large radix: 3,375 9.5.3.5.5, 105 7.3.5, 945 9.3.7.5; 1.11 – 1.23); the pair at 64 (4.16 against 8.8, 1.13 –
+   1.15); where real ZTURN-T starts (1,024 and 1,280 in place, 1.10 – 1.13).
+3. **The `zr2c` fold at T > 1:** mixed (100,000: the estimate threads the fold, the planner does not, 1.32; 8,198:
+   the planner threads the fold and the prime half, 1.22 – 1.25). Forced arms (fold on one thread or threaded)
+   before any rule.
+
+**The owner's answers (2026-11-01):** proposal 1 yes, with the check of TILES against BLOCKS at 50,021; forced
+arms for the rest.
+
+**The forced arms (2026-11-01, 16:14 – 16:48):** the 188 cells again with the estimate's recipe changed in one place
+(built by `est_build_real`, so the door serves it and the plan check holds), then 84 targeted one-thread cells (odd
+Bluestein lengths, odd composites with large factors, the lengths around where real ZTURN-T starts, the pairs).
+The control 0.997 – 1.003; nothing measured; every arm bound its lean entry.
+- **`zttr` at 8 threads:** TILES above the bound beats the planner's speed in reach on all 10 cells (1.55 – 5.2 ->
+  0.96 – 1.29); BLOCKS loses to TILES on all 10; below the bound (1,024, 4,096) threads lose 1.6 – 8.3 x. Proposal
+  1 holds as written for `zttr` and is **built** (`est_real`: `est_inner_mt` at M = N/2; the sketch's section 7).
+- **`zrb` at 8 threads:** threads pay from 4,099 as well (M = 7,168 passes the bound; the planner's row there is
+  serial): TILES 0.84 – 0.89, BLOCKS 0.92 – 0.94 against one thread at 1.0; at 50,021 TILES 1.11 – 1.15, BLOCKS
+  1.19 – 1.23. TILES needs a tiled inner, and the estimate's odd-band ZTURN-T inner is untiled.
+- **The `zr2c` fold:** the rule holds (threading the fold below the bound costs 1.5 – 8 x) except where the half is
+  prime: 8,198, the fold and the prime half threaded 0.995 against 1.24 – 1.28.
+- **`zrf` at 8 threads:** the threaded arm the estimate takes is right (one thread loses on 5 of 6).
+- **One thread:** `zrb`'s three-stage inner (1,009, 1,031 at 1,792 or 1,536) against the next length with a pair or
+  ZTURN-T inner (2,048, the planner's): 1.10 – 1.15 -> 1.03 – 1.06. The odd chain with its largest radix up to 9
+  first, the rest ascending: 22 cells 1.101 -> 1.041 (13 faster, 1 slower: 1,035); descending loses, the largest
+  first loses where it is 23. Real ZTURN-T at lengths that are not powers of two wins from 1,152 (1,920: 1.20 ->
+  1.005); R2C powers of two up to 8,192 run faster as the complex half (512: 1.01 -> 0.90, 1,024: 1.07 -> 0.96),
+  C2R powers of two faster as real ZTURN-T. The pair: the planner puts 10 second and prefers a second factor of at
+  least 10 (48 4.12, 64 4.16, 120 12.10, 160 16.10: 1.07 – 1.28 -> 0.95 – 1.03); that rule matches 32 of the
+  store's 34 pair rows (the current one 21).
+
+**Proposals (the owner's to approve), with the cells above at the rules' arms:** the one-thread stage-1 cells 1.033
+-> 1.019, the 8-thread ones 1.272 -> 1.070, the targeted cells 1.059 -> 1.015 (fitted on these cells; the unseen
+cells come after):
+1. `zrb` threads by the C2C prime cell's own reading: the bound at its convolution length M (not N/2), and at
+   T > 1 an untiled ZTURN-T inner takes the first legal tile of 1,024, 2,048, 512, so it runs TILES.
+2. A `zr2c` prime half reads the bound at its inner's M, as the C2C prime cell: the fold and the half thread there.
+3. `zrb`'s length skips a three-stage inner: the smallest candidate whose inner is a pair or ZTURN-T.
+4. The odd chain leads with its largest radix up to 9, the rest ascending.
+5. Real ZTURN-T at lengths that are not powers of two from N = 1,024 (now 2,048); R2C powers of two up to 8,192 take
+   the complex half (C2R unchanged).
+6. The pair: 10 second when it divides; else the most balanced pair whose second factor is at least 10; else the
+   most balanced, smaller first.
 
 ## 8. Noticed, not filled (unverified)
 - The 1D lane-major real Bluestein path (`_vfft_create_real_lanes`, rows `eng=zrbl`) looks unreachable for an

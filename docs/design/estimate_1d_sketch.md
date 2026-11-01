@@ -282,21 +282,25 @@ The door picks by parity (`il/real/real_create_il.h:30-34`). A real N plans like
 - **Odd N:**
   - **zrm** when N is in the rn1 list and (N ≤ 17 or N is prime).
   - **zrb** when N is a prime cell. Its length m is the smallest 2^a·{1,3,5,7,9,15} ≥ N+(N−1)/2
-    that an inner builds. Its inner is as in 4.6, with M < 2048 using a pair, then the il3p seed.
+    whose inner is a pair or ZTURN-T; a three-stage inner (the il3p seed) only when no other length has
+    an inner (the owner, 2026-11-01). Its inner is as in 4.6, with M < 2048 using a pair, then the il3p seed.
     Refused when (3N−1)/2 > 2^24 (`il/real/zrp_build.h:260-264`).
   - Otherwise **zrf**: the prime factors, 3·3 → 9, in ascending order. zrf needs 2 ≤ K ≤ 10
     (`il/real/zrf.h:228`), so above 10 stages the 4.4 merges apply (5·5 → 25, then 3·5 → 15,
-    3·7 → 21), re-sorted ascending. Example: 29296875 = 3·5^10 becomes 3.5.5.5.5.5.5.5.5.25.
+    3·7 → 21), re-sorted ascending. Example: 29296875 = 3·5^10 becomes 3.5.5.5.5.5.5.5.5.25. Then
+    the largest radix up to 9 leads, the rest ascending (the owner, 2026-11-01): 105 = 7.3.5, 3375 = 9.3.5.5.5.
     The split body is off (row
     token `msz=0`, `il/wisdom/wisdom2_real_il.h:188,210`) when a middle stage is in {3,5,7,9,15}.
     The tile budget is 0 while 8N ≤ L1d, else the widest of {64..2048} with 16·b ≤ L1d/2.
 - **Even N, the first that applies:**
   1. **zrm** at N ≤ 16 in the rn1 list.
-  2. **zrp**, at 4 lanes only, for N ≤ 160 with an even × even pair: the most balanced pair,
-     smaller factor first, form B (the r2z leaf).
+  2. **zrp**, at 4 lanes only, for N ≤ 160 with an even × even pair R1.R2, form B (the r2z leaf):
+     10 second when it divides; else the most balanced pair whose second factor is at least 10; else the
+     most balanced, smaller factor first (the owner, 2026-11-01: 48 = 4.12, 64 = 4.16, 120 = 12.10).
   3. **zfsr** when N/2 is a power of two in 2^19..2^24 (`vfft_zfsr_band`, `il/real/zfsr.h:86-89`).
      It takes the split of 4.5 at N/2 and that split's child as `fs_*` tokens (4.5).
-  4. **zttr**, at 4 lanes only, when N is a power of two in 512..524288, or N ≥ 2048 with N/2 in
+  4. **zttr**, at 4 lanes only, when N is a power of two in 512..524288 (r2c from 16384: below it the
+     power of two runs as zr2c, the owner, 2026-11-01), or N ≥ 1024 with N/2 in
      ZTT-r's grammar and 32 | N/2 (`il/real/zttr.h:113-143,180`). Chain:
      - power-of-two N/2, c2r: 4, then 8s, then 4s; r2c: 8, the 4s, then 8s, closing 4;
      - 2^a·odd N/2: the first power-of-two stage, the odd primes 7, 5, 3, the other power-of-two
@@ -328,9 +332,11 @@ the i9, 4096 on Zen4.
 | flat DIT | TILES with `il_mt_tw = il_tw` when tiled, else BLOCKS |
 | four-step | always threaded. `il_pair` stays the one-thread split; `il_mt` = the threaded split's N1_T: N/2048 up to 2^20, then 4096 (other N: the most balanced legal split, smaller column side). `il_mtsb=8.64.8` when natural, 16N > L3, N1_T = 4096 and N2_T % 16 = 0 (`k1_fourstep.h:955-958`); else 0. **The row's child is the threaded split's**, because it is seeded under (N1_T, N2_T, T) and replays only as "the verdict AND its child at T" (`k1_commit.h:1538-1552,1595-1620`); otherwise it races. So: `fs_chain` at N1_T, `fs_wl`/`fs_tf` by the L2 test at (N1_T, N2_T), the row plan at N2_T (4.5), the T = 1 switches, and the T > 1 tokens of 5.7 |
 | zrf | `mt=2` (LEVELS) |
-| zr2c | token `fold=mt` (the race arm `zr2c+foldmt`, `il/real/zrp_build.h:795-818`) when N ≥ 64 and above the bound, else `fold=st` (`wisdom2_real_il.h:7-8,434`). A non-prime child stays one-thread (`il/real/zr2c_build.h:38-41`). A prime child under `fold=mt` also takes its own threaded arm, `il_mt` on the row (`wisdom2_real_il.h:402-403`). That arm follows the prime-inner rule above at the child's M: 2 or 1 on a ZTURN-T inner, and absent (serial) otherwise |
+| zr2c | token `fold=mt` (the race arm `zr2c+foldmt`, `il/real/zrp_build.h:795-818`) when N ≥ 64 and above the bound (read at N/2; for a prime child at its inner's length M, as the c2c prime cell, the owner, 2026-11-01), else `fold=st` (`wisdom2_real_il.h:7-8,434`). A non-prime child stays one-thread (`il/real/zr2c_build.h:38-41`). A prime child under `fold=mt` also takes its own threaded arm, `il_mt` on the row (`wisdom2_real_il.h:402-403`). That arm follows the prime-inner rule above at the child's M: 2 or 1 on a ZTURN-T inner, and absent (serial) otherwise |
+| zfsr | the four-step row above at N/2: the threaded split and that split's child at T (the owner, 2026-11-01) |
 | zttr | the ZTURN-T row above at the real data, M = N/2: serial under the bound, else `mt=2` (TILES) with at least 2 tiles, else `mt=1` (BLOCKS) (the owner, 2026-11-01; `docs/roadmap/real_estimate_plan.md` section 7) |
-| pair, chain3, mono, zrb, zrp | serial: the first three have no threaded form; zrb and zrp have no threaded row |
+| zrb | the ZTURN-T row above, the bound read at its convolution length M (the c2c prime cell's reading); at T > 1 an untiled ZTURN-T inner takes the first legal tile of 1024, 2048, 512, so it runs `mt=2` (TILES) (the owner, 2026-11-01) |
+| pair, chain3, mono, zrp | serial: the first three have no threaded form; zrp has no threaded row |
 
 ## 8. Expected quality: how often estimate names the banked winner
 

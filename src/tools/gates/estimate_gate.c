@@ -51,16 +51,15 @@
  *      being its column chain's). The count of batches whose column pass ran threaded is reported.
  *   RL one 1D real transform, R2C and C2R (il/estimate/real_estimate_il.h), both placements, one thread: every N
  *      in 2..512 and every 7th N in 513..4096, the powers of two 8192..2^21 (the real four-step from 2^20), and 60
- *      lengths past 4096 drawn with a fixed seed (40 any N, 20 primes); RLT on 8 threads, 30 lengths over every
- *      engine and its threaded arm. Both plans built with nothing measured (the build itself refuses a plan whose
+ *      lengths past 4096 drawn with a fixed seed (40 any N, 20 primes); RLT on 8 threads, 31 lengths over every
+ *      engine and its threaded arm, the real four-step included. Both plans built with nothing measured (the build itself refuses a plan whose
  *      engine or threaded arm is not the recipe's, or that lacks the lean door's entry); the R2C against a
  *      long-double DFT of a real input (every bin of the half to N = 4096, above it 32 of them), the C2R to 4096
  *      from the exact half spectrum against N x, above it the round trip through the R2C plan. The count of
  *      executes that ran a threaded arm is reported.
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: a real transform at rank 2 or in a batch, a scrambled real one, the real four-step's lengths
- *      at T > 1 (a gap of the sketch), a real-to-real transform, rank 4, SPLIT, the flag with
+ *   R  the refusals: a real transform at rank 2 or in a batch, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
@@ -1158,9 +1157,6 @@ int main(int argc, char **argv)
         refused("C2R howmany 4", &c, "plans one VFFT_C2R transform at rank 1, not a batch");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C; c.order = VFFT_ORDER_SCRAMBLED;
         refused("R2C scrambled", &c, "a real plan is natural order only");
-        /* the real four-step's lengths at T > 1: the sketch has no threaded rule for zfsr (a gap, reported) */
-        memset(&c, 0, sizeof c); c.n[0] = 1 << 20; c.transform = VFFT_R2C; c.nthreads = 8;
-        refused("R2C 2^20 T=8", &c, "the sketch has no threaded rule for zfsr");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DCT2;
         refused("DCT2", &c, "plans VFFT_C2C, VFFT_R2C and VFFT_C2R only, not VFFT_DCT2");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DHT;
@@ -1243,12 +1239,12 @@ int main(int argc, char **argv)
     sec_end("A4");
 
     /* RL: one real transform (R2C and C2R), both placements, one thread; RLT on 8 threads, every engine and its
-     * threaded arm (the real four-step from N = 2^20 is refused at T > 1: R) */
+     * threaded arm, the real four-step (2^20) on the c2c four-step's threaded split and child */
     for (TR = 1; TR <= 8; TR += 7)
     {
         static const long RT[] = { 64, 100, 128, 1000, 1024, 1280, 2048, 4050, 6000, 8192, 65536, 100000, 131072,
-                                   262144, 524288, 1000000, 262, 2062, 8198, 100042, 105, 945, 1035, 3375, 59049,
-                                   531441, 131, 1031, 4099, 50021 };
+                                   262144, 524288, 1000000, 1048576, 262, 2062, 8198, 100042, 105, 945, 1035, 3375,
+                                   59049, 531441, 131, 1031, 4099, 50021 };
         const long b0 = g_rl_built, t0 = g_rl_mt;
         int ip;
         sec_begin();

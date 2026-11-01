@@ -12,13 +12,17 @@
  * zrf chain= msz= tile= [mt=]; zrb m= in= in_sh= in_tw= [mt=].
  *
  * THE RECIPE (est_plan_real -> est_real): the engine by the sketch's section 6, the threaded arms by its
- * section 7 (fitted at T = 8), except zttr's threaded arm: the c2c ZTURN-T rule at M = N/2 (est_inner_mt; the
- * owner, 2026-11-01). The zr2c half is the c2c estimate at N/2 (est_c2c), so the c2c rules reach it.
+ * section 7 (fitted at T = 8), with the owner's rules of 2026-11-01 (docs/roadmap/real_estimate_plan.md
+ * section 7, each fitted on the estimate's own recipe changed in one place): zttr's and zrb's threaded arms by
+ * the c2c ZTURN-T rule (est_inner_mt; zttr at M = N/2, zrb at its convolution length, an untiled zrb inner
+ * tiled at T > 1), a zr2c prime half's bound at its inner's length, zrb's length past a three-stage inner,
+ * zrf's chain led by its largest radix up to 9, zttr from N = 1024 where N is not a power of two and for r2c
+ * powers of two from 16384, the zrp pair with a second factor of 10 or more. The zr2c half is the c2c
+ * estimate at N/2 (est_c2c), so the c2c rules reach it.
  * The sketch's open decisions (its section 12) take these defaults: every T > 1 takes the rules fitted at
  * T = 8; the formulas follow the build's lanes (an 8-lane recipe is planned by an AVX-512 build only).
- * Gaps of the sketch, reported and not filled: zfsr at T > 1 is refused (section 7 has no rule for it); the
- * zr2c prime child's serial bound reads at its M as section 7 words it; zrf's LEVELS arm only where the
- * library can bind it (est_real).
+ * zfsr at T > 1 takes the c2c four-step's threaded split and child at N/2 (the owner, 2026-11-01). A gap of
+ * the sketch, reported and not filled: zrf's LEVELS arm only where the library can bind it (est_real).
  *
  * THE BUILD (est_build_real) takes est_build_c2c's steps: the pre-flight (the door's real builders at one
  * thread against an empty store, then destroyed; a nested four-step checked by est__fs_preflight), the row
@@ -156,10 +160,13 @@ static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
     return k;
 }
 /* section 6 zrf's chain: the prime factors, 3.3 -> 9, ascending; 2 <= K <= 10 (zrf.h:228), the
- * section 4.4 merges above 10 stages, re-sorted ascending (29296875 = 3.5.5.5.5.5.5.5.5.25). 0 = none. */
+ * section 4.4 merges above 10 stages, re-sorted ascending (29296875 = 3.5.5.5.5.5.5.5.5.25); then the
+ * largest radix up to 9 leads, the rest ascending (the owner, 2026-11-01: the planner leads with 9 or 7,
+ * 3375 9.5.3.5.5, 105 7.3.5, 945 9.3.7.5; over 22 odd composites at one thread 1.101 -> 1.041 against it,
+ * where the largest first, 23 at 1035, lost and the descending order lost). 0 = none. */
 static inline int est_zrf_chain(long long N, int *c)
 {
-    int k = est_odd_stages(N, c);
+    int k = est_odd_stages(N, c), b = -1, i;
     if (k < 2) return 0;
     est_sort_asc(c, k);
     if (k > VFFT_ILFD_MAX_K)
@@ -168,6 +175,14 @@ static inline int est_zrf_chain(long long N, int *c)
         k = est_merge10(c, k);
         if (k < 2) return 0;
         est_sort_asc(c, k);
+    }
+    for (i = 0; i < k; i++)
+        if (c[i] <= 9) b = i;   /* ascending: the last radix up to 9 is the largest */
+    if (b > 0)
+    {
+        const int lead = c[b];
+        for (i = b; i > 0; i--) c[i] = c[i - 1];
+        c[0] = lead;
     }
     return k;
 }
@@ -206,22 +221,27 @@ static inline int est_zrb(const est_machine_t *m, long long N, est_real_recipe_t
         }
     for (i = 1; i < nc; i++)
         for (j = i; j > 0 && cand[j] < cand[j - 1]; j--) { const long long x = cand[j]; cand[j] = cand[j - 1]; cand[j - 1] = x; }
-    for (i = 0; i < nc; i++)
-    {
-        est_inner_t in;
-        memset(&in, 0, sizeof in);
-        o->c.fs[0] = 0;
-        r = est_zrb_inner(m, cand[i], &in, o->c.fs, sizeof o->c.fs, why, whylen);
-        if (r < 0) return -1;
-        if (r == 0) continue;
-        snprintf(o->eng, sizeof o->eng, "zrb");
-        o->zrb.M = (int)cand[i];
-        snprintf(o->zrb.kind, sizeof o->zrb.kind, "%s", in.kind);
-        snprintf(o->zrb.shape, sizeof o->zrb.shape, "%s", in.shape);
-        o->zrb.tw = in.tw;
-        o->zrb.mt = 0;   /* section 7: zrb has no threaded row */
-        return 0;
-    }
+    /* a three-stage inner is passed over for the next length whose inner is a pair or ZTURN-T (the owner,
+     * 2026-11-01: 1009 and 1031 at 1536 or 1792 with a three-stage inner, 1.10 - 1.15 against the planner, at
+     * 2048 with ZTURN-T, the planner's, 1.03 - 1.06); a three-stage inner serves only when no other length has
+     * an inner */
+    for (j = 0; j < 2; j++)
+        for (i = 0; i < nc; i++)
+        {
+            est_inner_t in;
+            memset(&in, 0, sizeof in);
+            o->c.fs[0] = 0;
+            r = est_zrb_inner(m, cand[i], &in, o->c.fs, sizeof o->c.fs, why, whylen);
+            if (r < 0) return -1;
+            if (r == 0 || (j == 0 && !strcmp(in.kind, "3p"))) continue;
+            snprintf(o->eng, sizeof o->eng, "zrb");
+            o->zrb.M = (int)cand[i];
+            snprintf(o->zrb.kind, sizeof o->zrb.kind, "%s", in.kind);
+            snprintf(o->zrb.shape, sizeof o->zrb.shape, "%s", in.shape);
+            o->zrb.tw = in.tw;
+            o->zrb.mt = 0;   /* the threaded arm: est_real */
+            return 0;
+        }
     return est_refuse(why, whylen, "real N = %lld: no zrb length up to 2^24 has an inner (sketch 6)", N);
 }
 
@@ -243,7 +263,33 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         {   /* zrb, refused when (3N - 1)/2 > 2^24 (_zrb_ok, zrp_build.h:260-264) */
             if ((3 * N - 1) / 2 > VFFT_K1FS_MAX_N)
                 return est_refuse(why, whylen, "real N = %lld: zrb's (3N - 1)/2 passes 2^24 (sketch 6)", N);
-            return est_zrb(m, N, o, why, whylen);
+            if (est_zrb(m, N, o, why, whylen)) return -1;
+            if (T > 1 && !strcmp(o->zrb.kind, "ztt") && !est_serial(m, o->zrb.M))
+            {   /* the threaded arm (the owner, 2026-11-01): the c2c prime cell's rule, the bound read at the
+                 * convolution length M (est_inner_mt); an untiled inner (the odd band's) takes the first legal tile
+                 * of 1024, 2048, 512 so it runs TILES. Against the planner at 8 threads: 4099 (M = 7168) TILES
+                 * 0.84 - 0.89, BLOCKS 0.92 - 0.94, one thread 1.0 (the planner's row there is serial); 50021 TILES
+                 * 1.11 - 1.15, BLOCKS 1.19 - 1.23, one thread 5.2 - 5.6 */
+                static const int tiles[3] = { 1024, 2048, 512 };
+                est_inner_t in;
+                int zc[16], nz = 0, v = 0, t;
+                const char *p;
+                for (p = o->zrb.shape;; p++)
+                {   /* the inner's chain from its shape */
+                    if (*p >= '0' && *p <= '9') { v = 10 * v + (*p - '0'); continue; }
+                    if (v && nz < 16) zc[nz++] = v;
+                    v = 0;
+                    if (!*p) break;
+                }
+                for (t = 0; t < 3 && !o->zrb.tw; t++)
+                    if (o->zrb.M / tiles[t] >= 2 && est_ztt_tile_ok(o->zrb.M, zc, nz, tiles[t], 1))
+                        o->zrb.tw = tiles[t];
+                memset(&in, 0, sizeof in);
+                in.ztt = 1;
+                in.tw = o->zrb.tw;
+                o->zrb.mt = est_inner_mt(m, &in, o->zrb.M, o->zrb.M, T);
+            }
+            return 0;
         }
         k = est_zrf_chain(N, c);
         if (!k) return est_refuse(why, whylen, "real N = %lld: no zrf chain of 2..10 stages (sketch 6)", N);
@@ -290,20 +336,22 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         snprintf(o->eng, sizeof o->eng, "zrm");
         return 0;
     }
-    /* 2. zrp, 4 lanes only, N <= 160 (table 5.8), an even x even pair: the most balanced, smaller
-     * factor first, form B (the r2z leaf) */
+    /* 2. zrp, 4 lanes only, N <= 160 (table 5.8), an even x even pair R1.R2, form B (the r2z leaf): 10 second
+     * when it divides; else the most balanced pair whose second factor is at least 10; else the most balanced,
+     * smaller factor first (the owner, 2026-11-01: 32 of the store's 34 pair rows, the most balanced pair 21;
+     * at one thread 48 4.12, 64 4.16, 120 12.10, 160 16.10 against 6.8, 8.8, 10.12, 10.16: 1.07 - 1.28 ->
+     * 0.95 - 1.03) */
     if (VFFT_IL_VW == 4 && N <= 160)
     {
-        int lo = 0, hi = 0;
-        for (i = 0; i < EST_NELEM(est_zrp_list); i++)
-        {
-            const int a = est_zrp_list[i];
-            if (N % a || !est_in(est_zrp_list, EST_NELEM(est_zrp_list), N / a)) continue;
-            {
-                const int b = (int)(N / a), l = a < b ? a : b, h = a < b ? b : a;
-                if (!hi || h < hi) { lo = l; hi = h; }
+        int lo = 0, hi = 0, pass;
+        for (pass = 0; pass < 3 && !hi; pass++)
+            for (i = 0; i < EST_NELEM(est_zrp_list); i++)
+            {   /* pass 0: R2 = 10; pass 1: R2 >= 10; pass 2: any */
+                const int a = est_zrp_list[i], b = (int)(N / a), d = a > b ? a - b : b - a, dd = lo > hi ? lo - hi : hi - lo;
+                if (N % a || !est_in(est_zrp_list, EST_NELEM(est_zrp_list), b)) continue;
+                if ((pass == 0 && b != 10) || (pass == 1 && b < 10)) continue;
+                if (!hi || d < dd || (d == dd && a < lo)) { lo = a; hi = b; }
             }
-        }
         if (hi)
         {
             snprintf(o->eng, sizeof o->eng, "zrp");
@@ -314,28 +362,26 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         }
     }
     /* 3. zfsr: N/2 a power of two in 2^19..2^24; the split of section 4.5 at N/2 and its child as fs_*.
-     * At T > 1 the sketch has no rule for zfsr: section 7's table lists no zfsr row, and section 11
-     * says only that estimate does not switch engines by T. A race at T picks the split at T
-     * (_zfsr_sweep over vfft_k1fs_splits, zrp_build.h:518-530) and seeds the 2D child under T
-     * (_k1fs_child_keys(n1, n2, 0, T), :316-318), so neither the split nor the child's T > 1
-     * tokens follow from the text. The gap is reported, not filled: the cell is refused. */
+     * At T > 1 the c2c four-step's threaded recipe at N/2 (the owner, 2026-11-01): the door builds its c2c
+     * four-step child at T and seeds the child's rows under T (_k1fs_child_keys(n1, n2, 0, T),
+     * zrp_build.h:308-318), so the split is the c2c threaded split (est_fs_split, threaded: N/2048 up to 2^20,
+     * then 4096) and the child is that split's own at T (est_fs_child), as the c2c four-step's row at T. */
     if (est_is_pow2(N / 2) && N / 2 >= (1LL << 19))
     {
         int n1, n2;
-        if (T > 1)
-            return est_refuse(why, whylen, "real N = %lld at T = %d: the sketch has no threaded rule for zfsr (section 7 "
-                              "lists none; its race picks the split and the 2D child at T, zrp_build.h:316-318, "
-                              "518-530) -- a gap reported, not filled", N, T);
-        if (!est_fs_split(N / 2, 0, &n1, &n2) || n1 % EST_ZFSR_TB || n2 % (2 * EST_ZFSR_TB))
-            return est_refuse(why, whylen, "real N = %lld: no zfsr split (sketch 6)", N);
+        if (!est_fs_split(N / 2, T > 1, &n1, &n2) || n1 % EST_ZFSR_TB || n2 % (2 * EST_ZFSR_TB))
+            return est_refuse(why, whylen, "real N = %lld: no zfsr split at T = %d (sketch 6)", N, T);
         snprintf(o->eng, sizeof o->eng, "zfsr");
         o->zfsr.n1 = n1;
         o->zfsr.n2 = n2;
-        return est_fs_child(m, n1, n2, 1, o->c.fs, sizeof o->c.fs, why, whylen);
+        return est_fs_child(m, n1, n2, T, o->c.fs, sizeof o->c.fs, why, whylen);
     }
-    /* 4. zttr, 4 lanes only: a pow2 N in 512..524288, or N >= 2048 with N/2 in ZTT-r's grammar */
-    if (VFFT_IL_VW == 4 && ((est_is_pow2(N) && N >= 512 && N <= 524288) ||
-                            (!est_is_pow2(N) && N >= 2048 && est_zttr_grammar(N / 2))))
+    /* 4. zttr, 4 lanes only: a pow2 N in 512..524288 (r2c from 16384), or N >= 1024 with N/2 in ZTT-r's grammar
+     * (the owner, 2026-11-01: at one thread zttr wins from 1152 where N is not a power of two, 1920 1.20 ->
+     * 1.005; r2c powers of two up to 8192 run faster as zr2c, 512 1.01 -> 0.90, 1024 1.07 -> 0.96, and the
+     * planner's r2c rows take zttr at powers of two from 16384; c2r unchanged) */
+    if (VFFT_IL_VW == 4 && ((est_is_pow2(N) && N >= (c2r ? 512 : 16384) && N <= 524288) ||
+                            (!est_is_pow2(N) && N >= 1024 && est_zttr_grammar(N / 2))))
     {
         size_t tile = 0;
         k = est_zttr_chain(N, c2r, c, &tile);
@@ -377,31 +423,34 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         }
         o->c.il_mt = 0;   /* the child is one-thread (zr2c_build.h:38-41) ... */
         o->c.il_mt_tw = 0;
-        if (T > 1 && N >= 64 && !est_serial(m, N / 2))
-        {   /* section 7: fold=mt (zrp_build.h:795-818); a prime child also takes its own arm at its M */
-            o->zr2c.fold_mt = 1;
-            if (o->c.k1_il_route == VFFT_K1_IL_PRIME)
+        if (T > 1 && N >= 64)
+        {   /* section 7: fold=mt (zrp_build.h:795-818) above the bound at N/2; a prime child reads the bound at
+             * its inner's length M, as the c2c prime cell (the owner, 2026-11-01: 8198, the half 4099, the fold
+             * and the prime child threaded 0.995 against the planner, one thread 1.24 - 1.28), and takes its own
+             * arm there */
+            const int prime = o->c.k1_il_route == VFFT_K1_IL_PRIME;
+            est_inner_t in;
+            long long M = 1;
+            memset(&in, 0, sizeof in);
+            if (prime)
             {
-                est_inner_t in;
-                long long M = 1;
-                memset(&in, 0, sizeof in);
+                const char *p = o->c.prime.in_shape;
+                long long v = 0;
                 in.tw = o->c.prime.in_tw;
                 in.ztt = !strcmp(o->c.prime.in_kind, "ztt");
+                for (;; p++)
                 {   /* M = the inner shape's product (_ilprime_desc_len, k1_commit.h:488-496) */
-                    const char *p = o->c.prime.in_shape;
-                    long long v = 0;
-                    for (;; p++)
-                    {
-                        if (*p >= '0' && *p <= '9') { v = 10 * v + (*p - '0'); continue; }
-                        M *= v;
-                        v = 0;
-                        if (!*p) break;
-                    }
+                    if (*p >= '0' && *p <= '9') { v = 10 * v + (*p - '0'); continue; }
+                    M *= v;
+                    v = 0;
+                    if (!*p) break;
                 }
-                /* the bound at the child's M (section 7's zr2c row: "the prime-inner rule above at the
-                 * child's M"); OPEN for the owner -- the c2c cell reads it at N. At L1d = 48 KiB the two
-                 * never differ for a zr2c child. */
-                o->c.il_mt = est_inner_mt(m, &in, M, M, T);
+            }
+            if (!est_serial(m, prime ? M : N / 2))
+            {
+                o->zr2c.fold_mt = 1;
+                if (prime)
+                    o->c.il_mt = est_inner_mt(m, &in, M, M, T);
             }
         }
         return 0;

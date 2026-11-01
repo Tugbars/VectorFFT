@@ -27,8 +27,7 @@ rank 2 and 2026-10-31 at rank 3) in natural order, either placement; and since 2
 batch of them, the plan of one transform run once per transform on one thread and on T threads the way
 the batch rule picks (`est_batch_whole`); since 2026-11-01 a lane-major batch of them, the column pass
 over the lanes (`il/estimate/c2c_estimate_lm_il.h`); and since 2026-11-01 one 1D R2C or C2R transform in
-either placement on any thread count (`il/estimate/real_estimate_il.h`; at T > 1 the real four-step's
-lengths are refused, a gap of the sketch). It refuses a real transform at rank 2 or 3 or in a batch, real-to-real, rank 4,
+either placement on any thread count (`il/estimate/real_estimate_il.h`). It refuses a real transform at rank 2 or 3 or in a batch, real-to-real, rank 4,
 SPLIT, scrambled order at rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or
 `VFFT_FLAG_PATIENT`, and any create while an
 environment variable that steers a plan is set (`est_env_names`). At rank 2 and 3 the formulas also
