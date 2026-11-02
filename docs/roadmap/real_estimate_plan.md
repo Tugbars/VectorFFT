@@ -407,3 +407,27 @@ Open: the threaded pay-once (`cmts=2`: R2C at L2 1.30 -> 1.23 with 4 faster, 3 s
 2D grid 8 threads **1.040**, 3D grid one thread **1.026**, 3D grid 8 threads **1.088** (controls 0.997 – 1.006);
 `estimate_performance.md`, "2D and 3D real transforms". Not done: the in-place cells timed (only built and checked
 for correctness), the 2D and 3D batches (stage 4), the owner's review of the eleven rules.
+
+## 10. Stage 3, step 2: the banked planes (2026-11-02, morning)
+
+The owner: "we have incredible amount of saved / banked 2D cells, shall we test the estimate 2D real on those?" Every
+banked real 2D row at one thread, natural order, out of place: 211 planes, R2C on all of them, C2R on the 83 whose
+row carried its C2R side; the other 128 C2R sides raced into the store first (the owner's yes). The planner's plan
+replayed from the store, no race on any cell.
+
+Before the rule below: 422 cells, E/P 1.013 (R2C 1.031, C2R 0.995). The one gap was the tall power-of-two plane: a
+column of 4096 or 8192 rows over a row of 256 or fewer at 1.2 – 1.5 (R2C), 2048 and 512 at 1.1 – 1.3. The planner's
+column verdicts together (chain, forms, `cx`, `tf`) close it at every length (1.002 – 1.007); the chain alone carries
+nearly all of it. C2C's formula leads the column with 32 from 2048 on narrow rows, which the C2C planner banks
+there; the real planner leads small. Approved by the owner and built:
+
+12. **The tall real column: a power-of-two N1 from 512 to 8192 takes one chain per length** (`est_col_real_tall`),
+    both directions, every row width, one thread: 512 `16.32`, 1024 `8.4.32`, 2048 `8.8.32`, 4096 `8.8.8.8`, 8192
+    `8.16.64`, each the best of 5 – 7 chains timed on the banked planes. The 102 cells it changes: R2C 1.124 and C2R
+    1.043 -> 0.972 together (90 within 5 %). At 8 threads the table is no gain (13 planes, 1.192 -> 1.18), so it
+    stays at one thread; the 8-thread loss there is the open tall-plane threading (1024 x 64, 512 x 128 at 1.7 – 2.6).
+
+After it, all 422 banked cells: **E/P 0.985** (R2C 0.994, C2R 0.976; 362 within 5 %; control 0.999); the planes the
+night never timed 0.975. Noticed, not filled: R2C at x32 rows where the planner fuses the walk below the L2
+(512 x 32, 1024 x 32 1.15 – 1.18); C2R's N1 = 128 leaf (rule 3) at very wide planes (128 x 8192 1.20, 128 x 4096
+1.11, the planner's plain `16.8`); R2C's half-store leaf at 16 x N2 >= 1024 (1.16 – 1.17).

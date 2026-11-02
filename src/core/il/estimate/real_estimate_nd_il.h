@@ -118,6 +118,21 @@ static inline void est__col_forms_real(const int *R, int nst, int c2r, char *f, 
         f[0] = 0;
 }
 
+/* THE TALL REAL COLUMN (2026-11-02): the real plane's column pass at a power of two from 512 to 8192 takes one chain
+ * per length, both directions, at every row width, where C2C's formula leads with 32 from 2048 on narrow rows (the
+ * C2C planner's habit there, 32.4.32 at 4096 x 16) and runs the radix-8 pick below. The real planner leads small.
+ * One thread, timed against the planner on the banked planes (N2 4 - 8192): R2C 59 planes 1.124 -> 0.975, C2R 43
+ * planes 1.043 -> 0.982; per length R2C | C2R: 512 1.066 -> 0.984 | 1.052 -> 0.994, 1024 1.039 -> 1.001 |
+ * 1.011 -> 0.969, 2048 1.059 -> 0.964 | 1.034 -> 0.940, 4096 1.307 -> 0.964 | 1.059 -> 1.009, 8192 1.287 -> 0.949 |
+ * 1.056 -> 1.001. No one formula names the five: each is the best of 5 - 7 chains timed on the same planes. */
+static const struct { int N, nst, R[4]; } est_col_real_tall[] = {
+    { 512, 2, { 16, 32, 0, 0 } },
+    { 1024, 3, { 8, 4, 32, 0 } },
+    { 2048, 3, { 8, 8, 32, 0 } },
+    { 4096, 4, { 8, 8, 8, 8 } },
+    { 8192, 3, { 8, 16, 64, 0 } },
+};
+
 /* the real axis on N1 (raxis = n1, il/rank2/il2d_real_axis.h:212-300; R2C, one thread, out of place, even N1 >= 4, odd
  * N2): its two children's recipes, the C2C column chain at M = N1/2 down N2 columns in the scrambled class
  * (est_col_plan) and the C2C plan at N2 the batch of M + 1 folded rows runs. 0, or -1 with the reason. */
@@ -150,6 +165,13 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
         p->col.nst = 1;
         p->col.rd_n = 0;
     }
+    if (p->T == 1)
+        for (int i = 0; i < EST_NELEM(est_col_real_tall); i++)
+            if (est_col_real_tall[i].N == N1)
+            {   /* the tall real column (est_col_real_tall) */
+                memcpy(p->col.R, est_col_real_tall[i].R, sizeof(int) * (size_t)est_col_real_tall[i].nst);
+                p->col.nst = est_col_real_tall[i].nst;
+            }
     if (p->col.blu <= 0)
         est__col_forms_real(p->col.R, p->col.nst, c2r, p->col.forms, sizeof p->col.forms);
     p->wl = 0;
