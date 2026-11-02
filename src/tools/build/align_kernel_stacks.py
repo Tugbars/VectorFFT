@@ -66,10 +66,14 @@ def tool(cc, name):
     return os.path.join(d, b) if d else b
 
 
+ENV = None   # the environment of every tool started here (main: the compiler's folder first on PATH)
+
+
 def run(cmd, **kw):
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', **kw)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', env=ENV, **kw)
     if r.returncode:
-        sys.exit('align_kernel_stacks: %s failed:\n%s' % (os.path.basename(cmd[0]), r.stderr[-2000:]))
+        sys.exit('align_kernel_stacks: %s failed (exit %d):\n%s' % (os.path.basename(cmd[0]), r.returncode,
+                                                                   (r.stderr or r.stdout)[-2000:]))
     return r.stdout
 
 
@@ -188,6 +192,12 @@ def main():
     ap.add_argument('--keep', action='append', default=[])
     ap.add_argument('--cache')
     a = ap.parse_args()
+    # MinGW's gcc finds the DLLs of its own subprocesses (cc1, as) through PATH, not through its folder: started
+    # without that folder on PATH (MSYS2's ucrt64 gcc from a plain shell, 2026-11-02) it exits non-zero with no
+    # message at all, as gauntlet/build.py's build_env says of its compiles. The compiler's folder goes first.
+    global ENV
+    if os.path.dirname(a.cc):
+        ENV = dict(os.environ, PATH=os.path.dirname(os.path.abspath(a.cc)) + os.pathsep + os.environ.get('PATH', ''))
     objdump = a.objdump or tool(a.cc, 'objdump')
     objcopy = a.objcopy or tool(a.cc, 'objcopy')
     nm = a.nm or tool(a.cc, 'nm')

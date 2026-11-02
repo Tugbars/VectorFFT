@@ -51,6 +51,7 @@ length the column pool cannot chain (above 2^24). It never opens `wisdom_dir`.
 | `estimate_selftest.c` | The recipe printer with its own law pass. Now a library TU too: the c2c formulas read the library's facts. |
 | `estimate_race.c` | Timed: the banked plans against the estimate plans (E through the public flag). |
 | `estimate_race_nd.c` | The same at rank 2 and 3: 2D and 3D cells, the same protocol at one thread; with `T=n` the threaded protocol (one measurement scope with the library's guards, the blocks back to back, the arm order shuffled, each arm's engagement reported). The owner times on a quiet machine. |
+| `estimate_race_real.c` | The real twin of `estimate_race_nd.c`: 2D and 3D R2C or C2R cells (`r2c` / `c2r`), the same arms and protocols, and each estimate plan checked against a long-double DFT (R2C: 48 sampled bins; C2R: the round trip); an estimate create the library refused is reported with its reason. |
 | `estimate_store.c` | Writes the c2c estimate plans as a store on disk, for the gauntlet. |
 | `TEST_LOG.md` | Every test sweep before the release, every bug found, and the review fixes. |
 
