@@ -552,3 +552,38 @@ In place, timed for the first time (64 cells raced in place, one thread): 2D 40 
   them whole transforms per thread as the rule says) and RLM / RLMT (lane-major: 120 and 120, 34 threaded), each
   batch against the one-transform plans transform by transform, bitwise for a contiguous batch on one thread, and
   the round trip; four new refusals.
+
+## 12. Stage 2 study: verdict and proposals (2026-11-03, 00:05 – 00:10; races 2026-11-02 23:53 – 00:05)
+
+**Run:** the planner's creates into `src/wisdom/14900KF`: the lane-major rows (13 lengths x K 4, 32, 256 at 1 and 8
+threads; each R2C create banked the row, every C2R create replayed it) and the contiguous rows (20 lengths x K 3, 6,
+12, 24 at 8 threads, both directions), in place a share. Then P, E, a control P2 and the estimate's recipe changed in
+one place, 15 rounds (scratch `stage2/rbst.c`; evidence `docs/research/estimate_real/stage2/`, git-ignored). The
+machine was noisy before 00:00 (the owner: "run it anyway"); the controls are clean: 0.996 – 1.001.
+
+| Batch | Threads | Cells | E/P | control | > 1.10 |
+|---|---|---|---|---|---|
+| lane-major | 1 | 86 | 1.029 | 0.996 | 13 |
+| lane-major | 8 | 86 | 1.203 | 1.001 | 40 |
+| contiguous | 8 | 176 | 1.104 | 0.997 | 38 |
+
+**Proposals** (each scored on the timed arms, against the planner and against the best arm of each cell):
+1. **Contiguous on T threads:** whole transforms per thread while one transform's N/2 + 1 bins fit a core's L2,
+   when the batch carries at least 16 KiB (the C2C floor) or the plan runs through a prime engine (odd Bluestein, or
+   the half-length engine at a prime half: their work per byte is many times the others'). The C2C rule's L2 / 8 and
+   K-against-T bounds lost 3 – 7 times where the transform's own plan barely threads (100000: only the half's fold
+   threads; 65536). 176 cells: 1.107 -> 1.000 against the planner (1.115 -> 1.007 against the faster way, 25 -> 5
+   cells past 1.10). Without the prime-engine clause 1.044 (131 and 262 lose 2 – 4 times).
+2. **Lane-major on T threads:** threaded only when every worker gets 8 lanes (K >= 8 T, the door's fused strip
+   floor), or, past the L2 or on a Rader column, when two workers do (K >= 2 T); else serial. The C2C test (the plane
+   past L1d / 4) threads K = 4 and 32 batches the door runs 1.4 – 4 times slower threaded. 86 cells: 1.203 -> 0.995
+   (1.223 -> 1.012 against the best arm). The strips-or-walk choice stays as built.
+3. **Lane-major serial tile:** out of place, K >= 64, a chain with no Rader stage: the widest of the door's widths up
+   to 64 lanes whose strip, 16 M w bytes, fits the L2 (else the walk, sw = 0). One thread, 86 cells: 1.030 -> 1.005
+   (K = 256: 1.069 -> about 0.97). In place a tile costs the door another pass over the plane, and K = 32 lost with a
+   tile; the data has K = 32 and 256 only, so the bound K >= 64 is the unseen cells' to test.
+
+**Open, not proposed:** the lane-major chain at 65536 (M = 32768: the planner's `8.8.8.64` against the estimate's
+`8.16.16.16`, 1.19 – 1.40 at K = 4 and 32), the C2C batch study's open 1D chain gap too. **Noticed (planner side):**
+at 2062 x 256 on 8 threads the planner's banked Rader stage runs 5 – 6 times slower than the estimate's (same chain,
+tile and threaded verdict; the inner chain or window differs).

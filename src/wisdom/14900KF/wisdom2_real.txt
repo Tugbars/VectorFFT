@@ -5500,3 +5500,254 @@
 @cell t=r2c n=679 q=1 ord=nat place=ip nthreads=8 | eng=zrb m=1024 in=2p in_sh=32.32 in_tw=0 | ran=1 src=race ns=2052.5 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-8a4c198e-dirty
 @cell t=r2c n=4119 q=1 ord=nat place=ip | eng=zrb m=7168 in=ztt in_sh=4.7.8.8.4 in_tw=512 | ran=1 src=race ns=20400.0 metric=fwd1 units=ns date=2026-11-01 bld=0.1.0-8a4c198e-dirty
 @cell t=c2r n=796 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip il_route=prime il_prime=bluestein il_prime_in=2p il_prime_sh=32.32 il_prime_tw=0 il_kv=0 il_bkv=0 | ran=1 src=race ns=2228.8 metric=bwd1 units=ns date=2026-11-01 bld=0.1.0-8a4c198e-dirty
+@cell t=r2c n=16 q=4 ord=nat place=oop lay=lm | chain=8 sw=0 | ran=1 ns=14.5 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=32 ord=nat place=oop lay=lm | chain=8 sw=0 | ran=1 ns=48.5 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=256 ord=nat place=oop lay=lm | chain=8 sw=32 | ran=1 ns=751.7 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=32 ord=nat place=oop lay=lm | chain=4.8 sw=0 | ran=1 ns=334.8 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=256 ord=nat place=oop lay=lm | chain=4.8 sw=64 | ran=1 ns=4284.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=4 ord=nat place=oop lay=lm | chain=8.16 sw=0 | ran=1 ns=284.7 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=32 ord=nat place=oop lay=lm | chain=4.4.8 sw=8 | ran=1 ns=2694.4 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=256 ord=nat place=oop lay=lm | chain=4.4.8 sw=0 | ran=1 ns=21509.1 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=4 ord=nat place=oop lay=lm | chain=16.32 forms=-.b48 sw=0 | ran=1 ns=1930.9 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=32 ord=nat place=oop lay=lm | chain=8.4.16 sw=0 | ran=1 ns=13171.4 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=256 ord=nat place=oop lay=lm | chain=8.8.8 sw=64 | ran=1 ns=131200.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=4 ord=nat place=oop lay=lm | chain=4.4.8.16 sw=0 | ran=1 ns=9854.5 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=32 ord=nat place=oop lay=lm | chain=8.4.8.8 sw=0 | ran=1 ns=67500.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=256 ord=nat place=oop lay=lm | chain=4.8.8.8 sw=32 | ran=1 ns=791700.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=4 ord=nat place=oop lay=lm | chain=4.8.8.32 forms=-.-.-.b48 sw=0 | ran=1 ns=44100.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=32 ord=nat place=oop lay=lm | chain=8.8.4.32 forms=-.-.-.b48 sw=8 | ran=1 ns=379800.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=256 ord=nat place=oop lay=lm | chain=16.8.8.8 sw=16 | ran=1 ns=4927800.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=4 ord=nat place=oop lay=lm | chain=8.8.8.64 sw=0 | ran=1 ns=262800.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=32 ord=nat place=oop lay=lm | chain=8.8.8.64 sw=0 | ran=1 ns=2380000.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=256 ord=nat place=oop lay=lm | chain=16.8.32.8 forms=-.-.b48.- sw=0 | ran=1 ns=29928700.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=4 ord=nat place=oop lay=lm | chain=5.10 blu=0 sw=0 | ran=1 ns=108.6 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=32 ord=nat place=oop lay=lm | chain=5.10 bluforms=-.b48 blu=0 sw=16 | ran=1 ns=684.7 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=256 ord=nat place=oop lay=lm | chain=5.10 blu=0 sw=64 | ran=1 ns=7250.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=4 ord=nat place=oop lay=lm | chain=5.4.5.5 blu=0 sw=0 | ran=1 ns=2260.5 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=32 ord=nat place=oop lay=lm | chain=5.4.5.5 blu=0 sw=0 | ran=1 ns=14116.7 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=256 ord=nat place=oop lay=lm | chain=5.5.4.5 blu=0 sw=64 | ran=1 ns=127200.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=4 ord=nat place=oop lay=lm | chain=15.5.5.16 bluforms=-.-.-.b48 blu=0 sw=0 | ran=1 ns=33840.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=32 ord=nat place=oop lay=lm | chain=16.5.5.15 bluforms=-.-.-.b48 blu=0 sw=0 | ran=1 ns=293200.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=256 ord=nat place=oop lay=lm | chain=15.8.5.10 bluforms=-.-.b48.- blu=0 sw=16 | ran=1 ns=3358000.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=4 ord=nat place=oop lay=lm | chain=131 rd=13.10 rdw=4 bluforms=-.-.b48 blu=0 sw=0 | ran=1 ns=1959.2 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=32 ord=nat place=oop lay=lm | chain=131 rd=13.10 rdw=32 blu=0 sw=0 | ran=1 ns=9234.6 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=256 ord=nat place=oop lay=lm | chain=131 rd=13.10 rdw=60 blu=0 sw=128 | ran=1 ns=98850.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=4 ord=nat place=oop lay=lm | chain=1031 rd=103.10 rdw=4 blu=0 sw=0 | ran=1 ns=50160.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=32 ord=nat place=oop lay=lm | chain=1031 rd=103.10 rdw=32 blu=0 sw=0 | ran=1 ns=405800.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=256 ord=nat place=oop lay=lm | chain=1031 rd=103.10 rdw=8 blu=0 sw=32 | ran=1 ns=3523100.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=4 ord=nat place=oop lay=lm | chain=4099 rd=683.6 rdw=4 bluforms=-.-.-.b48 blu=0 sw=0 | ran=1 ns=251800.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=32 ord=nat place=oop lay=lm | chain=4099 rd=683.6 rdw=32 blu=0 sw=0 | ran=1 ns=2155700.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=256 ord=nat place=oop lay=lm | chain=4099 rd=683.6 rdw=8 bluforms=-.-.b48.- blu=0 sw=16 | ran=1 ns=24071600.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=8 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=11.4 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=8 sw=32 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=44.1 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=8 sw=32 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=735.2 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=32 forms=b48 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=50.9 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=4.8 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=335.3 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=4.8 sw=256 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=3956.7 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=8.16 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=284.2 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=4.4.8 sw=0 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=2847.9 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=4.4.8 sw=256 cmt=1 blu=0 mtarm=1 msw=16 | ran=1 ns=21463.6 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=16.32 forms=-.b48 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=1912.1 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=4.8.16 sw=32 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=14228.6 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=8.8.8 sw=32 cmt=1 blu=0 mtarm=1 msw=16 | ran=1 ns=130400.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=4.8.4.16 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=9345.5 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=8.4.4.16 sw=32 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=68350.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=8.8.4.8 sw=32 cmt=1 blu=0 mtarm=1 msw=32 | ran=1 ns=666100.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=4.8.4.64 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=44200.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=8.8.4.32 forms=-.-.-.b48 sw=0 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=379400.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=16.8.8.8 sw=16 cmt=1 blu=0 mtarm=1 msw=16 | ran=1 ns=4956700.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=8.8.8.64 sw=0 cmt=0 blu=0 mtarm=0 msw=0 | ran=1 ns=244000.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=8.8.8.64 sw=0 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=2261200.0 metric=fwd1 units=ns src=race date=2026-11-02 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=16.8.32.8 forms=-.-.b48.- sw=0 cmt=1 blu=0 mtarm=0 msw=0 | ran=1 ns=28102100.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=5.10 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=108.8 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=5.10 bluforms=-.b48 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=697.7 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=5.10 blu=0 sw=0 cmt=1 mtarm=0 msw=0 | ran=1 ns=7362.5 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=5.4.5.5 bluforms=-.-.b48 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=2223.1 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=4.5.5.5 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=14312.5 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=5.5.4.5 blu=0 sw=32 cmt=1 mtarm=1 msw=32 | ran=1 ns=127900.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=15.5.5.16 bluforms=-.-.-.b48 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=34140.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=16.5.5.15 bluforms=-.-.-.b48 blu=0 sw=0 cmt=1 mtarm=0 msw=0 | ran=1 ns=267600.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12000 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=15.8.5.10 bluforms=-.-.-.b48 blu=0 sw=8 cmt=1 mtarm=1 msw=8 | ran=1 ns=3314400.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=131 rd=13.10 rdw=4 bluforms=-.-.b48 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=2645.9 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=131 rd=13.10 rdw=32 blu=0 sw=0 cmt=1 mtarm=0 msw=0 | ran=1 ns=9193.3 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=131 rd=13.10 rdw=120 blu=0 sw=32 cmt=1 mtarm=1 msw=16 | ran=1 ns=70200.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=1031 rd=103.10 rdw=4 bluforms=-.-.-.b48 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=50566.7 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=1031 rd=103.10 rdw=32 blu=0 sw=32 cmt=1 mtarm=0 msw=0 | ran=1 ns=407000.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=1031 rd=103.10 rdw=256 blu=0 sw=0 cmt=1 mtarm=0 msw=0 | ran=1 ns=3574200.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=4 ord=nat place=oop lay=lm nthreads=8 | chain=4099 rd=683.6 rdw=4 blu=0 sw=0 cmt=0 mtarm=0 msw=0 | ran=1 ns=250700.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=32 ord=nat place=oop lay=lm nthreads=8 | chain=4099 rd=683.6 rdw=32 bluforms=-.-.-.b48 blu=0 sw=0 cmt=1 mtarm=0 msw=0 | ran=1 ns=2187900.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=8198 q=256 ord=nat place=oop lay=lm nthreads=8 | chain=4099 rd=683.6 rdw=8 bluforms=-.-.-.b48 blu=0 sw=16 cmt=1 mtarm=1 msw=16 | ran=1 ns=22276900.0 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=33.75 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=66.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=127.19 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=256.73 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=85.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=169.59 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=337.21 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=688.37 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=336.05 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=741.86 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=940.91 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=256 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=1263.64 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1022.73 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1850.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1024 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=3433.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=3916.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=5300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=6150.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=12799.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=17750.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=18300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=30900.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=16384 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=47700.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=78500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=74500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=147700.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=65536 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=226500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262144 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=224299.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262144 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=485300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262144 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=1115300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262144 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=2719100.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=28.45 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=49.73 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=98.68 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=12 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=201.75 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=120 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=178.69 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=120 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=330.43 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=120 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=606.52 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=120 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=786.96 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1027.27 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1218.18 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=2116.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=4133.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=6000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=5900.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=6000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=6000.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=6000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=11099.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=6000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=22799.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=113300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=108200.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=237999.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=100000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=535699.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=783.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=933.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1447.62 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=262 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=2818.18 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=6836.36 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=6766.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=12766.66 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=2062 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=29050.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=279.15 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=583.96 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=703.77 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=1159.26 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=945 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1037.50 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=945 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1225.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=945 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=2483.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=945 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=4633.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=15625 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=20350.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=15625 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=20600.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=15625 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=40899.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=15625 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=58100.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=131 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=662.72 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=131 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=885.88 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=131 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1313.95 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=131 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=2418.18 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4099 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=22500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4099 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=22166.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4099 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=44850.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4099 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=69700.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=199.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=64 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=899.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=2399.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=1000 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=5700.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=4096 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=8.4.4.4.4 tile=0 stk=0 | ran=1 src=race ns=2500.0 metric=fwd1 units=ns date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=r2c n=105 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=1800.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=33.75 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=66.62 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=125.44 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=253.22 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=81.87 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=153.80 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=313.95 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=590.70 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=256 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=350.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=256 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=595.35 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=256 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=763.64 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=256 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=1072.73 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1024 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1013.64 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1024 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1263.64 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1024 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1850.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1024 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=3733.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4096 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=3116.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4096 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=4300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4096 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=4950.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4096 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=10700.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16384 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=11200.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16384 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=14299.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16384 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=22200.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=16384 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=32400.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=65536 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=54300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=65536 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=56999.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=65536 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=119200.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=65536 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=196000.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262144 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=159600.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262144 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=364500.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262144 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=1003600.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262144 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=2774099.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=12 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=29.93 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=12 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=56.86 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=12 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=12 ns=99.34 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=12 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=199.12 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=120 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=165.57 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=120 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=331.52 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=120 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=480.43 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=120 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=630.43 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1031.82 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1409.09 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=2133.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=4300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=6000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=6525.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=6000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=6900.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=6000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=13899.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=6000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=27600.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=100000 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=119500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=100000 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=126300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=100000 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=282099.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=100000 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=716400.01 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=791.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1083.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1285.71 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=262 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=1963.64 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=2062 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=6954.54 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=2062 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=6916.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=2062 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=14133.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=2062 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=29300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=249.76 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=466.04 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=552.83 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=833.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=945 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=1000.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=945 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=1166.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=945 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1966.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=945 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=4300.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=15625 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=19500.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=15625 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=20000.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=15625 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=38200.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=15625 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=59199.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=131 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=761.54 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=131 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=787.06 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=131 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=1176.74 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=131 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=2131.82 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4099 q=3 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=3 ns=21616.67 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4099 q=6 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=21533.33 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4099 q=12 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=12 ns=40400.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4099 q=24 ord=nat place=oop lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=64399.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=200.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=64 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=24 ns=799.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=6 ns=2100.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=1000 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=6099.99 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=4096 q=1 ord=nat place=ip nthreads=8 | eng=zttr chain=4.8.8.8 tile=0 stk=1 | ran=1 src=race ns=2219.6 metric=bwd1 units=ns date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=700.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
+@cell t=c2r n=105 q=24 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=1 | ran=24 ns=2100.00 metric=fwd1 units=ns src=race date=2026-11-03 bld=0.1.0-019ec2b9-dirty
