@@ -235,10 +235,27 @@ static inline void est__lm_key(vw2_ilcol_key_t *ck, const est_planlm_t *p)
     ck->nthreads = p->T;
     ck->lm = 1;
 }
-/* est_put_rows_lm: the batch's row into st -- the column tokens (unbanded, no row route), sw, at T > 1 the
- * threaded verdict cmt mtarm msw, the turned pass's plan under tpc_, and the block child's rows under rp_ (written
- * into a store of their own and moved with the door's vfft_child_row_update, as est__put_child moves a 1D child).
- * Returns 0, or -1 with the reason. */
+/* the column pass's verdicts onto the row ck: the column tokens (unbanded, no row route), sw, at T > 1 the threaded
+ * verdict cmt mtarm msw, the turned pass's plan under tpc_ (the real batch's row too, real_estimate_lm_il.h). sh names
+ * the batch. Returns 0, or -1 with the reason. */
+static inline int est__put_lm_row(vw2_store_t *st, const vw2_ilcol_key_t *ck, const est_planlm_t *p, const char *sh,
+                                  char *why, size_t whylen)
+{
+    vw2_key_t key;
+    if (est__put_col(st, ck, &p->col, -1, 0) || vw2_ilcol_tok_seti(st, ck, "sw", p->sw) != VW2_OK)
+        return est_refuse(why, whylen, "the lane-major batch %s: its row was refused by the store's writers", sh);
+    if (p->T > 1 &&
+        (vw2_ilcol_tok_seti(st, ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, ck, "mtarm", p->mtarm) != VW2_OK ||
+         vw2_ilcol_tok_seti(st, ck, "msw", p->msw) != VW2_OK))
+        return est_refuse(why, whylen, "the lane-major batch %s: its threaded verdict was refused by the store's writers", sh);
+    vw2__ilcol_key(ck, &key);
+    if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
+        return -1;
+    return 0;
+}
+/* est_put_rows_lm: the batch's row into st -- the column pass's verdicts (est__put_lm_row), and the block child's rows
+ * under rp_ (written into a store of their own and moved with the door's vfft_child_row_update, as est__put_child
+ * moves a 1D child). Returns 0, or -1 with the reason. */
 static inline int est_put_rows_lm(vw2_store_t *st, const est_planlm_t *p, char *why, size_t whylen)
 {
     vw2_ilcol_key_t ck;
@@ -246,15 +263,9 @@ static inline int est_put_rows_lm(vw2_store_t *st, const est_planlm_t *p, char *
     char sh[64];
     est__lm_key(&ck, p);
     est__lm_shape(p, sh, sizeof sh);
-    if (est__put_col(st, &ck, &p->col, -1, 0) || vw2_ilcol_tok_seti(st, &ck, "sw", p->sw) != VW2_OK)
-        return est_refuse(why, whylen, "the lane-major batch %s: its row was refused by the store's writers", sh);
-    if (p->T > 1 &&
-        (vw2_ilcol_tok_seti(st, &ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, &ck, "mtarm", p->mtarm) != VW2_OK ||
-         vw2_ilcol_tok_seti(st, &ck, "msw", p->msw) != VW2_OK))
-        return est_refuse(why, whylen, "the lane-major batch %s: its threaded verdict was refused by the store's writers", sh);
-    vw2__ilcol_key(&ck, &key);
-    if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
+    if (est__put_lm_row(st, &ck, p, sh, why, whylen))
         return -1;
+    vw2__ilcol_key(&ck, &key);
     if (p->child)
     {
         struct vfft_wisdom_s *C = vfft_child_store_new();
@@ -276,14 +287,11 @@ static inline int est_put_rows_lm(vw2_store_t *st, const est_planlm_t *p, char *
 
 /* ── the plan the door built ────────────────────────────────────────────── */
 
-/* the lane-major batch against its recipe: the shape, the column pass, the serial tile, at T > 1 the threaded
- * verdict, the turned pass's plan, the block child */
-static inline int est__check_lm(const struct vfft_plan_s *h, const est_planlm_t *p, char *why, size_t whylen)
+/* the column pass the door built against the recipe's: the column, the serial tile, at T > 1 the threaded verdict,
+ * the turned pass's plan (the real batch's pass too, real_estimate_lm_il.h). sh names the batch. */
+static inline int est__check_lm_pass(const struct vfft_plan_s *h, const est_planlm_t *p, const char *sh, char *why,
+                                     size_t whylen)
 {
-    char sh[64];
-    est__lm_shape(p, sh, sizeof sh);
-    if (!h || !h->lm || h->N != p->N1 || h->N2 != p->N2 || h->N3 != p->N3 || h->K != p->K)
-        return est_refuse(why, whylen, "the door built no lane-major batch %s", sh);
     if (est__check_col(&h->il2d_col, &p->col, why, whylen))
         return -1;
     if (h->il2d_col.wc != p->sw)
@@ -296,6 +304,17 @@ static inline int est__check_lm(const struct vfft_plan_s *h, const est_planlm_t 
                           p->T, p->cmt, p->mtarm, p->msw);
     if (p->col.tpc == 1 &&
         est__check_child(h->il2d_col.tpcplan, &p->tpcp, p->N1, VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))
+        return -1;
+    return 0;
+}
+/* the lane-major batch against its recipe: the shape, the column pass (est__check_lm_pass), the block child */
+static inline int est__check_lm(const struct vfft_plan_s *h, const est_planlm_t *p, char *why, size_t whylen)
+{
+    char sh[64];
+    est__lm_shape(p, sh, sizeof sh);
+    if (!h || !h->lm || h->N != p->N1 || h->N2 != p->N2 || h->N3 != p->N3 || h->K != p->K)
+        return est_refuse(why, whylen, "the door built no lane-major batch %s", sh);
+    if (est__check_lm_pass(h, p, sh, why, whylen))
         return -1;
     if (p->child)
     {

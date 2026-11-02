@@ -83,6 +83,10 @@ typedef struct est_real_recipe_s
                                          /* [m= in= in_sh= in_tw= mt=] the convolution length and
                                           * its inner, the prime row's spelling; a kind-4 inner's
                                           * child goes in c.fs; mt 0 = serial                    */
+    int tcmt;                            /* [tcmt] a contiguous batch on T threads whose door builds
+                                          * copies (est__real_copies): the batch's own row (eng=tcb,
+                                          * q=K, nthreads=T), 1 whole transforms per thread, 0 all
+                                          * threads on each transform (est_batch_whole)          */
 } est_real_recipe_t;
 
 /* ── the formulas (the sketch's section 6 real, section 7 threads) ──────── */
@@ -457,8 +461,18 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
     }
 }
 
-/* est_plan_real: the recipe of a 1D real request (r2c or c2r, one transform, natural order). Pure: reads only
- * the machine and the request. Returns 0, or -1 with the reason. */
+/* the contiguous batch's copies on T threads (vfft.c, the wrapper's clones: each built in the slab role and kept
+ * when _tc_inner_mt_safe holds): every real engine but the real four-step (its team threads on the pool) and ZTT-r
+ * in place (the plan owns one scratch plane beside the caller's buffer, zttr.h:100) */
+static inline int est__real_copies(const est_real_recipe_t *rc, int ip)
+{
+    return strcmp(rc->eng, "zfsr") && !(ip && !strcmp(rc->eng, "zttr"));
+}
+
+/* est_plan_real: the recipe of a 1D real request (r2c or c2r, natural order): one transform, or a contiguous batch
+ * of them (howmany > 1), each the one transform's plan, on T threads the way est_batch_whole picks for a transform's
+ * N / 2 + 1 bins where the door builds copies. Pure: reads only the machine and the request. Returns 0, or -1 with
+ * the reason. */
 static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq, est_real_recipe_t *out, char *why,
                                 size_t whylen)
 {
@@ -479,9 +493,11 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
         return est_refuse(why, whylen, "placement %d is not out (0) or in (1)", rq->placement);
     if (rq->order != VFFT_ORDER_NATURAL)
         return est_refuse(why, whylen, "a real plan is natural order only (vfft.c:1941-1957)");
-    if (rq->howmany > 1)
-        return est_refuse(why, whylen, "one real transform, not a batch of %d", rq->howmany);
-    return est_real(m, rq->N, rq->transform == VFFT_C2R, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen);
+    if (est_real(m, rq->N, rq->transform == VFFT_C2R, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen))
+        return -1;
+    if (rq->howmany > 1 && T > 1 && est__real_copies(out, rq->placement == VFFT_PLACEMENT_IN))
+        out->tcmt = est_batch_whole(m, 16 * ((size_t)rq->N / 2 + 1), rq->howmany, T);
+    return 0;
 }
 
 
@@ -779,9 +795,10 @@ static inline int est__check_plan_real(const struct vfft_plan_s *h, const est_re
 
 /* est_build_real: the recipe of rq -> a plan built with nothing measured, or NULL with the reason in why and the
  * outcome in rep (may be NULL). cfg is the request as the front door translated it (one 1D interleaved r2c or
- * c2r transform); its store and save flag are not used. Holds the create lock from the pre-flight to the end.
- * The caller owns the plan (vfft_destroy); the caller's pin of a threaded plan is vfft_create's to arm
- * (vfft_api.h). */
+ * c2r transform, or a contiguous batch of them: the transform-contiguous wrapper over the one transform's plan,
+ * vfft.c, whose way on T threads its own row says when the door builds copies); its store and save flag are not
+ * used. Holds the create lock from the pre-flight to the end. The caller owns the plan (vfft_destroy); the
+ * caller's pin of a threaded plan is vfft_create's to arm (vfft_api.h). */
 static inline struct vfft_plan_s *est_build_real(const est_real_recipe_t *rc, const est_request_t *rq,
                                                  const vfft_cfg_t *cfg, est_build_report_t *rep, char *why,
                                                  size_t whylen)
@@ -789,9 +806,10 @@ static inline struct vfft_plan_s *est_build_real(const est_real_recipe_t *rc, co
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL, *P = NULL;
     struct vfft_plan_s *h = NULL;
+    const struct vfft_plan_s *h1;
     est__meter_t m0;
     vfft_cfg_t c1;
-    int serial = 0, T;
+    int serial = 0, T, copies;
     if (!rep)
         rep = &lrep;
     memset(rep, 0, sizeof *rep);
@@ -804,13 +822,15 @@ static inline struct vfft_plan_s *est_build_real(const est_real_recipe_t *rc, co
         return NULL;
     }
     T = est__T(rq);
+    copies = cfg->howmany > 1 && T > 1 && est__real_copies(rc, rq->placement == VFFT_PLACEMENT_IN);
     if ((rq->transform != VFFT_R2C && rq->transform != VFFT_C2R) || cfg->transform != rq->transform ||
-        cfg->dims > 1 || cfg->n[0] != rq->N || cfg->howmany > 1 || cfg->layout != VFI_LAYOUT_IL ||
+        cfg->dims > 1 || cfg->n[0] != rq->N || (cfg->howmany > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS) ||
+        (cfg->howmany > 1 ? cfg->howmany : 1) != (rq->howmany > 1 ? rq->howmany : 1) || cfg->layout != VFI_LAYOUT_IL ||
         (cfg->nthreads > 1 ? cfg->nthreads : 1) != T ||
         (cfg->placement == VFFT_INPLACE) != (rq->placement == VFFT_PLACEMENT_IN))
     {
-        est_refuse(why, whylen, "estimate builds one 1D interleaved r2c or c2r transform at the recipe's placement "
-                   "and thread count");
+        est_refuse(why, whylen, "estimate builds one 1D interleaved r2c or c2r transform, or a contiguous batch of them, "
+                   "at the recipe's placement, thread count and batch");
         return NULL;
     }
     if (est__eng(rc, rq) == EST_ENG_BAD || est__eng(rc, rq) == EST_ENG_K1)
@@ -827,8 +847,9 @@ static inline struct vfft_plan_s *est_build_real(const est_real_recipe_t *rc, co
         est_refuse(why, whylen, "out of memory");
         goto out;
     }
-    c1 = *cfg;                /* the pre-flight builds at one thread against an empty store */
+    c1 = *cfg;                /* the pre-flight builds one transform at one thread against an empty store */
     c1.nthreads = 1;
+    c1.howmany = 1;
     c1.wisdom = (vfft_wisdom *)P;
     c1.wisdom_write = 0;
     c1.recalibrate = 0;
@@ -841,12 +862,33 @@ static inline struct vfft_plan_s *est_build_real(const est_real_recipe_t *rc, co
     }
     if (est_put_rows_real(&S->vw2, rc, rq, 1, why, whylen))
         goto out;
+    if (copies && vw2_stride_bank_tcmt(&S->vw2, rq->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C, rq->N, cfg->howmany,
+                                       vfft_policy_ord_k1(cfg, rq->N, cfg->placement == VFFT_INPLACE),
+                                       cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), rc->tcmt,
+                                       T, 0.0) != VW2_OK)
+    {   /* the batch's own row as the wrapper looks it up (_tc_mt_decide, vfft.c) */
+        est_refuse(why, whylen, "the batch's row (eng=tcb) was refused by its writer");
+        goto out;
+    }
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && !est__check_plan_real(h, rc, rq, &serial, why, whylen))
+    if (h && (est__batch_one(h, cfg, copies && rc->tcmt, &h1, why, whylen) ||
+              !est__check_plan_real(h1, rc, rq, &serial, why, whylen)))
     {
         rep->status = serial ? EST_SERIAL : EST_NOPLAN;
         vfft_destroy((vfft_plan)h);
         h = NULL;
+    }
+    else if (h && copies && rc->tcmt)
+    {   /* the first copy runs the recipe's engine in its one-thread form (_tc_slab_role) */
+        est_request_t q1 = *rq;
+        int s1 = 0;
+        q1.nthreads = 1;
+        if (!est__check_plan_real(h->tcbw[0], rc, &q1, &s1, why, whylen))
+        {
+            rep->status = EST_NOPLAN;
+            vfft_destroy((vfft_plan)h);
+            h = NULL;
+        }
     }
     if (h)
         rep->status = EST_BUILT;
@@ -859,17 +901,18 @@ out:
     return h;
 }
 
-/* THE FRONT DOOR'S ESTIMATE CREATE OF A REAL TRANSFORM (_vfft_create_estimate, for R2C and C2R): the request,
- * the recipe, the build. NULL with the reason on the error record (vfft_error). */
+/* THE FRONT DOOR'S ESTIMATE CREATE OF A REAL TRANSFORM (_vfft_create_estimate, for R2C and C2R at rank 1): one
+ * transform or a contiguous batch of them (a lane-major batch is real_estimate_lm_il.h's): the request, the recipe,
+ * the build. NULL with the reason on the error record (vfft_error). */
 static vfft_plan _vfft_create_estimate_real(const est_machine_t *m, const vfft_cfg_t *cfg)
 {
     est_request_t rq;
     est_real_recipe_t rc;
     char why[640];
     struct vfft_plan_s *h;
-    if (cfg->dims > 1 || cfg->howmany > 1)
-    {   /* the front door refuses these first (_vfft_api_translate) */
-        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one R2C or C2R transform at rank 1");
+    if (cfg->dims > 1 || (cfg->howmany > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS))
+    {   /* _vfft_create_estimate routes these elsewhere first */
+        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one R2C or C2R transform at rank 1 here, or a contiguous batch");
         return NULL;
     }
     memset(&rq, 0, sizeof rq);
@@ -878,7 +921,7 @@ static vfft_plan _vfft_create_estimate_real(const est_machine_t *m, const vfft_c
     rq.order = cfg->order == VFI_ORDER_SCRAMBLED ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
     rq.placement = cfg->placement == VFFT_INPLACE ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     rq.nthreads = cfg->nthreads > 1 ? cfg->nthreads : 1;
-    rq.howmany = 1;
+    rq.howmany = cfg->howmany > 1 ? cfg->howmany : 1;
     if (est_plan_real(m, &rq, &rc, why, sizeof why))
     {
         _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);

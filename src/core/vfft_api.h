@@ -23,7 +23,8 @@
  *     order on any thread count (il/estimate/c2c_estimate_nd_il.h), and a contiguous batch of them on
  *     any thread count (the one-transform plan per transform; on T threads either way, est_batch_whole);
  *     and one R2C or C2R transform at rank 1 to 3 on any thread count (il/estimate/real_estimate_il.h,
- *     real_estimate_nd_il.h);
+ *     real_estimate_nd_il.h), and at rank 1 a batch of them, lane-major (the real DEFAULT,
+ *     real_estimate_lm_il.h) or contiguous (est_batch_whole);
  *     every other request under it is
  *     refused, as is the flag beside VFFT_FLAG_PATIENT or VFFT_FLAG_RECALIBRATE or while an
  *     environment variable that steers a plan is set (est_env_names), and wisdom_dir is not opened;
@@ -161,8 +162,9 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     {   /* an INTERLEAVED C2C transform: 1D in any order on any thread count, rank 2 and 3 in natural
          * order on any thread count (il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h), and a contiguous
          * or a lane-major batch of them (c2c_estimate_lm_il.h); one R2C or C2R transform at rank 1 to 3 on
-         * any thread count (il/estimate/real_estimate_il.h, real_estimate_nd_il.h); any other request under the flag is refused here, never
-         * planned by measuring instead */
+         * any thread count (il/estimate/real_estimate_il.h, real_estimate_nd_il.h), and at rank 1 a
+         * lane-major or a contiguous batch of them (real_estimate_lm_il.h, real_estimate_il.h); any other
+         * request under the flag is refused here, never planned by measuring instead */
         if (p->flags & VFFT_FLAG_RECALIBRATE)
         {
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_RECALIBRATE: estimate measures nothing and "
@@ -180,10 +182,10 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
                        "the flag to plan it by measuring)", _vfft_tname(p->transform));
             return 0;
         }
-        if (p->transform != VFFT_C2C && p->howmany > 1)
+        if (p->transform != VFFT_C2C && p->howmany > 1 && p->rank > 1)
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one VFFT_%s transform, not a batch (drop the flag to plan "
-                       "it by measuring)", _vfft_tname(p->transform));
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one VFFT_%s transform at rank 2 and 3, not a batch (drop the "
+                       "flag to plan it by measuring)", _vfft_tname(p->transform));
             return 0;
         }
         if (p->rank > 3)
