@@ -25,11 +25,12 @@ missing has its plan measured by the planner first: the first pass at one round 
 the copy (the tools skip a cell whose create measured), the second pass times. The one-thread protocol pins
 logical CPU 2 at HIGH priority; run on a quiet machine. Windows only (the tools use the Windows timer and
 affinity calls). Output: <run>/<set>.txt (the real sets: <set>-r2c.txt, <set>-c2r.txt), and SUMMARY.md with
-every cell's E/B and the geometric means. Needs the gauntlet built for the store lookup (build_avx512.sh /
-build_avx2.sh) unless --store is given.
+every cell's E/B and the geometric means. The store is the folder the library itself names for this CPU and build
+(the tools' --where); the tools run with the toolchain's folder first on PATH, as the gauntlet runs its own.
 """
 import argparse
 import datetime
+import importlib.util
 import math
 import os
 import re
@@ -76,15 +77,35 @@ def build(isa, sets):
             sys.exit("the build of %s failed" % stem)
 
 
-def shipped_store():
-    sys.path.insert(0, GAUNTLET)
-    try:
-        from wisdom_folder import shipped_folder
-        folder, identity = shipped_folder()
-    except SystemExit as e:
-        sys.exit("%s\n(or name the store with --store DIR)" % e)
-    print("store: %s\n  identity: %s" % (folder, identity))
-    return folder
+def tool_env():
+    """the environment the tools run in: the toolchain's folder first on PATH (gauntlet/build.py's compiler) -- a
+    MinGW-built tool loads its runtime (libwinpthread-1.dll) through PATH and, started without it, dies before main()
+    with no output, as gauntlet.py says of its bench processes -- and no VFFT_WISDOM_DIR (the library's own store)"""
+    spec = importlib.util.spec_from_file_location("gauntlet_build", os.path.join(GAUNTLET, "build.py"))
+    b = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(b)
+    cc = b.detect_toolchain()["cc"]
+    env = os.environ.copy()
+    env.pop("VFFT_WISDOM_DIR", None)
+    if os.path.dirname(cc):
+        env["PATH"] = os.path.dirname(os.path.abspath(cc)) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def shipped_store(tool, env):
+    """this CPU's folder of the library's own store, as the library names it: asked of the estimate tool just built
+    (--where, recal_1d_probe's question), so the gauntlet's own tools need not be built"""
+    exe = os.path.join(EST, tool + EXE)
+    r = subprocess.run([exe, "--where"], capture_output=True, text=True, errors="replace", env=env)
+    out = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+    if r.returncode != 0 or "folder" not in out:
+        sys.exit("%s --where failed (exit %d): %s\n(or name the store with --store DIR)" % (
+            exe, r.returncode, (r.stderr or r.stdout).strip()[-400:]))
+    print("store: %s\n  identity: %s" % (out["folder"], out.get("identity", "")))
+    return os.path.normpath(out["folder"])
+
+
+ENV = None   # main: tool_env()
 
 
 def run(tool, args, log, title):
@@ -93,7 +114,8 @@ def run(tool, args, log, title):
     print("\n== %s: %s" % (title, " ".join(cmd)), flush=True)
     with open(log, "a", encoding="utf-8", errors="replace") as f:
         f.write("\n== %s: %s\n" % (title, " ".join(cmd)))
-        p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                             env=ENV)
         for line in p.stdout:
             sys.stdout.write(line)
             f.write(line)
@@ -159,7 +181,9 @@ def main():
 
     if not a.no_build:
         build(a.isa, sets)
-    src = os.path.abspath(a.store) if a.store else shipped_store()
+    global ENV
+    ENV = tool_env()
+    src = os.path.abspath(a.store) if a.store else shipped_store(TOOL[sets[0]], ENV)
     if not os.path.isdir(src):
         sys.exit("no store at %s" % src)
     name = a.name or "estimate-pow2-%s-%s" % (a.isa, datetime.datetime.now().strftime("%Y%m%d-%H%M"))

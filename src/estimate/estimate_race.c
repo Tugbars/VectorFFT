@@ -142,7 +142,12 @@ static void est_tokens(const est_recipe_t *rc, char *out, size_t cap)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { printf("usage: estimate_race <store dir> [rounds] [c2c|r2c|c2r] N...\n"); return 2; }
+    if (argc > 1 && !strcmp(argv[1], "--where"))
+    {   /* this CPU's folder of the library's own store, as recal_1d_probe --where prints it */
+        printf("folder=%s\nidentity=%s\nbuild=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity(), vfft_wisdom_build());
+        return 0;
+    }
+    if (argc < 2) { printf("usage: estimate_race <store dir> [rounds] [c2c|r2c|c2r] N...   (or --where)\n"); return 2; }
     const char *store = argv[1];
     const int R = argc > 2 ? atoi(argv[2]) : 15;
     int first = 3, tf = VFFT_C2C;

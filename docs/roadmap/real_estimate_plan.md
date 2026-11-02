@@ -472,3 +472,18 @@ plane's threaded column (1.985 on 64 tall planes); approved by the owner and bui
     directions): 2.071 -> 1.077 against the planner (its own column verdicts 1.045), 58 faster, one slower (C2R
     3000 x 64, 1.02 -> 1.11). The near-square 2048 x 1024 (the planner keeps the strips) is left out by the bound.
     Open: R2C over rows of 64 at 1.23 – 1.33 (the row side); 1000 x 100 (the planner's radix 25, not in the pool).
+
+**3D at 8 threads** (the owner: "we can attack here then", after the page's 1.169 at 8 threads, L2 and L3 1.23 – 1.26).
+56 new 8-thread races (28 volumes of L2 and L3), 128 cells with arms. The planner runs a one-stage axis 0 in place,
+and on R2C the pay-once structure dealt by stage; the estimate split axis 0 and ran the strips. Approved by the owner
+and built:
+
+18. **At T > 1 axis 0 of 16, 32 or 64 runs one stage, in place (`cmtf=1`)**, both directions, with no L1d-set test
+    (crowded volumes gain too). 60 cells: 1.318 -> 1.014 as built, 52 faster, 3 slower (C2R 16 x 16 x 256, 32 x 32 x
+    61, 16 x 256 x 256: 0.96 – 1.11 -> 1.02 – 1.22).
+19. **At T > 1 R2C over a plain axis 0 of two stages or more, the volume within a third of the L3, runs the stage-wise
+    pay-once** (`cmts=2 cmtf=3`): from 0.3 to 9 MiB it won at every size, from 16 MiB it lost. 19 cells: 1.235 ->
+    0.993 as built, 17 faster, 2 slower (30 x 30 x 30 1.00 -> 1.17; 128 x 128 x 64 0.92 -> 0.97).
+
+The 128 cells as built: 1.208 -> 1.035 (R2C 1.265 -> 1.011, C2R 1.154 -> 1.058; L2 1.244 -> 1.036, L3 1.252 -> 1.037;
+control 1.002). Open: C2R over an axis 0 of two stages or more (about 1.13; the planner's structure and form vary).

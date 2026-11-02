@@ -155,6 +155,11 @@ int main(int argc, char **argv)
 {
     static int cells[MAXCELL][3];
     static char line[MAXCELL][360];
+    if (argc > 1 && !strcmp(argv[1], "--where"))
+    {   /* this CPU's folder of the library's own store, as recal_1d_probe --where prints it */
+        printf("folder=%s\nidentity=%s\nbuild=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity(), vfft_wisdom_build());
+        return 0;
+    }
     static double t[NARM][128];
     int nc = 0, T = 1;
     if (argc < 2) { printf("usage: estimate_race_nd <store dir> [rounds] [T=n] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
