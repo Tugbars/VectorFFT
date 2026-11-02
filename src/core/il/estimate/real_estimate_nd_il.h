@@ -133,6 +133,36 @@ static const struct { int N, nst, R[4]; } est_col_real_tall[] = {
     { 8192, 3, { 8, 16, 64, 0 } },
 };
 
+/* the pool's column chain at N with the fewest stages: on two stages the most balanced (least sum of (log2 R)^2), on
+ * three or more the largest radix last and then the most balanced; ties ascending, then the pool's order. The stage
+ * count, 0 = none. (THE TALL PLANE AT T > 1, est_plan_2d_real.) */
+static inline int est__col_fewest(int N, int *R)
+{
+    est_pool_t P;
+    int i, best = -1;
+    est__pool(N, &P);
+    for (i = 0; i < P.n; i++)
+    {
+        int better;
+        if (best < 0) { best = i; continue; }
+        if (P.len[i] != P.len[best])
+            better = P.len[i] < P.len[best];
+        else if (P.len[i] >= 3 && P.c[i][P.len[i] - 1] != P.c[best][P.len[best] - 1])
+            better = P.c[i][P.len[i] - 1] > P.c[best][P.len[best] - 1];
+        else
+        {
+            const double a = est__sumsq(P.c[i], P.len[i]), b = est__sumsq(P.c[best], P.len[best]);
+            if (a < b - 1e-9 || a > b + 1e-9) better = a < b;
+            else better = est__inversions(P.c[i], P.len[i], 1) < est__inversions(P.c[best], P.len[best], 1);
+        }
+        if (better) best = i;
+    }
+    if (best < 0)
+        return 0;
+    memcpy(R, P.c[best], sizeof(int) * (size_t)P.len[best]);
+    return P.len[best];
+}
+
 /* the real axis on N1 (raxis = n1, il/rank2/il2d_real_axis.h:212-300; R2C, one thread, out of place, even N1 >= 4, odd
  * N2): its two children's recipes, the C2C column chain at M = N1/2 down N2 columns in the scrambled class
  * (est_col_plan) and the C2C plan at N2 the batch of M + 1 folded rows runs. 0, or -1 with the reason. */
@@ -145,6 +175,7 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
 {
     const long long hp1 = N2 / 2 + 1, bytes = 16LL * N1 * hp1;
     const int c2r128wide = c2r && T <= 1 && N1 == 128 && bytes > (long long)m->l2 * 5 / 8;
+    const int tallmt = T > 1 && N1 != 2 && bytes > m->l1d / 2 && N1 >= 4LL * N2;   /* the threaded column of a tall plane */
     char dummy[1];
     if (!why || !whylen) { why = dummy; whylen = sizeof dummy; }
     why[0] = 0;
@@ -181,6 +212,21 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
         p->col.R[1] = 8;
         p->col.nst = 2;
     }
+    if (tallmt && p->col.blu <= 0 && p->col.rd_n == 0)
+    {   /* THE TALL PLANE AT T > 1 (2026-11-02): where N1 >= 4 N2 the threaded column runs plain (mtarm=0, below) over
+         * the chain with the fewest stages (est__col_fewest), the planner's verdicts on such planes: mtarm=0 on all 62
+         * banked 8-thread rows with N1 >= 4 N2, its chains 16.32, 32.32, 32.64, 64.64, 64.10, 3.8.64. At 8 threads,
+         * 60 tall planes of 256 - 8192 rows, power of two or not, both directions: 2.071 -> 1.077 against the planner
+         * (its own column verdicts 1.045), 58 faster, one slower (C2R 3000 x 64, 1.02 -> 1.11); on the near-square
+         * 2048 x 1024, where the planner keeps the strips, it was slower (1.06 - 1.15 -> 1.22 - 1.41). */
+        int R[8];
+        const int k = est__col_fewest(N1, R);
+        if (k > 0)
+        {
+            memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+            p->col.nst = k;
+        }
+    }
     if (p->col.blu <= 0)
         est__col_forms_real(p->col.R, p->col.nst, c2r, p->col.forms, sizeof p->col.forms);
     if (!c2r && p->T == 1 && N1 == 16 && N2 % 512 == 0 && p->col.nst == 1)
@@ -201,8 +247,8 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     if (p->T > 1 && N1 != 2 && bytes > m->l1d / 2)
     {   /* est_mt_2d's column rule at the real plane's bytes: threaded, the strips at their width */
         p->cmt = 1;
-        p->mtarm = 1;
-        p->msw = est__msw_2d(m, N1, (int)hp1, p->T);
+        p->mtarm = tallmt ? 0 : 1;   /* the tall plane's plain threaded column (above) */
+        p->msw = tallmt ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
     }
     p->rx[0] = p->rxs[0] = p->cx[0] = p->cxs[0] = 0;
     if (!c2r || !(N2 & 1))

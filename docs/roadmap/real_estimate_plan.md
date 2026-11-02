@@ -456,3 +456,19 @@ axis 0, where C2C's scrambled pass splits 16, 32 and 64. Approved by the owner a
     -> 0.974, 64 27 volumes 1.037 -> 0.906, none slower; with it one stage is slower (16 x 256 x 4 1.22, 64 x 128 x 128
     1.25) and the planner splits on all 45. Open: axis 0 at N1 = 256 (`16.16` at 1.2 – 1.45 on 8 volumes), 128 mixed;
     the C2R side thin (25 volumes).
+
+**The C2R side of 3D and the rules at 8 threads** (the owner: "start with these"). The C2R side raced for the 321
+banked 3D volumes that lacked it: 346 C2R volumes at one thread, E/P 1.016 (L1 0.947, L2 1.029, L3 1.076); rule 16
+holds for C2R (16, 32, 64: 0.993, 1.000, 1.009); open: axis 0 at 128 and 256, and C2R's band (`s_c2r=3`) on the worst
+volumes (256 x 16 x 4 1.38). The rules at 8 threads, each applied as an arm on 49 new 8-thread rows: 12 no gain
+(42 planes 1.537 -> 1.528, 4096 x 16 5.9 -> 8.4) and 16 slower (22 volumes 1.358 -> 1.480), so both stay at one
+thread; 13 has nothing to apply (the planner banks no fused walk at T > 1); 14 and 15 a small gain on thin evidence
+(6 planes 1.105 -> 1.051, 5 planes 1.212 -> 1.164), left at one thread. The 8-thread gap on these planes is the tall
+plane's threaded column (1.985 on 64 tall planes); approved by the owner and built:
+
+17. **At T > 1 a tall plane, N1 >= 4 N2, runs the plain threaded column (`mtarm=0`) over the chain with the fewest
+    stages** (two stages the most balanced, three or more the largest radix last). The planner takes `mtarm=0` on all
+    62 banked 8-thread rows with N1 >= 4 N2. 60 tall planes at 8 threads (256 – 8192 rows, power of two or not, both
+    directions): 2.071 -> 1.077 against the planner (its own column verdicts 1.045), 58 faster, one slower (C2R
+    3000 x 64, 1.02 -> 1.11). The near-square 2048 x 1024 (the planner keeps the strips) is left out by the bound.
+    Open: R2C over rows of 64 at 1.23 – 1.33 (the row side); 1000 x 100 (the planner's radix 25, not in the pool).
