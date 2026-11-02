@@ -103,6 +103,17 @@ static inline void est_free_lm(est_planlm_t *p)
     p->child = NULL;
 }
 
+/* the threaded verdict of a pass that threads (the strips rule above): the strips at est__msw_2d's width where every
+ * worker gets a vector of lanes, on a chain with no Rader stage whose strip of EST_LM_STRIP_MIN lanes fits the L2; else
+ * the threaded walk */
+static inline void est__lm_threaded(const est_machine_t *m, est_planlm_t *p, long long lanes)
+{
+    const int strips = p->col.blu <= 0 && !p->col.rd_n && lanes >= (long long)(m->lanes / 2) * p->T &&
+                       16LL * p->N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
+    p->cmt = 1;
+    p->mtarm = strips;
+    p->msw = strips ? est__msw_2d(m, p->N1, (int)lanes, p->T) : 0;
+}
 /* est__plan_lm: est_plan_lm's body; tpc_ok = 0 for a column whose door admits no turned prime pass (the real batch's,
  * il2d_tier.h _il2d_tpc_admits: a c2c axis 0 only), where a Rader column keeps its stage at every lane count */
 static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
@@ -145,13 +156,7 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
     if (out->T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2 && out->col.tpc != 1)
-    {
-        const int strips = out->col.blu <= 0 && !out->col.rd_n && lanes >= (long long)(m->lanes / 2) * out->T &&
-                           16LL * N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
-        out->cmt = 1;
-        out->mtarm = strips;
-        out->msw = strips ? est__msw_2d(m, N1, (int)lanes, out->T) : 0;
-    }
+        est__lm_threaded(m, out, lanes);
     if (rank >= 2)
     {
         if (!(out->child = (est_planlm_t *)calloc(1, sizeof *out->child)))

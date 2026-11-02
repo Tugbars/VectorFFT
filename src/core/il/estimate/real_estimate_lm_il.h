@@ -11,10 +11,10 @@
  * the scratch holds it, else the three-phase form) and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race).
  *
  * THE RECIPE (est_plan_lmr): the C2C lane-major recipe of rank 1 at M over K lanes in the scrambled class (est__plan_lm:
- * est_col_plan at w = K, the unbanded walk's chain past the L1d, sw = 0, at T > 1 est_mt_2d's test with the strips
- * rule), no rule of its own: the plan's stage 2 takes one only if the study shows the pack and the fold change it. A
- * Rader column keeps its stage at every lane count: the C2C rule's form on few lanes, Bluestein with the turned prime
- * pass, is not the real door's (il2d_tier.h _il2d_tpc_admits admits the turned pass on a c2c axis 0 only).
+ * est_col_plan at w = K, the unbanded walk's chain past the L1d), with the real batch's own threaded verdict and serial
+ * tile (the two rules below: the pack and the fold change both). A Rader column keeps its stage at every lane count:
+ * the C2C rule's form on few lanes, Bluestein with the turned prime pass, is not the real door's (il2d_tier.h
+ * _il2d_tpc_admits admits the turned pass on a c2c axis 0 only).
  * THE BUILD (est_build_lmr) takes est_build_lm's steps on the real row: the pre-flight, the row into a store held in
  * memory, the door's replay (est__replay), and the plan the door built checked against the recipe (est__check_lmr),
  * the lean door's entry in the transform's direction with it. An estimate create never hands back a plan that
@@ -34,11 +34,31 @@ typedef struct
     est_planlm_t pass;   /* the column pass: the C2C lane-major recipe of rank 1 at M = N / 2 over K lanes, scrambled */
 } est_planlmr_t;
 
-/* est_plan_lmr: the lane-major real batch's recipe (the header's list). Returns 0 with *out filled, or -1 with the
- * reason. Pure. */
+/* THE TWO LANE-MAJOR REAL RULES (the owner's, 2026-11-03; docs/roadmap/real_estimate_plan.md section 12, each fitted on
+ * the study's arms -- the estimate's recipe changed in one place -- against the best arm of each cell, 86 cells at 1 and
+ * 8 threads, 13 lengths x K 4, 32, 256):
+ *   - THE THREADED VERDICT AT T > 1: the door's fused strips give each worker EST_LMR_MT_LANES lanes at least (whole
+ *     cache lines; lm_batch_il.h _lmr_fused), so the pass threads when every worker gets them (K >= 8 T), or, past the
+ *     L2 or with a Rader stage (whose per-lane work is the largest), when two workers do (K >= 2 x 8); else serial, the
+ *     threaded form's choice then est__lm_threaded's. The C2C test (the plane past L1d / 4) threaded K = 4 and 32
+ *     batches the door ran 1.4 - 4 times slower threaded: 1.203 -> 0.995 against the planner (1.223 -> 1.012 against
+ *     the best arm).
+ *   - THE SERIAL TILE: from K = EST_LMR_TILE_K, on a chain with no Rader stage (a tile there ran 1.7 times slower), the
+ *     widest of the door's widths (_il2d_sw_ladder) up to EST_LMR_TILE_MAX lanes, below K, whose strip of 16 M w bytes
+ *     fits the L2: the fused strip packs, chains and folds in the L2 and the plane is read and written once. One
+ *     thread: 1.030 -> 1.005 (K = 256: 1.069 -> about 0.97). Both placements share the row: the study's in-place cells
+ *     (K = 32) lost with a tile, under the bound. */
+#define EST_LMR_MT_LANES 8
+#define EST_LMR_TILE_K 64
+#define EST_LMR_TILE_MAX 64
+
+/* est_plan_lmr: the lane-major real batch's recipe (the header's list, with the two rules above). Returns 0 with *out
+ * filled, or -1 with the reason. Pure. */
 static inline int est_plan_lmr(const est_machine_t *m, int N, size_t K, int T, est_planlmr_t *out, char *why,
                                size_t whylen)
 {
+    est_planlm_t *p = &out->pass;
+    long long M;
     memset(out, 0, sizeof *out);
     if (N < 4 || (N & 1) || K < 2)
         return est_refuse(why, whylen, "a lane-major real batch of N = %d, K = %zu: the door serves an even N of at least "
@@ -46,7 +66,25 @@ static inline int est_plan_lmr(const est_machine_t *m, int N, size_t K, int T, e
     out->N = N;
     out->K = K;
     out->T = T > 1 ? T : 1;
-    return est__plan_lm(m, 1, N / 2, 0, 0, K, out->T, 0, 0, &out->pass, why, whylen);
+    M = N / 2;
+    if (est__plan_lm(m, 1, (int)M, 0, 0, K, out->T, 0, 0, p, why, whylen))
+        return -1;
+    if (out->T > 1)
+    {
+        const long long k = (long long)K, w = EST_LMR_MT_LANES;
+        p->cmt = p->mtarm = p->msw = 0;
+        if (M != 2 && (k >= w * out->T || (k >= 2 * w && (16 * M * k > (long long)m->l2 || p->col.rd_n > 0))))
+            est__lm_threaded(m, p, k);
+    }
+    if (K >= EST_LMR_TILE_K && !p->col.rd_n && p->col.blu <= 0)
+    {
+        int lad[6], n = _il2d_sw_ladder((int)M, (int)K, 1, lad, 6), i;
+        for (i = 0; i < n; i++)
+            if (lad[i] > p->sw && lad[i] <= EST_LMR_TILE_MAX && (size_t)lad[i] < K && 16 * M * lad[i] <= (long long)m->l2 &&
+                vfft_policy_lm_tile_ok(lad[i], (int)K, 0))
+                p->sw = lad[i];
+    }
+    return 0;
 }
 
 /* the batch's row key, as its door keys it (lm_batch_il.h, _vfft_create_lmr_il) */

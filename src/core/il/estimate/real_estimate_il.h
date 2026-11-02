@@ -468,11 +468,27 @@ static inline int est__real_copies(const est_real_recipe_t *rc, int ip)
 {
     return strcmp(rc->eng, "zfsr") && !(ip && !strcmp(rc->eng, "zttr"));
 }
+/* THE CONTIGUOUS REAL BATCH'S WAY ON T THREADS (the owner's rule, 2026-11-03; docs/roadmap/real_estimate_plan.md section
+ * 12, fitted on the study's two ways timed at every cell, 176 cells at 8 threads, 20 lengths x K 3 - 24, both
+ * directions): whole transforms per thread while one transform's N/2 + 1 bins, 16 bytes each, fit a core's L2, when
+ * the batch carries EST_BATCH_FLOOR bytes or the plan runs through a prime engine (odd Bluestein zrb, or zr2c whose half
+ * has a prime factor no chain radix carries, vfft_policy_prime_cell: their work per byte is many times the others', and
+ * 131 or 262 at K = 3 already pay a copy each);
+ * else all threads on each transform (below the floor, the serial loop). The C2C rule's L2 / 8 bound (est_batch_whole)
+ * assumes one transform on T threads uses them all; a real one mostly does not (zr2c threads its fold only): it lost 3
+ * - 7 times at 65536 and 100000. 1.107 -> 1.000 against the planner (1.115 -> 1.007 against the faster way). */
+static inline int est__real_batch_whole(const est_machine_t *m, const est_real_recipe_t *rc, long long N, size_t K)
+{
+    const size_t bytes = 16 * ((size_t)N / 2 + 1);
+    const int prime = !strcmp(rc->eng, "zrb") || (!strcmp(rc->eng, "zr2c") && vfft_policy_prime_cell((int)(N / 2)));
+    if (K < 2 || m->l2 <= 0 || bytes > (size_t)m->l2)
+        return 0;
+    return prime || (double)K * (double)bytes >= EST_BATCH_FLOOR;
+}
 
 /* est_plan_real: the recipe of a 1D real request (r2c or c2r, natural order): one transform, or a contiguous batch
- * of them (howmany > 1), each the one transform's plan, on T threads the way est_batch_whole picks for a transform's
- * N / 2 + 1 bins where the door builds copies. Pure: reads only the machine and the request. Returns 0, or -1 with
- * the reason. */
+ * of them (howmany > 1), each the one transform's plan, on T threads the way est__real_batch_whole picks where the
+ * door builds copies. Pure: reads only the machine and the request. Returns 0, or -1 with the reason. */
 static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq, est_real_recipe_t *out, char *why,
                                 size_t whylen)
 {
@@ -496,7 +512,7 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
     if (est_real(m, rq->N, rq->transform == VFFT_C2R, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen))
         return -1;
     if (rq->howmany > 1 && T > 1 && est__real_copies(out, rq->placement == VFFT_PLACEMENT_IN))
-        out->tcmt = est_batch_whole(m, 16 * ((size_t)rq->N / 2 + 1), rq->howmany, T);
+        out->tcmt = est__real_batch_whole(m, out, rq->N, rq->howmany);
     return 0;
 }
 

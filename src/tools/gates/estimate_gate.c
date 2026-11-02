@@ -69,7 +69,8 @@
  *      recipe's); each transform through the one-transform plans: the batch's R2C against the one R2C, its C2R
  *      against the one C2R on the batch's bins, bitwise for a contiguous batch on one thread, within TOL otherwise;
  *      the round trip within TOL; on 8 threads a contiguous batch runs whole transforms per thread exactly when the
- *      rule says so (est_batch_whole at 16 (N/2 + 1) bytes a transform).
+ *      rule says so (est__real_batch_whole: one transform's 16 (N/2 + 1) bytes within the L2, the batch past 16 KiB or a
+ *      prime engine).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
  *   R  the refusals: a real transform in a batch at rank 2 and 3 or at its own pitch at rank 2, a lane-major real
@@ -1115,10 +1116,24 @@ static void sec_end_rl(const char *name, long b0, long mt0)
  * nothing measured; each transform run through the one-transform plans: the batch's R2C against the one R2C on its
  * reals, its C2R against the one C2R on the batch's bins, bitwise for a contiguous batch on one thread (the batch is
  * that plan, run once per transform), within TOL otherwise; the round trip within TOL. On T threads a contiguous
- * batch's split (whole transforms per thread, vfft_tc_mt_dispatches) engaged exactly when the rule says so, at
- * 16 (N/2 + 1) bytes a transform; the cells avoid the engines with no copies (ZTT-r in place serves from N = 1024,
- * the real four-step's transform is past the L2, where the rule takes all threads on each anyway). ── */
+ * batch's split (whole transforms per thread, vfft_tc_mt_dispatches) engaged exactly when the rule says so (rb_whole);
+ * the cells avoid the engines with no copies (ZTT-r in place serves from N = 1024, the real four-step's transform is
+ * past the L2, where the rule takes all threads on each anyway). ── */
 static long g_rb_built = 0, g_rb_mt = 0;
+/* the contiguous real batch's rule on T threads (est__real_batch_whole, il/estimate/real_estimate_il.h), stated again:
+ * whole transforms per thread while one transform's 16 (N/2 + 1) bytes fit a core's L2, when the batch carries 16 KiB
+ * or the plan runs through a prime engine -- past N = 64 (the small real kernel's), an N (odd: Bluestein) or a half
+ * (even: the half-length engine) with a prime factor past the chain radices (47) */
+static int rb_whole(long N, int K, int T)
+{
+    const long long l2 = (long long)vfft_cpu_l2_bytes(), bytes = 16LL * (N / 2 + 1);
+    long m = (N & 1) ? N : N / 2, p;
+    for (p = 2; p <= 47; p++)
+        while (m % p == 0) m /= p;
+    if (T < 2 || K < 2 || l2 <= 0 || bytes > l2)
+        return 0;
+    return (N > 64 && m > 1) || (long long)K * bytes >= (16LL << 10);
+}
 static void rb_cell(long N, int K, int ip, int T, int lm)
 {
     const long H = N / 2 + 1;
@@ -1203,7 +1218,7 @@ static void rb_cell(long N, int K, int ip, int T, int lm)
         ok = fsame && bsame && er <= TOL;
         if (!lm && T > 1)
         {
-            whole = batch_whole(16LL * H, K, T, NULL);
+            whole = rb_whole(N, K, T);
             CHECK((c1 != c0) == whole, "RB %s: the batch ran %s, the rule says %s", name,
                   c1 != c0 ? "whole transforms per thread" : "all threads on each transform",
                   whole ? "whole transforms per thread" : "all threads on each transform");
