@@ -444,3 +444,15 @@ rules, approved by the owner and built (one thread):
     flat). At 16 x 1000, 3000, 6000, 12000 it is 1 – 3 % slower; the 8, 32 and 64-point leaves gain nothing.
 
 The 109 cells as built: 1.033 -> 0.999; the cells the rules do not touch unchanged.
+
+**The 3D banked volumes** (the owner's yes): every banked 3D real row at one thread, 346 R2C volumes and the 25 with a
+C2R side, 371 cells, E/P 1.034 (L1 0.955, L2 1.065, L3 1.060); the 2D rules reach the plane child without harm (rule
+13's 6 volumes 0.953). The arms (the planner's axis-0 chain, its axis-1 chain, both, one stage on axis 0) put the gap on
+axis 0, where C2C's scrambled pass splits 16, 32 and 64. Approved by the owner and built:
+
+16. **3D axis 0 at N1 = 16, 32, 64: one stage, unless its N1 elements crowd an L1d set** (one thread, no strips). The
+    elements lie 16 N2 (N3/2 + 1) bytes apart and fall into 4096 / gcd(stride, 4096) sets of L1d / 4096 lines each, so
+    one stage while N1 gcd(stride, 4096) <= L1d. Without crowding: 16 28 volumes 1.263 -> 0.992, 32 38 volumes 1.144
+    -> 0.974, 64 27 volumes 1.037 -> 0.906, none slower; with it one stage is slower (16 x 256 x 4 1.22, 64 x 128 x 128
+    1.25) and the planner splits on all 45. Open: axis 0 at N1 = 256 (`16.16` at 1.2 – 1.45 on 8 volumes), 128 mixed;
+    the C2R side thin (25 volumes).

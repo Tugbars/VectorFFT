@@ -574,6 +574,21 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
             p->nf = 2;
             p->nsw = vfft_policy_ilndr_strip_w(N1, (size_t)w0);
         }
+        if (p->T == 1 && p->nf == 1 && (N1 == 16 || N1 == 32 || N1 == 64) && p->col.nst > 1 && p->col.rd_n == 0)
+        {   /* THE ONE-STAGE AXIS 0 (2026-11-02): where C2C's scrambled pass splits 16, 32 and 64, the real volume runs
+             * one stage unless its N1 elements, 16 N2 (N3/2 + 1) bytes apart, crowd an L1d set: they fall into
+             * 4096 / gcd(stride, 4096) of the sets, each set holds L1d / 4096 lines (12 here), so one stage while
+             * N1 gcd(stride, 4096) <= L1d. The banked volumes at one thread: no crowding 16 28 volumes 1.263 -> 0.992,
+             * 32 38 volumes 1.144 -> 0.974, 64 27 volumes 1.037 -> 0.906, none slower; crowding, one stage slower (16 x
+             * 256 x 4 1.01 -> 1.22, 64 x 128 x 128 1.00 -> 1.25) and the planner's chain split on all 45. */
+            const long long st = 16 * w0, low = st & -st;
+            if ((long long)N1 * (low < 4096 ? low : 4096) <= (long long)m->l1d)
+            {
+                p->col.R[0] = N1;
+                p->col.nst = 1;
+                est__col_forms(p->col.R, 1, p->col.forms, sizeof p->col.forms);
+            }
+        }
         p->cmt = 0;
         p->cmts = p->s;
         p->cmtf = p->nf;
