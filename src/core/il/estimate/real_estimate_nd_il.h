@@ -144,6 +144,7 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
                                    char *why, size_t whylen)
 {
     const long long hp1 = N2 / 2 + 1, bytes = 16LL * N1 * hp1;
+    const int c2r128wide = c2r && T <= 1 && N1 == 128 && bytes > (long long)m->l2 * 5 / 8;
     char dummy[1];
     if (!why || !whylen) { why = dummy; whylen = sizeof dummy; }
     why[0] = 0;
@@ -172,8 +173,29 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
                 memcpy(p->col.R, est_col_real_tall[i].R, sizeof(int) * (size_t)est_col_real_tall[i].nst);
                 p->col.nst = est_col_real_tall[i].nst;
             }
+    if (c2r128wide)
+    {   /* C2R's 128-point column past 5/8 of the L2: the plain two-stage column, the planner's 16.8 on every such row
+         * (2026-11-02, 10 planes 128 x 1536 - 16384: rule 3's b816 leaf 1.122 -> 0.961, each at or below it; the
+         * leaf still wins at 128 x 1024 and below, 1.047 against the plain column's 1.11 - 1.18) */
+        p->col.R[0] = 16;
+        p->col.R[1] = 8;
+        p->col.nst = 2;
+    }
     if (p->col.blu <= 0)
         est__col_forms_real(p->col.R, p->col.nst, c2r, p->col.forms, sizeof p->col.forms);
+    if (!c2r && p->T == 1 && N1 == 16 && N2 % 512 == 0 && p->col.nst == 1)
+    {   /* R2C's 16-point column over rows a multiple of 512: the leaf's half-store twin (2026-11-02: 16 x 512, 1024,
+         * 1536, 4096, 8192 1.06 - 1.18 -> 0.95 - 1.02, 16 x 2048 flat; at 16 x 1000, 3000, 6000, 12000 it is 1 - 3 %
+         * slower, and the 8, 32 and 64-point leaves gain nothing; the planner's leaf at 1024 - 8192 and 1536) */
+        const char *nm[VFFT_IL2P_COL_MAXFORMS];
+        const int k = vfft_il2p_col_forms(16, 1, nm);
+        for (int j = 1; j < k; j++)
+            if (strchr(nm[j], 'h'))
+            {
+                snprintf(p->col.forms, sizeof p->col.forms, "%s", nm[j]);
+                break;
+            }
+    }
     p->wl = 0;
     p->cmt = p->mtarm = p->msw = 0;
     if (p->T > 1 && N1 != 2 && bytes > m->l1d / 2)
@@ -207,7 +229,7 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     {   /* no column form on a Bluestein pass (il2d_real_plan.h:1575) */
         snprintf(p->cx, sizeof p->cx, "%s", p->col.nst >= 2 ? "strided" : "plain");
         snprintf(p->cxs, sizeof p->cxs, "any");
-        if (N1 == 128 && (p->T == 1 || !c2r))
+        if (N1 == 128 && (p->T == 1 || !c2r) && !c2r128wide)
             /* the 128-point column leaf, the whole pass in one kernel call (vfft_il2p_col_leaf_forms; the planner's
              * at 128 x 128 in the store, 1.07 - 1.24 -> 0.99 - 1.08 on the study's N1 = 128 planes): R2C b448, C2R
              * b816 (C2R's b448 1.11 at 128 x 16 against b816's 1.04); at T > 1 R2C's alone (b448 1.15 - 1.33 -> 0.88 -
@@ -217,8 +239,10 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     p->tf = p->raxis = p->csk = p->cxp = -1;
     if (p->T == 1)
     {   /* the fused walk: R2C past the L2 (below it 1.10 -> 1.20 at L1, flat at L2), C2R at every size (1.07 -> 1.03
-         * on 18 planes below the L2, none slower; past it off is slower on 28 of 30) */
-        p->tf = (c2r || bytes > m->l2) ? 1 : 0;
+         * on 18 planes below the L2, none slower; past it off is slower on 28 of 30); and R2C over rows of 32 from
+         * 256 rows at every size (2026-11-02, 10 of 10 planes 256 - 4096 rows, power of two or not, 1.06 - 1.26 ->
+         * 0.88 - 1.08, 128 x 32 flat; at rows of 4 - 16 it costs 5 - 40 %, at 24, 48, 64 it is mixed) */
+        p->tf = (c2r || bytes > m->l2 || (N2 == 32 && N1 >= 256)) ? 1 : 0;
         if (!c2r) { p->raxis = 0; p->csk = 0; }
         if (!c2r && !ip && N1 >= 4 && !(N1 & 1) && (N2 & 1) && N2 <= 2048)
         {   /* the real axis on N1 where the real axis N2 is an odd prime up to 2048 (stage 3 study, 2026-11-02: 16x61,

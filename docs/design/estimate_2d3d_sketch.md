@@ -596,12 +596,12 @@ direction's verdicts (C2R's under `_c2r`). The evidence and the study grid are i
 
 | Verdict | Formula |
 |---|---|
-| column pass `chain forms blu rd rdw` | `est_col_plan` at (N1, N2/2 + 1), natural, as C2C; no `tpc` on a real row; a power-of-two N1 from 8 to 64 one stage at any width; at one thread a power-of-two N1 from 512 to 8192 the chain of `est_col_real_tall` (512 `16.32`, 1024 `8.4.32`, 2048 `8.8.32`, 4096 `8.8.8.8`, 8192 `8.16.64`) at any width; `forms` spelled from the door's real pool (R2C's adds the half-store twins at the leaf), each stage the full-store default |
+| column pass `chain forms blu rd rdw` | `est_col_plan` at (N1, N2/2 + 1), natural, as C2C; no `tpc` on a real row; a power-of-two N1 from 8 to 64 one stage at any width; at one thread a power-of-two N1 from 512 to 8192 the chain of `est_col_real_tall` (512 `16.32`, 1024 `8.4.32`, 2048 `8.8.32`, 4096 `8.8.8.8`, 8192 `8.16.64`) at any width; `forms` spelled from the door's real pool (R2C's adds the half-store twins at the leaf), each stage the full-store default; R2C at N1 = 16 over N2 a multiple of 512 (one thread) the leaf's half-store twin `h` |
 | `wl` | 0 |
 | `cmt mtarm msw` (T > 1) | threaded past half the L1d (the real plane's bytes, `est_mt_2d`'s rule), the strips at `est__msw_2d`'s width |
 | `rx rxs` | the rows kernel `lm` out of place on one thread where it exists (N2 4 .. 32 at 4 lanes), else the door's row child; R2C at odd N2 the 1D real estimate's odd engine (`zrf`, `zrb`; not `zrm`); `rxs` any. C2R at odd N2 has no row engine. |
-| `cx cxs` | strided on a natural chain, else plain; N1 = 128 the column leaf (R2C `b448`; C2R `b816` at one thread only); none on a Bluestein pass; `cxs` any |
-| `tf` (T = 1) | C2R always; R2C past the L2 |
+| `cx cxs` | strided on a natural chain, else plain; N1 = 128 the column leaf (R2C `b448`; C2R `b816` at one thread only, and only while 16 N1 (N2/2 + 1) <= 5/8 of the L2: past it C2R's column is the plain `16.8`, strided); none on a Bluestein pass; `cxs` any |
+| `tf` (T = 1) | C2R always; R2C past the L2, and over rows of N2 = 32 from N1 = 256 |
 | `raxis` (R2C, T = 1, out of place) | n1 (the real axis on N1) where N1 is even, at least 4, and N2 an odd prime up to 2048, with its children `rax_` (`est_col_plan` at N1/2 over N2 columns, scrambled) and `raxr_` (the C2C estimate at N2); else n2 |
 | `csk` (R2C), `cxp` and `cxd` (C2R), T = 1 | 0; `cxp=3`; off |
 | `rp_` / `rp_c2r_` | even N2: the 1D real estimate at N2 at T (the row batch's K = 1 inner), at T > 1 its `tcmt` by `est_batch_whole`, 0 where the plane is serial (16 N1 (N2/2 + 1) <= L1d / 2); odd N2: the C2C estimate at N2, one thread, out of place |

@@ -431,3 +431,16 @@ After it, all 422 banked cells: **E/P 0.985** (R2C 0.994, C2R 0.976; 362 within 
 night never timed 0.975. Noticed, not filled: R2C at x32 rows where the planner fuses the walk below the L2
 (512 x 32, 1024 x 32 1.15 – 1.18); C2R's N1 = 128 leaf (rule 3) at very wide planes (128 x 8192 1.20, 128 x 4096
 1.11, the planner's plain `16.8`); R2C's half-store leaf at 16 x N2 >= 1024 (1.16 – 1.17).
+
+The owner: "calibrate more cells like these to see the pattern more clearly". 35 new planes raced into the store
+(non-power-of-two shapes and neighbouring lengths), 109 cells timed with every arm. Each gap has one pattern; three
+rules, approved by the owner and built (one thread):
+
+13. **R2C over rows of N2 = 32 from N1 = 256: the fused walk** at every size. 10 of 10 planes (256 – 4096 rows, power
+    of two or not): 1.146 -> 1.003. At rows of 4 – 16 the fused walk costs 5 – 40 %, at 24, 48 and 64 it is mixed.
+14. **C2R at N1 = 128 past 5/8 of the L2: the plain column `16.8`** (the planner's on every such row) instead of
+    rule 3's `b816` leaf. 10 planes 128 x 1536 – 16384: 1.122 -> 0.961. The leaf still wins at 128 x 1024 and below.
+15. **R2C at N1 = 16 over N2 a multiple of 512: the leaf's half-store twin `h`**. 6 planes: 1.099 -> 0.990 (16 x 2048
+    flat). At 16 x 1000, 3000, 6000, 12000 it is 1 – 3 % slower; the 8, 32 and 64-point leaves gain nothing.
+
+The 109 cells as built: 1.033 -> 0.999; the cells the rules do not touch unchanged.
