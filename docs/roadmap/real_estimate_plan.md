@@ -513,4 +513,14 @@ In place, timed for the first time (64 cells raced in place, one thread): 2D 40 
     does. One plane: 4099 x 2048 at 8 threads, R2C 2.75 -> 1.17, C2R 2.62 -> 1.14 -- the only Rader plane banked past
     the L3, so the rule rests on that plane alone; on the smaller Rader planes the plain column was slower (109 x 512
     0.96 -> 1.26). Open: the large Rader columns below the L3 (4099 x 512 1.35 – 1.53, 4099 x 1024 1.18 – 1.27, 2053
-    x 1024 1.21), which no threaded verdict of the column moves -- the Rader stage itself at T, not studied.
+    x 1024 1.21), which no threaded verdict of the column moves -- the Rader stage itself, studied next:
+25. **At T > 1 the Rader stage's window is 8 columns** (not `EST_ND_RD_W` = 32), the planner's window at every prime
+    from 1031 up. 14 prime-column planes, 53 x 64 – 4099 x 2048, both directions, 8 threads, as built: 1.111 -> 1.032,
+    15 faster, 2 slower (C2R 263 x 2048 0.83 -> 0.93; C2R 521 x 8192 1.05 -> 1.17, where the planner's window is 24);
+    4099 x 512 1.38 – 1.54 -> 1.00. At one thread the window of 32 stays (8 was slower at 17 of 28). Bluestein is not
+    the lever here: the planner raced it on these planes at both thread counts and banked the Rader chain, and the
+    turned prime pass (Bluestein through the 1D prime route) is serial in the door. Open: the Rader inner chain at
+    2053 (`4.27.19`, a spilling 27; `est__rd_inner_bad` rejects every candidate of 2052 for its unavoidable 19, so
+    `est__rader` falls back to the engine's pick) -- the planner's `9.19.12` / `3.3.19.12` take the 2053 planes from
+    1.03 – 1.11 to 0.91 – 0.97 at one thread and from 1.10 – 1.16 to 0.99 – 1.08 at 8; the filter is shared with the C2C
+    estimate, the owner's call.

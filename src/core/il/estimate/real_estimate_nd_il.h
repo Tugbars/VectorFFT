@@ -203,6 +203,19 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     if (est_col_plan(m, N1, hp1, 1, &p->col, why, whylen))
         return -1;
     p->col.tpc = -1;              /* no turned prime pass on a real row (il2d_tier.h:3278-3281) */
+    if (T > 1 && p->col.rd_n > 0)
+    {   /* THE RADER WINDOW AT T (2026-11-02): 8 columns, not EST_ND_RD_W, clipped as est__rader clips it -- the
+         * planner's window at every prime from 1031 up. 8 threads, 14 prime-column planes 53 x 64 - 4099 x 2048 both
+         * directions: 1.111 -> 1.026, 15 faster, one slower (C2R 521 x 8192, 1.05 -> 1.13; the planner's 24 there);
+         * 4099 x 512 1.38 - 1.54 -> 1.00. At one thread the window of 32 stays (8 was slower at 17 of 28) */
+        size_t W = 8;
+        const size_t ncol = (size_t)(N1 / p->col.R[0]) * (size_t)hp1;
+        if (W > ncol)
+            W = ncol & ~(size_t)1;
+        if (W < VFFT_ILRD_W_MIN)
+            W = VFFT_ILRD_W_MIN;
+        p->col.rdw = (int)W;
+    }
     if ((N1 == 8 || N1 == 16 || N1 == 32 || N1 == 64) && p->col.blu <= 0 && p->col.nst > 1)
     {   /* a column pass of 8 to 64 points in one stage at any width, where C2C's formula splits it on a wide row
          * (stage 3 study, 2026-11-02: N1 = 64 1.09 - 1.37 -> 1.00 - 1.05 on 4 of 8 planes, none slower; the unseen
