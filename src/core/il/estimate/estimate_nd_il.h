@@ -605,25 +605,29 @@ static inline int est__rd_inner_bad(const int *Rs, int nst)
 /* the Rader stage at stage 0 (sketch §6): the inner chain of p - 1 the engine's own pick (_ilrd_pick_chain,
  * il_rader_stage.h:184; never led by radix 64, so the request rebuilds it, :392) unless est__rd_inner_bad;
  * then, of the engine's candidates (_ilrd_enum_inners, :705, the planner's race pool), the fewest stages
- * that pass, the smallest radices first (the pick when none passes); the window EST_ND_RD_W within the
- * column space (N / p) w, as the engine takes a requested width (_ilrd_create, :433-438). */
+ * that pass, the smallest radices first. When none passes (every chain holds a prime factor of p - 1 the
+ * check rejects, 19 at p = 2053) and the pick holds a spilling radix, the 1D estimate's order
+ * (est_rader_window): the fewest stages without one, the smallest radices first (2026-11-02: the 2053
+ * planes 4.27.19 -> 9.19.12, 1.03-1.11 -> 0.91-0.97 against the planner at T = 1). The window EST_ND_RD_W
+ * within the column space (N / p) w, as the engine takes a requested width (_ilrd_create, :433-438). */
 static inline int est__rader(est_col_t *c, int p)
 {
     const size_t ncol = (size_t)(c->N / p) * (size_t)c->w;
     _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
     size_t W;
-    int nestp = 0, n, i, best = -1;
+    int nestp = 0, n, i, pass, best = -1;
     if (!_ilrd_pick_chain(p - 1, c->rd, &c->rd_n, &nestp))
         return -1;
     if (est__rd_inner_bad(c->rd, c->rd_n))
     {
         n = _ilrd_enum_inners(p - 1, cand, VFFT_ILRD_MAX_INNERS);
-        for (i = 0; i < n; i++)
-            if (!est__rd_inner_bad(cand[i].Rs, cand[i].nst) &&
-                (best < 0 || cand[i].nst < cand[best].nst ||
-                 (cand[i].nst == cand[best].nst &&
-                  memcmp(cand[i].Rs, cand[best].Rs, sizeof(int) * (size_t)cand[i].nst) < 0)))
-                best = i;
+        for (pass = 0; best < 0 && pass < 1 + est_rader_inner_spills(c->rd, c->rd_n); pass++)
+            for (i = 0; i < n; i++)
+                if (!(pass ? est_rader_inner_spills(cand[i].Rs, cand[i].nst) : est__rd_inner_bad(cand[i].Rs, cand[i].nst)) &&
+                    (best < 0 || cand[i].nst < cand[best].nst ||
+                     (cand[i].nst == cand[best].nst &&
+                      memcmp(cand[i].Rs, cand[best].Rs, sizeof(int) * (size_t)cand[i].nst) < 0)))
+                    best = i;
         if (best >= 0)
         {
             memcpy(c->rd, cand[best].Rs, sizeof(int) * (size_t)cand[best].nst);

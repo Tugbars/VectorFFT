@@ -519,8 +519,14 @@ In place, timed for the first time (64 cells raced in place, one thread): 2D 40 
     15 faster, 2 slower (C2R 263 x 2048 0.83 -> 0.93; C2R 521 x 8192 1.05 -> 1.17, where the planner's window is 24);
     4099 x 512 1.38 – 1.54 -> 1.00. At one thread the window of 32 stays (8 was slower at 17 of 28). Bluestein is not
     the lever here: the planner raced it on these planes at both thread counts and banked the Rader chain, and the
-    turned prime pass (Bluestein through the 1D prime route) is serial in the door. Open: the Rader inner chain at
-    2053 (`4.27.19`, a spilling 27; `est__rd_inner_bad` rejects every candidate of 2052 for its unavoidable 19, so
-    `est__rader` falls back to the engine's pick) -- the planner's `9.19.12` / `3.3.19.12` take the 2053 planes from
-    1.03 – 1.11 to 0.91 – 0.97 at one thread and from 1.10 – 1.16 to 0.99 – 1.08 at 8; the filter is shared with the C2C
-    estimate, the owner's call.
+    turned prime pass (Bluestein through the 1D prime route) is serial in the door.
+26. **The Rader inner chain when every candidate fails the check** (`est__rader`, shared with C2C; the owner: fix it
+    where it lives). `est__rd_inner_bad` rejects every candidate of 2052 for its unavoidable 19, and the engine's pick
+    it fell back to, `4.27.19`, holds a spilling 27. Now, when none passes and the pick spills, the 1D estimate's
+    order (`est_rader_window`): of the engine's candidates, the fewest stages without a spilling radix, the smallest
+    radices first -- `9.19.12` at 2053, the planner's own chain on two of the six planes. The six 2053 planes, both
+    directions, as built: one thread 1.03 – 1.12 -> 0.89 – 0.94, 8 threads 1.10 – 1.16 -> 0.96 – 1.07 (controls 0.98 –
+    1.01); 12 checks pass. It reaches 224 primes up to 16,400 (1,032 up to 70,000); banked, besides the 2053 planes,
+    only two C2C cells: 6151 x 16 x 32 at 8 threads 1.138 (10-31) -> 1.020 (control 0.947, noisy), and 8191 x 8, whose
+    planner already runs `15.13.3.14`, the new pick, and whose 1.56 is the turn verdict (`turn=1`, the planner's
+    `turn=0 ro=2`), not the chain.
