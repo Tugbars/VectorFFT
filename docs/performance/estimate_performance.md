@@ -854,6 +854,41 @@ Bluestein method.
 
 ---
 
+## 2D and 3D real transforms (R2C and C2R): a first sample
+
+Not counted in the totals above. The estimate arm is
+[`il/estimate/real_estimate_nd_il.h`](../../src/core/il/estimate/real_estimate_nd_il.h) (`VFFT_FLAG_ESTIMATE`
+serves one R2C or C2R transform at rank 2 and 3, natural order, either placement, any thread count), built through
+the same private store and replay as the library's C2C estimate, measuring nothing at create. Its column passes take
+the C2C formulas, its rows the 1D real estimate; the forms, the row engine, the strips and the threaded verdicts take
+the rules of the study in
+[`docs/roadmap/real_estimate_plan.md`](../roadmap/real_estimate_plan.md) (section 9).
+
+Measured on 2026-11-02 against the planner's plans raced into this machine's store the same night: out of place,
+both directions, the planner's plan, the estimate's, and the planner's again as the control, in one process, 15
+rounds, the median of the per-round ratios; C2R on Hermitian input. The shapes are a grid by cache layer (the
+spectrum's bytes against the L1d, the L2 and the L3, and beyond) and class (powers of two, smooth composites, odd
+composite and prime real axes, an even real axis with a prime half, prime columns; at 3D a prime axis 0 and a prime
+N2). The rules were fitted on the grid; the unseen planes are the same layers and classes at other sizes.
+
+| Set | Cells | Threads | Estimate ÷ planner | Control ÷ planner |
+|---|---:|---:|---|---|
+| 2D grid, 50 planes | 100 | 1 | 1.008 | 1.001 |
+| 2D unseen, 32 planes | 64 | 1 | 1.018 | 0.997 |
+| 2D grid | 100 | 8 | 1.040 | 1.001 |
+| 3D grid, 25 volumes | 50 | 1 | 1.026 | 1.001 |
+| 3D grid | 50 | 8 | 1.088 | 1.006 |
+
+By layer, the estimate over the planner:
+
+| Set | L1 | L2 | L3 | Beyond the L3 |
+|---|---|---|---|---|
+| 2D grid, 1 thread | 1.006 | 1.017 | 1.002 | 1.005 |
+| 2D unseen, 1 thread | 1.022 | 1.034 | 1.008 | 0.972 |
+| 2D grid, 8 threads | 0.894 | 1.137 | 1.048 | 1.248 |
+| 3D grid, 1 thread | 1.008 | 1.037 | 1.038 | 1.016 |
+| 3D grid, 8 threads | 1.056 | 1.174 | 1.098 | 0.971 |
+
 ## Estimate against MKL: every N from 128 to 4,096
 
 > **Competitor:** Intel oneMKL 2025.3 (sequential)  

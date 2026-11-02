@@ -584,3 +584,34 @@ its candidate list led with 64 wherever p - 1 is a multiple of 64, and a request
 composite above 47 cannot be rebuilt (il_rader_stage.h:392), so such rows could not replay. The engine
 now never leads with 64 (the first smaller radix moves to stage 0; 641, 769, 1409 and 40961 take a
 greedy with 64 barred from stage 0), and the estimate takes the engine's pick as it is.
+
+## 15. Real transforms (R2C and C2R) at rank 2 and 3 (2026-11-02)
+
+`il/estimate/real_estimate_nd_il.h`. One transform, natural order, either placement, any T; a batch and
+`VFFT_FLAG_OWN_PITCH` are refused. One `t=r2c` row serves both directions; the estimate writes the requested
+direction's verdicts (C2R's under `_c2r`). The evidence and the study grid are in
+`docs/roadmap/real_estimate_plan.md`, section 9.
+
+**2D** (`il/rank2/fft2d_create_il.h`; N2 the real axis, the spectrum N1 x (N2/2 + 1)):
+
+| Verdict | Formula |
+|---|---|
+| column pass `chain forms blu rd rdw` | `est_col_plan` at (N1, N2/2 + 1), natural, as C2C; no `tpc` on a real row; a power-of-two N1 from 8 to 64 one stage at any width; `forms` spelled from the door's real pool (R2C's adds the half-store twins at the leaf), each stage the full-store default |
+| `wl` | 0 |
+| `cmt mtarm msw` (T > 1) | threaded past half the L1d (the real plane's bytes, `est_mt_2d`'s rule), the strips at `est__msw_2d`'s width |
+| `rx rxs` | the rows kernel `lm` out of place on one thread where it exists (N2 4 .. 32 at 4 lanes), else the door's row child; R2C at odd N2 the 1D real estimate's odd engine (`zrf`, `zrb`; not `zrm`); `rxs` any. C2R at odd N2 has no row engine. |
+| `cx cxs` | strided on a natural chain, else plain; N1 = 128 the column leaf (R2C `b448`; C2R `b816` at one thread only); none on a Bluestein pass; `cxs` any |
+| `tf` (T = 1) | C2R always; R2C past the L2 |
+| `raxis` (R2C, T = 1, out of place) | n1 (the real axis on N1) where N1 is even, at least 4, and N2 an odd prime up to 2048, with its children `rax_` (`est_col_plan` at N1/2 over N2 columns, scrambled) and `raxr_` (the C2C estimate at N2); else n2 |
+| `csk` (R2C), `cxp` and `cxd` (C2R), T = 1 | 0; `cxp=3`; off |
+| `rp_` / `rp_c2r_` | even N2: the 1D real estimate at N2 at T (the row batch's K = 1 inner), at T > 1 its `tcmt` by `est_batch_whole`, 0 where the plane is serial (16 N1 (N2/2 + 1) <= L1d / 2); odd N2: the C2C estimate at N2, one thread, out of place |
+
+**3D** (`il/rank3/fftnd_real_il.h`; N3 the real axis):
+
+| Verdict | Formula |
+|---|---|
+| axis 0 `chain forms blu rd rdw` | `est_col_plan` at (N1, N2 (N3/2 + 1)), the scrambled pass |
+| axis 1 `chain1 forms1 blu1 rd1 rdw1` | `est_col_plan` at (N2, N3/2 + 1), scrambled, wherever axis 0 is a plain chain with a leaf kernel (the pay-once pieces the door builds anyway) |
+| `s nf nsw` | the child (`s=1`); in place (`nf=1`), the strips (`nf=2`) for R2C past four L2s and for C2R past the L3, on a plain axis 0 with no Rader stage and 16 N1 <= L1d / 4, `nsw` the door's policy width |
+| `cmt cmtt cmts cmtf` (T > 1) | `est_mt_3d`'s bound (serial while the cube times min(N1, N2 N3, T) fits 32 KiB per thread); else the plane arm on the child (`cmts=1`), the strips where axis 0 is a plain chain, in place on a one-stage Rader axis 0 (`cmtf=2`, `1`; R2C with a natural twin runs the child threaded only in strips), `cmtt` = T |
+| `plane_` | the 2D estimate at (N2, N3), one thread (in place for an in-place R2C) |

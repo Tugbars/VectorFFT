@@ -57,9 +57,12 @@
  *      long-double DFT of a real input (every bin of the half to N = 4096, above it 32 of them), the C2R to 4096
  *      from the exact half spectrum against N x, above it the round trip through the R2C plan. The count of
  *      executes that ran a threaded arm is reported.
+ *   RD2, RD3  one R2C and one C2R transform at rank 2 and 3 (il/estimate/real_estimate_nd_il.h), both placements,
+ *      natural: nothing measured, built, R2C against the long-double DFT on 48 sampled bins, C2R bringing that
+ *      checked spectrum back to the product of the extents times x; RD2T and RD3T the same at T = 8.
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: a real transform at rank 2 or in a batch, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
+ *   R  the refusals: a real transform in a batch or at its own pitch at rank 2, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
@@ -1094,6 +1097,120 @@ static void sec_end_rl(const char *name, long b0, long mt0)
            name, g_checks - s_checks, f, g_rl_built - b0, g_rl_mt - mt0, f ? "FAIL" : "PASS");
 }
 
+/* ── RD: one R2C or C2R transform at rank 2 and 3 (il/estimate/real_estimate_nd_il.h) ── */
+static long g_rd_built = 0;
+static double g_rd_e = 0.0;
+/* one shape, both placements, both directions: nothing measured, built, R2C against the long-double DFT on 48 sampled
+ * bins (every output row padded to N/2 + 1 bins), C2R bringing that checked spectrum back to the product of the
+ * extents times x */
+static void rd_cell(int rank, int n0, int n1, int n2, int T)
+{
+    const int A = rank == 2 ? n0 : n0 * n1, B = rank == 2 ? n1 : n2;
+    const size_t hp1 = (size_t)B / 2 + 1;
+    int ip;
+    for (ip = 0; ip < 2; ip++)
+    {
+        const size_t rp = ip ? 2 * hp1 : (size_t)B, nreal = (size_t)A * rp, ncpx = (size_t)A * hp1;
+        double *x = vfft_malloc((nreal + 8) * sizeof(double)), *spec = vfft_malloc((2 * ncpx + nreal + 8) * sizeof(double));
+        double *back = vfft_malloc((2 * ncpx + nreal + 8) * sizeof(double));
+        char name[96];
+        vfft_config_t c;
+        vfft_plan f, b;
+        int measured, k, r;
+        if (rank == 3) snprintf(name, sizeof name, "%dx%dx%d %s T=%d", n0, n1, n2, ip ? "ip" : "oop", T);
+        else snprintf(name, sizeof name, "%dx%d %s T=%d", n0, n1, ip ? "ip" : "oop", T);
+        memset(&c, 0, sizeof c);
+        c.rank = rank;
+        c.n[0] = n0; c.n[1] = n1; c.n[2] = rank == 3 ? n2 : 0;
+        c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+        c.nthreads = T;
+        c.transform = VFFT_R2C;
+        f = est_create(&c, &measured);
+        CHECK(!measured, "M  r2c %s: the create MEASURED", name);
+        CHECK(f != NULL, "RD r2c %s: refused: %s", name, vfft_error());
+        c.transform = VFFT_C2R;
+        b = est_create(&c, &measured);
+        CHECK(!measured, "M  c2r %s: the create MEASURED", name);
+        CHECK(b != NULL, "RD c2r %s: refused: %s", name, vfft_error());
+        srand(11 + n0 * 31 + n1 * 7 + n2);
+        memset(x, 0, (nreal + 8) * sizeof(double));
+        for (r = 0; r < A; r++)
+            for (k = 0; k < B; k++) x[(size_t)r * rp + k] = (double)rand() / RAND_MAX - 0.5;
+        if (f)
+        {
+            double err = 0, mag = 0;
+            int s;
+            if (ip) { memcpy(spec, x, nreal * sizeof(double)); vfft_execute(f, VFFT_FORWARD, spec, spec); }
+            else vfft_execute(f, VFFT_FORWARD, x, spec);
+            for (s = 0; s < 48; s++)
+            {
+                const int k0 = s == 0 ? 0 : (int)(((unsigned)s * 2654435761u) % (unsigned)n0);
+                const int k1 = rank == 2 ? 0 : (s == 0 ? 0 : (int)(((unsigned)s * 97u + 13u) % (unsigned)n1));
+                const int kb = s == 1 ? (int)(hp1 - 1) : (int)(((unsigned)s * 40503u) % (unsigned)hp1);
+                long double re = 0, im = 0;
+                for (r = 0; r < A; r++)
+                {
+                    const int i0 = rank == 2 ? r : r / n1, i1 = rank == 2 ? 0 : r % n1;
+                    const long double ph = (long double)((long long)k0 * i0 % n0) / n0 +
+                                           (rank == 3 ? (long double)((long long)k1 * i1 % n1) / n1 : 0.0L);
+                    for (k = 0; k < B; k++)
+                    {
+                        const long double ang = -2.0L * 3.14159265358979323846264L * (ph + (long double)((long long)kb * k % B) / B);
+                        re += x[(size_t)r * rp + k] * cosl(ang);
+                        im += x[(size_t)r * rp + k] * sinl(ang);
+                    }
+                }
+                {
+                    const size_t row = rank == 2 ? (size_t)k0 : (size_t)k0 * n1 + k1;
+                    const double *o = spec + 2 * (row * hp1 + kb);
+                    const double d = hypot(o[0] - (double)re, o[1] - (double)im), m = hypot((double)re, (double)im);
+                    if (d > err) err = d;
+                    if (m > mag) mag = m;
+                }
+            }
+            err = mag > 0 ? err / mag : err;
+            CHECK(err <= TOL, "RD r2c %s: forward %.2e (tolerance %.0e, sampled bins)", name, err, TOL);
+            if (err > g_rd_e) g_rd_e = err;
+            g_rd_built++;
+            if (b)
+            {
+                const double NN = (double)n0 * n1 * (rank == 3 ? n2 : 1);
+                double rerr = 0, rmag = 0;
+                memcpy(back, spec, 2 * ncpx * sizeof(double));
+                if (ip) vfft_execute(b, VFFT_BACKWARD, back, back);
+                else
+                {
+                    double *o = vfft_malloc((nreal + 8) * sizeof(double));
+                    vfft_execute(b, VFFT_BACKWARD, back, o);
+                    memcpy(back, o, nreal * sizeof(double));
+                    vfft_free(o);
+                }
+                for (r = 0; r < A; r++)
+                    for (k = 0; k < B; k++)
+                    {
+                        const double want = NN * x[(size_t)r * rp + k], got = back[(size_t)r * rp + k];
+                        if (fabs(got - want) > rerr) rerr = fabs(got - want);
+                        if (fabs(want) > rmag) rmag = fabs(want);
+                    }
+                rerr = rmag > 0 ? rerr / rmag : rerr;
+                CHECK(rerr <= TOL, "RD c2r %s: from the R2C spectrum %.2e (tolerance %.0e)", name, rerr, TOL);
+                if (rerr > g_rd_e) g_rd_e = rerr;
+                g_rd_built++;
+            }
+        }
+        vfft_destroy(f);
+        vfft_destroy(b);
+        vfft_free(x); vfft_free(spec); vfft_free(back);
+    }
+}
+static void sec_end_rd(const char *name, long b0)
+{
+    const int f = g_fail - s_fail;
+    printf("SECTION %-4s: %d checks, %d failed; %ld real plans built and correct, worst error %.1e -> %s\n", name,
+           g_checks - s_checks, f, g_rd_built - b0, g_rd_e, f ? "FAIL" : "PASS");
+    g_rd_e = 0.0;
+}
+
 static void env_set(const char *name, const char *val)
 {
 #ifdef _WIN32
@@ -1143,7 +1260,7 @@ int main(int argc, char **argv)
 #endif
     d0 = dir_digest(g_W, &f0);
     e0 = dir_digest(g_D, &d0n);
-    printf("ESTIMATE GATE: VFFT_FLAG_ESTIMATE, C2C at rank 1, 2 and 3, R2C and C2R at rank 1; store %s (%d file(s)); "
+    printf("ESTIMATE GATE: VFFT_FLAG_ESTIMATE, C2C at rank 1, 2 and 3, R2C and C2R at rank 1, 2 and 3; store %s (%d file(s)); "
            "the library's store %s\n",
            g_W, f0, g_D);
 
@@ -1151,10 +1268,13 @@ int main(int argc, char **argv)
     sec_begin();
     {
         vfft_config_t c;
-        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.transform = VFFT_R2C;
-        refused("R2C rank 2", &c, "plans one VFFT_R2C transform at rank 1, not rank 2 or 3");
+        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.transform = VFFT_R2C;
+        refused("R2C rank 2 howmany 4", &c, "plans one VFFT_R2C transform, not a batch");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.transform = VFFT_C2R;
-        refused("C2R howmany 4", &c, "plans one VFFT_C2R transform at rank 1, not a batch");
+        refused("C2R howmany 4", &c, "plans one VFFT_C2R transform, not a batch");
+        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.transform = VFFT_R2C; c.flags = VFFT_FLAG_OWN_PITCH;
+        c.placement = VFFT_PLACEMENT_IN;
+        refused("R2C rank 2 own pitch", &c, "not with VFFT_FLAG_OWN_PITCH");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C; c.order = VFFT_ORDER_SCRAMBLED;
         refused("R2C scrambled", &c, "a real plan is natural order only");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DCT2;
@@ -1359,6 +1479,38 @@ int main(int argc, char **argv)
             nd_cell(3, c1, 64, c3, T3);
         }
         sec_end_nd(T3 > 1 ? "D3T" : "D3", b0);
+    }
+
+    /* RD2, RD3: one R2C and one C2R transform at rank 2 and 3, both placements, natural; RD2T and RD3T the same at
+     * T = 8. The planes: the edges (axes of 2 and 3), powers of two through the L3, smooth and odd composite real
+     * axes, prime real axes (odd Bluestein), even real axes with a prime half, prime columns (Rader, Bluestein). The
+     * volumes: the edges, powers of two, an odd real axis, a prime axis 0 */
+    for (TR = 1; TR <= 8; TR += 7)
+    {
+        static const int RD2[][2] = {
+            { 2, 2 }, { 2, 3 }, { 3, 2 }, { 2, 64 }, { 64, 2 }, { 3, 1000 }, { 1000, 3 }, { 4096, 4 },
+            { 16, 16 }, { 32, 32 }, { 64, 64 }, { 8, 256 }, { 128, 16 }, { 128, 128 }, { 256, 256 }, { 64, 1024 },
+            { 1024, 64 }, { 512, 512 }, { 1024, 1024 },
+            { 12, 60 }, { 48, 48 }, { 100, 100 }, { 360, 360 }, { 1000, 1000 },
+            { 32, 63 }, { 16, 105 }, { 128, 225 }, { 64, 945 }, { 25, 27 },
+            { 16, 61 }, { 32, 127 }, { 64, 1031 }, { 16, 262 }, { 64, 2062 },
+            { 53, 64 }, { 61, 32 }, { 109, 512 }, { 211, 256 }, { 47, 47 }, { 97, 96 },
+        };
+        static const int RD3[][3] = {
+            { 2, 2, 2 }, { 2, 3, 4 }, { 3, 3, 3 }, { 2, 2, 64 }, { 64, 2, 2 }, { 5, 5, 5 }, { 7, 9, 11 },
+            { 8, 8, 8 }, { 16, 16, 16 }, { 32, 32, 32 }, { 4, 256, 64 }, { 64, 64, 64 },
+            { 27, 9, 15 }, { 64, 64, 15 }, { 16, 64, 63 }, { 100, 10, 12 }, { 53, 16, 16 }, { 17, 16, 16 },
+        };
+        long b0 = g_rd_built;
+        sec_begin();
+        for (i = 0; i < (int)(sizeof RD2 / sizeof RD2[0]); i++)
+            rd_cell(2, RD2[i][0], RD2[i][1], 0, TR);
+        sec_end_rd(TR > 1 ? "RD2T" : "RD2", b0);
+        b0 = g_rd_built;
+        sec_begin();
+        for (i = 0; i < (int)(sizeof RD3 / sizeof RD3[0]); i++)
+            rd_cell(3, RD3[i][0], RD3[i][1], RD3[i][2], TR);
+        sec_end_rd(TR > 1 ? "RD3T" : "RD3", b0);
     }
 
     /* B1, B2, B3: contiguous batches over the routes of A and the shapes of D, on one thread (bitwise the

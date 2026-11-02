@@ -700,6 +700,8 @@ out:
 #include "il/estimate/c2c_estimate_lm_il.h"
 /* one 1D real transform (R2C and C2R), on this file's replay and detectors */
 #include "il/estimate/real_estimate_il.h"
+/* one 2D real transform, on the column pieces of the 2D build and the 1D real estimate */
+#include "il/estimate/real_estimate_nd_il.h"
 
 /* ── the environment guard ──────────────────────────────────────────────── */
 
@@ -724,7 +726,12 @@ out:
  *     row, plane_queue.h _pq_mt_replay_or_race and _pq_mt_race);
  *   - the 1D real doors (il/estimate/real_estimate_il.h): VFFT_ZRM, VFFT_ZRF, VFFT_ZFSR (zrp_build.h:178,
  *     271, 365), VFFT_ZRP and VFFT_ZTTR (zrp_build.h:975, 991: an engine pin beats the row), VFFT_ZRB
- *     (odd_build.h:328), VFFT_ZR2C_ROUTE (zr2c_build.h:720).
+ *     (odd_build.h:328), VFFT_ZR2C_ROUTE (zr2c_build.h:720);
+ *   - the 2D real door (il/estimate/real_estimate_nd_il.h): VFFT_IL2D_RX / _RX_C2R (il2d_real_plan.h:772),
+ *     VFFT_IL2D_CX / _CX_C2R (il2d_real_plan.h:1570), VFFT_IL2D_CXD_C2R (il2d_real_plan.h:1964),
+ *     VFFT_IL2D_RAXIS (il2d_real_axis.h:369), VFFT_IL2D_TF / _TF_C2R (il2d_real_fuse.h:198),
+ *     VFFT_IL2D_CXP_C2R and VFFT_IL2D_RCSK (il2d_real_pitch.h:80, 250);
+ *   - the 3D real door (fftnd_real_il.h:1318, 1702): VFFT_ILNDR_ARM, _NF, _SW, _WL, and at T > 1 _MT and _PT.
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_TCMT_LOG, VFFT_TCMT_VERBOSE, VFFT_VERBOSE, ...), the execute-time profiling
  * (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate
@@ -742,6 +749,9 @@ static const char *const est_env_names[] = {
     "VFFT_ILND_ARM", "VFFT_ILND_WL", "VFFT_ILND_NF", "VFFT_ILND_SW", "VFFT_ILND_MT", "VFFT_ILND_PT",
     "VFFT_NO_TCMT", "VFFT_TCMT", "VFFT_PQ_NO_MT",
     "VFFT_ZRM", "VFFT_ZRP", "VFFT_ZTTR", "VFFT_ZFSR", "VFFT_ZRF", "VFFT_ZRB", "VFFT_ZR2C_ROUTE",
+    "VFFT_IL2D_RX", "VFFT_IL2D_RX_C2R", "VFFT_IL2D_CX", "VFFT_IL2D_CX_C2R", "VFFT_IL2D_CXD_C2R", "VFFT_IL2D_RAXIS",
+    "VFFT_IL2D_TF", "VFFT_IL2D_TF_C2R", "VFFT_IL2D_CXP_C2R", "VFFT_IL2D_RCSK",
+    "VFFT_ILNDR_ARM", "VFFT_ILNDR_NF", "VFFT_ILNDR_SW", "VFFT_ILNDR_WL", "VFFT_ILNDR_MT", "VFFT_ILNDR_PT",
 };
 /* the first steering variable set in this process's environment, NULL when none is */
 static inline const char *est_env_steers(void)
@@ -776,6 +786,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims >= 2)
+        return _vfft_create_estimate_real_nd(&m, cfg);
     if (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
         return _vfft_create_estimate_real(&m, cfg);
     if (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)

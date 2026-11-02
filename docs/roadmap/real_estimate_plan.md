@@ -269,10 +269,141 @@ cells come after):
 6. The pair: 10 second when it divides; else the most balanced pair whose second factor is at least 10; else the
    most balanced, smaller first.
 
+**The six rules, built (the owner: "yes to all"), judged on the arms already timed (2026-11-01, no new timing):** each
+cell's recipe under the rules matched to a timed arm: the old estimate's, the planner's, or the forced arm that
+makes the same change. The study's one-thread cells 1.037 -> 1.015 (94 of 96 matched), its 8-thread cells 1.263 ->
+1.028 (88 of 92), the targeted cells 1.059 -> 1.015 (84 of 84). The 6 unmatched cells are 1,035, whose chain the
+rule turns into 9.5.23; the arm timed at one thread out of place was 0.99 -> 1.04. The 8-thread gain is the
+threading rules: `zttr` 10 cells 3.0 -> 1.11, `zrb` 6 cells 3.1 -> 1.03.
+- **Still behind, untouched by the rules:** `zttr` at 8 threads takes a 2,048 tile on all 10 cells, the planner 1,024
+  on 8 (16,384 and 65,536: 1.20 – 1.29); R2C 100,000 at 8 threads threads the fold, the planner does not (1.32; C2R
+  100,000 and R2C 1,000,000 want it threaded); C2R 1,000,000's complex half (1.21 – 1.24) and the C2R child route at
+  1,000 and 6,000 (1.10 – 1.12) come from the C2C side.
+- **The unseen cells** (59 of 60 raced by the planner before the run was stopped; not timed): the estimate's engine
+  is the planner's on all 59, the whole recipe on 10; at 8 threads the thread choice agrees on all 23 recipes that
+  differ, the fold on 21. The differences are the Bluestein inner's shape and tile, and the complex half's details.
+- **The real four-step at 8 threads** (`zfsr`, the C2C four-step's threaded split and child at N/2; the owner: "yes"):
+  built; the 20 cells (2^20 – 2^24, both directions, both placements) plan and compute within 1e-15; not timed.
+
+**Real ZTURN-T at 8 threads: the cause (2026-11-01, 23:05 – 23:25; the 10 cells 16,384 – 262,144, 15 rounds, control
+1.002 – 1.013):** the estimate as built 1.104 – 1.123. One change at a time: the planner's stage order 1.035 – 1.040
+(6 faster, 1 slower), the tile 1,024 1.152 (worse), the planner's stk no change; the planner's whole recipe built by
+`est_build_real` 1.013 (the arms are faithful). The order carries the gap; at 16,384 only the order with the 1,024
+tile together is fast. Candidate orders: ascending (the 4s first, the 8s last) with the tile 1,024 1.042 (6 faster,
+none slower), ascending alone 1.075, one 8 moved to the end 1.104. **Proposal (waiting for the owner's fresh-cell
+check):** at T > 1 real ZTURN-T takes its stages ascending and the tile 1,024.
+
 ## 8. Noticed, not filled (unverified)
 - The 1D lane-major real Bluestein path (`_vfft_create_real_lanes`, rows `eng=zrbl`) looks unreachable for an
   interleaved batch: `vfft.c` serves or refuses every lane-major K > 1 before `_vfft_create_real`.
 - `fftnd_real_il.h` seeds the 3D plane from the 2D row keyed at `nthreads=T`, but creates the plane child at one
-  thread. Whether the child's lookup reconciles the two was not checked.
+  thread (confirmed 2026-11-02, `fftnd_real_il.h:1238, 1370, 1386`): at T > 1 the borrowed seed is invisible to the
+  child, which races. No 3D real row at T > 1 exists yet to show it in the data.
+- The 2D real door's in-place plan looks up a `zr2c` row engine's child at `is_inplace=0` but banks it at the plan's
+  placement (`il2d_real_plan.h:495` against `:509`, `:1158`), so an in-place plan with `rx=zr2c_r*` would race its
+  child at every create (read from the code, not run).
 - A `zfsr` row whose child is missing makes the door race the whole cell, its engine included
   (`il/wisdom/wisdom2_real_il.h`, `vw2_real_il_lookup_zfsr`), where only the child is missing.
+
+## 9. Stage 3, step 1: the 2D and 3D build (2026-11-02, overnight; the owner: "full approval")
+
+**Built, no new rule.** `src/core/il/estimate/real_estimate_nd_il.h`, its own file beside the 1D one, reached from
+`_vfft_create_estimate` for R2C and C2R at rank 2 and 3; the front door admits one real transform at rank 1 to 3 in
+natural order (`vfft_api.h`; a batch and `VFFT_FLAG_OWN_PITCH` refused by name); the 2D and 3D real doors'
+switches joined the steering list (`c2c_estimate_il.h`).
+- **2D** (`est_plan_2d_real`): the column pass by `est_col_plan` at (N1, N2/2 + 1), natural, as C2C; the forms as the
+  door's real race spells them (R2C's pool adds the half-store twins at the leaf, so its token is always written;
+  each stage the full-store default, the planner's leaf in the store 4 times in 5); `wl` 0; at T > 1 `est_mt_2d`'s
+  column rule at the real plane's bytes (threaded past half the L1d, the strips at `est__msw_2d`'s width); the row
+  engine `lm` where it is offered, else the door's row child; the column form strided on a natural chain, else
+  plain; one thread: `tf` past the L2, `raxis` n2, `csk` 0, C2R's `cxp` 0 and `cxd` off; the row child the 1D real
+  estimate at N2 (at T > 1 with the batch's verdict by `est_batch_whole`), at odd N2 the C2C estimate at N2. The row
+  engine can also be the 1D real estimate's engine at N2 (its child written under `rx_` for `zr2c`).
+- **3D** (`est_plan_3d_real`): axis 0 by `est_col_plan` at (N1, N2 (N3/2 + 1)), the scrambled pass; axis 1's pay-once
+  chain at (N2, N3/2 + 1) wherever axis 0 is a plain chain; the child in place (`s=1 nf=1`, the store's majority);
+  at T > 1 `est_mt_3d`'s bound, the plane arm on the child with the strips where axis 0 is a plain chain (R2C with a
+  natural twin cannot run the child in place threaded, `fftnd_real_il.h:1830`), `cmtt` written; the plane child the
+  2D estimate at (N2, N3), one thread.
+- **The build and checks:** the 1D builds' steps (`est__replay`'s detectors: nothing measured, nothing re-banked)
+  and a plan check (the column chain, the row engine by the door's own spelling, the column form, the one-thread
+  forms only where asked, the threaded verdict, the children; at 3D the structure, the threaded verdict and the
+  plane child as the 2D recipe).
+- **Checked** (scratch `ndchk`, long-double DFT on 48 sampled bins for R2C, C2R back from that spectrum): every
+  plane of the study grid at 1 and 8 threads out of place, 13 planes and 12 volumes in place, the edge shapes
+  (axes of 2 and 3, tiny odd axes) at both ranks, both placements, 1 and 8 threads: all built, nothing measured,
+  worst error under 3e-15. The gate gained `RD2 RD2T RD3 RD3T` (built, not run) and its real refusals now name a
+  batch and the own pitch.
+
+**The study grid** (scratch `nd/cells2d.py`): 50 planes by layer (the spectrum's bytes against L1d 48 KiB, L2 2 MiB,
+L3 36 MiB) and class (powers of two, smooth composites, odd composite real axes, prime real axes, even real axes
+with a prime half, prime columns): 16 in L1, 16 in L2, 13 in L3, 5 beyond. The planner's creates raced into
+`src/wisdom/14900KF` (R2C, then C2R on the shared row), one thread first, then 8 threads.
+
+**The one-thread study (2026-11-02, 00:41 – 01:30; 100 cells, the 50 planes both directions, out of place, 15 rounds,
+control 1.001; tools in scratch `nd/`, `ndtime` with one-change arms).** The build as above: E/P 1.087 (R2C 1.138,
+C2R 1.039). By layer: L1 1.064, L2 1.134, L3 1.068, beyond 1.069. The gap was R2C at odd real axes (odd composites
+1.17 – 1.82, primes 1.34 – 1.77 by layer): the door's C2C row child where the planner runs a 1D real engine. Six
+rules came out of the arms, each built (the owner's approval for the night):
+1. **R2C at odd N2: the row engine is the 1D real estimate's odd engine** (`zrf`, `zrb`; the small kernel `zrm` stays
+   on the child, 5.3 x slower at 16 x 61): 1.46 -> 1.10 on 8 of 8 `zrf` planes, 1.52 -> 1.24 on 5 of 6 `zrb` planes.
+2. **The fused walk:** C2R at every size (1.07 – 1.12 -> 1.03 on 18 planes below the L2, none slower); R2C past the
+   L2 only (below it 1.10 -> 1.20 at L1); past the L2 turning it off is slower on 28 of 30.
+3. **N1 = 128: the column leaf**, R2C `b448`, C2R `b816` (1.07 – 1.24 -> 0.99 – 1.08).
+4. **C2R's column-inverse pitch `cxp=3`** (1.014 -> 0.999 on 17 planes, none slower).
+5. **N1 = 64: one column stage** at any width (C2C's formula splits it 8.8 on a wide row): 1.09 – 1.37 -> 1.00 – 1.05
+   on 4 of 8, none slower; the planner's chain at every N1 = 64 plane in the store (extended below to N1 = 8 .. 64).
+6. **R2C, odd prime N2 up to 2048, even N1 >= 4: the real axis on N1** (`raxis=n1` with its children `rax_`, the C2C
+   column chain at N1/2 down N2, and `raxr_`, the C2C plan at N2): 16 x 61, 32 x 127, 256 x 127, 64 x 1031, 1024 x
+   1031 1.09 – 1.68 -> 1.00 – 1.07; at 4099 and at the odd composites (but 24 x 45) it is slower.
+With rules 1 – 5 the same 100 cells: **E/P 1.033** (R2C 1.054, C2R 1.012; L1 1.021, L2 1.067, L3 1.014, beyond
+1.014; control 0.999); rule 6 on its 5 planes as above (fitted on these cells; the unseen ones come after).
+Still open: the column chain at N1 >= 1024 (the planner's two radix-32 stages, `32.32`, against C2C's four, run
+1.06 – 1.13 faster on 3 of 5 such planes and slower on others: not one rule yet); the Bluestein row engine's inner at
+N2 = 127 and 1031 in the row role (the planner's `2p:6.32` and `ztt:8.8.4.8` against the 1D estimate's `12.16` and
+`8.8.8.4`).
+
+**The 8-thread study (2026-11-02, 02:16 – 02:45; the same 100 cells at T = 8, control 1.001 – 1.003).** The build
+with the one-thread rules: E/P 1.143 (R2C 1.145, C2R 1.141). Three rules came out of the arms, built:
+7. **The rows kernel `lm` on one thread only** (at 8 threads 2.2 – 3.8 x slower at 16 x 16 and 32 x 32; the door's row
+   child 0.98 – 1.02).
+8. **The row batch serial where the plane is** (16 N1 (N2/2 + 1) <= L1d / 2, the column rule's bound): 8 x 256 and
+   48 x 48 1.06 – 1.83 -> 0.52 – 0.88, the other serial planes flat; above the bound serial rows are 1.6 – 3.5 x slower.
+9. **The N1 = 128 leaf at T > 1 for R2C** (`b448`: 1.15 – 1.33 -> 0.88 – 1.01 on 3 of 4 planes; C2R's mixed, strided
+   kept).
+With them the same 100 cells: **E/P 1.035** (R2C 1.032, C2R 1.039; L1 0.893, L2 1.126, L3 1.043, beyond 1.246).
+Still open at T > 1: the tall power-of-two planes at L2 (1024 x 64, 512 x 128, 256 x 256: 1.4 – 1.6; the planner's
+two radix-32 stages with the matched partition, `mtarm=0`; neither alone closes it); the Rader column at 4099 x 2048
+beyond the L3 (2.4 – 2.7; the matched partition 1.1 – 1.2: the strips' width 8 on a one-stage Rader pass). The
+matched partition is no rule: past the L2 it is 1.2 – 2.6 x slower than the strips.
+
+**Unseen planes, one thread (2026-11-02, 02:20 – 03:10; 32 planes the rules were not fitted on, the same layer x
+class grid at other sizes, both directions, raced into the store, then timed; scratch `nd/cellsu2d.py`): E/P 1.027**
+(R2C 1.040, C2R 1.014; L1 1.019, L2 1.063, L3 1.008, beyond 0.978; control 0.997), against 1.033 on the fitted cells.
+Two misses there: 32 x 2048 (1.24 – 1.38; C2C's formula splits the 32-point column on its wide row, the planner keeps
+one stage) -> **rule 5 extended to every power-of-two N1 from 8 to 64** (the planner's chain at all of them in the
+store but 8 x 4): 32 x 2048 then 1.02 and 0.98. And R2C 256 x 63 (1.53): the planner's real axis on N1 at an odd
+composite N2 (the arm 0.94), where rule 6 takes primes only; the odd composites were mixed on the fitted grid
+(24 x 45 faster, 16 x 105, 128 x 225 and the large ones slower) and stay open.
+
+**3D, one thread (2026-11-02, 03:05 – 03:28; 25 volumes by layer x class, scratch `nd/cells3d.py`: powers of two,
+smooth, an odd N3, a prime N3, a prime axis 0, a prime N2; both directions; raced into the store, then timed with
+`ndtime3`, control 1.000).** The build: E/P 1.058 (R2C 1.082, C2R 1.036; L1 1.012, L2 1.037, L3 1.089, beyond
+1.142). One rule came out of the arms, built:
+10. **The strips (`nf=2`): R2C past four L2s, C2R past the L3** (C2C's `est_nf_3d` bound), on a plain axis 0 with no
+    Rader stage and 16 N1 <= L1d / 4, at the width the door's policy gives (`vfft_policy_ilndr_strip_w`): R2C 9 – 129
+    MiB, 6 volumes 1.11 – 1.34 -> 0.94 – 1.02; C2R 56 – 129 MiB 1.08 – 1.15 -> 0.98 – 1.07; below those bounds, and on
+    a Rader axis 0 (109, 331), slower.
+Open: the pay-once structure (`s=2`: 100 x 100 x 100 1.11 – 1.21 -> 1.00 – 1.03, slower on 17 small volumes) and C2R's
+band (`s=3`, the planner's at 128^3 and 256^3; no arm yet).
+
+**3D, 8 threads (2026-11-02, 03:27 – 03:58; the same 50 cells at T = 8, control 0.994).** The build with rule 10:
+E/P 1.099 (R2C 1.142, C2R 1.057; L1 1.034, L2 1.201, L3 1.120, beyond 0.995). One rule came out of the arms, built:
+11. **A one-stage Rader axis 0 runs the plane arm in place, not in strips** (53, 109, 331, both directions 1.10 –
+    1.27 -> 0.97 – 1.03, none slower), as rule 10 keeps the serial strips off it.
+Open: the threaded pay-once (`cmts=2`: R2C at L2 1.30 -> 1.23 with 4 faster, 3 slower; at L1, L3 and beyond slower).
+
+**The library as built at the end of the night (2026-11-02, 03:58 – 04:08; no arms, the stores the races left):**
+2D grid one thread **1.008** (R2C 1.010, C2R 1.006), unseen planes one thread **1.018** (51 of 64 within 5 %),
+2D grid 8 threads **1.040**, 3D grid one thread **1.026**, 3D grid 8 threads **1.088** (controls 0.997 – 1.006);
+`estimate_performance.md`, "2D and 3D real transforms". Not done: the in-place cells timed (only built and checked
+for correctness), the 2D and 3D batches (stage 4), the owner's review of the eleven rules.
