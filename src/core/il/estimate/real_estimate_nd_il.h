@@ -650,7 +650,26 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
             /* the strips on a plain axis 0; a one-stage Rader axis 0 in place (stage 3 study, 2026-11-02, 8 threads:
              * 53, 109 and 331 both directions 1.10 - 1.27 -> 0.97 - 1.03, none slower; the serial strips' exclusion) */
             p->cmtf = (plain && !(p->col.rd_n > 0 && p->col.nst == 1)) ? 2 : 1;
-            if (twin && p->cmtf != 2)
+            if (plain && p->col.rd_n == 0 && p->col.nst >= 2 && (N1 == 16 || N1 == 32 || N1 == 64))
+            {   /* THE ONE-STAGE AXIS 0 AT T (2026-11-02): axis 0 of 16, 32 or 64 in one stage, in place (cmtf=1) --
+                 * the planner's at 8 threads, where the strips have nothing to permute. 8 threads, both directions:
+                 * 60 cells 1.318 -> 1.014 against the planner, 53 faster, one slower (R2C 32 x 32 x 61, 1.14 -> 1.20);
+                 * with no L1d-set test, unlike one thread (crowded volumes too: 1.14 - 1.26 -> 1.00 - 1.08) */
+                p->col.R[0] = N1;
+                p->col.nst = 1;
+                est__col_forms(p->col.R, 1, p->col.forms, sizeof p->col.forms);
+                p->cmtf = 1;
+            }
+            else if (!c2r && plain && p->col.rd_n == 0 && p->col.nst >= 2 && p->has_col1 && m->l3 > 0 &&
+                     cube <= (double)m->l3 / 3)
+            {   /* THE STAGE-WISE PAY-ONCE AT T (2026-11-02): R2C over a plain axis 0 of two stages or more, the volume
+                 * within a third of the L3, the pay-once structure dealt by stage (cmts=2 cmtf=3, fftnd_real_il.h nf=3),
+                 * the planner's on such volumes. 8 threads: 19 volumes 1.235 -> 0.995, none slower; from 0.3 to 9 MiB it
+                 * won at every size, from 16 MiB it lost (128 x 128 x 128 1.03 -> 1.40, past the L3 ~1.8) */
+                p->cmts = 2;
+                p->cmtf = 3;
+            }
+            else if (twin && p->cmtf != 2)
                 p->cmt = 0, p->cmts = p->s, p->cmtf = p->nf;
         }
     }
