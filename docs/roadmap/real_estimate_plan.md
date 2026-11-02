@@ -530,3 +530,25 @@ In place, timed for the first time (64 cells raced in place, one thread): 2D 40 
     only two C2C cells: 6151 x 16 x 32 at 8 threads 1.138 (10-31) -> 1.020 (control 0.947, noisy), and 8191 x 8, whose
     planner already runs `15.13.3.14`, the new pick, and whose 1.56 is the turn verdict (`turn=1`, the planner's
     `turn=0 ro=2`), not the chain.
+
+## 11. Stage 2, step 1: the 1D batches built (2026-11-02, evening; the owner: "we can start with batching now")
+
+- **Lane-major, the real batch's default** (`il/estimate/real_estimate_lm_il.h`, new): an even N of at least 4 and K
+  of at least 2, both directions, both placements, any thread count. The recipe is the C2C lane-major recipe of rank
+  1 at M = N/2 over K lanes in the scrambled class, written on the real row (`t=r2c n=N q=K ... lay=lm`, shared by
+  both directions and placements), with no rule of its own. One difference: a Rader column keeps its stage at every
+  lane count. The C2C rule's form on few lanes, Bluestein with the turned prime pass, is not the real door's: the
+  column builder admits the turned pass on a C2C axis 0 only (`il2d_tier.h` `_il2d_tpc_admits`). The gate found it
+  (the door built Bluestein without the turned pass at 131, 1031 and 4099); the shared planner now takes the switch
+  as a parameter (`est__plan_lm`), the C2C batch unchanged. An odd N, or N below 4, is refused with the door's reason.
+- **Contiguous** (`real_estimate_il.h`): the one transform's plan per transform; on T threads the batch's own row per
+  direction (`eng=tcb tcmt=`), the way `est_batch_whole` picks at 16 (N/2 + 1) bytes a transform, where the door
+  builds copies (every engine but the real four-step, and ZTT-r in place, which owns a scratch plane).
+- **The front door** serves a 1D real batch under the flag; a real batch at rank 2 and 3 is refused with its own
+  message (stage 4).
+- **Two pure refactors** in `c2c_estimate_lm_il.h`, so the real batch shares the row writer and the pass check
+  (`est__put_lm_row`, `est__check_lm_pass`).
+- **`estimate_gate`** passes in full. New sections RB / RBT (contiguous, 1 and 8 threads: 42 and 64 batches, 21 of
+  them whole transforms per thread as the rule says) and RLM / RLMT (lane-major: 120 and 120, 34 threaded), each
+  batch against the one-transform plans transform by transform, bitwise for a contiguous batch on one thread, and
+  the round trip; four new refusals.

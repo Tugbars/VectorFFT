@@ -10,10 +10,11 @@
  * turned prime pass and its plan under tpc_), the serial lane tile sw= (0: the whole plane as one fused strip where
  * the scratch holds it, else the three-phase form) and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race).
  *
- * THE RECIPE (est_plan_lmr): the C2C lane-major recipe of rank 1 at M over K lanes in the scrambled class (est_plan_lm:
- * est_col_plan at w = K, the unbanded walk's chain past the L1d, a Rader column on few lanes as Bluestein with the
- * turned prime pass, sw = 0, at T > 1 est_mt_2d's test with the strips rule), no rule of its own: the plan's stage 2
- * takes one only if the study shows the pack and the fold change it.
+ * THE RECIPE (est_plan_lmr): the C2C lane-major recipe of rank 1 at M over K lanes in the scrambled class (est__plan_lm:
+ * est_col_plan at w = K, the unbanded walk's chain past the L1d, sw = 0, at T > 1 est_mt_2d's test with the strips
+ * rule), no rule of its own: the plan's stage 2 takes one only if the study shows the pack and the fold change it. A
+ * Rader column keeps its stage at every lane count: the C2C rule's form on few lanes, Bluestein with the turned prime
+ * pass, is not the real door's (il2d_tier.h _il2d_tpc_admits admits the turned pass on a c2c axis 0 only).
  * THE BUILD (est_build_lmr) takes est_build_lm's steps on the real row: the pre-flight, the row into a store held in
  * memory, the door's replay (est__replay), and the plan the door built checked against the recipe (est__check_lmr),
  * the lean door's entry in the transform's direction with it. An estimate create never hands back a plan that
@@ -45,7 +46,7 @@ static inline int est_plan_lmr(const est_machine_t *m, int N, size_t K, int T, e
     out->N = N;
     out->K = K;
     out->T = T > 1 ? T : 1;
-    return est_plan_lm(m, 1, N / 2, 0, 0, K, out->T, 0, &out->pass, why, whylen);
+    return est__plan_lm(m, 1, N / 2, 0, 0, K, out->T, 0, 0, &out->pass, why, whylen);
 }
 
 /* the batch's row key, as its door keys it (lm_batch_il.h, _vfft_create_lmr_il) */

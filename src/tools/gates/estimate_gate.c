@@ -1,8 +1,9 @@
 /* estimate_gate.c — VFFT_FLAG_ESTIMATE (include/vfft.h; il/estimate/estimate_il.h,
  * il/estimate/c2c_estimate_il.h, and at rank 2 and 3 il/estimate/estimate_nd_il.h,
  * il/estimate/c2c_estimate_nd_il.h, il/estimate/c2c_estimate_lm_il.h, and the real transforms
- * il/estimate/real_estimate_il.h): an interleaved c2c transform planned by formulas, nothing measured, a contiguous or
- * a lane-major batch of them, and one 1D R2C or C2R transform.
+ * il/estimate/real_estimate_il.h, real_estimate_nd_il.h, real_estimate_lm_il.h): an interleaved c2c transform planned
+ * by formulas, nothing measured, a contiguous or a lane-major batch of them, one R2C or C2R transform at rank 1 to 3,
+ * and a contiguous or a lane-major batch of 1D ones.
  *
  * Every create goes through the public API with the flag and names the gate's scratch store:
  *   A  correct against a long-double DFT: every bin up to N = 4096 (scrambled: the sorted multiset of the
@@ -60,9 +61,19 @@
  *   RD2, RD3  one R2C and one C2R transform at rank 2 and 3 (il/estimate/real_estimate_nd_il.h), both placements,
  *      natural: nothing measured, built, R2C against the long-double DFT on 48 sampled bins, C2R bringing that
  *      checked spectrum back to the product of the extents times x; RD2T and RD3T the same at T = 8.
+ *   RB, RLM  a batch of K 1D real transforms: contiguous (RB, il/estimate/real_estimate_il.h; K = 2 and 5, 15 lengths
+ *      over the real engines, in place below 1024) and lane-major (RLM, real_estimate_lm_il.h, the real batch's
+ *      DEFAULT; K = 2, 3, 8, 32, 15 even lengths, halves that are primes among them), both placements, one thread;
+ *      RBT (K = 2, 8, 9) and RLMT on 8 threads. The batch's R2C and C2R and the one-transform plans built with
+ *      nothing measured (the build itself refuses a batch whose served way, column pass or lean entry is not the
+ *      recipe's); each transform through the one-transform plans: the batch's R2C against the one R2C, its C2R
+ *      against the one C2R on the batch's bins, bitwise for a contiguous batch on one thread, within TOL otherwise;
+ *      the round trip within TOL; on 8 threads a contiguous batch runs whole transforms per thread exactly when the
+ *      rule says so (est_batch_whole at 16 (N/2 + 1) bytes a transform).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: a real transform in a batch or at its own pitch at rank 2, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
+ *   R  the refusals: a real transform in a batch at rank 2 and 3 or at its own pitch at rank 2, a lane-major real
+ *      batch at an odd N or below N = 4, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
@@ -1097,6 +1108,127 @@ static void sec_end_rl(const char *name, long b0, long mt0)
            name, g_checks - s_checks, f, g_rl_built - b0, g_rl_mt - mt0, f ? "FAIL" : "PASS");
 }
 
+/* ── RB, RLM: a batch of K 1D real transforms (il/estimate/real_estimate_il.h, real_estimate_lm_il.h). Contiguous
+ * (RB): transform t's reals at t N (t 2 (N/2 + 1) in place) and its bins at t 2 (N/2 + 1). Lane-major (RLM, the real
+ * batch's DEFAULT): real e of transform t at x[e K + t], bin f at z[2 (f K + t)]; in place one buffer of 2 (N/2 + 1) K
+ * doubles, the reals first. The batch's R2C and C2R and the one-transform plans of the same request, all built with
+ * nothing measured; each transform run through the one-transform plans: the batch's R2C against the one R2C on its
+ * reals, its C2R against the one C2R on the batch's bins, bitwise for a contiguous batch on one thread (the batch is
+ * that plan, run once per transform), within TOL otherwise; the round trip within TOL. On T threads a contiguous
+ * batch's split (whole transforms per thread, vfft_tc_mt_dispatches) engaged exactly when the rule says so, at
+ * 16 (N/2 + 1) bytes a transform; the cells avoid the engines with no copies (ZTT-r in place serves from N = 1024,
+ * the real four-step's transform is past the L2, where the rule takes all threads on each anyway). ── */
+static long g_rb_built = 0, g_rb_mt = 0;
+static void rb_cell(long N, int K, int ip, int T, int lm)
+{
+    const long H = N / 2 + 1;
+    const size_t nb = (size_t)2 * H * K, nr = ip ? nb : (size_t)N * K;   /* the bins' doubles; the reals' buffer */
+    const size_t sr = lm ? 1 : (ip ? (size_t)2 * H : (size_t)N);          /* a contiguous transform's reals apart */
+    double *xs = (double *)vfft_malloc(nr * sizeof(double)), *x = (double *)vfft_malloc(nb * sizeof(double));
+    double *y = (double *)vfft_malloc(nb * sizeof(double)), *w = (double *)vfft_malloc(nb * sizeof(double));
+    double *z = (double *)vfft_malloc(nb * sizeof(double)), *e = (double *)vfft_malloc(nb * sizeof(double));
+    double *a = (double *)vfft_malloc((size_t)2 * H * sizeof(double)), *b = ip ? a : (double *)vfft_malloc((size_t)2 * H * sizeof(double));
+    long double sx = 0.0L, m = 0.0L;
+    double df, dbk, er;
+    char name[96];
+    vfft_config_t c;
+    vfft_plan p1f, p1b, pbf, pbb;
+    int m1f, m1b, mbf, mbb, t, fsame, bsame, whole = 0, ok;
+    long f, i, c0, c1, e0;
+#define RIX(E_, T_) (lm ? (size_t)(E_) * K + (size_t)(T_) : (size_t)(T_) * sr + (size_t)(E_))
+#define BIX(F_, T_) (lm ? (size_t)2 * ((size_t)(F_) * K + (size_t)(T_)) : (size_t)(T_) * 2 * H + (size_t)2 * (F_))
+    if (!xs || !x || !y || !w || !z || !e || !a || !b) { printf("out of memory\n"); exit(2); }
+    snprintf(name, sizeof name, "N=%ld K=%d %s %s T=%d", N, K, lm ? "lane-major" : "contiguous", ip ? "ip" : "oop", T);
+    memset(&c, 0, sizeof c);
+    c.n[0] = (int)N;
+    c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    c.nthreads = T;
+    c.transform = VFFT_R2C;
+    p1f = est_create(&c, &m1f);
+    c.transform = VFFT_C2R;
+    p1b = est_create(&c, &m1b);
+    c.howmany = (size_t)K;
+    c.batch = lm ? VFFT_BATCH_DEFAULT : VFFT_BATCH_CONTIGUOUS;
+    c.transform = VFFT_R2C;
+    pbf = est_create(&c, &mbf);
+    c.transform = VFFT_C2R;
+    pbb = est_create(&c, &mbb);
+    CHECK(!m1f && !m1b && !mbf && !mbb, "M  RB %s: a create MEASURED (one %d %d, batch %d %d)", name, m1f, m1b, mbf, mbb);
+    CHECK(p1f && p1b, "RB %s: a one-transform plan refused: %s", name, vfft_error());
+    CHECK(pbf && pbb, "RB %s: a batch refused: %s", name, vfft_error());
+    if (p1f && p1b && pbf && pbb && !m1f && !m1b && !mbf && !mbb)
+    {
+        g_rng = 0x2545F4914F6CDD1Dull ^ ((unsigned long long)N << 9) ^ (unsigned long long)K;
+        memset(xs, 0, nr * sizeof(double));
+        for (t = 0; t < K; t++)
+            for (i = 0; i < N; i++)
+            {
+                const double v = rnd();
+                xs[RIX(i, t)] = v;
+                sx += (long double)v * v;
+            }
+        for (t = 0; t < K; t++)   /* the one R2C, transform by transform */
+        {
+            for (i = 0; i < N; i++) a[i] = xs[RIX(i, t)];
+            vfft_execute(p1f, VFFT_FORWARD, a, b);
+            for (f = 0; f < H; f++) { w[BIX(f, t)] = b[2 * f]; w[BIX(f, t) + 1] = b[2 * f + 1]; }
+        }
+        memcpy(x, xs, nr * sizeof(double));
+        c0 = vfft_tc_mt_dispatches();
+        e0 = vfft_il2d_col_mt_passes();
+        vfft_execute(pbf, VFFT_FORWARD, x, ip ? x : y);
+        if (ip) memcpy(y, x, nb * sizeof(double));
+        df = rel_diff(w, y, nb);
+        fsame = (T > 1 || lm) ? df <= TOL : !memcmp(w, y, nb * sizeof(double));
+        for (t = 0; t < K; t++)   /* the one C2R on the batch's bins */
+        {
+            for (f = 0; f < H; f++) { b[2 * f] = y[BIX(f, t)]; b[2 * f + 1] = y[BIX(f, t) + 1]; }
+            vfft_execute(p1b, VFFT_BACKWARD, b, a);
+            for (i = 0; i < N; i++) e[(size_t)t * N + i] = a[i];
+        }
+        memcpy(x, y, nb * sizeof(double));
+        vfft_execute(pbb, VFFT_BACKWARD, x, ip ? x : z);
+        if (ip) memcpy(z, x, nb * sizeof(double));
+        c1 = vfft_tc_mt_dispatches();
+        for (t = 0; t < K; t++)   /* the batch's reals, transform by transform, into w */
+            for (i = 0; i < N; i++)
+            {
+                const long double d = fabsl((long double)z[RIX(i, t)] / N - xs[RIX(i, t)]);
+                w[(size_t)t * N + i] = z[RIX(i, t)];
+                if (!(d <= m)) m = d;
+            }
+        dbk = rel_diff(e, w, (size_t)N * K);
+        bsame = (T > 1 || lm) ? dbk <= TOL : !memcmp(e, w, (size_t)N * K * sizeof(double));
+        er = (double)(m / sqrtl(sx / ((long double)N * K)));
+        ok = fsame && bsame && er <= TOL;
+        if (!lm && T > 1)
+        {
+            whole = batch_whole(16LL * H, K, T, NULL);
+            CHECK((c1 != c0) == whole, "RB %s: the batch ran %s, the rule says %s", name,
+                  c1 != c0 ? "whole transforms per thread" : "all threads on each transform",
+                  whole ? "whole transforms per thread" : "all threads on each transform");
+            ok &= (c1 != c0) == whole;
+        }
+        CHECK(fsame && bsame && er <= TOL, "RB %s: the batch's R2C %s and its C2R %s the one-transform plans', transform by "
+              "transform (%s; R2C %.1e, C2R %.1e); round trip %.2e", name, fsame ? "is" : "is NOT", bsame ? "is" : "is NOT",
+              (T > 1 || lm) ? "within TOL" : "bitwise", df, dbk, er);
+        g_rb_built += ok;
+        g_rb_mt += lm ? vfft_il2d_col_mt_passes() != e0 : c1 != c0;
+    }
+#undef RIX
+#undef BIX
+    vfft_destroy(p1f); vfft_destroy(p1b); vfft_destroy(pbf); vfft_destroy(pbb);
+    vfft_free(xs); vfft_free(x); vfft_free(y); vfft_free(w); vfft_free(z); vfft_free(e); vfft_free(a);
+    if (!ip) vfft_free(b);
+}
+static void sec_end_rb(const char *name, long b0, long mt0, int lm)
+{
+    const int f = g_fail - s_fail;
+    printf("SECTION %-4s: %d checks, %d failed; %ld real batches built and correct, %ld of them %s -> %s\n", name,
+           g_checks - s_checks, f, g_rb_built - b0, g_rb_mt - mt0, lm ? "threaded" : "whole transforms per thread",
+           f ? "FAIL" : "PASS");
+}
+
 /* ── RD: one R2C or C2R transform at rank 2 and 3 (il/estimate/real_estimate_nd_il.h) ── */
 static long g_rd_built = 0;
 static double g_rd_e = 0.0;
@@ -1269,9 +1401,14 @@ int main(int argc, char **argv)
     {
         vfft_config_t c;
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.transform = VFFT_R2C;
-        refused("R2C rank 2 howmany 4", &c, "plans one VFFT_R2C transform, not a batch");
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.howmany = 4; c.transform = VFFT_C2R;
-        refused("C2R howmany 4", &c, "plans one VFFT_C2R transform, not a batch");
+        refused("R2C rank 2 howmany 4", &c, "plans one VFFT_R2C transform at rank 2 and 3, not a batch");
+        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.transform = VFFT_C2R;
+        c.batch = VFFT_BATCH_LANE_MAJOR;
+        refused("C2R rank 3 howmany 2 lane-major", &c, "plans one VFFT_C2R transform at rank 2 and 3, not a batch");
+        memset(&c, 0, sizeof c); c.n[0] = 63; c.howmany = 4; c.transform = VFFT_C2R;
+        refused("C2R N=63 howmany 4 (lane-major by default)", &c, "an odd N has no real column engine");
+        memset(&c, 0, sizeof c); c.n[0] = 2; c.howmany = 4; c.transform = VFFT_R2C; c.batch = VFFT_BATCH_LANE_MAJOR;
+        refused("R2C N=2 howmany 4 lane-major", &c, "an even N of at least 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.transform = VFFT_R2C; c.flags = VFFT_FLAG_OWN_PITCH;
         c.placement = VFFT_PLACEMENT_IN;
         refused("R2C rank 2 own pitch", &c, "not with VFFT_FLAG_OWN_PITCH");
@@ -1586,6 +1723,36 @@ int main(int argc, char **argv)
         }
     }
 
+    /* RB, RBT: contiguous 1D real batches on one thread (K = 2 and an odd K) and on 8 threads (K = 2, 8, 9), over the
+     * real engines (the mono, the pair, ZTT-r, the half, the odd chain, odd Bluestein, the real four-step at 2^20 out
+     * of place); in place below 1024. RLM, RLMT: lane-major 1D real batches (K = 2, 3, 8, 32), both placements, over
+     * powers of two, smooth lengths and halves that are primes (131 Rader, 1031 and 4099 Bluestein on few lanes) */
+    {
+        static const long RB[] = { 2, 3, 16, 64, 100, 131, 1000, 1031, 1280, 4096, 6000, 16384, 65536, 100000, 1048576 };
+        static const long RLM[] = { 4, 6, 8, 16, 64, 100, 128, 262, 1000, 1024, 2062, 4096, 8198, 12000, 16384 };
+        static const int KB1[2] = { 2, 5 }, KBT[3] = { 2, 8, 9 }, KLM[4] = { 2, 3, 8, 32 };
+        int TB, k, ip;
+        for (TB = 1; TB <= 8; TB += 7)
+        {
+            long b0 = g_rb_built, t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof RB / sizeof RB[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < (TB > 1 ? 3 : 2); k++)
+                        if ((!ip || RB[i] < 1024) && (RB[i] < (1L << 20) || (TB > 1 && k == 0)))
+                            rb_cell(RB[i], TB > 1 ? KBT[k] : KB1[k], ip, TB, 0);
+            sec_end_rb(TB > 1 ? "RBT" : "RB", b0, t0, 0);
+            b0 = g_rb_built;
+            t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof RLM / sizeof RLM[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < 4; k++)
+                        rb_cell(RLM[i], KLM[k], ip, TB, 1);
+            sec_end_rb(TB > 1 ? "RLMT" : "RLM", b0, t0, 1);
+        }
+    }
+
     /* E: the environment guard; each variable unset again before the next create */
     sec_begin();
     {
@@ -1635,7 +1802,7 @@ int main(int argc, char **argv)
     sec_end("W");
 
     printf("%d checks, %d failed; %ld 1D, %ld 1D real and %ld rank-2/3 plans built and correct, %ld contiguous and %ld "
-           "lane-major batches\n%s\n", g_checks, g_fail, g_built, g_rl_built, g_nd_built, g_b_built, g_lm_built,
-           g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
+           "lane-major batches, %ld 1D real batches\n%s\n", g_checks, g_fail, g_built, g_rl_built, g_nd_built, g_b_built,
+           g_lm_built, g_rb_built, g_fail ? "*** ESTIMATE GATE FAILED ***" : "ESTIMATE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

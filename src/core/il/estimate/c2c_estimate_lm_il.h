@@ -103,10 +103,19 @@ static inline void est_free_lm(est_planlm_t *p)
     p->child = NULL;
 }
 
+/* est__plan_lm: est_plan_lm's body; tpc_ok = 0 for a column whose door admits no turned prime pass (the real batch's,
+ * il2d_tier.h _il2d_tpc_admits: a c2c axis 0 only), where a Rader column keeps its stage at every lane count */
+static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
+                               int tpc_ok, est_planlm_t *out, char *why, size_t whylen);
 /* est_plan_lm: the lane-major batch's recipe (the header's list). Returns 0 with *out filled (its block child
  * allocated: est_free_lm), or -1 with the reason. Pure. */
 static inline int est_plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
                               est_planlm_t *out, char *why, size_t whylen)
+{
+    return est__plan_lm(m, rank, N1, N2, N3, K, T, nat, 1, out, why, whylen);
+}
+static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
+                               int tpc_ok, est_planlm_t *out, char *why, size_t whylen)
 {
     long long lanes;
     memset(out, 0, sizeof *out);
@@ -130,7 +139,8 @@ static inline int est_plan_lm(const est_machine_t *m, int rank, int N1, int N2, 
         return -1;
     if (rank == 1 && 16LL * N1 * lanes > m->l1d)
         (void)est__col_unbanded(m, &out->col);
-    if (out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) && est__col_blu(m, &out->col, why, whylen))
+    if (tpc_ok && out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) &&
+        est__col_blu(m, &out->col, why, whylen))
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;

@@ -737,8 +737,9 @@ out:
  * Not here: the logging names (VFFT_IL2D_LOG, VFFT_NAT_LOG, VFFT_ILPR_LOG, VFFT_IL_DP_VERBOSE,
  * VFFT_RACE_LOG, VFFT_TCMT_LOG, VFFT_TCMT_VERBOSE, VFFT_VERBOSE, ...), the execute-time profiling
  * (VFFT_IL2D_PHASES, VFFT_ILND_PROF), the stores' names (VFFT_WISDOM_DIR, VFFT_WISDOM_WRITE: estimate
- * opens none), the split doors' names and the real lane-major Bluestein's VFFT_ZRBL (the flag refuses
- * those requests), the names no
+ * opens none), the split doors' names (the flag refuses those requests), the real lane-major Bluestein's
+ * VFFT_ZRBL (no estimate create reaches it: a lane-major real batch is the column door's,
+ * real_estimate_lm_il.h, and a contiguous one the wrapper over one transform), the names no
  * estimate create or execute reads (VFFT_IL2D_DENSE), and VFFT_HIGHN_PLAN, read only inside a race
  * (k1_commit.h:777, 1651). */
 static const char *const est_env_names[] = {

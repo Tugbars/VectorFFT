@@ -17,7 +17,9 @@ replay code.
 | `src/core/il/estimate/c2c_estimate_il.h` | the c2c build `est_build_c2c` (pre-flight, private store, the door's replay, the detectors `est__meter_read` / `est__replay`, the plan check), the environment guard `est_env_names` / `est_env_steers`, and the front door's `_vfft_create_estimate` |
 | `src/core/il/estimate/estimate_nd_il.h` | rank 2 and 3: the recipes `est_plan2d_t` / `est_plan3d_t`, the formulas `est_plan_2d` / `est_plan_3d` (the column chain from the door's pool, the N-arm, the bands, the 2D row route, the 3D natural form; the 1D children by `est_plan_1d`) and how they thread, `est_mt_2d` / `est_mt_3d`, the row writers `est_put_rows_2d` / `est_put_rows_3d` |
 | `src/core/il/estimate/c2c_estimate_nd_il.h` | rank 2 and 3: the build `est_build_nd` (pre-flight, rows, the door's replay, the plan check) and `_vfft_create_estimate_nd` |
-| `src/core/il/estimate/real_estimate_il.h` | one 1D R2C or C2R transform (2026-11-01): the real recipe `est_real_recipe_t`, the formulas `est_plan_real` / `est_real` (the sketch's sections 6 and 7), the row writer `est_put_rows_real`, the pre-flight, the plan check (the engine, its threaded arm, the lean door's entry), the build `est_build_real` and `_vfft_create_estimate_real` |
+| `src/core/il/estimate/real_estimate_il.h` | one 1D R2C or C2R transform (2026-11-01) and a contiguous batch of them (2026-11-02, the batch's way `tcmt` by `est_batch_whole`): the real recipe `est_real_recipe_t`, the formulas `est_plan_real` / `est_real` (the sketch's sections 6 and 7), the row writer `est_put_rows_real`, the pre-flight, the plan check (the engine, its threaded arm, the lean door's entry), the build `est_build_real` and `_vfft_create_estimate_real` |
+| `src/core/il/estimate/real_estimate_nd_il.h` | one R2C or C2R transform at rank 2 and 3 (2026-11-02): the recipes `est_plan2dr_t` / `est_plan3dr_t`, the formulas `est_plan_2d_real` / `est_plan_3d_real`, the rows, the plan checks, the builds and `_vfft_create_estimate_real_nd` |
+| `src/core/il/estimate/real_estimate_lm_il.h` | a lane-major batch of 1D R2C or C2R transforms, the real batch's default (2026-11-02): the recipe `est_planlmr_t` (the c2c lane-major recipe of rank 1 at N / 2 over K lanes), the build `est_build_lmr` and `_vfft_create_estimate_lmr` |
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
 
@@ -26,8 +28,10 @@ rank 2 and 3 (2026-10-22, `docs/design/estimate_2d3d_sketch.md`; at any thread c
 rank 2 and 2026-10-31 at rank 3) in natural order, either placement; and since 2026-10-31 a contiguous
 batch of them, the plan of one transform run once per transform on one thread and on T threads the way
 the batch rule picks (`est_batch_whole`); since 2026-11-01 a lane-major batch of them, the column pass
-over the lanes (`il/estimate/c2c_estimate_lm_il.h`); and since 2026-11-01 one 1D R2C or C2R transform in
-either placement on any thread count (`il/estimate/real_estimate_il.h`). It refuses a real transform at rank 2 or 3 or in a batch, real-to-real, rank 4,
+over the lanes (`il/estimate/c2c_estimate_lm_il.h`); since 2026-11-01 one 1D R2C or C2R transform in
+either placement on any thread count (`il/estimate/real_estimate_il.h`), since 2026-11-02 one at rank 2 and 3
+(`real_estimate_nd_il.h`) and a 1D batch of them, lane-major (the real default, `real_estimate_lm_il.h`) or
+contiguous. It refuses a real batch at rank 2 and 3, real-to-real, rank 4,
 SPLIT, scrambled order at rank 2 and 3, the flag with `VFFT_FLAG_RECALIBRATE` or
 `VFFT_FLAG_PATIENT`, and any create while an
 environment variable that steers a plan is set (`est_env_names`). At rank 2 and 3 the formulas also
