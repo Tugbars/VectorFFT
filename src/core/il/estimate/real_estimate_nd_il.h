@@ -163,6 +163,21 @@ static inline int est__col_fewest(int N, int *R)
     return P.len[best];
 }
 
+/* 1 = a stage s of the chain R over N, its R[s] elements N / (R[0] ... R[s]) rows of w complex apart, crowds an L1d set:
+ * they fall into 4096 / gcd(stride, 4096) sets of L1d / 4096 lines (the one-stage axis 0's count, stage by stage) */
+static inline int est__chain_crowds(const est_machine_t *m, int N, const int *R, int nst, long long w)
+{
+    long long L = N;
+    for (int s = 0; s < nst; s++)
+    {
+        L /= R[s];
+        const long long st = 16 * L * w, low = st & -st;
+        if ((long long)R[s] * (low < 4096 ? low : 4096) > (long long)m->l1d)
+            return 1;
+    }
+    return 0;
+}
+
 /* the real axis on N1 (raxis = n1, il/rank2/il2d_real_axis.h:212-300; R2C, one thread, out of place, even N1 >= 4, odd
  * N2): its two children's recipes, the C2C column chain at M = N1/2 down N2 columns in the scrambled class
  * (est_col_plan) and the C2C plan at N2 the batch of M + 1 folded rows runs. 0, or -1 with the reason. */
@@ -246,9 +261,13 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     p->cmt = p->mtarm = p->msw = 0;
     if (p->T > 1 && N1 != 2 && bytes > m->l1d / 2)
     {   /* est_mt_2d's column rule at the real plane's bytes: threaded, the strips at their width */
+        /* a Rader column on a plane past the L3 runs plain too (2026-11-02, one plane: 4099 x 2048 at 8 threads, R2C
+         * 2.75 -> 1.17, C2R 2.62 -> 1.14; the only such plane banked -- the smaller Rader planes keep the strips, where
+         * the plain column was slower, 109 x 512 0.96 -> 1.26) */
+        const int plain = tallmt || (p->col.rd_n > 0 && m->l3 > 0 && bytes > (long long)m->l3);
         p->cmt = 1;
-        p->mtarm = tallmt ? 0 : 1;   /* the tall plane's plain threaded column (above) */
-        p->msw = tallmt ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
+        p->mtarm = plain ? 0 : 1;   /* the tall plane's plain threaded column (above) */
+        p->msw = plain ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
     }
     p->rx[0] = p->rxs[0] = p->cx[0] = p->cxs[0] = 0;
     if (!c2r || !(N2 & 1))
@@ -270,6 +289,12 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             if (est__rx_token(&p->rxe, tk, sizeof tk))
                 snprintf(p->rx, sizeof p->rx, "%s", tk);
         }
+        if (!c2r && !ip && p->T > 1 && N2 == 64 && N1 >= 4LL * N2 && VFFT_IL_VW == 4)
+            /* R2C AT T > 1 OVER ROWS OF 64 ON A TALL PLANE (2026-11-02): the rows by the real pair 4.16, form a, the
+             * planner's on every banked tall plane over rows of 64 from 512 rows (the pair engine exists at 4 lanes
+             * only, as the 1D real estimate's zrp). 8 threads, 8 planes 256 - 8192 x 64: 1.181 -> 1.023, 7 faster,
+             * none slower; over rows of 32 and 128, and in C2R, the door's row child stays (no gap) */
+            snprintf(p->rx, sizeof p->rx, "zrp_4.16_a");
     }
     if (p->col.blu <= 0)
     {   /* no column form on a Bluestein pass (il2d_real_plan.h:1575) */
@@ -573,6 +598,7 @@ typedef struct est_plan3dr_s
     int has_col1;             /* axis 1's pay-once chain is written (axis 0 a plain chain with a leaf kernel) */
     est_col_t col1;           /* [chain1 forms1 blu1 rd1 rdw1] axis 1 at (N2, N3/2 + 1) */
     int s, nf, nsw;           /* [s nf nsw (_c2r)] the one-thread structure (1 child) and form (1 in place, 2 strips) */
+    int wl;                   /* [wl_c2r] the band's width in planes (C2R, s=3), a span of axis 0's chain */
     int cmt, cmts, cmtf;      /* [cmt cmtt cmts cmtf (_c2r)] T > 1: 0 serial | 2 the plane arm; its structure, form */
     est_plan2dr_t plane;      /* the plane child: the 2D real recipe at (N2, N3), one thread (fftnd_real_il.h:1371-1390) */
 } est_plan3dr_t;
@@ -599,6 +625,32 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
         return -1;
     p->col.tpc = -1;              /* no turned prime pass on a real row (il2d_tier.h:3278-3281) */
     p->col.wl = 0;
+    if (p->T == 1 && p->col.blu <= 0 && p->col.rd_n == 0 && p->col.nst >= 2)
+    {   /* AXIS 0'S CHAIN BY ITS L1d SETS (2026-11-02, one thread, the banked volumes of 128 and 256 rows): the scrambled
+         * pass's formula picks one chain on narrow rows and another on wide ones (est__narrow). A chain with a stage
+         * that crowds an L1d set (est__chain_crowds) takes the wide rows' chain: 16.16 at 256 over 16 - 64 x 4 - 16
+         * planes, 12 volumes 1.402 -> 0.977 (4.8.8), none slower; uncrowded it is right (18 volumes 0.934). On wide
+         * rows C2R takes the narrow rows' chain where it crowds no set (128: 25 volumes 1.081 -> 1.007, 256: 5
+         * volumes 1.098 -> 1.007, none slower), R2C at 256 only (5 volumes 1.099 -> 1.003; at 128 mixed, 8 faster
+         * and 11 slower); at 128 x 256 x N its stage of 16 one row apart crowds (1.07 - 1.22 -> 1.18 - 1.51). */
+        int Rn[8], Rw[8], k = 0;
+        const long long wn = (long long)m->l1d / (16 * EST_ND_R16);   /* the narrow rows' bound (est__narrow) */
+        const int kn = est_col_chain(m, N1, wn, 0, Rn), kw = est_col_chain(m, N1, wn + 1, 0, Rw);
+        const int *R = NULL;
+        if (est__chain_crowds(m, N1, p->col.R, p->col.nst, w0))
+        {
+            if (kw >= 2 && !est__chain_crowds(m, N1, Rw, kw, w0)) R = Rw, k = kw;
+        }
+        else if (!est__narrow(m, w0) && (c2r ? (N1 == 128 || N1 == 256) : N1 == 256) && kn >= 2 &&
+                 !est__chain_crowds(m, N1, Rn, kn, w0))
+            R = Rn, k = kn;
+        if (R)
+        {
+            memcpy(p->col.R, R, sizeof(int) * (size_t)k);
+            p->col.nst = k;
+            est__col_forms(p->col.R, k, p->col.forms, sizeof p->col.forms);
+        }
+    }
     {   /* the pay-once pieces exist for a plain chain whose leaf is a kernel call (fftnd_real_il.h:1460) */
         const int plain = p->col.blu <= 0, rd1 = p->col.nst == 1 && p->col.rd_n > 0;
         p->has_col1 = 0;
@@ -620,6 +672,11 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
             p->nf = 2;
             p->nsw = vfft_policy_ilndr_strip_w(N1, (size_t)w0);
         }
+        if (c2r && ip && p->T == 1 && p->has_col1 && p->nf == 1)
+            /* C2R IN PLACE (2026-11-02, one thread): the pay-once structure (s=2), the planner's on all 12 in-place
+             * volumes raced; 12 volumes 16^3 - 128^3 and 64 x 64 x 225 1.146 -> 0.992, 11 faster, none slower. Out of
+             * place it is mixed (253 volumes, 43 faster, 59 slower) and R2C in place slower, so the child stays there */
+            p->s = 2;
         if (p->T == 1 && p->nf == 1 && (N1 == 16 || N1 == 32 || N1 == 64) && p->col.nst > 1 && p->col.rd_n == 0)
         {   /* THE ONE-STAGE AXIS 0 (2026-11-02): where C2C's scrambled pass splits 16, 32 and 64, the real volume runs
              * one stage unless its N1 elements, 16 N2 (N3/2 + 1) bytes apart, crowd an L1d set: they fall into
@@ -699,6 +756,8 @@ static inline int est_put_rows_3d_real(vw2_store_t *st, const est_plan3dr_t *p, 
     EST_TOKI("nf", p->nf);
     if (p->nf == 2)
         EST_TOKI("nsw", p->nsw);
+    if (p->s == 3)
+        EST_TOKI("wl", p->wl);
     if (p->T > 1)
     {
         EST_TOKI("cmt", p->cmt);
@@ -746,7 +805,7 @@ static inline int est__check_3d_real(const struct vfft_plan_s *h, const est_plan
     for (i = 0; i < d->ax0.nst; i++)
         if (d->ax0.R[i] != p->col.R[i])
             return !est_refuse(why, whylen, "axis 0's chain differs from the recipe's at stage %d", i);
-    if (d->arm != p->s || d->nf != p->nf)
+    if (d->arm != p->s || d->nf != p->nf || (p->s == 3 && d->wl != p->wl))
         return !est_refuse(why, whylen, "the structure is s=%d nf=%d, the recipe's s=%d nf=%d", d->arm, d->nf, p->s, p->nf);
     if (p->T > 1 && (d->mt != p->cmt || (p->cmt == 2 && (d->mts != p->cmts || d->mtf != p->cmtf))))
         return !est_refuse(why, whylen, "the threaded verdict is cmt=%d cmts=%d cmtf=%d, the recipe's %d %d %d", d->mt,

@@ -487,3 +487,30 @@ and built:
 
 The 128 cells as built: 1.208 -> 1.035 (R2C 1.265 -> 1.011, C2R 1.154 -> 1.058; L2 1.244 -> 1.036, L3 1.252 -> 1.037;
 control 1.002). Open: C2R over an axis 0 of two stages or more (about 1.13; the planner's structure and form vary).
+
+**The remaining gaps, one by one** (the owner: "let's go one by one", then "go through all the items, I will review in
+the end"). Built, for the owner's review:
+
+20. **3D axis 0 at one thread: a chain with a stage that crowds an L1d set takes the wide rows' chain.** A stage of R
+    elements L rows apart crowds when R gcd(16 L N2 (N3/2 + 1), 4096) > L1d (`est__chain_crowds`; the one-stage axis
+    0's count, stage by stage). 16.16 at 256 over 16 – 64 x 4 – 16 planes: 12 volumes 1.402 -> 0.977 (4.8.8).
+21. **3D axis 0 at one thread on wide rows: the narrow rows' chain where it crowds no set**, C2R at 128 and 256 and R2C
+    at 256 (R2C at 128 is mixed). C2R 128 25 volumes 1.081 -> 1.007, 256 5 volumes 1.098 -> 1.007; R2C 256 5 volumes
+    1.099 -> 1.003. Rules 20 and 21 as built, the 172 banked volumes of 128 and 256 rows: 1.052 -> 1.007, the 47
+    whose chain changed 1.161 -> 0.999 (38 faster, one slower: C2R 128 x 16 x 32, 1.08 -> 1.15). C2R's band and
+    pay-once structures alone gained little (253 volumes: the band at its best width 1.061 -> 1.045, the pay-once
+    mixed); its gap was axis 0's chain.
+22. **R2C at T > 1 on a tall plane (N1 >= 4 N2) over rows of 64: the rows by the real pair 4.16, form a**
+    (`zrp_4.16_a`, the planner's on every such banked plane; 4 lanes only, as the 1D estimate's pair engine). 8
+    planes at 8 threads, as built: 1.181 -> 1.040. Rows of 32 and 128, and C2R, had no gap.
+23. **C2R in place at one thread: the pay-once structure (s=2)**, the planner's on all 12 volumes raced in place.
+    12 volumes, as built: 1.146 -> 0.991, none slower. Out of place it is mixed and R2C in place slower.
+
+In place, timed for the first time (64 cells raced in place, one thread): 2D 40 cells 1.012 (R2C 1.030, C2R 0.995);
+3D R2C 1.014, C2R 1.146 before rule 23.
+
+24. **At T > 1 a Rader column on a plane past the L3 runs the plain threaded column (`mtarm=0`)**, as the tall plane
+    does. One plane: 4099 x 2048 at 8 threads, R2C 2.75 -> 1.17, C2R 2.62 -> 1.14 -- the only Rader plane banked past
+    the L3, so the rule rests on that plane alone; on the smaller Rader planes the plain column was slower (109 x 512
+    0.96 -> 1.26). Open: the large Rader columns below the L3 (4099 x 512 1.35 – 1.53, 4099 x 1024 1.18 – 1.27, 2053
+    x 1024 1.21), which no threaded verdict of the column moves -- the Rader stage itself at T, not studied.

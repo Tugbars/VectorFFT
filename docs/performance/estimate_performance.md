@@ -874,18 +874,18 @@ and volumes raced for its rules. Every output agreed with the planner's to 2e-15
 | Set | Cells | Estimate ÷ planner | Within 5 % | R2C | C2R | Control ÷ planner |
 |---|---:|---|---:|---|---|---|
 | 2D, 1 thread | 468 | 0.987 | 407 | 0.992 | 0.980 | 1.001 |
-| 2D, 8 threads | 175 | 1.046 | 101 | 1.059 | 1.033 | 1.002 |
-| 3D, 1 thread | 692 | 1.002 | 544 | 0.989 | 1.016 | 1.001 |
-| 3D, 8 threads | 72 | 1.169 | 28 | 1.238 | 1.104 | 1.000 |
+| 2D, 8 threads | 175 | 1.023 | 108 | 1.027 | 1.018 | 0.999 |
+| 3D, 1 thread | 692 | 0.993 | 586 | 0.980 | 1.005 | 1.001 |
+| 3D, 8 threads | 72 | 1.032 | 49 | 1.039 | 1.025 | 1.001 |
 
 By layer (the spectrum's bytes against this machine's L1d, L2 and L3), the estimate over the planner:
 
 | Set | L1 | L2 | L3 | Beyond the L3 |
 |---|---|---|---|---|
 | 2D, 1 thread | 0.988 | 0.989 | 0.985 | 0.962 |
-| 2D, 8 threads | 0.921 | 1.069 | 1.061 | 1.270 |
-| 3D, 1 thread | 0.944 | 1.014 | 1.051 | 0.977 |
-| 3D, 8 threads | 1.053 | 1.226 | 1.255 | 0.973 |
+| 2D, 8 threads | 0.903 | 1.057 | 1.047 | 1.063 |
+| 3D, 1 thread | 0.947 | 1.000 | 1.034 | 1.010 |
+| 3D, 8 threads | 1.070 | 1.037 | 1.027 | 0.968 |
 
 ## Estimate against MKL: every N from 128 to 4,096
 
