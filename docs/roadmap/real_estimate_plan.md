@@ -826,9 +826,15 @@ after the fix on a copy of the store without the cell's rows: no "did not replay
 scratch for each of the zr2c child's two routes (14 min 18 s, then 3 min 56 s; the rest 1 s): up to 480 inner
 candidates (both methods, every inner size and shape) at about 312,000 points (`_ilprime_create_banked`,
 `k1_commit.h`). The night's other halves with a large prime factor took as long (482026: 1,687 s; 471596:
-1,097 s). Not changed: it is the planner's design (racing the prime cell once for both routes would save about 4 of
-the 18 minutes).
+1,097 s). The race is the route's in nothing (its own convolution, out of place, no store; its four-step rows warmed
+in place), so on the owner's word the zr2c race now races the prime cell once and the second route builds it from
+the first route's method and inner (`_zr2c_kid_race`, `zr2c_build.h`). 311722 x 5 again on the scratch store: 863 s
+and 1,238 races (was 1,095 s and 1,730), the same verdict (Bluestein, the four-step inner 490 x 640), the next
+create replayed in 0.39 s. 262, 2062 and 8198 raced cold on an empty store in both directions and placements: one
+prime-cell race per create, no candidate dropped by the door's gate against its reference, every cell replayed.
+The rest of the time is the prime cell's own race (up to 480 candidates), unchanged.
 
 **Gates (2026-11-03, 08:37):** `estimate_gate` ALL PASS, 31,642 checks (the C2C lane-major sections with the new
 cells: 592 lane-major batches; the real sections as at 05:16, the real recipes unchanged); `zr2c_fd_gate` all correct;
-the canonical CMake build of `vfft_core` with its three earlier warnings only.
+the canonical CMake build of `vfft_core` with its three earlier warnings only. After the prime cell's one race
+(09:05): `zr2c_fd_gate` all correct.

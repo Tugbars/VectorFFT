@@ -412,13 +412,15 @@ static int _zr2c_dp_ready = 0;
  * in-role ns, 1e18 when nothing built. `pr` receives the winner's prime cell
  * (its method and inner) when the winner is PRIME, zero otherwise; `fs_out`
  * the race's private store when the winner is a four-step (its child's rows
- * are in it), NULL otherwise. */
+ * are in it), NULL otherwise. `pcell` (may be NULL) carries the prime cell
+ * from one route's race to the other's: empty, the cell is raced and kept
+ * there; filled, the cell is built from it and not raced again. */
 /* the real request's store, for the child's four-step candidates to borrow their row cells
  * from (VFFT_HIGHN_PLAN=borrow, policy_il.h; read only): set by _zr2c_build for the race
  * below it -- planning side, one create at a time */
 static const struct vfft_wisdom_s *_zr2c_race_W = NULL;
 static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_cand_t *best,
-                             _zr2c_prime_t *pr, struct vfft_wisdom_s **fs_out)
+                             _zr2c_prime_t *pr, struct vfft_wisdom_s **fs_out, _zr2c_prime_t *pcell)
 {
     const int n = N / 2, top = N / 4, c2r = cfg->transform == VFFT_C2R;
     vfft_cfg_t c2, cs;
@@ -469,9 +471,26 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
     _k1pr_release();
     if (vfft_policy_prime_cell(n))
     {
-        _k1pr_ctx.plan = _ilprime_create_banked(NULL, &c2, n, &pr->d);
+        /* ONE RACE FOR BOTH ROUTES (owner, 2026-11-03): the prime cell's race is the route's in nothing (its own
+         * convolution, out of place, no store; its four-step rows warmed in place), so the second route builds the
+         * first route's cell from its method and inner. 311722 (155861 prime): the race 14 min, its repeat 4. */
+        if (pcell && pcell->m)
+        {
+            _ilprime_inner_desc_t d = pcell->d;
+            if (d.kind == 4 && pcell->fs[0])
+                d.seed = _zr2c_fs_store(pcell->fs, d.R1, d.R2, 0);   /* the inner's child from the first race's rows */
+            _k1pr_ctx.plan = _ilprime_build_with(n, pcell->m == 1, &d);
+            if (d.seed)
+                _vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
+            if (_k1pr_ctx.plan)
+                *pr = *pcell;
+        }
+        if (!_k1pr_ctx.plan)
+        {   /* the first route, or a cell that did not build from the first race: raced here */
+            _k1pr_ctx.plan = _ilprime_create_banked(NULL, &c2, n, &pr->d);
+            pr->m = _k1pr_ctx.plan ? (_k1pr_ctx.plan->method == 1 ? 1 : 2) : 0;
+        }
         _k1pr_ctx.N = _k1pr_ctx.plan ? n : 0;
-        pr->m = _k1pr_ctx.plan ? (_k1pr_ctx.plan->method == 1 ? 1 : 2) : 0;
         /* a four-step inner's child, raced on the cell's own private store,
          * into the recipe now while the raced plan is alive: the rebuild from
          * the recipe seeds its store from these tokens and the child replays.
@@ -482,6 +501,8 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
          * row carries its child's recipe (owner, 2026-10-14). */
         if (_k1pr_ctx.plan && pr->d.kind == 4 && _k1pr_ctx.plan->inner.fs && _k1pr_ctx.plan->inner.fs->own)
             (void)_zr2c_fs_str(pr->fs, sizeof pr->fs, _k1pr_ctx.plan->inner.fs->own, pr->d.R1, pr->d.R2, 0);
+        if (pcell && !pcell->m && pr->m)
+            *pcell = *pr;   /* kept for the other route */
     }
     _k1_il_fs_warm(S, _zr2c_race_W, &cs, n);
     _k1fs_ctx.W = S;
@@ -522,7 +543,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int r
     if (!child)
     {
         _vfft_wisdom_free((vfft_wisdom *)fsS);
-        if (_zr2c_kid_race(cfg, N, route, &raced, &rpr, &fsS) >= 1e17)
+        if (_zr2c_kid_race(cfg, N, route, &raced, &rpr, &fsS, NULL) >= 1e17)
         {
             _vfft_warn("vfft_create: zr2c child c2c(%d) has no plan in the real role", half);
             return NULL;
@@ -737,10 +758,11 @@ static struct vfft_plan_s *_zr2c_build(const vfft_cfg_t *cfg, int N,
      * there is no ESTIMATE tier) */
     _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
     vfft_il_cand_t c0, c1;
-    _zr2c_prime_t p0, p1;
+    _zr2c_prime_t p0, p1, pc;   /* pc: the prime cell, raced once for both routes */
     struct vfft_wisdom_s *f0, *f1;
-    struct vfft_plan_s *h0 = _zr2c_kid_race(cfg, N, 0, &c0, &p0, &f0) < 1e17 ? _zr2c_build_route(cfg, N, 0, &c0, &p0, f0) : NULL;
-    struct vfft_plan_s *h1 = _zr2c_kid_race(cfg, N, 1, &c1, &p1, &f1) < 1e17 ? _zr2c_build_route(cfg, N, 1, &c1, &p1, f1) : NULL;
+    memset(&pc, 0, sizeof pc);
+    struct vfft_plan_s *h0 = _zr2c_kid_race(cfg, N, 0, &c0, &p0, &f0, &pc) < 1e17 ? _zr2c_build_route(cfg, N, 0, &c0, &p0, f0) : NULL;
+    struct vfft_plan_s *h1 = _zr2c_kid_race(cfg, N, 1, &c1, &p1, &f1, &pc) < 1e17 ? _zr2c_build_route(cfg, N, 1, &c1, &p1, f1) : NULL;
     if (!h0 || !h1) /* one route builds: it serves */
         return h0 ? h0 : h1;
 
