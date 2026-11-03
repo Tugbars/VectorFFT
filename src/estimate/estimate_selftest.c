@@ -224,7 +224,7 @@ static int st_one(const est_machine_t *m, const est_request_t *rq, int quiet, co
 
 int main(int argc, char **argv)
 {
-    est_machine_t m = { VFFT_IL_VW, 49152, 2097152, 37748736, 8 };
+    est_machine_t m = { VFFT_IL_VW, 49152, 2097152, 37748736, 8, 12 };
     est_request_t rq = { 0, VFFT_C2C, VFFT_ORDER_NATURAL, VFFT_PLACEMENT_OUT, 1 };
     int i, all = 0, sweep = 0;
     long long a = 0, b = -1;

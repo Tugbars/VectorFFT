@@ -118,9 +118,6 @@ typedef struct est_plan3d_s
  * and radix-64 kernels), the plane within this fraction of the L1d (sketch §4 step 1; which radices
  * it should cover is open, sketch §14) */
 #define EST_ND_BLOCKED_L1_DIV 4
-/* the leading stage of a power of two from 2^s1: 32 on narrow rows, 16 on wide ones (sketch §4 step 3) */
-#define EST_ND_LEAD_NARROW 32
-#define EST_ND_LEAD_WIDE 16
 /* the 2D band: none while the plane fits L2 / EST_ND_2D_PLANE_DIV (the 3D plan's plane child:
  * L2 / EST_ND_3D_PLANE_DIV); the band within L2 / EST_ND_2D_BAND_DIV (sketch §7) */
 #define EST_ND_2D_PLANE_DIV 4
@@ -481,10 +478,24 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
     memcpy(R, P->c[best], sizeof(int) * (size_t)P->len[best]);
     return P->len[best];
 }
+/* The leading stage of a power of two from 2^s1 (sketch §4 step 3; docs/roadmap/estimate_microarch_plan.md
+ * §7): the first stage reads R legs and writes R, N / R rows apart, a multiple of 4 KB at every power-of-two
+ * row width there, so its 2R lines share one L1d set and stay in it while 2R <= the L1d's ways. The largest
+ * power of two R with 2R <= ways, at least 4; ways not reported: 4 (a small L1d assumed). 8 ways (Zen 4) and
+ * 12 (14900KF) give 4: on the 14900KF 0.98-1.05 x the planner's 8-led chains at 2048 x 120-126 and 4096 x
+ * 60-62, 0.73-0.80 x its radix-32 rows of 2026-09-24 at 2048 x 128 and 4096 x 64, where Zen 4's planner leads
+ * 4 itself; the radix-32 lead lost 1.02-1.37 x on the 14900KF and 1.30-7.49 x on Zen 4 at those seven. */
+static inline int est_col_lead(const est_machine_t *m)
+{
+    int r = 4;
+    while (4 * r <= m->l1d_ways)
+        r *= 2;
+    return r;
+}
 /* The column chain at N over rows of w complex on the natural (nat = 1) or scrambled pass
  * (sketch §4): one stage when it may serve; a Rader prime first, then the rest; the scrambled pass's
- * exceptions; a power of two from 2^s1 led by 32 (narrow rows) or 16; else the pick above. 0 = the
- * pool holds no chain at N (the door's column Bluestein). */
+ * exceptions; a power of two from 2^s1 led by est_col_lead; else the pick above. 0 = the pool holds
+ * no chain at N (the door's column Bluestein). */
 static inline int est_col_chain(const est_machine_t *m, int N, long long w, int nat, int *R)
 {
     est_pool_t P;
@@ -520,7 +531,7 @@ static inline int est_col_chain(const est_machine_t *m, int N, long long w, int 
             }
     if (est_is_pow2(N) && N >= (1 << est_s1(m)))
     {
-        pre[0] = est__narrow(m, w) ? EST_ND_LEAD_NARROW : EST_ND_LEAD_WIDE;
+        pre[0] = est_col_lead(m);
         if ((k = est__pick(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, R)) > 0)
             return k;
     }

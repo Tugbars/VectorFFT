@@ -88,8 +88,11 @@ names always exists and resolves (the pre-flight checks it with the door's resol
    `_ilrd_col0_ok`): the chain [p] followed by this formula's chain of N / p (at most 3 stages,
    nothing when N = p).
 3. **A power of two from 2^s1** (s1 = floor(log2(L1d / 16)) = 11, the 1D estimate's tile span):
-   a leading 32 on narrow rows, 16 on wide ones, then this formula's chain of N / 32 or N / 16
-   (at most 3 stages).
+   a leading R, the largest power of two with 2R <= the L1d's ways and at least 4 (4 when the CPU
+   reports no ways), then this formula's chain of N / R (at most 3 stages). The first stage reads R
+   legs and writes R, N / R rows apart, a multiple of 4 KB at every power-of-two row width there, so
+   its 2R lines share one L1d set (docs/roadmap/estimate_microarch_plan.md §7). 8 ways (Zen 4) and 12
+   (14900KF) both give 4.
 4. **Otherwise** the pool's chains of two stages or more, the first by:
    - the stage count nearest k* = ceil(n / 4) on narrow rows (the radix-16 regime), ceil(n / 3) on
      wide ones (the radix-8 regime); on a tie the fewer;

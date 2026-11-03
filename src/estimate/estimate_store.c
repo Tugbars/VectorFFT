@@ -31,7 +31,9 @@ int main(int argc, char **argv)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
-    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d\n", m.lanes, m.l1d, m.l2, m.l3, m.cores);
+    m.l1d_ways = (int)vfft_cpu_l1d_ways();
+    printf("# machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d\n", m.lanes, m.l1d, m.l1d_ways, m.l2, m.l3,
+           m.cores);
 
     vw2_store_t st;
     if (vw2_open(&st, dir, 1) != VW2_OK && st.nrec != 0) { printf("cannot open %s as an empty store\n", dir); return 1; }

@@ -168,7 +168,9 @@ int main(int argc, char **argv)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
-    printf("# machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d; %s\n", m.lanes, m.l1d, m.l2, m.l3, m.cores,
+    m.l1d_ways = (int)vfft_cpu_l1d_ways();
+    printf("# machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; %s\n", m.lanes, m.l1d,
+           m.l1d_ways, m.l2, m.l3, m.cores,
            store, R, tname);
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << 2);

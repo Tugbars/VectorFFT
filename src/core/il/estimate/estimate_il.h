@@ -46,6 +46,8 @@ typedef struct est_machine_s
     long l3;    /* bytes, vfft_cpu_l3_bytes() (cpu_cache.h:569), shared, 0 = not reported: the
                  * threaded four-step's super-band and the 3D strips rule (estimate_nd_il.h) */
     int cores;  /* vfft_topology()->ncores: reported, no rule reads it */
+    int l1d_ways; /* vfft_cpu_l1d_ways() (cpu_cache.h:564), 0 = not reported: the column chain's first
+                   * radix (est_col_lead, estimate_nd_il.h) */
 } est_machine_t;
 
 /* The request: the row's key. The values are the public enums' (include/vfft.h). */

@@ -247,8 +247,9 @@ int main(int argc, char **argv)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
-    printf("# %s; machine: lanes %d, L1d %ld, L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d\n",
-           c2r ? "C2R" : "R2C", m.lanes, m.l1d, m.l2, m.l3, m.cores, store, R, T);
+    m.l1d_ways = (int)vfft_cpu_l1d_ways();
+    printf("# %s; machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d\n",
+           c2r ? "C2R" : "R2C", m.lanes, m.l1d, m.l1d_ways, m.l2, m.l3, m.cores, store, R, T);
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
     if (T > 1)
     {   /* the threaded protocol: the caller on logical CPU 0 in one measurement scope, the library's guard */

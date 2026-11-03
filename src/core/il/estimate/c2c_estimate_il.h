@@ -789,6 +789,7 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     m.l2 = vfft_cpu_l2_bytes();
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
+    m.l1d_ways = (int)vfft_cpu_l1d_ways();
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->howmany > 1 &&
         (cfg->dims < 2 ? cfg->batch_geom != VFFT_BATCH_CONTIGUOUS : cfg->batch_geom == VFFT_BATCH_LANE_MAJOR))
         return _vfft_create_estimate_lmr(&m, cfg);   /* a real batch is lane-major by DEFAULT at rank 1, when named above */

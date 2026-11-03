@@ -264,12 +264,13 @@ static est_machine_t est_machine_here(void)
     m.l2 = vfft_cpu_l2_bytes();           /* :564 */
     m.l3 = vfft_cpu_l3_bytes();           /* :569 */
     m.cores = vfft_topology()->ncores;    /* cpu_topology.h:47,189 */
+    m.l1d_ways = (int)vfft_cpu_l1d_ways(); /* cpu_cache.h:564 */
     return m;
 }
 static void est_machine_print(const char *what, const est_machine_t *m)
 {
-    printf("%s: lanes %d (%s build), L1d %ld, L2 %ld, L3 %ld, cores %d\n", what, m->lanes, VFFT_ISA_NAME, m->l1d,
-           m->l2, m->l3, m->cores);
+    printf("%s: lanes %d (%s build), L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d\n", what, m->lanes, VFFT_ISA_NAME, m->l1d,
+           m->l1d_ways, m->l2, m->l3, m->cores);
 }
 
 /* ================================================================ cells */
@@ -1132,6 +1133,7 @@ static void est_machine_of_stamp(const char *stamp, est_machine_t *m)
     if ((p = strstr(stamp, "isa="))) m->lanes = !strncmp(p + 4, "avx512", 6) ? 8 : 4;
     if ((p = strstr(stamp, "pcores="))) m->cores = atoi(p + 7);
     if ((p = strstr(stamp, "ecores="))) m->cores += atoi(p + 7);
+    m->l1d_ways = 0;   /* the stamp names no ways: a small L1d assumed (est_col_lead) */
 }
 
 /* a payload token's comparable name: the four-step child's row plan under fs_row_ (the shipped

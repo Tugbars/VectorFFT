@@ -559,6 +559,14 @@ static inline const char *vfft_cpu_host_tag(void)
  * stamped into a wisdom record beside the width it produced. */
 static inline long vfft_cpu_l1d_bytes(void) { return vfft_cpu_cache()->l1d_used; }
 
+/* The L1d's ways under the same refuse rule: what was read on a P-core whose geometry checks out
+ * (discovered), 0 = unknown (an E-core, a bad read, or -DVFFT_L1D_DISCOVER=0). */
+static inline long vfft_cpu_l1d_ways(void)
+{
+    const vfft_cpu_cache_t *c = vfft_cpu_cache();
+    return c->discovered ? c->l1d_ways : 0;
+}
+
 /* The L2 twin: the capacity every L2-sized decision must use, and the value
  * stamped beside any banked verdict that depended on it. */
 static inline long vfft_cpu_l2_bytes(void) { return vfft_cpu_cache()->l2_used; }
