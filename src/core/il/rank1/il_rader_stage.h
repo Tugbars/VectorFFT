@@ -578,7 +578,10 @@ static void _ilrd_col0_run(const void *v, const double *src, size_t spitch, doub
             runs[nr].n = n;
             runs[nr].gi = tw ? tw + 2 * (size_t)rd->p * d : 0;
             nr++; acc += n; k += n;
-            if (acc == W) { _ilrd_window_runs(rd, runs, nr, bwd, slot); nr = 0; acc = 0; }
+            /* the window full, or the run list (as _ilrd_window bounds it): a window wider than VFFT_ILRD_W_MAX over
+             * short runs (the width race's arm at the stage's every column: 464 over runs of 5 lanes at a real batch
+             * of 168702 x 5, 2026-11-03) overran runs[] and the stack */
+            if (acc == W || nr == VFFT_ILRD_W_MAX + 1) { _ilrd_window_runs(rd, runs, nr, bwd, slot); nr = 0; acc = 0; }
         }
     if (nr) _ilrd_window_runs(rd, runs, nr, bwd, slot);
 }
