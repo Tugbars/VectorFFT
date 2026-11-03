@@ -401,8 +401,9 @@ typedef struct
     int  ptw;              /* il_prime_tw (its tile, 0 = untiled) */
     int  pmt;              /* il_mt: on a threaded plan's row, the prime cell's threaded
                             * arm (il_prime_mt.h: 1 BLOCKS, 2 TILES); absent = serial */
-    char fs[512];          /* route FS: its four-step child's rows -- the fs_*
-                            * fs_row_* fs_row_bwd_* tokens, space-joined */
+    char fs[4096];         /* route FS: its four-step child's rows -- the fs_*
+                            * fs_row_* fs_row_bwd_* tokens, space-joined (N/2 = 500000:
+                            * about 1070 characters; 512 left that row unbanked) */
 } vw2_zr2c_child_t;
 
 static inline int vw2__zr2c_ints_str(char *b, size_t cap, const int *v, int n)

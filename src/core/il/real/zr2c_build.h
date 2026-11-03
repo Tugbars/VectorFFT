@@ -75,8 +75,9 @@ typedef struct
 {
     int m;                       /* 1 rader, 2 bluestein */
     _ilprime_inner_desc_t d;     /* the inner */
-    char fs[512];                /* a four-step inner (kind 4, 2026-10-12): its child's rows as fs_ tokens, space-joined
-                                  * (the row's; empty = none: the child races at the build and says so) */
+    char fs[sizeof ((vw2_zr2c_child_t *)0)->fs];   /* a four-step inner (kind 4, 2026-10-12): its child's rows as
+                                                     * fs_ tokens, space-joined (the row's; empty = none: the child
+                                                     * races at the build and says so) */
 } _zr2c_prime_t;
 
 struct vfft_zr2c_kid_s
