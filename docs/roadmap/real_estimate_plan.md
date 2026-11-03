@@ -587,3 +587,248 @@ machine was noisy before 00:00 (the owner: "run it anyway"); the controls are cl
 `8.16.16.16`, 1.19 – 1.40 at K = 4 and 32), the C2C batch study's open 1D chain gap too. **Noticed (planner side):**
 at 2062 x 256 on 8 threads the planner's banked Rader stage runs 5 – 6 times slower than the estimate's (same chain,
 tile and threaded verdict; the inner chain or window differs).
+
+## 13. Stage 2: the three rules built, calibrated over the four layers and refitted (2026-11-03, overnight)
+
+The owner: "yes please" to the three rules, "but we need to calibrate more cells, calibrate more in L1 L2 L3 and beyond
+L3, if we have already some banked ones use them too"; then "continue and finish batch handling of real transforms, 1D
+2D and 3D as well as threaded batch handling", "you can take all the decisions you want".
+
+**The calibration set** (scratch `stage2/cells_cal.py`): lane-major 42 shapes over the four layers of the batch's bytes
+(16 (N/2 + 1) K; L1 10, L2 14, L3 11, past the L3 7), K 4 – 1024, at 1 and 8 threads, both directions, 6 in place at
+K >= 64; contiguous 34 shapes over the four layers, K 2 – 64, at 8 threads, both directions, 5 in place, and the 30
+banked contiguous cells the first study had not timed (odd lengths at K = 64: 45, 97, 105, 159, 225, 251, 315, 509,
+1001, 1009, 2003, 2025, 3465, 4099, 6561). The planner raced every missing row into the store first. Controls 1.000 –
+1.003.
+
+| Batch | Threads | Cells | E/P with the rules | control |
+|---|---|---|---|---|
+| lane-major | 1 | 96 | 1.015 | 1.002 |
+| lane-major | 8 | 96 | 1.057 | 1.003 |
+| contiguous | 8 | 108 | 1.127 | 1.000 |
+
+**Refits on the study and the calibration together** (each scored on the timed arms):
+- the serial tile from K = 128, not 64: 182 one-thread cells, the walk 1.026, from 64 1.010, from 128 1.006 against
+  the planner (K = 64 lost with a tile, in place by 1.2);
+- the threaded verdict's Rader clause from K = 32, not 16: 182 cells at 8 threads 1.027 -> 1.024 (2062 x 16: serial
+  1.3 – 1.5 times faster);
+- the contiguous rule's prime clause read off the length (an odd N, or the half of an even one, with a prime factor
+  past the chain radices), whatever engine runs it: 284 cells 1.030 -> 1.018 against the planner (61 x 16 on the
+  small real kernel: whole transforms per thread 5.8 times faster). A threaded engine's own bound or a K-against-T
+  clause scored no better.
+
+**Open:** the lane-major chain past M = 32768 (65536 – 1048576: the planner closes with a radix-64 stage, `8.8.8.64`,
+`16.8.64.64`, against the estimate's balanced `8.16.16.16`, `16.32.32.32`; 1.17 – 1.35). **Noticed (library side):**
+at N = 1,000,000 the real door's 8-thread row is not banked (`rc=-1`: the half's four-step tokens pass the row's cap,
+`wisdom2_real_il.h:405`), so every create there races again, the batch's copies included (fixed 2026-11-03: section
+18).
+
+## 14. Stage 4, step 1: the 2D and 3D batches built (2026-11-03, overnight)
+
+- **Lane-major, when named** (`real_estimate_lm_il.h`, now ranks 1 – 3): the doors `lm_batch2dr_il.h` and
+  `lm_batch3dr_il.h` run N1 blocks of the real batch one rank down (the block child, on one thread, under `rp_`), then
+  the first axis as one complex column pass over the spectrum's lanes (H K at rank 2, N2 H K at rank 3, H the real
+  axis's bins), natural. The recipe: the C2C rank-2 and rank-3 batch's first axis at those lanes (no unbanded pick, no
+  turned prime pass: a real key admits none), its forms spelled from the real pool (the column builder offers R2C's
+  half-store twin at the leaf; the C2C spelling left the door racing them, which the gate caught), the C2C threaded
+  test; the block child the real batch one rank down. The row is shared by both directions; rank 3 keys its in-place
+  cell's own row.
+- **Contiguous, the DEFAULT at rank 2 and 3** (`real_estimate_nd_il.h`, `est_build_real_ndb`): the plane and volume
+  queues over the one-transform plan; on T threads the primary's row at T, the copies' one-thread row and the batch's
+  own way row (`pq`, keyed by the request's direction), the way by the C2C rule at a transform's spectrum. At rank 3,
+  where the policy admits the groups arm (powers of two, 2 <= K <= T/2), its copies replay the cell's row at G = T / K
+  threads: that row is written too (the gate caught the race).
+- The front door serves a real batch at every rank; the gate's sections RB2, RB3, RLM2, RLM3 (one thread and 8) check
+  every batch against the one-transform plans, transform by transform, and the round trip.
+
+**The Rader window of a threaded lane-major pass** (built 2026-11-03): the 28 prime-half cells (262, 2062, 8198 x
+K 4 – 1024, both directions) timed again with the window the only change (`E:rdw8`): at 8 threads 1.020 -> 0.767
+against the planner (K = 32: 0.32 – 0.44, three times the planner and the window of 32; 8198 x 64: 3.3 -> 1.04); on a
+serial pass and at one thread (22 cells: 1.008 -> 1.064) the window of 32 stays. So a Rader column whose pass threads
+takes 8 columns (`EST_LMR_RD_W`), the 2D real plane's rule 25 one geometry over. **Noticed (planner side):** at
+2062 x 256 on 8 threads the planner banks a window of 256 and runs 5 – 6 times slower than the estimate.
+
+## 15. Stage 4: the study (2026-11-03, 02:05 – 02:45)
+
+The planner raced every 2D and 3D real batch cell into the store first (none was banked): lane-major 29 shapes at 1
+and 8 threads, contiguous 25 shapes at 1 and 8 threads, both directions, 4 shapes each in place; the four layers of
+the batch's spectrum bytes (16 R (L/2 + 1) K), K 4 – 128 (scratch `stage2/cells4.py`). Controls 0.987 – 1.002.
+
+| Batch | Threads | Cells | E/P | control |
+|---|---|---|---|---|
+| lane-major 2D and 3D | 1 | 66 | 1.099 | 1.002 |
+| lane-major 2D and 3D | 8 | 66 | 1.038 | 1.001 |
+| contiguous 2D and 3D | 8 | 58 | 1.017 | 0.987 |
+| contiguous 2D and 3D | 1 | 58 | 0.994 | 0.998 |
+
+- **Contiguous:** the C2C way rule (`est_batch_whole` at a transform's spectrum) is the best of the candidates scored
+  on the two ways timed at every cell (58 cells: 1.016 against the faster way; the 1D real rule ties, the tighter L2
+  bounds lose 1.04 – 1.13): no rule of its own. At one thread the batch is the one-transform plan looped; its misses
+  are the single-transform estimate's at odd real axes (5x7x9 R2C 1.9, 32x15 R2C 1.7: stage 3's open items).
+- **Lane-major, threaded verdict:** the C2C test as built is within 0.5 % of the best arm (66 cells at 8 threads,
+  1.005): no rule of its own.
+- **Lane-major, the first axis's chain and tile:** the planner runs the first axis in the fewest, largest radices (64,
+  32, 16.8, 32.64, 64.16, 8.8.64) with a serial tile of 16 – 64 lanes, the estimate in many small ones (8.8, 8.4.4,
+  16.8.4.4) walking; rank 3 at one thread 1.161, past the L3 1.26. Timed again with the fewest-stage chain
+  (`est__col_fewest`), the first axis's tiles and the block child's tiles as one-change arms (`s4v_time_*`).
+
+**The one-change arms (2026-11-03, 03:00 – 03:40), against the estimate as it stood (no tile):**
+
+| Arm | 1 thread (66 cells, E 1.100) | 8 threads (66 cells, E 1.043) |
+|---|---|---|
+| the first axis's tile, the best width of 8 – 64 | 1.116 -> 1.037 (56 cells) | 1.048 -> 1.042 |
+| a tile of 32 / 64 lanes | 1.158 -> 1.035 / 1.173 -> 1.034 | 1.057 -> 1.055 / 1.067 -> 1.071 |
+| the fewest-stage chain | 1.145 -> 1.100 (24 faster, 12 slower) | 1.058 -> 1.163 (2 faster, 24 slower) |
+| the block child's tile of 8 / 16 lanes | 1.132 -> 1.257 / 1.182 -> 1.238 | 1.048 -> 1.113 / 1.044 -> 1.040 |
+
+- **Built: the first axis's tile** (`real_estimate_lm_il.h`, rank 2 and 3). On a plain chain (no Rader stage, no
+  Bluestein) of two stages or more whose plane, 16 N1 lanes bytes, passes the L1d: the widest of the door's widths up
+  to 64 lanes, below the lanes, whose strip of 16 N1 w bytes fits the L2. The first axis runs over the spectrum's whole
+  width, every stage a pass over the plane; a tile keeps a strip in the cache from stage to stage. 66 cells at one
+  thread: 1.100 -> 0.986 against the planner (1.003 against the best tile). One stage is one pass either way: every
+  tile there ran slower (14 cells of 14, the best width 1.26 times the walk). The rule was first built without that
+  clause (0.989); two unseen cells showed it (3x84 x 48 in place 1.32, 12x1852 x 8 in place 1.15) and the clause was
+  added after the unseen run at one thread. In the L1d the walk won (8x8 x 16, 16x16 x 8: a tile 1.5 times slower).
+  At 8 threads a tile is neutral (66 cells: the rule 1.045, the walk 1.043); the rule applies at every thread count.
+- **The batch's own first axis only.** The block child of a 3D batch (the 2D batch over one plane) keeps the walk: its
+  tile of 8 or 16 lanes ran slower at one thread (3D, 8 lanes: 6 cells faster, 12 slower, 1.145 against the walk; 16
+  lanes 1.054). Widths of 32 and 64 there were not timed; the unseen run times them as arms.
+- **Not built: the fewest-stage chain.** At one thread it wins half the cells and loses a third (the tile, built since,
+  takes most of the same gap); at 8 threads it loses 24 of 26. The unseen run times it again on top of the tile.
+
+## 16. Found on the way (2026-11-03, overnight)
+
+**The first unseen set** (scratch `stage2/cells_unseen.py`, drawn after the three rules of section 13: 30 lane-major
+at 1 and 8 threads, 30 contiguous at 8 threads; any length, K 2 – 1024) missed in two places:
+
+| Batch | Threads | Cells | E/P | control |
+|---|---|---|---|---|
+| lane-major | 1 | 14 | 0.971 | 0.923 |
+| lane-major | 8 | 12 | 1.190 | 0.983 |
+| contiguous | 8 | 30 | 1.389 | 0.999 |
+
+Four lane-major cells did not build (below). The two misses drove two refits, each scored on every timed cell:
+- **Contiguous on T threads:** an odd N (an odd engine: zrf, zrb, the small real kernel) does many times an even
+  one's work per byte, so its floor is half the C2C one (69 x 27, 19 x 53, 375 x 5: whole transforms per thread 1.5 –
+  3.9 times faster below 16 KiB); and odd Bluestein with its own threaded arm (zrb mt) scales on its transform from
+  128 KiB (24031 x 2, 92861 x 6, 97217 x 56: all threads on each 1.7 – 2.1 times faster). All 314 cells: 1.049 ->
+  1.032 against the planner. Left open: the large zr2c and zrb transforms that pass or near the L2 (168214, 569746,
+  639401: the way follows the half's factorization, not the bytes).
+- **Lane-major on T threads:** the pass threads only past the C2C test's plane, L1d / 2 (10 x 114 in place, a 9 KiB
+  plane: threaded 5.2 times the serial pass). 194 cells at 8 threads: 1.036 -> 1.026 against the best arm.
+
+**A column Bluestein on a real key** (four of the unseen cells: 25514 x 3, 49978 x 17, 16714 x 414, 13642 x 226, a
+prime half with no Rader chain): the door builds Bluestein with no turned prime pass on a real key; the estimate wrote
+the C2C pass's switch and the replay failed. The real recipe now writes no switch (`tpc = -1`, rank 1 and the first
+axis of rank 2 and 3) and the pre-flight accepts it. Timed after the fix: 1.343 (25514 x 3, one thread), 1.088,
+1.191, 1.253 at 8 threads: the inner chain at 32768 (the planner's `8.64.64`, the estimate's `8.16.16.16`), the
+lane-major chain gap of section 13.
+
+**A crash in the library** (`il/rank1/il_rader_stage.h`, `_ilrd_col0_run`; found by the planner's race at 168702 x 5,
+lane-major): the Rader column stage gathers each window's runs into `runs[VFFT_ILRD_W_MAX + 2]`. The width race's arm
+at the stage's every column (W = 464 here, past `VFFT_ILRD_W_MAX` = 64) over runs of 5 lanes overran the list and the
+stack (a segfault in the race). The stage now flushes the window when the list is full, as `_ilrd_window` bounds it.
+The planner's race at 168702 x 5 then ran in 6 s. The flush only fires at 65 runs, which a window of at most 64
+columns never reaches; a wider one (the race's every-column arm) now runs in pieces instead of overrunning.
+`rader_gate` failed three times out of three, once on the committed tree without this fix (29479b95, exported):
+the 2D cell c2c 214x16 (107.2, the turned route) did not engage a threaded pass at T = 8 in one arm or both, as its
+cold races fall. One run also failed "M r2c 134144: T=8 replay != cold (bitwise)", which the other two passed (the
+committed tree's one of them): a replay that built another plan than the cold create, as the races fall (the flush
+runs alike in both, so it cannot set them apart). Reported, not filled.
+
+**Noticed, not filled:** at N = 1,000,000 the real door's 8-thread row is not banked (`rc=-1`: the half's four-step
+tokens pass the row's cap, `wisdom2_real_il.h:405`), so every create there races again, the batch's copies included
+(fixed 2026-11-03: section 18).
+At 2062 x 256 on 8 threads the planner banks a Rader window of 256 and runs 5 – 6 times slower than the estimate;
+at 6548 x 97 (M = 2 x 1637) its banked row runs Bluestein, 2.2 times slower than the estimate's Rader stage.
+
+## 17. The unseen cells (2026-11-03, 03:50 – 04:45)
+
+**Drawn after every rule above** (scratch `stage2/cells_unseen2.py`, seed 20261105): 1D, 30 lane-major (15 at one
+thread, 15 at 8; an even N log-uniform in 8 – 2^20, K 2 – 1024) and 30 contiguous at 8 threads (any N, K 2 – 64);
+rank 2 and 3, 40 lane-major (20 and 20) and 20 contiguous at 8 threads (every extent log-uniform from 2, K 2 – 64); a
+direction each, one in five in place. The planner raced all 120 into the store first (none was banked; 311722 x 5
+took 18 minutes: "the real composite's prime child at N=155861: its four-step inner's child did not replay -- it
+raced in the plan's private store"; section 18).
+
+| Batch | Threads | Cells | First timing | Final rules | control |
+|---|---|---|---|---|---|
+| lane-major 1D | 1 | 15 | 1.006 | 1.009 | 0.999 |
+| lane-major 2D and 3D | 1 | 20 | 1.038 | 1.018 | |
+| lane-major 1D | 8 | 15 | 1.048 | 1.024 | 1.002 |
+| lane-major 2D and 3D | 8 | 20 | 1.136 | 1.054 | |
+| contiguous 1D | 8 | 30 | 1.138 | 1.147 | |
+| contiguous 2D and 3D | 8 | 20 | 1.146 | 1.166 | |
+| **all** | | **120** | | **1.078** (median 1.015) | 1.001 |
+
+**Two rules added after the first timing** (`real_estimate_lm_il.h`), each read off the one-change arms of every
+timed cell, then timed again:
+- **The first axis's tile skips a one-stage chain** (section 15). 3x84 x 48 in place 1.318 -> 1.005, 12x1852 x 8 in
+  place 1.150 -> 1.004.
+- **A threaded Rader chain of two stages or more runs in strips** (`est__lmr_rader_strips`, at `est__msw_2d`'s
+  width; the C2C rule gave every Rader chain the threaded walk; since section 18 the clause is the C2C rule's too,
+  `est__lm_threaded`). The walk carries each worker's whole range through
+  every stage. On the first axis of a 2D or 3D batch it ran 3.3 – 5.7 times the planner, slower than the serial pass
+  (122x288 x 55 in place: 5.16). A validation set drawn for it (scratch `stage2/cells_rd.py`: 23 shapes with a
+  Rader prime 53 – 1031 times small factors, both directions, 48 cells at 8 threads) confirmed it: 2D 4.478 -> 1.023,
+  3D 4.609 -> 1.070, 1D 0.856 -> 0.854. Over every timed threaded Rader cell: rank 2 and 3, 25 cells 4.535 -> 1.026;
+  rank 1, 26 cells 0.948 -> 0.920; a Rader stage alone keeps the walk (33 cells: strips 1.13 times slower).
+
+**Where the rest is:**
+- *Contiguous 2D and 3D:* the one-transform plan, not the batch. The estimate's own plan with the better of the two
+  ways is 1.126 against the planner, and the way itself 1.035. The misses are odd real axes (7x37x7, 7x2x7,
+  150x98x7, 411x9, 23x6x53), stage 3's open items.
+- *Contiguous 1D:* the way, not the plan (the way 1.126, the plan 1.018). (a) The half-length engine's large
+  transforms: whole transforms per thread won past the L2 (480240 x 24, 3.8 MB a transform, 2.0 times; 311722 x 5,
+  2.3 times), and all threads on each won within it (193818 x 62, 1.55 MB, 2.15 times; 69518 x 17; 103060 x 39 in
+  place). That is section 16's open item: the way follows the half's factorization, not the bytes. (b) Batches below
+  the 16 KiB floor: whole transforms per thread won at 43 x 7, 94 x 5 and 31x4 x 4 (2.5 – 6 KiB, the planner 550 –
+  930 ns: 1.16 – 1.59), and the serial loop won at every batch under 200 ns and at 182 x 11 in place. Three cells
+  each way, not enough for a rule.
+- *Lane-major:* the first axis's chain (200x7x52 x 39: 8.5.5 against the planner's 25.8; 90x12x20 x 57: 5.3.6
+  against 15.6), the 1D chain past M = 32768 (section 13), and a Rader window at few columns (41530 x 5 at one
+  thread: 25 columns, the window of 8 1.02 against 1.33).
+- *Not timed:* the block child's tile of 32 and 64 lanes (the unseen shapes, small and odd, offered no such arm;
+  of the 8- and 16-lane arms there, 3 of 6 ran slower and none faster).
+
+**Noticed, not filled:** the C2C lane-major batch shares the clause that gives a Rader chain the threaded walk;
+its 2D and 3D Rader first axes may run the same walk, untested (timed and built 2026-11-03: section 18).
+
+**Gates (2026-11-03, 05:16):** `estimate_gate` ALL PASS, 31,502 checks: 702 1D real batches and the 2D and 3D
+real batches in both layouts, at 1 and 8 threads, each against the one-transform plans transform by transform and the
+round trip. New cells for the night's rules: halves with a Rader stage among others (212, 4124 lane-major) and a first
+axis 106 = 53 x 2 (106x16, 106x4x4), which run the strips threaded (RLM2T 32 threaded batches, RLM3T 16). The
+canonical CMake build of `vfft_core` is clean.
+
+## 18. Three noticed items, fixed (2026-11-03, morning)
+
+The owner asked for the three items of sections 16 and 17 to be fixed.
+
+**The C2C lane-major Rader chain.** Timed on 26 C2C cells at 8 threads, a prime 53 – 1031 times 2 – 12 in the
+column (`lane_major_estimate_plan.md` section 9): the threaded walk 3.82 times the planner (rank 2 and 3: 4.84;
+rank 1: 2.44), the strips 0.874, the control 1.007. Built: a Rader stage among two stages or more takes the strips
+in the C2C threaded verdict (`est__lm_threaded`); the real batch's clause (`est__lmr_rader_strips`, section 17) was
+the same test and is gone, so the real recipes do not change. Timed again with the rule built: the estimate serves
+the strips at all 26 cells, 0.874 against the planner (the worst cell 1.045).
+
+**The 1,000,000 row.** The zr2c row carries its child's four-step tokens (the FS route's child, or a prime child's
+four-step inner) through a fixed field of 512 characters (`vw2_zr2c_child_t.fs`, `wisdom2_real_il.h`, and the prime
+cell's copy in `zr2c_build.h`). The half 500,000 needs about 1,070 (the store's C2C rows at 500,000 hold 1,012 and
+1,071), so the bank refused the row (`rc=-1`) at one thread and at 8, and every create raced again (300 s). The
+field is now 4,096 characters. Raced into the store after the fix (the cells were missing): R2C 1,000,000 x 8 at 8
+threads, contiguous, banked the cell's row (1,296 characters) and the batch's row in 306 s; the next create replayed
+in 0.34 s.
+
+**311722 x 5's 18 minutes.** The same field: the prime half 155861 runs Bluestein through a four-step inner whose
+child's tokens can pass 512 characters, and then the child raced again at the build ("did not replay"). Raced again
+after the fix on a copy of the store without the cell's rows: no "did not replay", and the next create replayed in
+0.45 s. The race itself is unchanged: 1,095 s and 1,730 races, as before. The time is the prime cell's race, run from
+scratch for each of the zr2c child's two routes (14 min 18 s, then 3 min 56 s; the rest 1 s): up to 480 inner
+candidates (both methods, every inner size and shape) at about 312,000 points (`_ilprime_create_banked`,
+`k1_commit.h`). The night's other halves with a large prime factor took as long (482026: 1,687 s; 471596:
+1,097 s). Not changed: it is the planner's design (racing the prime cell once for both routes would save about 4 of
+the 18 minutes).
+
+**Gates (2026-11-03, 08:37):** `estimate_gate` ALL PASS, 31,642 checks (the C2C lane-major sections with the new
+cells: 592 lane-major batches; the real sections as at 05:16, the real recipes unchanged); `zr2c_fd_gate` all correct;
+the canonical CMake build of `vfft_core` with its three earlier warnings only.

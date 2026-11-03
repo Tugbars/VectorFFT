@@ -89,8 +89,9 @@ static inline int est__preflight_col(const est_col_t *c, char *why, size_t whyle
                               c->blu > 0 ? c->blu : c->N);
     }
     if (c->blu > 0)
-    {
-        if (c->tpc != 1 || c->rd_n || c->wl)
+    {   /* the turned prime pass marked (tpc = 1); a real key's column Bluestein carries none (tpc = -1: the column
+         * builder admits the pass on a c2c axis 0 only, il2d_tier.h _il2d_tpc_admits) */
+        if ((c->tpc != 1 && c->tpc != -1) || c->rd_n || c->wl)
             return est_refuse(why, whylen, "the column Bluestein at N = %d with a Rader stage or a band", c->N);
         return 0;
     }

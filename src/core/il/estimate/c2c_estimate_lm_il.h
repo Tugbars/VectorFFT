@@ -42,7 +42,8 @@
  *     after it). Loss against the better of the two over the study's 50 prime cells: 1.009 (a fixed 4 lanes: 1.039).
  *   - THE STRIPS AT T > 1 only when every worker gets a vector of lanes (lanes >= the vector's complex count x T:
  *     2 x T on AVX2; 4 per worker scored 1.021),
- *     on a chain with no Rader stage (those walk faster threaded) whose strip of EST_LM_STRIP_MIN lanes fits the
+ *     on a chain with no Rader stage (a Rader stage alone walks faster threaded; a Rader stage among two stages or
+ *     more takes the strips, 2026-11-03, est__lm_threaded) whose strip of EST_LM_STRIP_MIN lanes fits the
  *     L2 (65536 rows walk); else the threaded walk. Loss against the best of serial, walk and strips over 103 cells
  *     at 8 threads: 1.019 (strips wherever no Bluestein: 1.188; at K = 4 the strips ran 3.5 - 7 times slower).
  *   - THE 1D CHAIN past the L1d: the unbanded walk's pick (est__col_unbanded) where the batch passes the L1d. Over the
@@ -104,29 +105,41 @@ static inline void est_free_lm(est_planlm_t *p)
 }
 
 /* the threaded verdict of a pass that threads (the strips rule above): the strips at est__msw_2d's width where every
- * worker gets a vector of lanes, on a chain with no Rader stage whose strip of EST_LM_STRIP_MIN lanes fits the L2; else
- * the threaded walk */
+ * worker gets a vector of lanes, on a chain with no Rader stage or with a Rader stage among two stages or more, whose
+ * strip of EST_LM_STRIP_MIN lanes fits the L2; else the threaded walk.
+ * THE RADER CHAIN'S STRIPS (2026-11-03; docs/roadmap/real_estimate_plan.md sections 17 and 18): the walk carries each
+ * worker's whole range through every stage; the strips keep a strip in the cache from the Rader stage to the next.
+ * Timed with the form the only change at 8 threads. C2C, 26 cells (a prime 53 - 1031 times 2 - 12, rank 1 K 32 -
+ * 1024, rank 2 and 3 K 4 - 16): the walk 3.82 times the planner (rank 2 and 3 4.84, rank 1 2.44, slower than the
+ * serial pass at 212 x 256 and 4124 x 64), the strips 0.874. Real (its first axis and its pass at M), 25 rank-2 and 3
+ * cells 4.535 -> 1.026, 26 rank-1 cells 0.948 -> 0.920. A Rader stage alone keeps the walk (the 2026-11-01 study's
+ * prime columns; real, 33 cells: the strips 1.13 times slower). */
 static inline void est__lm_threaded(const est_machine_t *m, est_planlm_t *p, long long lanes)
 {
-    const int strips = p->col.blu <= 0 && !p->col.rd_n && lanes >= (long long)(m->lanes / 2) * p->T &&
+    const int chain = p->col.rd_n ? p->col.nst > 1 : p->col.blu <= 0;
+    const int strips = chain && lanes >= (long long)(m->lanes / 2) * p->T &&
                        16LL * p->N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
     p->cmt = 1;
     p->mtarm = strips;
     p->msw = strips ? est__msw_2d(m, p->N1, (int)lanes, p->T) : 0;
 }
-/* est__plan_lm: est_plan_lm's body; tpc_ok = 0 for a column whose door admits no turned prime pass (the real batch's,
- * il2d_tier.h _il2d_tpc_admits: a c2c axis 0 only), where a Rader column keeps its stage at every lane count */
+/* est__plan_lm: est_plan_lm's body under opts: EST_LM_TPC the prime column's switch to the turned prime pass (its door
+ * admits the pass: a c2c axis 0 only, il2d_tier.h _il2d_tpc_admits; without it a Rader column keeps its stage at every
+ * lane count), EST_LM_UNB the rank-1 batch's unbanded chain pick past the L1d (a rank-1 pass of its own; the first
+ * axis of a 2D or 3D batch never takes it) */
+#define EST_LM_TPC 1
+#define EST_LM_UNB 2
 static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
-                               int tpc_ok, est_planlm_t *out, char *why, size_t whylen);
+                               int opts, est_planlm_t *out, char *why, size_t whylen);
 /* est_plan_lm: the lane-major batch's recipe (the header's list). Returns 0 with *out filled (its block child
  * allocated: est_free_lm), or -1 with the reason. Pure. */
 static inline int est_plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
                               est_planlm_t *out, char *why, size_t whylen)
 {
-    return est__plan_lm(m, rank, N1, N2, N3, K, T, nat, 1, out, why, whylen);
+    return est__plan_lm(m, rank, N1, N2, N3, K, T, nat, EST_LM_TPC | EST_LM_UNB, out, why, whylen);
 }
 static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
-                               int tpc_ok, est_planlm_t *out, char *why, size_t whylen)
+                               int opts, est_planlm_t *out, char *why, size_t whylen)
 {
     long long lanes;
     memset(out, 0, sizeof *out);
@@ -148,9 +161,9 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
         return est_refuse(why, whylen, "a lane-major batch of %lld lanes: past the doors' lane count", lanes);
     if (est_col_plan(m, N1, lanes, nat, &out->col, why, whylen))
         return -1;
-    if (rank == 1 && 16LL * N1 * lanes > m->l1d)
+    if (rank == 1 && (opts & EST_LM_UNB) && 16LL * N1 * lanes > m->l1d)
         (void)est__col_unbanded(m, &out->col);
-    if (tpc_ok && out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) &&
+    if ((opts & EST_LM_TPC) && out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) &&
         est__col_blu(m, &out->col, why, whylen))
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))

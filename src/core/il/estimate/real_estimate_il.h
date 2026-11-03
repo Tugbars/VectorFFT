@@ -471,19 +471,31 @@ static inline int est__real_copies(const est_real_recipe_t *rc, int ip)
 /* THE CONTIGUOUS REAL BATCH'S WAY ON T THREADS (the owner's rule, 2026-11-03; docs/roadmap/real_estimate_plan.md section
  * 12, fitted on the study's two ways timed at every cell, 176 cells at 8 threads, 20 lengths x K 3 - 24, both
  * directions): whole transforms per thread while one transform's N/2 + 1 bins, 16 bytes each, fit a core's L2, when
- * the batch carries EST_BATCH_FLOOR bytes or the plan runs through a prime engine (odd Bluestein zrb, or zr2c whose half
- * has a prime factor no chain radix carries, vfft_policy_prime_cell: their work per byte is many times the others', and
- * 131 or 262 at K = 3 already pay a copy each);
- * else all threads on each transform (below the floor, the serial loop). The C2C rule's L2 / 8 bound (est_batch_whole)
- * assumes one transform on T threads uses them all; a real one mostly does not (zr2c threads its fold only): it lost 3
- * - 7 times at 65536 and 100000. 1.107 -> 1.000 against the planner (1.115 -> 1.007 against the faster way). */
+ * the batch carries EST_BATCH_FLOOR bytes or the transform is a prime one -- an odd N, or the half of an even one, with a
+ * prime factor no chain radix carries (vfft_policy_prime_cell): whatever engine runs it (odd Bluestein, the small real
+ * kernel at 53 - 61, the half-length engine on a prime half), its work per byte is many times the others', and 61, 131
+ * or 262 at K = 3 already pay a copy each; else all threads on each transform (below the floor, the serial loop). The
+ * C2C rule's L2 / 8 bound (est_batch_whole) assumes one transform on T threads uses them all; a real one mostly does not
+ * (zr2c threads its fold only): it lost 3 - 7 times at 65536 and 100000. The first study, 176 cells: 1.107 -> 1.000
+ * against the planner; with the calibration set (108 cells over the four layers, K 2 - 64, the banked odd lengths at
+ * K = 64), 284 cells: 1.018 (1.023 against the faster way; the prime clause read off the engine 1.030; a threaded
+ * engine's own bound or a K-against-T clause no better). The 30 cells drawn after it (odd lengths, 69 x 27 - 639401 x
+ * 12) missed it at 1.389, two ways: an odd N (an odd engine: zrf, zrb, the small kernel) does many times an even one's
+ * work per byte, so its floor is half the C2C one (69 x 27, 19 x 53, 375 x 5: whole transforms 1.5 - 3.9 times
+ * faster below 16 KiB); and odd Bluestein with its own threaded arm (zrb mt) scales on its transform from
+ * EST_REAL_BATCH_ZRB_MT bytes (24031 x 2, 92861 x 6, 97217 x 56: all threads on each 1.7 - 2.1 times faster). With
+ * both, all 314 cells 1.049 -> 1.032 against the planner. Left open: the large zr2c and zrb transforms that pass or
+ * near the L2 (168214, 569746, 639401: the way follows the half's factorization, not the bytes). */
+#define EST_REAL_BATCH_ZRB_MT (128 << 10)
 static inline int est__real_batch_whole(const est_machine_t *m, const est_real_recipe_t *rc, long long N, size_t K)
 {
     const size_t bytes = 16 * ((size_t)N / 2 + 1);
-    const int prime = !strcmp(rc->eng, "zrb") || (!strcmp(rc->eng, "zr2c") && vfft_policy_prime_cell((int)(N / 2)));
+    const int prime = vfft_policy_prime_cell((int)((N & 1) ? N : N / 2));
     if (K < 2 || m->l2 <= 0 || bytes > (size_t)m->l2)
         return 0;
-    return prime || (double)K * (double)bytes >= EST_BATCH_FLOOR;
+    if (!strcmp(rc->eng, "zrb") && rc->zrb.mt && bytes >= EST_REAL_BATCH_ZRB_MT)
+        return 0;
+    return prime || (double)K * (double)bytes >= ((N & 1) ? EST_BATCH_FLOOR / 2 : EST_BATCH_FLOOR);
 }
 
 /* est_plan_real: the recipe of a 1D real request (r2c or c2r, natural order): one transform, or a contiguous batch

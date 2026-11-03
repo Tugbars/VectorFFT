@@ -70,11 +70,13 @@
  *      against the one C2R on the batch's bins, bitwise for a contiguous batch on one thread, within TOL otherwise;
  *      the round trip within TOL; on 8 threads a contiguous batch runs whole transforms per thread exactly when the
  *      rule says so (est__real_batch_whole: one transform's 16 (N/2 + 1) bytes within the L2, the batch past 16 KiB or a
- *      prime engine).
+ *      prime engine). RB2, RB3 and RLM2, RLM3 the same at rank 2 and 3 (contiguous: the plane and volume queues, the
+ *      DEFAULT there, its way est_batch_whole at a transform's spectrum, vfft_pq_mt_passes; lane-major when named), on
+ *      one thread and on 8 (RB2T, RB3T, RLM2T, RLM3T).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
- *   R  the refusals: a real transform in a batch at rank 2 and 3 or at its own pitch at rank 2, a lane-major real
- *      batch at an odd N or below N = 4, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
+ *   R  the refusals: a real transform at its own pitch at rank 2, a lane-major real batch at an odd last extent or
+ *      below N = 4, a scrambled real one, a real-to-real transform, rank 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
@@ -1122,8 +1124,8 @@ static void sec_end_rl(const char *name, long b0, long mt0)
 static long g_rb_built = 0, g_rb_mt = 0;
 /* the contiguous real batch's rule on T threads (est__real_batch_whole, il/estimate/real_estimate_il.h), stated again:
  * whole transforms per thread while one transform's 16 (N/2 + 1) bytes fit a core's L2, when the batch carries 16 KiB
- * or the plan runs through a prime engine -- past N = 64 (the small real kernel's), an N (odd: Bluestein) or a half
- * (even: the half-length engine) with a prime factor past the chain radices (47) */
+ * or the transform is a prime one -- an odd N, or the half of an even one, with a prime factor past the chain radices
+ * (47) */
 static int rb_whole(long N, int K, int T)
 {
     const long long l2 = (long long)vfft_cpu_l2_bytes(), bytes = 16LL * (N / 2 + 1);
@@ -1132,30 +1134,50 @@ static int rb_whole(long N, int K, int T)
         while (m % p == 0) m /= p;
     if (T < 2 || K < 2 || l2 <= 0 || bytes > l2)
         return 0;
-    return (N > 64 && m > 1) || (long long)K * bytes >= (16LL << 10);
+    /* an odd N's floor is half (its odd engine's work per byte); odd Bluestein with its threaded arm takes all threads
+     * on each from 128 KiB a transform, which the section's Bluestein lengths (131, 1031) never reach */
+    return m > 1 || (long long)K * bytes >= ((N & 1) ? (8LL << 10) : (16LL << 10));
 }
-static void rb_cell(long N, int K, int ip, int T, int lm)
+/* one batch at rank 1, 2 or 3 (n0 x n1 x n2, the last extent the real one): R rows of L reals before the real axis's
+ * H = L/2 + 1 bins. The one-transform plan's layout: out of place R L reals, R H bins; in place R rows of 2 H doubles,
+ * the reals first. A contiguous batch: K of them one after another. Lane-major: real (r, c) of transform t at
+ * (r L + c) K + t, bin (r, f) at 2 ((r H + f) K + t); in place R rows of 2 H K doubles, the reals first in each. */
+static void rbn_cell(int rank, long n0, long n1, long n2, int K, int ip, int T, int lm)
 {
-    const long H = N / 2 + 1;
-    const size_t nb = (size_t)2 * H * K, nr = ip ? nb : (size_t)N * K;   /* the bins' doubles; the reals' buffer */
-    const size_t sr = lm ? 1 : (ip ? (size_t)2 * H : (size_t)N);          /* a contiguous transform's reals apart */
+    const long L = rank == 1 ? n0 : rank == 2 ? n1 : n2, R = rank == 1 ? 1 : rank == 2 ? n0 : n0 * n1, H = L / 2 + 1;
+    const long P = R * L;
+    const size_t nb = (size_t)2 * R * H * K, nr = ip ? nb : (size_t)P * K;   /* the bins' doubles; the reals' buffer */
+    const size_t sr = ip ? (size_t)2 * R * H : (size_t)P;                   /* a contiguous transform's reals apart */
     double *xs = (double *)vfft_malloc(nr * sizeof(double)), *x = (double *)vfft_malloc(nb * sizeof(double));
     double *y = (double *)vfft_malloc(nb * sizeof(double)), *w = (double *)vfft_malloc(nb * sizeof(double));
     double *z = (double *)vfft_malloc(nb * sizeof(double)), *e = (double *)vfft_malloc(nb * sizeof(double));
-    double *a = (double *)vfft_malloc((size_t)2 * H * sizeof(double)), *b = ip ? a : (double *)vfft_malloc((size_t)2 * H * sizeof(double));
+    double *a = (double *)vfft_malloc((size_t)2 * R * H * sizeof(double));
+    double *b = ip ? a : (double *)vfft_malloc((size_t)2 * R * H * sizeof(double));
     long double sx = 0.0L, m = 0.0L;
     double df, dbk, er;
-    char name[96];
+    char name[96], shape[48];
     vfft_config_t c;
     vfft_plan p1f, p1b, pbf, pbb;
     int m1f, m1b, mbf, mbb, t, fsame, bsame, whole = 0, ok;
-    long f, i, c0, c1, e0;
-#define RIX(E_, T_) (lm ? (size_t)(E_) * K + (size_t)(T_) : (size_t)(T_) * sr + (size_t)(E_))
-#define BIX(F_, T_) (lm ? (size_t)2 * ((size_t)(F_) * K + (size_t)(T_)) : (size_t)(T_) * 2 * H + (size_t)2 * (F_))
+    long f, i, r, c0, c1, e0;
+#define RX1(R_, C_) (ip ? (size_t)(R_) * 2 * H + (size_t)(C_) : (size_t)(R_) * L + (size_t)(C_))
+#define BX1(R_, F_) (ip ? (size_t)(R_) * 2 * H + (size_t)2 * (F_) : (size_t)2 * ((R_) * H + (F_)))
+#define RIX(R_, C_, T_) (lm ? (ip ? (size_t)(R_) * 2 * H * K + (size_t)(C_) * K + (size_t)(T_) \
+                              : ((size_t)(R_) * L + (size_t)(C_)) * K + (size_t)(T_)) \
+                           : (size_t)(T_) * sr + RX1(R_, C_))
+#define BIX(R_, F_, T_) (lm ? (ip ? (size_t)(R_) * 2 * H * K + (size_t)2 * ((size_t)(F_) * K + (size_t)(T_)) \
+                              : (size_t)2 * (((size_t)(R_) * H + (size_t)(F_)) * K + (size_t)(T_))) \
+                           : (size_t)(T_) * 2 * R * H + BX1(R_, F_))
     if (!xs || !x || !y || !w || !z || !e || !a || !b) { printf("out of memory\n"); exit(2); }
-    snprintf(name, sizeof name, "N=%ld K=%d %s %s T=%d", N, K, lm ? "lane-major" : "contiguous", ip ? "ip" : "oop", T);
+    if (rank == 1) snprintf(shape, sizeof shape, "%ld", n0);
+    else if (rank == 2) snprintf(shape, sizeof shape, "%ldx%ld", n0, n1);
+    else snprintf(shape, sizeof shape, "%ldx%ldx%ld", n0, n1, n2);
+    snprintf(name, sizeof name, "%s K=%d %s %s T=%d", shape, K, lm ? "lane-major" : "contiguous", ip ? "ip" : "oop", T);
     memset(&c, 0, sizeof c);
-    c.n[0] = (int)N;
+    c.rank = rank;
+    c.n[0] = (int)n0;
+    if (rank >= 2) c.n[1] = (int)n1;
+    if (rank == 3) c.n[2] = (int)n2;
     c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     c.nthreads = T;
     c.transform = VFFT_R2C;
@@ -1163,7 +1185,8 @@ static void rb_cell(long N, int K, int ip, int T, int lm)
     c.transform = VFFT_C2R;
     p1b = est_create(&c, &m1b);
     c.howmany = (size_t)K;
-    c.batch = lm ? VFFT_BATCH_DEFAULT : VFFT_BATCH_CONTIGUOUS;
+    c.batch = lm ? (rank == 1 ? VFFT_BATCH_DEFAULT : VFFT_BATCH_LANE_MAJOR)
+                 : (rank == 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT);
     c.transform = VFFT_R2C;
     pbf = est_create(&c, &mbf);
     c.transform = VFFT_C2R;
@@ -1173,23 +1196,26 @@ static void rb_cell(long N, int K, int ip, int T, int lm)
     CHECK(pbf && pbb, "RB %s: a batch refused: %s", name, vfft_error());
     if (p1f && p1b && pbf && pbb && !m1f && !m1b && !mbf && !mbb)
     {
-        g_rng = 0x2545F4914F6CDD1Dull ^ ((unsigned long long)N << 9) ^ (unsigned long long)K;
+        g_rng = 0x2545F4914F6CDD1Dull ^ ((unsigned long long)P << 9) ^ (unsigned long long)K ^ ((unsigned long long)rank << 40);
         memset(xs, 0, nr * sizeof(double));
         for (t = 0; t < K; t++)
-            for (i = 0; i < N; i++)
-            {
-                const double v = rnd();
-                xs[RIX(i, t)] = v;
-                sx += (long double)v * v;
-            }
+            for (r = 0; r < R; r++)
+                for (i = 0; i < L; i++)
+                {
+                    const double v = rnd();
+                    xs[RIX(r, i, t)] = v;
+                    sx += (long double)v * v;
+                }
         for (t = 0; t < K; t++)   /* the one R2C, transform by transform */
         {
-            for (i = 0; i < N; i++) a[i] = xs[RIX(i, t)];
+            for (r = 0; r < R; r++)
+                for (i = 0; i < L; i++) a[RX1(r, i)] = xs[RIX(r, i, t)];
             vfft_execute(p1f, VFFT_FORWARD, a, b);
-            for (f = 0; f < H; f++) { w[BIX(f, t)] = b[2 * f]; w[BIX(f, t) + 1] = b[2 * f + 1]; }
+            for (r = 0; r < R; r++)
+                for (f = 0; f < H; f++) { w[BIX(r, f, t)] = b[BX1(r, f)]; w[BIX(r, f, t) + 1] = b[BX1(r, f) + 1]; }
         }
         memcpy(x, xs, nr * sizeof(double));
-        c0 = vfft_tc_mt_dispatches();
+        c0 = rank == 1 ? vfft_tc_mt_dispatches() : vfft_pq_mt_passes();
         e0 = vfft_il2d_col_mt_passes();
         vfft_execute(pbf, VFFT_FORWARD, x, ip ? x : y);
         if (ip) memcpy(y, x, nb * sizeof(double));
@@ -1197,28 +1223,31 @@ static void rb_cell(long N, int K, int ip, int T, int lm)
         fsame = (T > 1 || lm) ? df <= TOL : !memcmp(w, y, nb * sizeof(double));
         for (t = 0; t < K; t++)   /* the one C2R on the batch's bins */
         {
-            for (f = 0; f < H; f++) { b[2 * f] = y[BIX(f, t)]; b[2 * f + 1] = y[BIX(f, t) + 1]; }
+            for (r = 0; r < R; r++)
+                for (f = 0; f < H; f++) { b[BX1(r, f)] = y[BIX(r, f, t)]; b[BX1(r, f) + 1] = y[BIX(r, f, t) + 1]; }
             vfft_execute(p1b, VFFT_BACKWARD, b, a);
-            for (i = 0; i < N; i++) e[(size_t)t * N + i] = a[i];
+            for (r = 0; r < R; r++)
+                for (i = 0; i < L; i++) e[(size_t)t * P + r * L + i] = a[RX1(r, i)];
         }
         memcpy(x, y, nb * sizeof(double));
         vfft_execute(pbb, VFFT_BACKWARD, x, ip ? x : z);
         if (ip) memcpy(z, x, nb * sizeof(double));
-        c1 = vfft_tc_mt_dispatches();
+        c1 = rank == 1 ? vfft_tc_mt_dispatches() : vfft_pq_mt_passes();
         for (t = 0; t < K; t++)   /* the batch's reals, transform by transform, into w */
-            for (i = 0; i < N; i++)
-            {
-                const long double d = fabsl((long double)z[RIX(i, t)] / N - xs[RIX(i, t)]);
-                w[(size_t)t * N + i] = z[RIX(i, t)];
-                if (!(d <= m)) m = d;
-            }
-        dbk = rel_diff(e, w, (size_t)N * K);
-        bsame = (T > 1 || lm) ? dbk <= TOL : !memcmp(e, w, (size_t)N * K * sizeof(double));
-        er = (double)(m / sqrtl(sx / ((long double)N * K)));
+            for (r = 0; r < R; r++)
+                for (i = 0; i < L; i++)
+                {
+                    const long double d = fabsl((long double)z[RIX(r, i, t)] / P - xs[RIX(r, i, t)]);
+                    w[(size_t)t * P + r * L + i] = z[RIX(r, i, t)];
+                    if (!(d <= m)) m = d;
+                }
+        dbk = rel_diff(e, w, (size_t)P * K);
+        bsame = (T > 1 || lm) ? dbk <= TOL : !memcmp(e, w, (size_t)P * K * sizeof(double));
+        er = (double)(m / sqrtl(sx / ((long double)P * K)));
         ok = fsame && bsame && er <= TOL;
         if (!lm && T > 1)
         {
-            whole = rb_whole(N, K, T);
+            whole = rank == 1 ? rb_whole(n0, K, T) : batch_whole(16LL * R * H, K, T, NULL);
             CHECK((c1 != c0) == whole, "RB %s: the batch ran %s, the rule says %s", name,
                   c1 != c0 ? "whole transforms per thread" : "all threads on each transform",
                   whole ? "whole transforms per thread" : "all threads on each transform");
@@ -1230,11 +1259,17 @@ static void rb_cell(long N, int K, int ip, int T, int lm)
         g_rb_built += ok;
         g_rb_mt += lm ? vfft_il2d_col_mt_passes() != e0 : c1 != c0;
     }
+#undef RX1
+#undef BX1
 #undef RIX
 #undef BIX
     vfft_destroy(p1f); vfft_destroy(p1b); vfft_destroy(pbf); vfft_destroy(pbb);
     vfft_free(xs); vfft_free(x); vfft_free(y); vfft_free(w); vfft_free(z); vfft_free(e); vfft_free(a);
     if (!ip) vfft_free(b);
+}
+static void rb_cell(long N, int K, int ip, int T, int lm)
+{
+    rbn_cell(1, N, 0, 0, K, ip, T, lm);
 }
 static void sec_end_rb(const char *name, long b0, long mt0, int lm)
 {
@@ -1415,15 +1450,16 @@ int main(int argc, char **argv)
     sec_begin();
     {
         vfft_config_t c;
-        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.howmany = 4; c.transform = VFFT_R2C;
-        refused("R2C rank 2 howmany 4", &c, "plans one VFFT_R2C transform at rank 2 and 3, not a batch");
-        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.howmany = 2; c.transform = VFFT_C2R;
+        memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 63; c.howmany = 4; c.transform = VFFT_R2C;
         c.batch = VFFT_BATCH_LANE_MAJOR;
-        refused("C2R rank 3 howmany 2 lane-major", &c, "plans one VFFT_C2R transform at rank 2 and 3, not a batch");
+        refused("R2C rank 2 64x63 howmany 4 lane-major", &c, "an odd last extent has no real column engine");
+        memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 7; c.howmany = 2; c.transform = VFFT_C2R;
+        c.batch = VFFT_BATCH_LANE_MAJOR;
+        refused("C2R rank 3 8x8x7 howmany 2 lane-major", &c, "an odd last extent has no real column engine");
         memset(&c, 0, sizeof c); c.n[0] = 63; c.howmany = 4; c.transform = VFFT_C2R;
-        refused("C2R N=63 howmany 4 (lane-major by default)", &c, "an odd N has no real column engine");
+        refused("C2R N=63 howmany 4 (lane-major by default)", &c, "an odd last extent has no real column engine");
         memset(&c, 0, sizeof c); c.n[0] = 2; c.howmany = 4; c.transform = VFFT_R2C; c.batch = VFFT_BATCH_LANE_MAJOR;
-        refused("R2C N=2 howmany 4 lane-major", &c, "an even N of at least 4");
+        refused("R2C N=2 howmany 4 lane-major", &c, "an even last extent of at least 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.transform = VFFT_R2C; c.flags = VFFT_FLAG_OWN_PITCH;
         c.placement = VFFT_PLACEMENT_IN;
         refused("R2C rank 2 own pitch", &c, "not with VFFT_FLAG_OWN_PITCH");
@@ -1701,12 +1737,14 @@ int main(int argc, char **argv)
 
     /* LM1, LM2, LM3: lane-major batches on one thread; LM1T, LM2T, LM3T on 8 threads. Rank 1 in the four order x
      * placement cells over powers of two, smooth and odd lengths, a Rader prime (131) and Bluestein-sized ones
-     * (1031, 12005); rank 2 and 3 natural in both placements, with odd sides and a prime column */
+     * (1031, 12005); rank 2 and 3 natural in both placements, with odd sides and a prime column; a Rader stage among
+     * others (212 = 53 x 4, 106 = 53 x 2: the strips at 8 threads) */
     {
-        static const int L1[] = { 2, 3, 8, 16, 64, 100, 131, 256, 1000, 1031, 4096, 12005 };
-        static const int L2[][2] = { { 2, 2 }, { 8, 8 }, { 16, 16 }, { 9, 15 }, { 64, 64 }, { 131, 16 }, { 8, 100 },
-                                     { 100, 8 }, { 2, 256 } };
-        static const int L3[][3] = { { 2, 2, 2 }, { 4, 8, 16 }, { 8, 8, 8 }, { 16, 16, 16 }, { 5, 7, 9 }, { 8, 8, 131 } };
+        static const int L1[] = { 2, 3, 8, 16, 64, 100, 131, 212, 256, 1000, 1031, 4096, 12005 };
+        static const int L2[][2] = { { 2, 2 }, { 8, 8 }, { 16, 16 }, { 9, 15 }, { 64, 64 }, { 131, 16 }, { 106, 16 },
+                                     { 8, 100 }, { 100, 8 }, { 2, 256 } };
+        static const int L3[][3] = { { 2, 2, 2 }, { 4, 8, 16 }, { 8, 8, 8 }, { 16, 16, 16 }, { 5, 7, 9 }, { 8, 8, 131 },
+                                     { 106, 4, 4 } };
         static const int KL1[4] = { 2, 3, 8, 32 }, KL2[3] = { 2, 3, 8 }, KL3[2] = { 2, 3 };
         int TL, k, ip, scr;
         for (TL = 1; TL <= 8; TL += 7)
@@ -1741,10 +1779,12 @@ int main(int argc, char **argv)
     /* RB, RBT: contiguous 1D real batches on one thread (K = 2 and an odd K) and on 8 threads (K = 2, 8, 9), over the
      * real engines (the mono, the pair, ZTT-r, the half, the odd chain, odd Bluestein, the real four-step at 2^20 out
      * of place); in place below 1024. RLM, RLMT: lane-major 1D real batches (K = 2, 3, 8, 32), both placements, over
-     * powers of two, smooth lengths and halves that are primes (131 Rader, 1031 and 4099 Bluestein on few lanes) */
+     * powers of two, smooth lengths, halves that are primes (131 Rader, 1031 and 4099 Bluestein on few lanes) and halves
+     * with a Rader stage among others (106 = 53 x 2, 2062 = 1031 x 2: threaded, the strips) */
     {
         static const long RB[] = { 2, 3, 16, 64, 100, 131, 1000, 1031, 1280, 4096, 6000, 16384, 65536, 100000, 1048576 };
-        static const long RLM[] = { 4, 6, 8, 16, 64, 100, 128, 262, 1000, 1024, 2062, 4096, 8198, 12000, 16384 };
+        static const long RLM[] = { 4, 6, 8, 16, 64, 100, 128, 212, 262, 1000, 1024, 2062, 4096, 4124, 8198, 12000,
+                                    16384 };
         static const int KB1[2] = { 2, 5 }, KBT[3] = { 2, 8, 9 }, KLM[4] = { 2, 3, 8, 32 };
         int TB, k, ip;
         for (TB = 1; TB <= 8; TB += 7)
@@ -1765,6 +1805,55 @@ int main(int argc, char **argv)
                     for (k = 0; k < 4; k++)
                         rb_cell(RLM[i], KLM[k], ip, TB, 1);
             sec_end_rb(TB > 1 ? "RLMT" : "RLM", b0, t0, 1);
+        }
+    }
+
+    /* RB2, RB3: contiguous 2D and 3D real batches (the plane and volume queues, il/estimate/real_estimate_nd_il.h), both
+     * placements, one thread (K = 2, 3) and RB2T, RB3T on 8 threads (K = 2, 8, 9); RLM2, RLM3: lane-major 2D and 3D real
+     * batches (real_estimate_lm_il.h), both placements, K = 2, 3, 8 (2D) and 2, 3 (3D), one and 8 threads. The shapes:
+     * powers of two, odd and smooth sides, an odd real axis (contiguous only), a Rader and a prime first axis, a Rader
+     * stage among others on the first axis (106 = 53 x 2: threaded, the strips) */
+    {
+        static const int B2[][2] = { { 8, 8 }, { 16, 16 }, { 64, 64 }, { 100, 100 }, { 32, 63 }, { 53, 64 }, { 4, 256 },
+                                     { 256, 4 }, { 12, 60 } };
+        static const int B3[][3] = { { 4, 4, 4 }, { 8, 8, 8 }, { 16, 16, 16 }, { 5, 7, 9 }, { 53, 8, 8 }, { 2, 3, 4 },
+                                     { 16, 64, 63 } };
+        static const int L2[][2] = { { 2, 4 }, { 8, 8 }, { 16, 16 }, { 64, 64 }, { 100, 100 }, { 53, 64 }, { 131, 16 },
+                                     { 8, 100 }, { 106, 16 } };
+        static const int L3[][3] = { { 2, 2, 4 }, { 4, 4, 4 }, { 8, 8, 8 }, { 16, 16, 16 }, { 53, 8, 8 }, { 8, 8, 100 },
+                                     { 106, 4, 4 } };
+        static const int KB1[2] = { 2, 3 }, KBT[3] = { 2, 8, 9 }, KL2[3] = { 2, 3, 8 }, KL3[2] = { 2, 3 };
+        int TB, k, ip;
+        for (TB = 1; TB <= 8; TB += 7)
+        {
+            long b0 = g_rb_built, t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof B2 / sizeof B2[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < (TB > 1 ? 3 : 2); k++)
+                        rbn_cell(2, B2[i][0], B2[i][1], 0, TB > 1 ? KBT[k] : KB1[k], ip, TB, 0);
+            sec_end_rb(TB > 1 ? "RB2T" : "RB2", b0, t0, 0);
+            b0 = g_rb_built; t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof B3 / sizeof B3[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < (TB > 1 ? 3 : 2); k++)
+                        rbn_cell(3, B3[i][0], B3[i][1], B3[i][2], TB > 1 ? KBT[k] : KB1[k], ip, TB, 0);
+            sec_end_rb(TB > 1 ? "RB3T" : "RB3", b0, t0, 0);
+            b0 = g_rb_built; t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof L2 / sizeof L2[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < 3; k++)
+                        rbn_cell(2, L2[i][0], L2[i][1], 0, KL2[k], ip, TB, 1);
+            sec_end_rb(TB > 1 ? "RLM2T" : "RLM2", b0, t0, 1);
+            b0 = g_rb_built; t0 = g_rb_mt;
+            sec_begin();
+            for (i = 0; i < (int)(sizeof L3 / sizeof L3[0]); i++)
+                for (ip = 0; ip < 2; ip++)
+                    for (k = 0; k < 2; k++)
+                        rbn_cell(3, L3[i][0], L3[i][1], L3[i][2], KL3[k], ip, TB, 1);
+            sec_end_rb(TB > 1 ? "RLM3T" : "RLM3", b0, t0, 1);
         }
     }
 

@@ -212,3 +212,30 @@ The 11 above 1.10 are the gaps listed above: 6007 x 96 (1.71), the first axis's 
 
 Next (the owner's): the 3D strips' width and the first axis's chain at rank 2 and 3 are the largest gaps left.
 Tools and logs: `docs/research/estimate_threaded/evidence/lane_major/`.
+
+## 9. A Rader stage among others takes the strips (2026-11-03)
+
+The strips rule of section 8 gave every column with a Rader stage the threaded walk; the study's prime columns were a
+Rader stage alone (131, 197, 2003, 6007), where the walk won. The real batch's study found a Rader stage among other
+stages walking 3.3 – 5.7 times slower than the planner (`real_estimate_plan.md` section 17), and the C2C batch was
+timed for it: 23 shapes whose column is a prime 53 – 1031 times 2 – 12 (rank 1 at K 32 – 1024, rank 2 and 3 at K 4 –
+16, three of them in place too), 26 cells at 8 threads, the planner's rows raced into `src/wisdom/14900KF` first
+(none was banked; the planner took the strips at every cell but 1018 x 96, where it runs Bluestein with the turned
+pass). The estimate's recipe with the threaded form the only change (scratch `fix3/`, `lmst time`):
+
+| Cells | Count | The walk (the rule as it was) | The strips | Serial | Control |
+|---|---|---|---|---|---|
+| rank 1 | 9 | 2.439 | 0.768 | 4.237 | 0.999 |
+| rank 2 and 3 | 17 | 4.844 | 0.935 | 5.564 | 1.011 |
+| all | 26 | 3.820 | 0.874 | 5.063 | 1.007 |
+
+The walk ran 4.3 – 5.8 times the planner at rank 2 and 3 (2062x8 x 4: 1.31) and up to 7.6 at rank 1 (212 x 1024);
+the strips were within 5% of the planner or faster at all 26 (2062 x 64 and 1018 x 96: 0.29 and 0.33). **Built:** a column
+with a Rader stage among two stages or more takes the strips at `est__msw_2d`'s width under the same lanes and L2
+bounds (`est__lm_threaded`, `c2c_estimate_lm_il.h`); a Rader stage alone keeps the walk. The real batch's own clause
+(`est__lmr_rader_strips`) is the same test and now lives there, so the real batch's recipes do not change. None of
+the 2026-11-01 study's or unseen cells has such a column, so their numbers and the performance page's section stand.
+`estimate_gate` gained 212 (rank 1), 106x16 and 106x4x4 in its lane-major sections and passes in full (31,642 checks,
+2026-11-03 08:34).
+Timed again with the rule built (08:39): the estimate serves the strips at all 26 cells, 0.874 against the planner
+(rank 1 0.776, rank 2 and 3 0.930; the worst cell 1.045; the control 1.006).

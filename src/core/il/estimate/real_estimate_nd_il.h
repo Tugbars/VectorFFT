@@ -881,17 +881,111 @@ out:
     return h;
 }
 
-/* THE FRONT DOOR'S ESTIMATE CREATE OF A REAL TRANSFORM AT RANK 2 OR 3 (_vfft_create_estimate): the request, the
- * recipe, the build. NULL with the reason on the error record (vfft_error). */
+/* ── the contiguous batch at rank 2 and 3 (stage 4) ─────────────────────── */
+
+/* THE CONTIGUOUS REAL BATCH (howmany = K > 1, the DEFAULT geometry at rank 2 and 3): the door's plane or volume queue
+ * (fft2d_create_il.h _vfft_create_pq_il, plane_queue.h) over the plan of one transform -- on one thread that plan run
+ * once per transform, no copy built; on T threads the primary at T and T one-thread copies that replay the cell's
+ * one-thread row, run the way the batch's own row says (pq=, vw2_pq_bank, keyed by the request's direction): whole
+ * transforms per thread (1), else all threads on each transform in turn (0). The way: the C2C rule (est_batch_whole) at
+ * a transform's spectrum, 16 bytes a bin (stage 4, step 1: no rule of its own). The 3D queue's groups arm (pq=2: K
+ * copies at G = T / K threads, vfft_policy_pq_groups_ok) is never the way written, but the door builds its copies
+ * whenever the policy admits it, each replaying the cell's row at G threads: that row is written too (g3).
+ * est_build_real_ndb: p2 or p3 the recipe at T, q2 or q3 the copies' one-thread recipe (T > 1; else NULL), g3 the
+ * groups' recipe at G (else NULL), whole the way -> a plan built with nothing measured, or NULL with the reason in why
+ * and the outcome in rep (may be NULL). */
+static inline struct vfft_plan_s *est_build_real_ndb(const est_plan2dr_t *p2, const est_plan3dr_t *p3,
+                                                     const est_plan2dr_t *q2, const est_plan3dr_t *q3,
+                                                     const est_plan3dr_t *g3, int whole, const vfft_cfg_t *cfg,
+                                                     est_build_report_t *rep, char *why, size_t whylen)
+{
+    est_build_report_t lrep;
+    struct vfft_wisdom_s *S = NULL;
+    struct vfft_plan_s *h = NULL;
+    const struct vfft_plan_s *h1;
+    est__meter_t m0;
+    const int rank = p3 ? 3 : 2, T = cfg && cfg->nthreads > 1 ? cfg->nthreads : 1, batch = T > 1;
+    const int c2r = p3 ? p3->c2r : p2 ? p2->c2r : 0, ip = p3 ? p3->ip : p2 ? p2->ip : 0;
+    if (!rep)
+        rep = &lrep;
+    memset(rep, 0, sizeof *rep);
+    rep->status = EST_REFUSED;
+    if (why && whylen)
+        why[0] = 0;
+    if ((!p2 && !p3) || (p2 && p3) || !cfg || (cfg->transform != VFFT_R2C && cfg->transform != VFFT_C2R) ||
+        (cfg->transform == VFFT_C2R) != (c2r != 0) || cfg->dims != rank || cfg->howmany < 2 ||
+        cfg->batch_geom == VFFT_BATCH_LANE_MAJOR || cfg->layout != VFI_LAYOUT_IL || (cfg->placement == VFFT_INPLACE) != (ip != 0) ||
+        (p2 && (cfg->n[0] != p2->N1 || cfg->n[1] != p2->N2 || T != p2->T)) ||
+        (p3 && (cfg->n[0] != p3->N1 || cfg->n[1] != p3->N2 || cfg->n[2] != p3->N3 || T != p3->T)) ||
+        (batch ? (p2 ? !q2 || q2->T != 1 || q2->N1 != p2->N1 || q2->N2 != p2->N2 || q2->c2r != c2r || q2->ip != ip
+                     : !q3 || q3->T != 1 || q3->N1 != p3->N1 || q3->N2 != p3->N2 || q3->N3 != p3->N3 || q3->c2r != c2r ||
+                           q3->ip != ip)
+               : whole) ||
+        (g3 && (!p3 || !batch || g3->T < 2 || g3->T >= T || g3->N1 != p3->N1 || g3->N2 != p3->N2 || g3->N3 != p3->N3 ||
+                g3->c2r != c2r || g3->ip != ip)))
+    {
+        est_refuse(why, whylen, "estimate builds a contiguous batch of %dD interleaved r2c or c2r transforms at the recipe's "
+                   "shape, placement and thread count (on more than one thread with its copies' one-thread recipe)", rank);
+        return NULL;
+    }
+    vfft_env_init();
+    _vfft_create_lock();
+    _vfft_create_depth++;
+    est__meter_read(&m0);
+    if (!(S = vfft_child_store_new()))
+    {
+        est_refuse(why, whylen, "out of memory");
+        goto out;
+    }
+    if (p2 ? est_put_rows_2d_real(&S->vw2, p2, why, whylen) : est_put_rows_3d_real(&S->vw2, p3, why, whylen))
+        goto out;
+    if (batch)
+    {   /* the copies' one-thread row; the way on the batch's own row, as _pq_mt_replay_or_race reads it */
+        vw2_key_t key;
+        if (p2 ? est_put_rows_2d_real(&S->vw2, q2, why, whylen) : est_put_rows_3d_real(&S->vw2, q3, why, whylen))
+            goto out;
+        if (g3 && est_put_rows_3d_real(&S->vw2, g3, why, whylen))   /* the groups' copies replay the row at G */
+            goto out;
+        vw2__pq_key(&key, c2r ? VW2_T_C2R : VW2_T_R2C, rank, cfg->n[0], cfg->n[1], rank == 3 ? cfg->n[2] : 0, cfg->howmany,
+                    vfft_policy_ord_rankn(cfg), ip ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), T);
+        if (vw2_pq_bank(&S->vw2, &key, whole, 0.0) != VW2_OK)
+        {
+            est_refuse(why, whylen, "the batch's row (pq) was refused at %d threads", T);
+            goto out;
+        }
+    }
+    h = est__replay(S, cfg, &m0, rep, why, whylen);
+    if (h && (est__batch_one(h, cfg, whole, &h1, why, whylen) ||
+              !(p2 ? est__check_2d_real(h1, p2, why, whylen) : est__check_3d_real(h1, p3, why, whylen)) ||
+              (whole && !(p2 ? est__check_2d_real(h->pq_w[0], q2, why, whylen) : est__check_3d_real(h->pq_w[0], q3, why, whylen)))))
+    {   /* with whole transforms per thread the first copy is the one-thread recipe's plan too */
+        rep->status = EST_NOPLAN;
+        vfft_destroy((vfft_plan)h);
+        h = NULL;
+    }
+    else if (h)
+        rep->status = EST_BUILT;
+out:
+    vfft_child_store_free(S);
+    if (--_vfft_create_depth == 0)
+        _vfft_scope_create_done();
+    _vfft_create_unlock();
+    return h;
+}
+
+/* THE FRONT DOOR'S ESTIMATE CREATE OF A REAL TRANSFORM AT RANK 2 OR 3 (_vfft_create_estimate): one transform, or a
+ * contiguous batch of them (a lane-major batch is real_estimate_lm_il.h's): the request, the recipe, the build. NULL
+ * with the reason on the error record (vfft_error). */
 static vfft_plan _vfft_create_estimate_real_nd(const est_machine_t *m, const vfft_cfg_t *cfg)
 {
     char why[640];
     struct vfft_plan_s *h;
     const int T = cfg->nthreads > 1 ? cfg->nthreads : 1, c2r = cfg->transform == VFFT_C2R;
     const int ip = cfg->placement == VFFT_INPLACE;
-    if ((cfg->dims != 2 && cfg->dims != 3) || cfg->howmany > 1)
-    {
-        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one R2C or C2R transform at rank 1 to 3");
+    if ((cfg->dims != 2 && cfg->dims != 3) || (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR))
+    {   /* _vfft_create_estimate routes a lane-major batch elsewhere first */
+        _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans one R2C or C2R transform at rank 2 or 3 here, or a contiguous "
+                   "batch of them");
         return NULL;
     }
     if (cfg->owned_buffers)
@@ -901,31 +995,55 @@ static vfft_plan _vfft_create_estimate_real_nd(const est_machine_t *m, const vff
         return NULL;
     }
     if (cfg->dims == 2)
-    {
-        est_plan2dr_t p;
-        if (est_plan_2d_real(m, cfg->n[0], cfg->n[1], c2r, ip, T, &p, why, sizeof why))
+    {   /* two recipes, the copies' one-thread one with it: off the stack */
+        est_plan2dr_t *p = (est_plan2dr_t *)malloc(sizeof *p), *q = (est_plan2dr_t *)malloc(sizeof *q);
+        if (!p || !q)
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);
-            return NULL;
-        }
-        h = est_build_real_2d(&p, cfg, NULL, why, sizeof why);
-    }
-    else
-    {
-        est_plan3dr_t *p = (est_plan3dr_t *)malloc(sizeof *p);   /* two 1D real recipes and a 2D one: off the stack */
-        if (!p)
-        {
+            free(p);
+            free(q);
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: out of memory");
             return NULL;
         }
-        if (est_plan_3d_real(m, cfg->n[0], cfg->n[1], cfg->n[2], c2r, ip, T, p, why, sizeof why))
+        if (est_plan_2d_real(m, cfg->n[0], cfg->n[1], c2r, ip, T, p, why, sizeof why) ||
+            (cfg->howmany > 1 && T > 1 && est_plan_2d_real(m, cfg->n[0], cfg->n[1], c2r, ip, 1, q, why, sizeof why)))
+            h = NULL;
+        else if (cfg->howmany > 1)
+            h = est_build_real_ndb(p, NULL, T > 1 ? q : NULL, NULL, NULL,
+                                   T > 1 && est_batch_whole(m, 16 * (size_t)cfg->n[0] * ((size_t)cfg->n[1] / 2 + 1),
+                                                            cfg->howmany, T),
+                                   cfg, NULL, why, sizeof why);
+        else
+            h = est_build_real_2d(p, cfg, NULL, why, sizeof why);
+        free(p);
+        free(q);
+    }
+    else
+    {
+        est_plan3dr_t *p = (est_plan3dr_t *)malloc(sizeof *p), *q = (est_plan3dr_t *)malloc(sizeof *q),
+                      *g = (est_plan3dr_t *)malloc(sizeof *g);   /* off the stack */
+        const int groups = cfg->howmany > 1 && T > 1 && vfft_policy_pq_groups_ok(cfg, cfg->howmany, T);
+        if (!p || !q || !g)
         {
             free(p);
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);
+            free(q);
+            free(g);
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: out of memory");
             return NULL;
         }
-        h = est_build_real_3d(p, cfg, NULL, why, sizeof why);
+        if (est_plan_3d_real(m, cfg->n[0], cfg->n[1], cfg->n[2], c2r, ip, T, p, why, sizeof why) ||
+            (cfg->howmany > 1 && T > 1 && est_plan_3d_real(m, cfg->n[0], cfg->n[1], cfg->n[2], c2r, ip, 1, q, why, sizeof why)) ||
+            (groups && est_plan_3d_real(m, cfg->n[0], cfg->n[1], cfg->n[2], c2r, ip, T / (int)cfg->howmany, g, why, sizeof why)))
+            h = NULL;
+        else if (cfg->howmany > 1)
+            h = est_build_real_ndb(NULL, p, NULL, T > 1 ? q : NULL, groups ? g : NULL,
+                                   T > 1 && est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1] *
+                                                                   ((size_t)cfg->n[2] / 2 + 1), cfg->howmany, T),
+                                   cfg, NULL, why, sizeof why);
+        else
+            h = est_build_real_3d(p, cfg, NULL, why, sizeof why);
         free(p);
+        free(q);
+        free(g);
     }
     if (!h)
         _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);

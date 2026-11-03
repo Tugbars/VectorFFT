@@ -29,7 +29,8 @@ are within 5%, 35 are more than 5% faster and 72 more than 5% slower.
 > 945) on 2026-10-27 at commit 0d702e36; the real transforms on 2026-10-28 at commit 0d702e36; the 3D
 > shapes at 8 threads on 2026-10-31 (the plans with the axis-0 chains of that day); the contiguous
 > batches at 8 threads on 2026-10-31 at commit 80e3d1d2; the lane-major batches on 2026-11-01 at commit
-> 3ff2d127; every other section on 2026-10-27 at commit
+> 3ff2d127; the real batches on 2026-11-03 on top of commit 29479b95 (the night's rules, uncommitted at the
+> time); every other section on 2026-10-27 at commit
 > a61b778c. The changes between them leave the plans of the
 > earlier sections as they were
 
@@ -886,6 +887,77 @@ By layer (the spectrum's bytes against this machine's L1d, L2 and L3), the estim
 | 2D, 8 threads | 0.903 | 1.057 | 1.047 | 1.063 |
 | 3D, 1 thread | 0.947 | 1.000 | 1.034 | 1.010 |
 | 3D, 8 threads | 1.070 | 1.037 | 1.027 | 0.968 |
+
+---
+
+## Real batches (R2C and C2R) at 1 and 8 threads: 120 batches from 0.3 KiB to 92 MiB
+
+Not counted in the totals above. The estimate arm is the library's real batch formulas:
+[`il/estimate/real_estimate_il.h`](../../src/core/il/estimate/real_estimate_il.h) (a contiguous 1D batch),
+[`real_estimate_nd_il.h`](../../src/core/il/estimate/real_estimate_nd_il.h) (a contiguous batch at rank 2 and 3,
+the default there) and [`real_estimate_lm_il.h`](../../src/core/il/estimate/real_estimate_lm_il.h) (a lane-major
+batch at rank 1 to 3, the default in 1D). They are built through the same private store and replay as the library's
+C2C estimate and measure nothing at create.
+
+> **Arms:** the planner's batch, replayed from [`src/wisdom/14900KF`](../../src/wisdom/14900KF) (the 120 batches
+> raced there on 2026-11-03); the estimate's batch, the plan `VFFT_FLAG_ESTIMATE` builds; the planner's batch
+> created a second time, as a control  
+> **Contract:** real-to-complex and complex-to-real FP64, interleaved spectrum, natural order, out of place (28
+> batches in place), a contiguous batch (one transform after another) or a lane-major batch (element i of
+> transform t at position i K + t), 1 or 8 threads; C2R on Hermitian input  
+> **Method:** the three plans in one process; the process on the P-cores, the caller on one P-core inside one
+> measurement scope with the library's sibling guards; every plan warmed for 5 ms, then 15 rounds in a shuffled
+> order: an R2C out of place a block of about 10 ms, in place and C2R (which overwrites its input) three single
+> executes, the input laid out again untimed; each ratio is the median of the 15 per-round ratios (the control
+> against the planner: 1.001, geometric mean)  
+> **Batches:** 60 in 1D (30 lane-major, 15 at one thread and 15 at 8, an even N from 8 to 2^20 and K from 2 to
+> 1,024; 30 contiguous at 8 threads, any N from 8 to 2^20 and K from 2 to 64) and 60 at rank 2 and 3 (40
+> lane-major, 20 at one thread and 20 at 8; 20 contiguous at 8 threads; K from 2 to 64), each its own shape with
+> one K and one direction. They were drawn at random after the estimate's real batch rules were set, from shapes
+> and K the rules were not fitted on. Two rules were added after their first timing: the first axis's tile skips a
+> one-stage chain, and a threaded Rader chain of two stages or more runs in strips. The rules and the study behind
+> them: [`real_estimate_plan.md`](../roadmap/real_estimate_plan.md) (sections 11 – 17)
+
+Over the 120 batches the estimate's plan takes 1.078 times the planner's at the geometric mean and 1.015 at the
+median; 74 are within 5%, 5 more than 5% faster and 41 more than 5% slower. At 8 threads the two take the same
+threaded form (serial, all threads walking the lanes, or strips of lanes per thread) on 28 of the 35 lane-major
+batches, and the same way (whole transforms per thread, or all threads on each transform in turn) on 41 of the 50
+contiguous ones. The lane-major batches sit within 2.5% at the geometric mean except 2D and 3D at 8 threads.
+Most of the contiguous gap is elsewhere: at rank 2 and 3 it is the one-transform plan at odd real axes (the
+estimate's own plan with the better way: 1.126 against the planner); in 1D it is the way on the half-length engine's
+large transforms and on batches below 16 KiB.
+
+By the batch's spectrum bytes (16 R (L/2 + 1) K, L the real axis, R the other axes' points) against the caches (L1d
+48 KiB, L2 2 MiB, L3 36 MiB):
+
+| Batch | Batches | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
+|---|---|---|---|---|---|---|
+| up to 48 KiB | 35 | 1.065 | 1.000 | 22 | 2 | 11 |
+| 48 KiB to 2 MiB | 47 | 1.052 | 1.017 | 34 | 0 | 13 |
+| 2 to 36 MiB | 33 | 1.104 | 1.028 | 15 | 3 | 15 |
+| past 36 MiB | 5 | 1.269 | 1.029 | 3 | 0 | 2 |
+| **all** | **120** | **1.078** | **1.015** | **74** | **5** | **41** |
+
+By layout, rank and thread count:
+
+| Batches | Count | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
+|---|---|---|---|---|---|---|
+| lane-major 1D, one thread | 15 | 1.009 | 0.998 | 12 | 2 | 1 |
+| lane-major 1D, 8 threads | 15 | 1.024 | 1.009 | 12 | 0 | 3 |
+| lane-major 2D and 3D, one thread | 20 | 1.018 | 1.003 | 16 | 1 | 3 |
+| lane-major 2D and 3D, 8 threads | 20 | 1.054 | 1.034 | 12 | 0 | 8 |
+| contiguous 1D, 8 threads | 30 | 1.147 | 1.025 | 15 | 2 | 13 |
+| contiguous 2D and 3D, 8 threads | 20 | 1.166 | 1.103 | 7 | 0 | 13 |
+
+By rank and direction:
+
+| Batches | Count | Geomean | Median | Within 5% | More than 5% faster | More than 5% slower |
+|---|---|---|---|---|---|---|
+| 1D | 60 | 1.080 | 1.007 | 39 | 4 | 17 |
+| 2D | 31 | 1.051 | 1.019 | 21 | 0 | 10 |
+| 3D | 29 | 1.107 | 1.028 | 14 | 1 | 14 |
+| R2C | 67 | 1.107 | 1.010 | 42 | 2 | 23 |
+| C2R | 53 | 1.043 | 1.019 | 32 | 3 | 18 |
 
 ## Estimate against MKL: every N from 128 to 4,096
 
