@@ -83,7 +83,6 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat',   # the real flat DIT (il/real/zrf.h): r1c, the real leaf
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat' / 'herm',   # its Hermitian last stage: t2csgh, t2csght
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'rows',   # the real rows (the 2D real tier's row pass): r2zr
-        DAG / 'codelets' / 'split' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
         # the avx512 drivers sit in their own subfolder so an avx2 build never compiles them
         (DAG / 'generator' / 'generated' / 'fused_codelets' / 'avx512' if DAG_ISA == 'avx512'
          else DAG / 'generator' / 'generated' / 'fused_codelets'),  # ZTURN-T FUSED CODELETS: one whole-transform function per pow2 cell with the boundary_split stage kernels inlined — the pow2 solution's executable form ONLY (owner's ruling 2026-09-14, README.md there); one file per (family, N), DERIVED from the corpus cells by a promote rule (ztt_drivers.ml)

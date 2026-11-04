@@ -64,8 +64,8 @@ let slot_of = function
   | Hc2hc_dif_bwd_log3 -> Some "hc2hc_dif_bwd_log3"
   | Hc2hc_dif_rng_bwd -> Some "hc2hc_dif_rng_bwd"
   | Hc2c_nat_bwd -> Some "hc2c_bwd"
-  | Hc2c_nat_bwd_log3 -> Some "hc2c_bwd_log3"
-  | Hc2c_nat_bwd_rng -> Some "hc2c_bwd_rng"
+  | Hc2c_nat_bwd_log3 -> None (* no reader: c2r.h takes hc2c_bwd only; deleted 2026-11-04 *)
+  | Hc2c_nat_bwd_rng -> None
   | Unknown -> None
 ;;
 

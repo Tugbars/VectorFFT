@@ -63,44 +63,9 @@
 ; trig (real-to-real) registry (section 66): auto-emitted from Coverage.files
 ; "trig-<isa>". Uniform 3-arg ABI; kind selects slot, N indexes.
 
-(rule
- (targets trig_registry_avx2.h)
- (deps %{exe:../bin/emit_trig_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   trig_registry_avx2.h
-   (run %{exe:../bin/emit_trig_registry.exe} --isa avx2))))
-
-(rule
- (targets trig_registry_avx512.h)
- (deps %{exe:../bin/emit_trig_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   trig_registry_avx512.h
-   (run %{exe:../bin/emit_trig_registry.exe} --isa avx512))))
-
-; strided (Design C 2D) registry (section 66): auto-emitted from
-; Coverage.files "strided-<isa>". Uniform 6-arg in-place ABI; dir selects slot.
-
-(rule
- (targets strided_registry_avx2.h)
- (deps %{exe:../bin/emit_strided_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   strided_registry_avx2.h
-   (run %{exe:../bin/emit_strided_registry.exe} --isa avx2))))
-
-(rule
- (targets strided_registry_avx512.h)
- (deps %{exe:../bin/emit_strided_registry.exe})
- (mode promote)
- (action
-  (with-stdout-to
-   strided_registry_avx512.h
-   (run %{exe:../bin/emit_strided_registry.exe} --isa avx512))))
+; (the trig and strided registries left with their consumers-that-never-were,
+;  2026-11-04: the trig shells dispatch stride plans and two hand kernels, the
+;  strided rows declare their kernels by hand)
 
 ; c2r (backward real) registry — auto-emitted from Coverage.files "c2r-<isa>".
 ; Fills the r2cb / hc2hc_dif_bwd[_log3] slots of rfft_codelets_t. Mirrors the

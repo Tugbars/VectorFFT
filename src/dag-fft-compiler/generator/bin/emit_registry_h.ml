@@ -111,10 +111,12 @@ let has_n1 r = List.mem r all_radixes
 (* xl_pow2 (R=1024) emits ONLY t1_dit_fwd (flat) and t1_dit_fwd_log3 —
  * research-only path per the script. All other (kind, orient, dir, log3)
  * combinations are absent. Standard radixes get the full matrix. *)
-let codelet_exists_t1 ~r ~kind ~orient ~log3:_ ~direction =
+(* t1s exists in DIT flat form only (Corpus.ip_families, 2026-11-04): the six
+   other t1s families were deleted with their slots. *)
+let codelet_exists_t1 ~r ~kind ~orient ~log3 ~direction =
   if r = xl_radix
   then kind = T1 && orient = DIT && direction = Fwd
-  else List.mem r standard_radixes
+  else List.mem r standard_radixes && (kind = T1 || (orient = DIT && not log3))
 ;;
 
 (* ────────────────────────────────────────────────────────────────────
@@ -137,7 +139,9 @@ let orients = [ DIT; DIF ]
 let dirs = [ Fwd; Bwd ]
 let log3s = [ false; true ]
 
-(* Iterator over the 16 (kind × orient × log3 × dir) combos in stable order. *)
+(* Iterator over the 10 live (kind × orient × log3 × dir) combos in stable
+   order: t1 over the full matrix, t1s DIT flat only (the six dead t1s slots
+   left the registry 2026-11-04). *)
 let foreach_t1_combo f =
   List.iter
     (fun kind ->
@@ -145,7 +149,8 @@ let foreach_t1_combo f =
          (fun orient ->
             List.iter
               (fun log3 ->
-                 List.iter (fun direction -> f ~kind ~orient ~log3 ~direction) dirs)
+                 if kind = T1 || (orient = DIT && not log3)
+                 then List.iter (fun direction -> f ~kind ~orient ~log3 ~direction) dirs)
               log3s)
          orients)
     kinds
@@ -225,11 +230,10 @@ let emit_struct () =
   print_endline "    vfft_proto_n1_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];";
   print_endline "    vfft_proto_n1_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];";
   print_endline "";
-  print_endline "    /* Twiddled inner-stage codelets. 16 slots:";
-  print_endline "     *   kind   ∈ { t1, t1s }";
-  print_endline "     *   orient ∈ { dit, dif }";
-  print_endline "     *   log3?";
-  print_endline "     *   direction ∈ { fwd, bwd }";
+  print_endline "    /* Twiddled inner-stage codelets. 10 slots:";
+  print_endline "     *   t1  : orient ∈ { dit, dif } × log3? × direction ∈ { fwd, bwd }";
+  print_endline "     *   t1s : dit, flat, direction ∈ { fwd, bwd } (the planner wires";
+  print_endline "     *         t1s in DIT only; the other t1s forms were deleted 2026-11-04)";
   print_endline "     */";
   foreach_t1_combo (fun ~kind ~orient ~log3 ~direction ->
     Printf.printf

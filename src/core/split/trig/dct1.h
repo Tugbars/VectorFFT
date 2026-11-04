@@ -32,10 +32,10 @@
  *   The plan is rejected (and the inner destroyed) if r2c_plan_M->N
  *   does not equal the required M.
  *
- * Cost: one r2c of length ~2N plus O(N*K) extension/extract passes. The
- * generated boundary codelets (radix{5,9,17,33}_dct1_*,
- * radix{3,7,15,31}_dst1_*, lean 3-arg ABI; trig_codelets.h) are faster at
- * their sizes but are not dispatched from here.
+ * Cost: one r2c of length ~2N plus O(N*K) extension/extract passes. (The
+ * generated boundary codelets radix{5,9,17,33}_dct1_* / radix{3,7,15,31}_dst1_*
+ * that were faster at their sizes were never dispatched from here and left
+ * the corpus 2026-11-04.)
  *
  * MT: the extension/extract passes K-split across the pool (as dct.h);
  * no B-blocking.

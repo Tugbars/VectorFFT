@@ -185,11 +185,6 @@ typedef struct {
      * present (fewer twiddle loads: 7->3 slots at r8). 0 = fall back to flat. */
     rfft_hc_fn hc2hc_log3[VFFT_RFFT_MAX_RADIX + 1];
     rfft_hc2c_nat_fn hc2c_log3[VFFT_RFFT_MAX_RADIX + 1];
-    /* DIF orientation slots: distinct identity from DIT, so the auto-emitted
-     * registrar does not clobber DIT with DIF. Same ABI as the DIT twiddle
-     * stage. No executor calls these (populated but unused). */
-    rfft_hc_fn hc2hc_dif[VFFT_RFFT_MAX_RADIX + 1];
-    rfft_hc_fn hc2hc_dif_log3[VFFT_RFFT_MAX_RADIX + 1];
     /* c2r (backward real) slots: the r2cb leaf
      * (halfcomplex -> real) and the DIF BACKWARD twiddle stages. hc2r runs
      * as apply_dif with sign-flipped twiddles; these slots hold the
@@ -207,8 +202,6 @@ typedef struct {
      * the stage-0 split-input codelets (--hc2c-nat --bwd --dif). Let a split
      * half-spectrum feed the fast packed c2r cascade with no repack. */
     rfft_hc2c_nat_bwd_fn hc2c_bwd[VFFT_RFFT_MAX_RADIX + 1];
-    rfft_hc2c_nat_bwd_fn hc2c_bwd_log3[VFFT_RFFT_MAX_RADIX + 1];
-    rfft_hc2c_nat_bwd_rng_fn hc2c_bwd_rng[VFFT_RFFT_MAX_RADIX + 1];
 } rfft_codelets_t;
 
 typedef struct {

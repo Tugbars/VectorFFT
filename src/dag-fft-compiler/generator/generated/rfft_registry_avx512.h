@@ -15,7 +15,6 @@
 extern void radix32_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix2_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix2_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix2_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix2_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix2_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix2_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -23,7 +22,6 @@ extern void radix2_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix2_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix3_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix3_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix3_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix3_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix3_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix3_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -31,7 +29,6 @@ extern void radix3_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix3_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix4_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix4_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix4_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix4_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix4_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix4_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -39,7 +36,6 @@ extern void radix4_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix4_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix5_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix5_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix5_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix5_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix5_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix5_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -47,7 +43,6 @@ extern void radix5_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix5_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix7_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix7_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix7_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix7_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix7_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix7_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -55,7 +50,6 @@ extern void radix7_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix7_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix8_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix8_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix8_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix8_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix8_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix8_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -63,7 +57,6 @@ extern void radix8_hc2hc_dit_rng_fwd_avx512(const double*, const double*, double
 extern void radix8_hc2c_nat_rng_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);
 extern void radix16_r2cf_avx512(const double*, double*, double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix16_hc2hc_dit_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
-extern void radix16_hc2hc_dif_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix16_hc2hc_dit_log3_fwd_avx512(const double*, const double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix16_hc2c_nat_log3_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 extern void radix16_hc2c_nat_fwd_avx512(const double*, const double*, double*, double*, double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
@@ -75,7 +68,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->r2cf[32] = radix32_r2cf_avx512;
     reg->r2cf[2] = radix2_r2cf_avx512;
     reg->hc2hc[2] = radix2_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[2] = radix2_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[2] = radix2_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[2] = radix2_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[2] = radix2_hc2c_nat_fwd_avx512;
@@ -83,7 +75,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[2] = radix2_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[3] = radix3_r2cf_avx512;
     reg->hc2hc[3] = radix3_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[3] = radix3_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[3] = radix3_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[3] = radix3_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[3] = radix3_hc2c_nat_fwd_avx512;
@@ -91,7 +82,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[3] = radix3_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[4] = radix4_r2cf_avx512;
     reg->hc2hc[4] = radix4_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[4] = radix4_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[4] = radix4_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[4] = radix4_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[4] = radix4_hc2c_nat_fwd_avx512;
@@ -99,7 +89,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[4] = radix4_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[5] = radix5_r2cf_avx512;
     reg->hc2hc[5] = radix5_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[5] = radix5_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[5] = radix5_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[5] = radix5_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[5] = radix5_hc2c_nat_fwd_avx512;
@@ -107,7 +96,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[5] = radix5_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[7] = radix7_r2cf_avx512;
     reg->hc2hc[7] = radix7_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[7] = radix7_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[7] = radix7_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[7] = radix7_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[7] = radix7_hc2c_nat_fwd_avx512;
@@ -115,7 +103,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[7] = radix7_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[8] = radix8_r2cf_avx512;
     reg->hc2hc[8] = radix8_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[8] = radix8_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[8] = radix8_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[8] = radix8_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[8] = radix8_hc2c_nat_fwd_avx512;
@@ -123,7 +110,6 @@ static inline void rfft_register_all_avx512(rfft_codelets_t *reg)
     reg->hc2c_rng[8] = radix8_hc2c_nat_rng_fwd_avx512;
     reg->r2cf[16] = radix16_r2cf_avx512;
     reg->hc2hc[16] = radix16_hc2hc_dit_fwd_avx512;
-    reg->hc2hc_dif[16] = radix16_hc2hc_dif_fwd_avx512;
     reg->hc2hc_log3[16] = radix16_hc2hc_dit_log3_fwd_avx512;
     reg->hc2c_log3[16] = radix16_hc2c_nat_log3_fwd_avx512;
     reg->hc2c[16] = radix16_hc2c_nat_fwd_avx512;

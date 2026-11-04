@@ -33,12 +33,15 @@ let oop_n1_radices =
 ;;
 
 let t1p_radices = [ 4; 7; 8; 13; 16; 32; 64 ]
-let spec_radices = [ 7; 13; 32 ] (* stride formula: rv = r * 8 *)
 let strided_radices_avx2 = [ 4; 8; 12; 16; 20; 32; 64 ]
 let strided_radices_avx512 = [ 8; 16; 32; 64 ]
 
-(* The in-place 18-family matrix: n1 fwd/bwd plus
- * {t1,t1s} x {dit,dif} x {fwd,bwd} x {flat,log3}. *)
+(* The in-place 12-family matrix: n1 fwd/bwd plus
+ * t1 x {dit,dif} x {fwd,bwd} x {flat,log3} and t1s x dit x {fwd,bwd} flat.
+ * t1s exists in DIT flat form only: the planner wires t1s in DIT ("T1S in
+ * DIF mode falls back to FLAT", split/engine/planner.h) and never a log3
+ * t1s; the six other t1s families had no consumer anywhere and were deleted
+ * (2026-11-04 census, 216 files). *)
 let ip_families (isa : string) : (string * string list) list =
   let n1 =
     [ "n1_fwd", [ "--in-place"; "--isa"; isa; "--su" ]
@@ -47,7 +50,7 @@ let ip_families (isa : string) : (string * string list) list =
   in
   let t1 =
     List.concat_map
-      (fun (tsuf, targ) ->
+      (fun (tsuf, targ, orients, log3s) ->
          List.concat_map
            (fun (dsuf, darg) ->
               List.concat_map
@@ -63,10 +66,12 @@ let ip_families (isa : string) : (string * string list) list =
                           @ larg
                         in
                         fam, args)
-                     [ "", []; "_log3", [ "--log3" ] ])
+                     log3s)
                 [ "_fwd", []; "_bwd", [ "--bwd" ] ])
-           [ "_dit", []; "_dif", [ "--dif" ] ])
-      [ "t1", []; "t1s", [ "--t1s" ] ]
+           orients)
+      [ "t1", [], [ "_dit", []; "_dif", [ "--dif" ] ], [ "", []; "_log3", [ "--log3" ] ]
+      ; "t1s", [ "--t1s" ], [ "_dit", [] ], [ "", [] ]
+      ]
   in
   n1 @ t1
 ;;
@@ -2797,36 +2802,9 @@ let matrix_files (quadrant : string) : (string * string list) list =
            , (string_of_int r :: base) @ [ "--twiddled" ] ))
         t1p_radices
     in
-    let extras =
-      (* OOP stride-specialized codelets (--oop-strides): strides baked as
-       * compile-time constants -> 7-arg ABI, ~6-10% over runtime-stride
-       * (doc oop_stride_specialization.md). The lane-blocked geometry is
-       * rv = R*V where V is the ISA vector width (avx512 V=8, avx2 V=4),
-       * verified against the emitted codelets (b += 8 / b += 4). Earlier this
-       * was avx512-only with rv hardcoded r*8; section 65 made it lane-aware
-       * and extended it to avx2 with rv = r*4. (t1s_oop was removed in
-       * section 64: --t1s without --twiddled is a no-op n1 duplicate.) *)
-      let v = if isa = "avx512" then 8 else 4 in
-      let opt = [ "--fuse"; string_of_int v; "--oop-store-fused" ] in
-      List.concat_map
-        (fun r ->
-           let rv = r * v in
-           let strides_n1 = Printf.sprintf "%d,1,%d,%d" rv v r in
-           let strides_t1p = Printf.sprintf "%d,1,%d,1" rv rv in
-           [ ( Printf.sprintf "radix%d_n1_oop_%s_spec.c" r isa
-             , (string_of_int r :: base) @ opt @ [ "--oop-strides"; strides_n1 ] )
-           ; ( Printf.sprintf "radix%d_t1p_oop_%s_spec.c" r isa
-             , (string_of_int r :: base)
-               @ opt
-               @ [ "--oop-strides"; strides_t1p; "--twiddled-pos" ] )
-           ; ( Printf.sprintf "radix%d_t1p_log3_oop_%s_spec.c" r isa
-             , (string_of_int r :: base)
-               @ opt
-               @ [ "--oop-strides"; strides_t1p; "--twiddled-pos"; "--log3" ] )
-           ])
-        spec_radices
-    in
-    n1 @ t1p @ t1 @ extras
+    (* the stride-specialized `_spec` twins (--oop-strides, section 65) had no
+       reference anywhere and left the corpus 2026-11-04 *)
+    n1 @ t1p @ t1
   | "strided-avx2" | "strided-avx512" ->
     let isa = if quadrant = "strided-avx2" then "avx2" else "avx512" in
     let radices = if isa = "avx2" then strided_radices_avx2 else strided_radices_avx512 in
@@ -2862,10 +2840,9 @@ let matrix_files (quadrant : string) : (string * string list) list =
              , [ string_of_int r; "--r2cf"; "--isa"; isa; "--su" ] )
            ; ( Printf.sprintf "radix%d_hc2hc_dit_fwd_%s.c" r isa
              , [ string_of_int r; "--hc2hc"; "--t1s"; "--isa"; isa; "--su" ] )
-           ; ( Printf.sprintf "radix%d_hc2hc_dif_fwd_%s.c" r isa
-             , [ string_of_int r; "--hc2hc"; "--dif"; "--t1s"; "--isa"; isa; "--su" ] )
-           ; ( Printf.sprintf "radix%d_hc2c_dit_fwd_%s.c" r isa
-             , [ string_of_int r; "--hc2c"; "--t1s"; "--isa"; isa; "--su" ] )
+             (* the DIF forward stage (hc2hc_dif_fwd) and the packed terminator
+                (hc2c_dit_fwd) had no executor slot or no reader and were
+                deleted (2026-11-04 census) *)
            ; (* log3 variants (section 62: hc2cf2 = hc2c + log3). The hc2cf2
               * family is literally hc2c generated with log3 twiddles; here the
               * --log3 flag composes with --t1s the same way (verified: 7->3
@@ -2893,34 +2870,6 @@ let matrix_files (quadrant : string) : (string * string list) list =
                ] )
            ])
         radices
-  | "trig-avx2" | "trig-avx512" ->
-    (* Real-to-real trig family (notebook section 51): lean 3-arg ABI
-     * (in, out, K), constant hoisting on, consumed by core/dct.h-style
-     * plan shells. rdft deferred: complex output, generic ABI. *)
-    let isa = if quadrant = "trig-avx2" then "avx2" else "avx512" in
-    let kind_sizes =
-      [ "dct2", [ 8; 16; 32; 64 ]
-      ; "dct3", [ 8; 16; 32; 64 ]
-      ; "dct4", [ 8; 16; 32; 64 ]
-      ; "dst2", [ 8; 16; 32; 64 ]
-      ; "dst3", [ 8; 16; 32; 64 ]
-      ; "dst4", [ 8; 16; 32; 64 ]
-      ; "dht", [ 8; 16; 32; 64 ]
-      ; (* Boundary kinds run at their logical-extension sizes:
-         dct1 at N needs M = 2(N-1) radix-coverable -> N = 2^k+1
-         (Chebyshev grids); dst1 needs M = 2(N+1) -> N = 2^k-1. *)
-        "dct1", [ 5; 9; 17; 33 ]
-      ; "dst1", [ 3; 7; 15; 31 ]
-      ]
-    in
-    List.concat_map
-      (fun (kind, sizes) ->
-         List.map
-           (fun n ->
-              ( Printf.sprintf "radix%d_%s_%s.c" n kind isa
-              , [ string_of_int n; "--" ^ kind; "--isa"; isa; "--su" ] ))
-           sizes)
-      kind_sizes
   | "c2r-avx2" | "c2r-avx512" ->
     (* Native real-cascade BACKWARD family (section 62, the inverse of the
      * rfft forward quadrant). hc2r runs as apply_DIF + sign-flipped
@@ -2977,34 +2926,14 @@ let matrix_files (quadrant : string) : (string * string list) list =
            ; (* c2r NATURAL INITIATOR (stage-0 split-input, inverse of the rfft
               * forward hc2c_nat terminator): reads the SPLIT half-spectrum and
               * feeds the packed c2r cascade with no repack. --bwd --dif matches
-              * the cascade orientation; verified to invert the forward at 7e-15. *)
-             ( Printf.sprintf "radix%d_hc2c_nat_log3_bwd_%s.c" r isa
+              * the cascade orientation; verified to invert the forward at 7e-15.
+              * Its log3 and ranged twins had no reader (c2r.h reads hc2c_bwd
+              * only) and were deleted, 2026-11-04 census. *)
+             ( Printf.sprintf "radix%d_hc2c_nat_bwd_%s.c" r isa
              , [ string_of_int r
                ; "--hc2c-nat"
                ; "--bwd"
                ; "--dif"
-               ; "--log3"
-               ; "--t1s"
-               ; "--isa"
-               ; isa
-               ; "--su"
-               ] )
-           ; ( Printf.sprintf "radix%d_hc2c_nat_bwd_%s.c" r isa
-             , [ string_of_int r
-               ; "--hc2c-nat"
-               ; "--bwd"
-               ; "--dif"
-               ; "--t1s"
-               ; "--isa"
-               ; isa
-               ; "--su"
-               ] )
-           ; ( Printf.sprintf "radix%d_hc2c_nat_rng_bwd_%s.c" r isa
-             , [ string_of_int r
-               ; "--hc2c-nat"
-               ; "--bwd"
-               ; "--dif"
-               ; "--ranged"
                ; "--t1s"
                ; "--isa"
                ; isa
@@ -3022,8 +2951,6 @@ let quadrants =
   ; "oop-avx512"
   ; "strided-avx2"
   ; "strided-avx512"
-  ; "trig-avx2"
-  ; "trig-avx512"
   ; "rfft-avx2"
   ; "rfft-avx512"
   ; "c2r-avx2"

@@ -164,24 +164,6 @@ extern void radix2_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix2_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix2_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix2_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix2_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix2_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix2_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix2_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix3_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -210,24 +192,6 @@ extern void radix3_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix3_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix3_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix4_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -260,24 +224,6 @@ extern void radix4_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix4_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix4_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix4_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix4_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix4_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix4_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix4_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix5_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -306,24 +252,6 @@ extern void radix5_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix5_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix5_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix6_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -356,24 +284,6 @@ extern void radix6_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix6_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix6_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix6_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix6_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix6_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix6_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix6_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix7_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -402,24 +312,6 @@ extern void radix7_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix7_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix7_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix8_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -452,24 +344,6 @@ extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix8_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix8_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix8_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix8_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix8_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix8_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix8_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix10_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -498,24 +372,6 @@ extern void radix10_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix10_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix10_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix11_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -548,24 +404,6 @@ extern void radix11_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix11_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix11_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix11_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix11_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix11_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix11_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix11_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix12_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -594,24 +432,6 @@ extern void radix12_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix12_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix12_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix13_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -644,24 +464,6 @@ extern void radix13_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix13_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix13_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix13_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix13_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix13_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix13_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix13_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix16_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -690,24 +492,6 @@ extern void radix16_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix16_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix16_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix17_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -740,24 +524,6 @@ extern void radix17_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix17_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix17_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix17_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix17_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix17_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix17_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix17_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix19_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -786,24 +552,6 @@ extern void radix19_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix19_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix19_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix20_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -836,24 +584,6 @@ extern void radix20_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix20_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix20_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix20_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix20_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix20_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix20_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix20_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix25_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -882,24 +612,6 @@ extern void radix25_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix25_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix25_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix32_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -932,24 +644,6 @@ extern void radix32_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix32_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix32_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix32_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix32_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix32_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix32_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix32_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 extern void radix64_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -980,24 +674,6 @@ extern void radix64_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix64_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
-extern void radix64_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix64_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix64_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix64_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix64_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
-extern void radix64_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
 
 #ifndef VFFT_PROTO_REGISTRY_TYPES_H
 #define VFFT_PROTO_REGISTRY_TYPES_H
@@ -1026,11 +702,10 @@ typedef struct {
     vfft_proto_n1_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];
     vfft_proto_n1_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];
 
-    /* Twiddled inner-stage codelets. 16 slots:
-     *   kind   ∈ { t1, t1s }
-     *   orient ∈ { dit, dif }
-     *   log3?
-     *   direction ∈ { fwd, bwd }
+    /* Twiddled inner-stage codelets. 10 slots:
+     *   t1  : orient ∈ { dit, dif } × log3? × direction ∈ { fwd, bwd }
+     *   t1s : dit, flat, direction ∈ { fwd, bwd } (the planner wires
+     *         t1s in DIT only; the other t1s forms were deleted 2026-11-04)
      */
     vfft_proto_codelet_fn t1_dit_fwd[VFFT_PROTO_REG_MAX_RADIX];
     vfft_proto_codelet_fn t1_dit_bwd[VFFT_PROTO_REG_MAX_RADIX];
@@ -1042,12 +717,6 @@ typedef struct {
     vfft_proto_codelet_fn t1_dif_log3_bwd[VFFT_PROTO_REG_MAX_RADIX];
     vfft_proto_codelet_fn t1s_dit_fwd[VFFT_PROTO_REG_MAX_RADIX];
     vfft_proto_codelet_fn t1s_dit_bwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dit_log3_fwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dit_log3_bwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dif_fwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dif_bwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dif_log3_fwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn t1s_dif_log3_bwd[VFFT_PROTO_REG_MAX_RADIX];
 } vfft_proto_registry_t;
 
 
@@ -1074,15 +743,6 @@ static inline int vfft_proto_has_t1_dif_log3(const vfft_proto_registry_t *reg, i
 }
 static inline int vfft_proto_has_t1s_dit(const vfft_proto_registry_t *reg, int r) {
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dit_fwd[r] != NULL;
-}
-static inline int vfft_proto_has_t1s_dit_log3(const vfft_proto_registry_t *reg, int r) {
-    return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dit_log3_fwd[r] != NULL;
-}
-static inline int vfft_proto_has_t1s_dif(const vfft_proto_registry_t *reg, int r) {
-    return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dif_fwd[r] != NULL;
-}
-static inline int vfft_proto_has_t1s_dif_log3(const vfft_proto_registry_t *reg, int r) {
-    return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dif_log3_fwd[r] != NULL;
 }
 
 #endif /* VFFT_PROTO_REGISTRY_TYPES_H */
@@ -1392,126 +1052,6 @@ static inline void vfft_proto_registry_init_avx2(vfft_proto_registry_t *reg) {
     reg->t1s_dit_bwd[25] = radix25_t1s_dit_bwd_avx2;
     reg->t1s_dit_bwd[32] = radix32_t1s_dit_bwd_avx2;
     reg->t1s_dit_bwd[64] = radix64_t1s_dit_bwd_avx2;
-
-    /* t1s_dit_log3_fwd */
-    reg->t1s_dit_log3_fwd[2] = radix2_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[3] = radix3_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[4] = radix4_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[5] = radix5_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[6] = radix6_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[7] = radix7_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[8] = radix8_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[10] = radix10_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[11] = radix11_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[12] = radix12_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[13] = radix13_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[16] = radix16_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[17] = radix17_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[19] = radix19_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[20] = radix20_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[25] = radix25_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[32] = radix32_t1s_dit_log3_fwd_avx2;
-    reg->t1s_dit_log3_fwd[64] = radix64_t1s_dit_log3_fwd_avx2;
-
-    /* t1s_dit_log3_bwd */
-    reg->t1s_dit_log3_bwd[2] = radix2_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[3] = radix3_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[4] = radix4_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[5] = radix5_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[6] = radix6_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[7] = radix7_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[8] = radix8_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[10] = radix10_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[11] = radix11_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[12] = radix12_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[13] = radix13_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[16] = radix16_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[17] = radix17_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[19] = radix19_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[20] = radix20_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[25] = radix25_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[32] = radix32_t1s_dit_log3_bwd_avx2;
-    reg->t1s_dit_log3_bwd[64] = radix64_t1s_dit_log3_bwd_avx2;
-
-    /* t1s_dif_fwd */
-    reg->t1s_dif_fwd[2] = radix2_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[3] = radix3_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[4] = radix4_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[5] = radix5_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[6] = radix6_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[7] = radix7_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[8] = radix8_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[10] = radix10_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[11] = radix11_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[12] = radix12_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[13] = radix13_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[16] = radix16_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[17] = radix17_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[19] = radix19_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[20] = radix20_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[25] = radix25_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[32] = radix32_t1s_dif_fwd_avx2;
-    reg->t1s_dif_fwd[64] = radix64_t1s_dif_fwd_avx2;
-
-    /* t1s_dif_bwd */
-    reg->t1s_dif_bwd[2] = radix2_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[3] = radix3_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[4] = radix4_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[5] = radix5_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[6] = radix6_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[7] = radix7_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[8] = radix8_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[10] = radix10_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[11] = radix11_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[12] = radix12_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[13] = radix13_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[16] = radix16_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[17] = radix17_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[19] = radix19_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[20] = radix20_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[25] = radix25_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[32] = radix32_t1s_dif_bwd_avx2;
-    reg->t1s_dif_bwd[64] = radix64_t1s_dif_bwd_avx2;
-
-    /* t1s_dif_log3_fwd */
-    reg->t1s_dif_log3_fwd[2] = radix2_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[3] = radix3_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[4] = radix4_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[5] = radix5_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[6] = radix6_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[7] = radix7_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[8] = radix8_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[10] = radix10_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[11] = radix11_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[12] = radix12_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[13] = radix13_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[16] = radix16_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[17] = radix17_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[19] = radix19_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[20] = radix20_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[25] = radix25_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[32] = radix32_t1s_dif_log3_fwd_avx2;
-    reg->t1s_dif_log3_fwd[64] = radix64_t1s_dif_log3_fwd_avx2;
-
-    /* t1s_dif_log3_bwd */
-    reg->t1s_dif_log3_bwd[2] = radix2_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[3] = radix3_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[4] = radix4_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[5] = radix5_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[6] = radix6_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[7] = radix7_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[8] = radix8_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[10] = radix10_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[11] = radix11_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[12] = radix12_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[13] = radix13_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[16] = radix16_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[17] = radix17_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[19] = radix19_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[20] = radix20_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[25] = radix25_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[32] = radix32_t1s_dif_log3_bwd_avx2;
-    reg->t1s_dif_log3_bwd[64] = radix64_t1s_dif_log3_bwd_avx2;
 
 }
 

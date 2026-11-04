@@ -105,9 +105,9 @@ let slot_of (abi : abi) (log3 : bool) (dif : bool) : string option =
   match abi, log3, dif with
   | R2cf, _, _ -> Some "r2cf"
   | Hc2hc, false, false -> Some "hc2hc"
-  | Hc2hc, false, true -> Some "hc2hc_dif"
+  | Hc2hc, false, true -> None (* the DIF forward stage left the registry 2026-11-04 *)
   | Hc2hc, true, false -> Some "hc2hc_log3"
-  | Hc2hc, true, true -> Some "hc2hc_dif_log3"
+  | Hc2hc, true, true -> None
   | Hc2hc_rng, _, _ -> Some "hc2hc_rng"
   | Hc2c_nat, false, _ -> Some "hc2c"
   | Hc2c_nat, true, _ -> Some "hc2c_log3"
