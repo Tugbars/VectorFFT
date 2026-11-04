@@ -1370,13 +1370,8 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_cfg_t *cfg,
     return stride;
 }
 
-/* the deployed split executes the split creates race as the INCUMBENT arms
- * of zturn-ts's cell race (2026-11-04): defined below (_exec_c2c_inplace)
- * and in split/split_execute.h (_exec_k1_split) */
-static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir, double *re, double *im);
-static void _exec_k1_split(struct vfft_plan_s *h, int fwd, double *sre, double *sim, double *dre, double *dim);
-/* ...and the split execute itself: the serial-vs-slabs race of zturn-ts's
- * threaded contiguous form runs the deployed execute as both arms */
+/* the split execute: the serial-vs-slabs race of zturn-ts's threaded
+ * contiguous form runs the deployed execute as both arms (split/rank1/c2c_create_split.h) */
 static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim);
 #include "split/split_create.h"      /* the SPLIT create: the split side of the one fork */
 #include "il/rank1/lm_batch_il.h"    /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
@@ -1527,7 +1522,7 @@ static void _tc_slab_role(struct vfft_plan_s *c)
  * The one arm of the contiguous batch: the SERIAL loop vs SLABS over the
  * worker clones, raced at create on the batch's own cell and banked as
  * eng=tcb tcmt= on its q=K row at the plan's thread count
- * (vw2_stride_bank_tcmt; nthreads= since 2026-11-01: a slab is ceil(K/T)
+ * (vw2_tcmt_bank; nthreads= since 2026-11-01: a slab is ceil(K/T)
  * transforms, so the verdict moves with T and a lookup never crosses it).
  * No clones (no pool, inner not pool-free,
  * K=1 workers) => no arm: serial by construction. VFFT_TCMT=0|1 pins the
@@ -1592,7 +1587,7 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     if (W && !cfg->recalibrate)
     {
         int v = 0;
-        if (vw2_stride_lookup_tcmt(&W->vw2, t, N, K, ord, pl, lay, T, &v))
+        if (vw2_tcmt_lookup(&W->vw2, t, N, K, ord, pl, lay, T, &v))
         {
             h->tc_mt = v;
             if (lg)
@@ -1652,7 +1647,7 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
         if (!ip)
             vfft_aligned_free(dst);
         vfft_aligned_free(s0);
-        if (W && vw2_stride_bank_tcmt(&W->vw2, t, N, K, ord, pl, lay,
+        if (W && vw2_tcmt_bank(&W->vw2, t, N, K, ord, pl, lay,
                                       h->tc_mt, T, h->tc_mt ? mt : st) == VW2_OK)
             _vw2_persist(W, cfg);
     }
@@ -2324,54 +2319,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)
         return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
-    return _vfft_split_create(cfg, ob, W, reg, N, K);
-}
-
-/* The full 1D in-place c2c split execute (MT, padded exec_me, NATURAL tapes,
- * mt_unsafe) — extracted verbatim so the interleaved wrapper can reuse it as
- * the always-correct fallback. */
-static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
-                              double *re, double *im)
-{
-    _vfft_pool_arm(h->nthreads);
-    /* Unified MT execute: tight runs p->K lanes; padded runs exec_me (Kp = full-SIMD pad,
-     * or K = tail on the Kp-wide buffer). fn (JIT/baked) is resolved at create ONLY for
-     * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
-     * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
-    size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
-    /* ORDER_NATURAL SCR forward: fused scatter terminator does the whole forward
-     * (OOP scratch-fill stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
-    if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
-    {
-        _scr_fwd_mt(h->nat_scr, re, im, h->K); /* scratch-fill K-split + terminator q-split */
-        return;
-    }
-    /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
-     * layout (cycle inverse; SCR reuses PURE's cycle tape), then zero-perm DIF backward.
-     * (FREE needs nothing; nat_mode==0 = order=DEFAULT = byte-identical old path.) */
-    if (dir != VFFT_FORWARD &&
-        (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
-         h->nat_mode == VFFT_NAT_SCR))
-        _natorder_mt(h, re, im, 0);
-    if (h->mt_unsafe)
-    {
-        /* codelet ignores `me` -> K-split would overrun; run the FFT WHOLE-BATCH (the reorder above/below
-         * still threads). Same call shape as _c2c_mt's T<=1 branch. */
-        vfft_proto_exec_fn f = dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd;
-        if (f)
-            f(h->cplan, re, im, me, h->cplan->K, 0);
-        else if (dir == VFFT_FORWARD)
-            vfft_proto_execute_fwd(h->cplan, re, im, me);
-        else
-            vfft_proto_execute_bwd(h->cplan, re, im, me);
-    }
-    else
-        _c2c_mt(h->cplan, re, im, dir == VFFT_FORWARD ? 1 : 0,        /* dst==src */
-                dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
-    /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
-    if (dir == VFFT_FORWARD &&
-        (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
-        _natorder_mt(h, re, im, 1);
+    return _vfft_split_create(cfg, ob, W, N, K);
 }
 
 /* The engagement COUNTER stays here, with its public accessor. It is mutable

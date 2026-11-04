@@ -434,7 +434,7 @@ static inline int est_put_rows_2d_real(vw2_store_t *st, const est_plan2dr_t *p, 
         if (est_put_rows_real(&S->vw2, &p->rp, &rq, 1, why, whylen))
             goto child_out;
         if (T > 1 && p->tcmt >= 0 &&
-            vw2_stride_bank_tcmt(&S->vw2, p->c2r ? VW2_T_C2R : VW2_T_R2C, N2, (size_t)N1, VW2_ORD_NAT,
+            vw2_tcmt_bank(&S->vw2, p->c2r ? VW2_T_C2R : VW2_T_R2C, N2, (size_t)N1, VW2_ORD_NAT,
                                  ip ? VW2_PL_IP : VW2_PL_OOP, VW2_LAY_IL, p->tcmt, T, 0.0) != VW2_OK)
         {
             est_refuse(why, whylen, "the row batch's verdict at %d x %d was refused by its writer", N2, N1);

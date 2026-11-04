@@ -452,59 +452,7 @@ static inline int vw2_stride_rec_from_nat_mig(vw2_rec_t *r,
                                    why);
 }
 
-/* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict ──────────────
- * The contiguous batch's one arm: the serial loop vs slabs over the worker
- * clones, raced at create on the batch's OWN cell. Key = (t, n=N, q=K, ord,
- * place, lay=il, nthreads=T); payload eng=tcb tcmt=0|1. The thread count is
- * a key axis like every threaded verdict's (v1.3): the slabs are ceil(K/T)
- * transforms a worker, so which way wins moves with T (K = 4 leaves half of
- * eight workers idle). eng=tcb keeps the row out of every natx reader (their
- * family gate rejects it), so a batch row can never be served as a plan. */
-static inline void vw2__tcmt_key(vw2_key_t *k, int t, int N, size_t K,
-                                 int ord, int pl, uint8_t lay, int T)
-{
-    vw2__stride_key(k, t, N, K, ord, pl);
-    k->lay = lay;
-    k->nthreads = (uint8_t)(T > 1 ? T : 0);
-}
-
-static inline int vw2_stride_lookup_tcmt(const vw2_store_t *s, int t, int N,
-                                         size_t K, int ord, int pl,
-                                         uint8_t lay, int T, int *tcmt)
-{
-    vw2_key_t k;
-    const vw2_rec_t *r;
-    const char *eng, *v;
-    vw2__tcmt_key(&k, t, N, K, ord, pl, lay, T);
-    r = vw2_lookup(s, &k);
-    if (!r) return 0;
-    eng = vw2_rec_get(r, "eng");
-    if (!eng || strcmp(eng, "tcb")) return 0;
-    v = vw2_rec_get(r, "tcmt");
-    if (!v) return 0;
-    *tcmt = atoi(v) ? 1 : 0;
-    return 1;
-}
-
-static inline int vw2_stride_bank_tcmt(vw2_store_t *st, int t, int N,
-                                       size_t K, int ord, int pl, uint8_t lay,
-                                       int tcmt, int T, double ns)
-{
-    vw2_rec_t rec;
-    const char *why = NULL;
-    memset(&rec, 0, sizeof rec);
-    vw2__tcmt_key(&rec.key, t, N, K, ord, pl, lay, T);
-    if (vw2_rec_set(&rec, 1, "eng", "tcb") != VW2_OK ||
-        vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK) {
-        vw2_rec_free(&rec);
-        fprintf(stderr, "[wisdom2] tcmt bank refused (token-refused)\n");
-        return -1;
-    }
-    if (vw2__stride_tail(&rec, K, ns, "race", NULL, &why)) {   /* frees rec */
-        fprintf(stderr, "[wisdom2] tcmt bank refused (%s)\n", why ? why : "?");
-        return -1;
-    }
-    return vw2__stride_bank(st, &rec);
-}
+/* the contiguous batch's threading verdict (eng=tcb tcmt=) moved to
+ * common/wisdom/wisdom2_tcmt.h (2026-11-05): both layouts share it */
 
 #endif /* VFFT_WISDOM2_STRIDE_READER_H */

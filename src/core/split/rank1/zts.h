@@ -74,9 +74,11 @@ static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0,
 
 #define VFFT_ZTS_MAX_NF 7
 #define VFFT_ZTS_MAX_N 262144
+#define VFFT_ZTS_MIN_N 16         /* the registry's smallest cell (c2c_create_split.h names the band) */
 #define VFFT_ZTS_SLACK 8192u          /* bytes of slack behind each scratch plane */
 #define VFFT_ZTS_MT_MAX 63            /* worker planes: THREAD_POOL_MAX_DISPATCH - 1 (the caller is slot 0) */
-#define VFFT_ZTS_LANES_MAX 64         /* the lane-major batch: K a multiple of VW up to this */
+#define VFFT_ZTS_LANES_MAX 262144     /* the lane-major batch: K a multiple of VW up to this (the
+                                       * group planes do not grow with K; a 2D column pass is K = N2) */
 
 /* the tile ladder the race walks beside untiled (complex columns per tile):
  * ZTURN-T's 1024 / 2048 (16 KB / 32 KB of block plane) and, for the lane-major

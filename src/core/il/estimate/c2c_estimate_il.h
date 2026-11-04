@@ -656,7 +656,7 @@ static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const es
     }
     if (est_put_rows(&S->vw2, rc, rq, 1, why, whylen))
         goto out;
-    if (copies && vw2_stride_bank_tcmt(&S->vw2, VW2_T_C2C, rq->N, cfg->howmany,
+    if (copies && vw2_tcmt_bank(&S->vw2, VW2_T_C2C, rq->N, cfg->howmany,
                                        vfft_policy_ord_k1(cfg, rq->N, cfg->placement == VFFT_INPLACE),
                                        cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), rc->tcmt,
                                        T, 0.0) != VW2_OK)
