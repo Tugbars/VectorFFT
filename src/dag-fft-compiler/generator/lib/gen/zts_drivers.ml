@@ -10,14 +10,20 @@
  *     The interior is the 64-B [re x4][im x4] block plane (the scratch): two
  *     true split planes as interior cost 1.3x on the ingest and 1.7x on an
  *     R = 8 last stage (a column's lines 32 KB apart, two RFO streams).
- *   V (fam "ztv", P_vec): lane-major K = VW data[e*VW + t] (lane =
- *     transform). Every column is ONE vector per plane: no turn anywhere,
- *     twiddles broadcast from (c, s) scalar pairs.
+ *   V (fam "ztv", P_vec): lane-major K data[e*K + t] (lane = transform), K
+ *     any multiple of VW (2026-11-04: K = 8 named by the owner). The pipeline
+ *     runs per LANE GROUP of VW lanes: the ingest loads the group's vector of
+ *     every element at the runtime element pitch ep = K (its lane offset
+ *     folded into the base pointer), the interior planes hold ONE group
+ *     (N*VW doubles each), the terminator stores the group back at pitch K.
+ *     Every column is ONE vector per plane: no turn anywhere, twiddles
+ *     broadcast from (c, s) scalar pairs.
  *
  * Driver ABI: S (in_re, in_im, out_re, out_im, plane, tw, rb, tile) with a
  * `_batch` twin (..., size_t K) looping K CONTIGUOUS transforms at offset
  * t*N transform-major (one scratch plane); V (in_re, in_im, out_re, out_im,
- * plane_re, plane_im, tw, rb, tile). Both run the pipeline IN THE SCRATCH
+ * plane_re, plane_im, tw, rb, tile, K) with K the lane count (a multiple of
+ * VW; the group loop is the driver's). Both run the pipeline IN THE SCRATCH
  * (ZTURN-T's `plane` mode) and the terminator tlfi writes the caller's
  * planes: in place when in == out. There is no `dest` placement for split
  * (two separate caller planes cannot host the block interior, and a
@@ -69,7 +75,7 @@ let driver_params = function
      const double *tw, const size_t *rb, size_t tile"
   | V ->
     "const double *in_re, const double *in_im, double *out_re, double *out_im, double *plane_re, \
-     double *plane_im, const double *tw, const size_t *rb, size_t tile"
+     double *plane_im, const double *tw, const size_t *rb, size_t tile, size_t K"
 ;;
 
 (* the cells: every natural-class ZTURN-T cell (R0 % VW == 0: the S ingest
@@ -85,7 +91,6 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
   let sc = scale ~isa fam in
   let body base radix = Cascade_z.ztt_body_name ~fam:(fam_tag fam) ~base ~radix ~bwd in
   let b = Buffer.create 4096 in
-  let add = Buffer.add_string b in
   let off = Array.make k 0 in
   for s = 2 to k - 1 do
     off.(s) <- off.(s - 1) + g.Ztt_drivers.twd.(s - 1)
@@ -130,17 +135,44 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
             g.Ztt_drivers.l.(s))
       , fun s ->
           Printf.sprintf
-            "    %s(W, Wi, out_re, out_im, tw + %d, (size_t)%d, (size_t)%d, (size_t)%d);\n"
+            "    %s(W, Wi, go_re, go_im, tw + %d, (size_t)%d, (size_t)%d, K, (size_t)%d);\n"
             (body "tlfi" r.(s))
             off.(s)
             g.Ztt_drivers.l.(s)
             g.Ztt_drivers.l.(s)
             g.Ztt_drivers.l.(s) )
   in
-  add (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.Isa.target_attr);
-  add (Printf.sprintf "void %s(%s)\n{\n" (driver_name ~isa:isa.Isa.name ~fam n ch ~bwd) (driver_params fam));
-  add planes_decl;
-  (* ingest: (in, W, rb, Ls = N/R0, count = N/R0) *)
+  (* V: the whole pipeline per lane group of VW lanes (the driver's loop);
+     the body below is written once and indented one level inside it *)
+  let ind = if fam = V then "    " else "" in
+  let add s =
+    if fam = V
+    then (
+      let parts = String.split_on_char '\n' s in
+      let n = List.length parts in
+      List.iteri
+        (fun i l ->
+           if l <> "" then Buffer.add_string b (ind ^ l);
+           if i < n - 1 then Buffer.add_char b '\n')
+        parts)
+    else Buffer.add_string b s
+  in
+  let add_raw = Buffer.add_string b in
+  add_raw (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.Isa.target_attr);
+  add_raw (Printf.sprintf "void %s(%s)\n{\n" (driver_name ~isa:isa.Isa.name ~fam n ch ~bwd) (driver_params fam));
+  add_raw planes_decl;
+  if fam = V
+  then
+    add_raw
+      (Printf.sprintf
+         "    /* the lane groups: VW = %d lanes of the K at element pitch K, in and out */\n\
+         \    for (size_t gl = 0; gl < K; gl += %d)\n\
+         \    {\n\
+         \        const double *gi_re = in_re + gl, *gi_im = in_im + gl;\n\
+         \        double *go_re = out_re + gl, *go_im = out_im + gl;\n"
+         isa.Isa.vec_width
+         isa.Isa.vec_width);
+  (* ingest: (in, W, rb, Ls = N/R0, [ep,] count = N/R0) *)
   add
     (match fam with
      | S ->
@@ -151,7 +183,7 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
          g.Ztt_drivers.ncol
      | V ->
        Printf.sprintf
-         "    %s(in_re, in_im, W, Wi, rb, (size_t)%d, (size_t)%d);\n"
+         "    %s(gi_re, gi_im, W, Wi, rb, (size_t)%d, K, (size_t)%d);\n"
          (body "t0tp" r.(0))
          g.Ztt_drivers.ncol
          g.Ztt_drivers.ncol);
@@ -203,7 +235,8 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
   let s = k - 1 in
   assert (g.Ztt_drivers.gs.(s) = 1);
   add (last s);
-  add "}\n\n";
+  if fam = V then add_raw "    }\n";
+  add_raw "}\n\n";
   (* S: the CONTIGUOUS batch twin, transform-major around the whole pipeline *)
   if fam = S
   then
@@ -253,7 +286,7 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(fam : fam) (n : int) : string 
        (match fam with
         | S ->
           "(in_re, in_im, out_re, out_im, plane, tw, rb, tile), + a _batch twin (..., K) for K contiguous transforms"
-        | V -> "(in_re, in_im, out_re, out_im, plane_re, plane_im, tw, rb, tile), lane-major K = VW")
+        | V -> "(in_re, in_im, out_re, out_im, plane_re, plane_im, tw, rb, tile, K), lane-major K a multiple of VW (the pipeline per lane group of VW)")
        isa.Isa.name
        uarch.Uarch.name);
   add "#include <immintrin.h>\n#include <stddef.h>\n\n";

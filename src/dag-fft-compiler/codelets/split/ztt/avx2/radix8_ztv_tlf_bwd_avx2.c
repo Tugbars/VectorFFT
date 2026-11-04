@@ -18,7 +18,7 @@
 
 static __attribute__((always_inline)) inline void _ztvtlf8b_body(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t count)
 {
     for (size_t k = 0; k + 1 <= count; k += 1) {
         /* zturn-ts lane-batched load edge */
@@ -38,7 +38,7 @@ static __attribute__((always_inline)) inline void _ztvtlf8b_body(
         const __m256d lane_im_6 = _mm256_loadu_pd(&in_im[4*((size_t)6*Ls + k)]);
         const __m256d lane_re_7 = _mm256_loadu_pd(&in_re[4*((size_t)7*Ls + k)]);
         const __m256d lane_im_7 = _mm256_loadu_pd(&in_im[4*((size_t)7*Ls + k)]);
-        /* zturn-ts lane-batched store edge */
+        /* zturn-ts lane-major store edge (element pitch ep) */
         /* SU-scheduled body (pipeline) */
         const __m256d t41 = _mm256_set1_pd(0.70710678118654757);
         const __m256d t0 = lane_re_7;
@@ -127,41 +127,41 @@ static __attribute__((always_inline)) inline void _ztvtlf8b_body(
         const __m256d t94 = _mm256_add_pd(t70, t73);
         const __m256d t77 = _mm256_sub_pd(t74, t62);
         const __m256d t131 = _mm256_fnmadd_pd(t41, t44, t77);
-        _mm256_storeu_pd(&out_re[4*((size_t)7*OLs + k)], t130);
-        _mm256_storeu_pd(&out_im[4*((size_t)7*OLs + k)], t131);
+        _mm256_storeu_pd(&out_re[ep*((size_t)7*OLs + k)], t130);
+        _mm256_storeu_pd(&out_im[ep*((size_t)7*OLs + k)], t131);
         const __m256d t135 = _mm256_fmadd_pd(t41, t44, t77);
-        _mm256_storeu_pd(&out_re[4*((size_t)3*OLs + k)], t134);
-        _mm256_storeu_pd(&out_im[4*((size_t)3*OLs + k)], t135);
+        _mm256_storeu_pd(&out_re[ep*((size_t)3*OLs + k)], t134);
+        _mm256_storeu_pd(&out_im[ep*((size_t)3*OLs + k)], t135);
         const __m256d t96 = _mm256_sub_pd(t94, t91);
         const __m256d t101 = _mm256_sub_pd(t96, t89);
-        _mm256_storeu_pd(&out_re[4*((size_t)6*OLs + k)], t99);
-        _mm256_storeu_pd(&out_im[4*((size_t)6*OLs + k)], t101);
+        _mm256_storeu_pd(&out_re[ep*((size_t)6*OLs + k)], t99);
+        _mm256_storeu_pd(&out_im[ep*((size_t)6*OLs + k)], t101);
         const __m256d t125 = _mm256_add_pd(t89, t96);
-        _mm256_storeu_pd(&out_re[4*((size_t)2*OLs + k)], t124);
-        _mm256_storeu_pd(&out_im[4*((size_t)2*OLs + k)], t125);
+        _mm256_storeu_pd(&out_re[ep*((size_t)2*OLs + k)], t124);
+        _mm256_storeu_pd(&out_im[ep*((size_t)2*OLs + k)], t125);
         const __m256d t109 = _mm256_add_pd(t62, t74);
         const __m256d t133 = _mm256_fnmadd_pd(t41, t106, t109);
-        _mm256_storeu_pd(&out_re[4*((size_t)5*OLs + k)], t132);
-        _mm256_storeu_pd(&out_im[4*((size_t)5*OLs + k)], t133);
+        _mm256_storeu_pd(&out_re[ep*((size_t)5*OLs + k)], t132);
+        _mm256_storeu_pd(&out_im[ep*((size_t)5*OLs + k)], t133);
         const __m256d t137 = _mm256_fmadd_pd(t41, t106, t109);
-        _mm256_storeu_pd(&out_re[4*((size_t)1*OLs + k)], t136);
-        _mm256_storeu_pd(&out_im[4*((size_t)1*OLs + k)], t137);
+        _mm256_storeu_pd(&out_re[ep*((size_t)1*OLs + k)], t136);
+        _mm256_storeu_pd(&out_im[ep*((size_t)1*OLs + k)], t137);
         const __m256d t117 = _mm256_add_pd(t91, t94);
         const __m256d t121 = _mm256_sub_pd(t117, t114);
-        _mm256_storeu_pd(&out_re[4*((size_t)4*OLs + k)], t119);
-        _mm256_storeu_pd(&out_im[4*((size_t)4*OLs + k)], t121);
+        _mm256_storeu_pd(&out_re[ep*((size_t)4*OLs + k)], t119);
+        _mm256_storeu_pd(&out_im[ep*((size_t)4*OLs + k)], t121);
         const __m256d t129 = _mm256_add_pd(t114, t117);
-        _mm256_storeu_pd(&out_re[4*(size_t)k], t128);
-        _mm256_storeu_pd(&out_im[4*(size_t)k], t129);
+        _mm256_storeu_pd(&out_re[ep*(size_t)k], t128);
+        _mm256_storeu_pd(&out_im[ep*(size_t)k], t129);
     }
 }
 
 __attribute__((target("avx2,fma")))
 void radix8_ztv_tlf_bwd_avx2(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count)
+    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep)
 {
     (void)rb;
     for (size_t g = 0; g < Gs; g++)
-        _ztvtlf8b_body(in_re + g * 32 * Ls, in_im + g * 32 * Ls, out_re + g * 32 * OLs, out_im + g * 32 * OLs, tw_re, Ls, OLs, count);
+        _ztvtlf8b_body(in_re + g * 32 * Ls, in_im + g * 32 * Ls, out_re + g * ep * 8 * OLs, out_im + g * ep * 8 * OLs, tw_re, Ls, OLs, ep, count);
 }

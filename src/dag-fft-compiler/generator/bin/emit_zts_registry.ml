@@ -32,9 +32,9 @@ let () =
   p " * transforms at offset t*N. */\n";
   Printf.printf "typedef void (*vfft_zts_fn)(%s);\n" (Zts_drivers.driver_params Zts_drivers.S);
   Printf.printf "typedef void (*vfft_zts_bfn)(%s, size_t K);\n\n" (Zts_drivers.driver_params Zts_drivers.S);
-  p "/* V (lane-major K = VW, data[e*VW + t]): the two lane-batched planes in and out,\n";
-  p " * two scratch planes (N*VW doubles each + slack), tw = (c, s) pairs per (column,\n";
-  p " * leg) in stage order, rb, tile. */\n";
+  p "/* V (lane-major K, data[e*K + t], K a multiple of VW): the two lane-major planes in\n";
+  p " * and out, two scratch planes (N*VW doubles each + slack: ONE lane group at a time),\n";
+  p " * tw = (c, s) pairs per (column, leg) in stage order, rb, tile, K. */\n";
   Printf.printf "typedef void (*vfft_ztv_fn)(%s);\n\n" (Zts_drivers.driver_params Zts_drivers.V);
   List.iter
     (fun (n, ch) ->
@@ -57,7 +57,7 @@ let () =
   p "\ntypedef struct {\n    int n, nf;\n    int chain[7];\n";
   p "    vfft_zts_fn s_fwd, s_bwd;          /* K=1, split planes (the plane form) */\n";
   p "    vfft_zts_bfn s_fwd_batch, s_bwd_batch;   /* K contiguous transforms */\n";
-  p "    vfft_ztv_fn v_fwd, v_bwd;          /* lane-major K = VW */\n";
+  p "    vfft_ztv_fn v_fwd, v_bwd;          /* lane-major K, a multiple of VW */\n";
   p "} vfft_zts_cell_t;\n\n";
   Printf.printf "#define VFFT_ZTS_NCELLS_%s %d\n" up (List.length cells);
   Printf.printf "static const vfft_zts_cell_t vfft_zts_cells_%s[VFFT_ZTS_NCELLS_%s] = {\n" isa up;

@@ -12,10 +12,13 @@
  *              split-plane stores, no shuffle. K contiguous transforms
  *              (transform t at offset t*N) run transform-major through the
  *              _batch twin on the one scratch plane.
- *   lanes = 4  the lane-major engine (fused codelets ztv_*): data[e*4 + t],
- *              element e of transform t; every column is ONE vector per plane
- *              (lane = transform), no turn anywhere, twiddles broadcast from
- *              (c, s) pairs; two scratch planes of 4N doubles.
+ *   lanes = K  the lane-major engine (fused codelets ztv_*), K a multiple of
+ *              the vector width: data[e*K + t], element e of transform t. The
+ *              driver runs the pipeline per LANE GROUP of VW lanes (the edges
+ *              at element pitch K, the group's lane offset on the pointers);
+ *              every column is ONE vector per plane (lane = transform), no
+ *              turn anywhere, twiddles broadcast from (c, s) pairs; two
+ *              scratch planes of VW*N doubles (one group at a time).
  * Both run the pipeline IN THE SCRATCH and the terminator writes the caller's
  * planes: in place when in == out. There is no destination mode for split
  * (two caller planes cannot host the block interior; a terminator writing the
@@ -38,7 +41,10 @@
  * The create is the validator: an illegal chain, a size out of range, a lane
  * count the registry does not serve, or a cell without a driver returns NULL
  * loudly (VFFT_NAT_LOG) — no fallback, no default chain (the planner is the
- * only source of a chain). Serial (T=1) only. */
+ * only source of a chain: split/rank1/zts_race.h, the create-time race, and
+ * the cell's wisdom row, split/wisdom/wisdom2_zts_split.h). Serial: the
+ * engine has no threaded form; at K <= 4 the stride engine it replaces runs
+ * its FFT serially too (the pool K-split needs K >= 8). */
 #ifndef VFFT_ZTS_H
 #define VFFT_ZTS_H
 
@@ -59,7 +65,7 @@
 /* zturn-ts is emitted at avx2 only so far (2026-11-04): no cells at avx512 */
 typedef void (*vfft_zts_fn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t);
 typedef void (*vfft_zts_bfn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t, size_t);
-typedef void (*vfft_ztv_fn)(const double *, const double *, double *, double *, double *, double *, const double *, const size_t *, size_t);
+typedef void (*vfft_ztv_fn)(const double *, const double *, double *, double *, double *, double *, const double *, const size_t *, size_t, size_t);
 typedef struct { int n, nf; int chain[7]; vfft_zts_fn s_fwd, s_bwd; vfft_zts_bfn s_fwd_batch, s_bwd_batch; vfft_ztv_fn v_fwd, v_bwd; } vfft_zts_cell_t;
 #define VFFT_ZTS_NCELLS 0
 static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0, 0 } };
@@ -69,23 +75,46 @@ static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0,
 #define VFFT_ZTS_MAX_NF 7
 #define VFFT_ZTS_MAX_N 262144
 #define VFFT_ZTS_SLACK 8192u          /* bytes of slack behind each scratch plane */
+#define VFFT_ZTS_MT_MAX 63            /* worker planes: THREAD_POOL_MAX_DISPATCH - 1 (the caller is slot 0) */
+#define VFFT_ZTS_LANES_MAX 64         /* the lane-major batch: K a multiple of VW up to this */
 
-typedef struct
+/* the tile ladder the race walks beside untiled (complex columns per tile):
+ * ZTURN-T's 1024 / 2048 (16 KB / 32 KB of block plane) and, for the lane-major
+ * engine whose planes are four times wider per column, 256 / 512. The tile
+ * law filters each; the race decides. */
+static const int VFFT_ZTS_TILE_LADDER[] = { 256, 512, 1024, 2048 };
+#define VFFT_ZTS_TILE_LADDER_N 4
+
+typedef struct vfft_zts_plan_s
 {
     int N, nf;
     int chain[VFFT_ZTS_MAX_NF];
-    int lanes;                        /* 1 = the K=1 engine, VFFT_ZTS_VW = lane-major */
+    int lanes;                        /* 1 = the K=1 engine; K (a multiple of VW) = lane-major:
+                                       * the driver runs the pipeline per lane group of VW */
     long ncol;                        /* N / chain[0]: ingest columns = rb entries    */
     long L[VFFT_ZTS_MAX_NF];          /* run length BEFORE stage s (s >= 1)           */
     long Gs[VFFT_ZTS_MAX_NF];         /* group count of stage s                       */
-    double *tw, *twb;                 /* ONE contiguous stream each, stage order       */
+    double *tw, *twb;                 /* ONE contiguous stream each, stage order; twb
+                                       * NULL until vfft_zts_fill_bwd (the race builds
+                                       * forward streams only)                        */
     size_t twdoubles;
     size_t twoff[VFFT_ZTS_MAX_NF];
     size_t *rb;                       /* the run-base table, ncol entries              */
     double *plane;                    /* lanes = 1: the block plane, 2N doubles + slack */
     double *plane_re, *plane_im;      /* lanes = VW: the two lane-batched planes       */
+    int planes_owned;                 /* 0 = the race's shared scratch (never freed here) */
     const vfft_zts_cell_t *cell;      /* the registry row                              */
     size_t tile;
+    /* THE THREADED FORM of a contiguous batch (lanes = 1, K > 1): the K
+     * transforms sliced over the pool's slots, slot 0 the caller, each slot
+     * running the _batch twin on its OWN block plane (the streams and rb are
+     * read-only and shared) — the IL contiguous wrapper's shape, bitwise the
+     * serial loop. mt = the verdict (1 = slabs; raced at create, banked
+     * eng=tcb tcmt= at the plan's thread count, split/rank1/c2c_ip_create_split.h
+     * _zts_tcmt_decide); mt_n = the worker planes built (0 = no arm). */
+    int mt;
+    int mt_n;
+    double *mtplane[VFFT_ZTS_MT_MAX];
 } vfft_zts_plan_t;
 
 static inline const vfft_zts_cell_t *vfft_zts_lookup(int N, const int *chain, int nf)
@@ -102,16 +131,46 @@ static inline const vfft_zts_cell_t *vfft_zts_lookup(int N, const int *chain, in
     return NULL;
 }
 
+/* 1 = the registry has at least one cell at N (the race's admission) */
+static inline int vfft_zts_serves(int N)
+{
+    int i;
+    for (i = 0; i < VFFT_ZTS_NCELLS; i++)
+        if (vfft_zts_cells[i].n == N) return 1;
+    return 0;
+}
+
 static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
 {
+    int i;
     if (!p) return;
     vfft_aligned_free(p->tw);
     vfft_aligned_free(p->twb);
     vfft_aligned_free(p->rb);
-    vfft_aligned_free(p->plane);
-    vfft_aligned_free(p->plane_re);
-    vfft_aligned_free(p->plane_im);
+    if (p->planes_owned)
+    {
+        vfft_aligned_free(p->plane);
+        vfft_aligned_free(p->plane_re);
+        vfft_aligned_free(p->plane_im);
+    }
+    for (i = 0; i < p->mt_n; i++) vfft_aligned_free(p->mtplane[i]);
     free(p);
+}
+
+/* the worker planes of the threaded contiguous form (lanes = 1): n of them,
+ * one per pool slot beyond the caller; returns the count built */
+static inline int vfft_zts_mt_planes(vfft_zts_plan_t *p, int n)
+{
+    int i;
+    if (p->lanes != 1) return 0;
+    if (n > VFFT_ZTS_MT_MAX) n = VFFT_ZTS_MT_MAX;
+    for (i = p->mt_n; i < n; i++)
+    {
+        p->mtplane[i] = (double *)vfft_aligned_alloc((size_t)2 * (size_t)p->N * sizeof(double) + VFFT_ZTS_SLACK);
+        if (!p->mtplane[i]) break;
+        p->mt_n = i + 1;
+    }
+    return p->mt_n;
 }
 
 /* the tile law, ZTURN-T's: 0 always legal; else a width that divides N, that
@@ -132,9 +191,61 @@ static inline int vfft_zts_set_tile(vfft_zts_plan_t *p, size_t tile)
     return 1;
 }
 
+/* the bytes of ONE scratch plane for this lane mode (lanes = 1: the block
+ * plane; lane-major: each of the two lane planes holds ONE lane group of VW) */
+static inline size_t vfft_zts_plane_bytes(int N, int lanes)
+{
+    return lanes == 1 ? (size_t)2 * (size_t)N * sizeof(double) + VFFT_ZTS_SLACK
+                      : (size_t)N * (size_t)VFFT_ZTS_VW * sizeof(double) + VFFT_ZTS_SLACK;
+}
+
+/* own scratch planes for the plan (the create's default; the race's winner) */
+static inline int vfft_zts_own_planes(vfft_zts_plan_t *p)
+{
+    const size_t bytes = vfft_zts_plane_bytes(p->N, p->lanes);
+    p->plane = p->plane_re = p->plane_im = NULL;
+    if (p->lanes == 1)
+        p->plane = (double *)vfft_aligned_alloc(bytes);
+    else
+    {
+        p->plane_re = (double *)vfft_aligned_alloc(bytes);
+        p->plane_im = (double *)vfft_aligned_alloc(bytes);
+    }
+    p->planes_owned = 1;
+    return p->lanes == 1 ? p->plane != NULL : (p->plane_re != NULL && p->plane_im != NULL);
+}
+
+/* the race's shared scratch: one block plane, or two lane planes, not owned */
+static inline void vfft_zts_share_planes(vfft_zts_plan_t *p, double *a, double *b)
+{
+    p->planes_owned = 0;
+    if (p->lanes == 1) { p->plane = a; p->plane_re = p->plane_im = NULL; }
+    else { p->plane = NULL; p->plane_re = a; p->plane_im = b; }
+}
+
+/* the backward stream (the race builds candidates forward-only) */
+static inline int vfft_zts_fill_bwd(vfft_zts_plan_t *p)
+{
+    size_t off = 0;
+    int s;
+    if (p->twb) return 1;
+    p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+    if (!p->twb) return 0;
+    for (s = 1; s < p->nf; s++)
+    {
+        const long RL = p->L[s] * p->chain[s];
+        off += (p->lanes == 1)
+                   ? vfft_qw_fill_stage_quad(p->twb + off, p->L[s], p->chain[s], RL, 1, VFFT_ZTS_VW)
+                   : vfft_qw_fill_stage_pair(p->twb + off, p->L[s], p->chain[s], RL, 1);
+    }
+    return 1;
+}
+
 /* create: lanes = 1 (K=1 / contiguous K) or VFFT_ZTS_VW (lane-major). NULL = not
- * a zturn-ts cell, loudly under VFFT_NAT_LOG. */
-static inline vfft_zts_plan_t *vfft_zts_create_chain(int N, const int *chain, int nf, int lanes)
+ * a zturn-ts cell, loudly under VFFT_NAT_LOG. want_bwd / want_planes = 0: the
+ * race's candidate shape (forward stream only, planes shared by the caller). */
+static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int nf, int lanes,
+                                                   int want_bwd, int want_planes)
 {
     vfft_zts_plan_t *p;
     const vfft_zts_cell_t *cell;
@@ -144,7 +255,8 @@ static inline vfft_zts_plan_t *vfft_zts_create_chain(int N, const int *chain, in
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTS_MAX_NF) why = "nf outside 2..7";
     else if (N < 16 || N > VFFT_ZTS_MAX_N) why = "N outside 16..262144";
-    else if (lanes != 1 && lanes != VFFT_ZTS_VW) why = "lanes is neither 1 nor the vector width";
+    else if (lanes != 1 && (lanes % VFFT_ZTS_VW || lanes > VFFT_ZTS_LANES_MAX))
+        why = "lanes is neither 1 nor a multiple of the vector width up to 64";
     for (s = 0; !why && s < nf; s++)
     {
         if (chain[s] != 4 && chain[s] != 8) why = "radix not in {4, 8}";
@@ -180,37 +292,21 @@ static inline vfft_zts_plan_t *vfft_zts_create_chain(int N, const int *chain, in
         if (s + 1 < nf) p->L[s + 1] = RL;
     }
     p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
-    p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
     p->rb = (size_t *)vfft_aligned_alloc((size_t)p->ncol * sizeof(size_t));
-    if (lanes == 1)
-        p->plane = (double *)vfft_aligned_alloc((size_t)2 * (size_t)N * sizeof(double) + VFFT_ZTS_SLACK);
-    else
-    {
-        p->plane_re = (double *)vfft_aligned_alloc((size_t)N * (size_t)lanes * sizeof(double) + VFFT_ZTS_SLACK);
-        p->plane_im = (double *)vfft_aligned_alloc((size_t)N * (size_t)lanes * sizeof(double) + VFFT_ZTS_SLACK);
-    }
-    if (!p->tw || !p->twb || !p->rb || (lanes == 1 ? !p->plane : (!p->plane_re || !p->plane_im)))
+    if (!p->tw || !p->rb || (want_planes && !vfft_zts_own_planes(p)) ||
+        (want_bwd && !vfft_zts_fill_bwd(p)))
     {
         vfft_zts_destroy(p);
         return NULL;
     }
-    /* the streams, stage order, ONE allocation each */
+    /* the forward stream, stage order, ONE allocation */
     for (s = 1, off = 0; s < nf; s++)
     {
         const long RL = p->L[s] * chain[s];
-        size_t n;
-        if (lanes == 1)
-        {
-            n = vfft_qw_fill_stage_quad(p->tw + off, p->L[s], chain[s], RL, 0, VFFT_ZTS_VW);
-            (void)vfft_qw_fill_stage_quad(p->twb + off, p->L[s], chain[s], RL, 1, VFFT_ZTS_VW);
-        }
-        else
-        {
-            n = vfft_qw_fill_stage_pair(p->tw + off, p->L[s], chain[s], RL, 0);
-            (void)vfft_qw_fill_stage_pair(p->twb + off, p->L[s], chain[s], RL, 1);
-        }
         p->twoff[s] = off;
-        off += n;
+        off += (lanes == 1)
+                   ? vfft_qw_fill_stage_quad(p->tw + off, p->L[s], chain[s], RL, 0, VFFT_ZTS_VW)
+                   : vfft_qw_fill_stage_pair(p->tw + off, p->L[s], chain[s], RL, 0);
     }
     /* the run-base table: rb[c] = the run j whose digit reversal (over the
      * middle+last radices) is column c; refused unless a bijection */
@@ -231,12 +327,18 @@ static inline vfft_zts_plan_t *vfft_zts_create_chain(int N, const int *chain, in
     return p;
 }
 
-/* the block plane's start for this call (lanes = 1): the 512-B slot mod 4 KB
- * farthest from all four caller pointers; the allocation carries the slack */
-static inline double *_zts_plane_for(const vfft_zts_plan_t *p, const double *ire, const double *iim,
-                                     const double *ore, const double *oim)
+static inline vfft_zts_plan_t *vfft_zts_create_chain(int N, const int *chain, int nf, int lanes)
 {
-    const uintptr_t base = (uintptr_t)p->plane;
+    return _vfft_zts_create_ex(N, chain, nf, lanes, 1, 1);
+}
+
+/* the block plane's start for this call (lanes = 1): the 512-B slot mod 4 KB
+ * farthest from all four caller pointers; the allocation (`alloc`: the
+ * plan's plane, or a worker's) carries the slack */
+static inline double *_zts_plane_at(const double *alloc, const double *ire, const double *iim,
+                                    const double *ore, const double *oim)
+{
+    const uintptr_t base = (uintptr_t)alloc;
     const uintptr_t o[4] = { (uintptr_t)ire & 4095u, (uintptr_t)iim & 4095u, (uintptr_t)ore & 4095u, (uintptr_t)oim & 4095u };
     uintptr_t best = 2048u, bestm = 0, t;
     int i;
@@ -253,6 +355,28 @@ static inline double *_zts_plane_for(const vfft_zts_plan_t *p, const double *ire
     }
     return (double *)(base + (((best - (base & 4095u)) & 4095u) & ~(uintptr_t)63u));
 }
+static inline double *_zts_plane_for(const vfft_zts_plan_t *p, const double *ire, const double *iim,
+                                     const double *ore, const double *oim)
+{
+    return _zts_plane_at(p->plane, ire, iim, ore, oim);
+}
+
+/* one slot of the threaded contiguous form: transforms [t0, t0 + cnt) on the
+ * slot's own block plane (the serial loop's exact arithmetic per transform) */
+static inline void vfft_zts_run_slab(const vfft_zts_plan_t *p, int bwd,
+                                     const double *ire, const double *iim, double *ore, double *oim,
+                                     size_t t0, size_t cnt, const double *plane_alloc)
+{
+    const double *tw = bwd ? p->twb : p->tw;
+    const size_t off = t0 * (size_t)p->N;
+    const double *ir = ire + off, *ii = iim + off;
+    double *orr = ore + off, *oi = oim + off;
+    double *W = _zts_plane_at(plane_alloc, ir, ii, orr, oi);
+    if (cnt == 1)
+        (bwd ? p->cell->s_bwd : p->cell->s_fwd)(ir, ii, orr, oi, W, tw, p->rb, p->tile);
+    else
+        (bwd ? p->cell->s_bwd_batch : p->cell->s_fwd_batch)(ir, ii, orr, oi, W, tw, p->rb, p->tile, cnt);
+}
 
 /* the lane-major planes: 1 KB and 3 KB (mod 4 KB) from their allocations */
 static inline double *_zts_vplane(const double *alloc, unsigned want)
@@ -263,7 +387,8 @@ static inline double *_zts_vplane(const double *alloc, unsigned want)
 
 /* execute. lanes = 1: K contiguous transforms (K >= 1), transform t at offset
  * t*N in every plane; lanes = VW: one lane-major batch of VW transforms. In
- * place when in == out. */
+ * place when in == out. The backward call needs the backward stream
+ * (vfft_zts_fill_bwd; the create builds it unless asked not to). */
 static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
                             const double *ire, const double *iim, double *ore, double *oim, size_t K)
 {
@@ -279,7 +404,7 @@ static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
     else
     {
         double *Wr = _zts_vplane(p->plane_re, 1024u), *Wi = _zts_vplane(p->plane_im, 3072u);
-        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile);
+        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes);
     }
 }
 

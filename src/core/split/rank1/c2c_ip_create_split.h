@@ -43,13 +43,209 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
  * here, so a new early exit cannot skip the shared post-step (a skipped exit
  * ships mt_unsafe=0 — calloc's default, which spells "proven safe" — without
  * running the proof). The gate is cheap for ST creates (skipped). */
+/* the incumbent arm of zturn-ts's in-place race: this handle's deployed
+ * forward (vfft.c _exec_c2c_inplace: the stride plan, its JIT, the natural
+ * tape), on the race's own planes */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *re, *im;
+} _zts_inc_ip_t;
+static void _zts_inc_ip_run(void *v)
+{
+    _zts_inc_ip_t *c = (_zts_inc_ip_t *)v;
+    _exec_c2c_inplace(c->h, VFFT_FORWARD, c->re, c->im);
+}
+
+/* a handle served by zturn-ts alone: no stride plan, no tapes */
+static struct vfft_plan_s *_zts_handle(const vfft_cfg_t *cfg, int placement, int N, size_t K,
+                                       vfft_zts_plan_t *z)
+{
+    struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    if (!h)
+    {
+        vfft_zts_destroy(z);
+        return NULL;
+    }
+    h->transform = VFFT_C2C;
+    h->placement = placement;
+    h->layout = (int)cfg->layout;
+    h->N = N;
+    h->K = K;
+    h->nthreads = _vfft_plan_threads(cfg);
+    h->zts = z;
+    return h;
+}
+
+/* the cell's banked zturn-ts verdict rebuilt (NULL = no zts row, or the
+ * build cannot serve it — the caller then treats the cell as held) */
+static vfft_zts_plan_t *_zts_replay(struct vfft_wisdom_s *W, int N, size_t K, int place_ip,
+                                    int lanes, int *held)
+{
+    vfft_zts_entry_t ze;
+    vfft_zts_plan_t *z;
+    *held = 0;
+    if (!vw2_zts_lookup(&W->vw2, N, K, place_ip, &ze))
+        return NULL;
+    *held = 1;
+    if (!ze.zts)
+        return NULL;
+    z = vfft_zts_create_chain(N, ze.chain, ze.nf, lanes);
+    if (z && ze.tile && !vfft_zts_set_tile(z, ze.tile))
+    {
+        vfft_zts_destroy(z);
+        z = NULL;
+    }
+    if (z && getenv("VFFT_NAT_LOG"))
+    {
+        char cs[48];
+        vfft_zts_chain_str(z, cs, sizeof cs);
+        fprintf(stderr, "[zts] N=%d q=%zu %s: replay chain %s tile=%zu src=wisdom\n",
+                N, K, place_ip ? "ip" : "oop", cs, z->tile);
+    }
+    return z;
+}
+
+/* ── zturn-ts's CONTIGUOUS batch at T > 1: the THREADING verdict ──────
+ * The one arm: the serial loop vs SLABS over the pool's slots (zts.h
+ * vfft_zts_run_slab; split_execute.h), raced at create on the batch's own
+ * cell and banked as eng=tcb tcmt= on its q=K row at the plan's thread
+ * count (wisdom2_stride_reader.h vw2_stride_bank_tcmt with lay=split: the
+ * IL contiguous wrapper's own grammar, vfft.c _tc_mt_decide, and its laws —
+ * a slab is ceil(K/T) transforms, so the verdict moves with T and a lookup
+ * never crosses it). No worker planes (K = 1 workers, VFFT_NO_TCMT) => no
+ * arm: serial. VFFT_TCMT=0|1 pins the verdict (never replays, never banks). */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *re, *im, *ore, *oim;
+    int mt;
+} _zts_tcmt_arm_t;
+static void _zts_tcmt_arm_run(void *v)
+{
+    _zts_tcmt_arm_t *a = (_zts_tcmt_arm_t *)v;
+    a->h->zts->mt = a->mt;
+    _vfft_split_execute(a->h, VFFT_FORWARD, a->re, a->im, a->ore, a->oim);
+}
+typedef struct
+{
+    double *re, *im, *re0, *im0;
+    size_t nb;
+} _zts_tcmt_reseed_t;
+static void _zts_tcmt_reseed(void *v)
+{
+    _zts_tcmt_reseed_t *r = (_zts_tcmt_reseed_t *)v;
+    memcpy(r->re, r->re0, r->nb);
+    memcpy(r->im, r->im0, r->nb);
+}
+static void _zts_tcmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
+                             struct vfft_wisdom_s *W, int N, size_t K)
+{
+    const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    const int pl = ip ? VW2_PL_IP : VW2_PL_OOP;
+    const int lg = getenv("VFFT_TCMT_VERBOSE") || getenv("VFFT_TCMT_LOG");
+    const char *pin = getenv("VFFT_TCMT");
+    int nw;
+    h->zts->mt = 0;
+    if (T <= 1 || K <= 1 || getenv("VFFT_NO_TCMT"))
+        return;
+    nw = T - 1;
+    if ((size_t)nw > K - 1)
+        nw = (int)(K - 1);
+    if (nw > VFFT_ZTS_MT_MAX)
+        nw = VFFT_ZTS_MT_MAX;
+    if (vfft_zts_mt_planes(h->zts, nw) == 0)
+        return; /* no worker planes: no arm */
+    if (pin)
+    {
+        h->zts->mt = atoi(pin) ? 1 : 0;
+        if (lg)
+            fprintf(stderr, "[tcmt] zts N=%d K=%zu T=%d: pinned tcmt=%d (env; not banked)\n", N, K, T, h->zts->mt);
+        return;
+    }
+    if (W && !cfg->recalibrate)
+    {
+        int v = 0;
+        if (vw2_stride_lookup_tcmt(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, VW2_LAY_SPLIT, T, &v))
+        {
+            h->zts->mt = v;
+            if (lg)
+                fprintf(stderr, "[tcmt] zts N=%d K=%zu T=%d: replay tcmt=%d src=wisdom\n", N, K, T, v);
+            return;
+        }
+    }
+    { /* the race: serial loop vs slabs, on this cell's own planes */
+        const size_t n = (size_t)N * K, nb = n * sizeof(double);
+        double *re = (double *)vfft_aligned_alloc(nb), *im = (double *)vfft_aligned_alloc(nb);
+        double *ore = ip ? re : (double *)vfft_aligned_alloc(nb);
+        double *oim = ip ? im : (double *)vfft_aligned_alloc(nb);
+        double *re0 = ip ? (double *)vfft_aligned_alloc(nb) : NULL;
+        double *im0 = ip ? (double *)vfft_aligned_alloc(nb) : NULL;
+        double st = 0, mt = 0;
+        size_t i;
+        if (!re || !im || !ore || !oim || (ip && (!re0 || !im0)))
+        {
+            vfft_aligned_free(re);
+            vfft_aligned_free(im);
+            if (!ip) { vfft_aligned_free(ore); vfft_aligned_free(oim); }
+            vfft_aligned_free(re0);
+            vfft_aligned_free(im0);
+            return; /* no buffers: serial */
+        }
+        for (i = 0; i < n; i++)
+        {
+            re[i] = 1.0 + 1e-6 * (double)(i & 511);
+            im[i] = 0.5 - 1e-6 * (double)(i & 255);
+        }
+        if (ip)
+        {
+            memcpy(re0, re, nb);
+            memcpy(im0, im, nb);
+        }
+        {
+            _zts_tcmt_arm_t a = { h, re, im, ore, oim, 0 };
+            _zts_tcmt_arm_t b = { h, re, im, ore, oim, 1 };
+            _zts_tcmt_reseed_t rs = { re, im, re0, im0, nb };
+            const vfft_race_arm_t arms[2] = { { "serial", _zts_tcmt_arm_run, &a },
+                                              { "slabs", _zts_tcmt_arm_run, &b } };
+            vfft_race_proto_t proto;
+            double ns[2];
+            memset(&proto, 0, sizeof proto);
+            proto.rounds = ip ? 9 : 7;
+            proto.reps = ip ? 1 : (int)(32768u / (n ? n : 1)) + 1; /* >= ~30 us a sample */
+            proto.agg = VFFT_RACE_MIN;
+            proto.alternate = 1;
+            proto.warm = 1;
+            proto.reset = ip ? _zts_tcmt_reseed : NULL;
+            proto.reset_ctx = ip ? &rs : NULL;
+            vfft_race_run(&proto, arms, 2, ns); /* threaded arms: no pace */
+            st = ns[0];
+            mt = ns[1];
+        }
+        h->zts->mt = (mt < st);
+        if (lg)
+            fprintf(stderr, "[tcmt] zts N=%d K=%zu T=%d %s: race serial=%.0f slabs=%.0f -> %s\n",
+                    N, K, T, ip ? "ip" : "oop", st, mt, h->zts->mt ? "SLABS" : "serial");
+        vfft_aligned_free(re);
+        vfft_aligned_free(im);
+        if (!ip) { vfft_aligned_free(ore); vfft_aligned_free(oim); }
+        vfft_aligned_free(re0);
+        vfft_aligned_free(im0);
+        if (W && vw2_stride_bank_tcmt(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, VW2_LAY_SPLIT,
+                                      h->zts->mt, T, h->zts->mt ? mt : st) == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
+}
+
+/* zts_try: 0 = the cell was consumed (no race); 1 = the natural verdict was
+ * MEASURED this create (the @nat row absent, or recalibrate) and banked by
+ * the natural block; 2 = measured, FREE (single stage), nothing banked. */
 static vfft_plan _c2c_ip_finish_split(struct vfft_plan_s *h,
                                       struct vfft_wisdom_s *W,
-                                      const vfft_cfg_t *cfg, int N)
+                                      const vfft_cfg_t *cfg, int N,
+                                      size_t K, int zts_try)
 {
-    (void)W;
-    (void)cfg;
-    (void)N;
     /* MT-safety: flag plans whose codelet ignores the partial-lane count (so
      * _c2c_mt runs them whole-batch instead of K-splitting). Checked once on
      * the FINAL cplan (after any natural rebuild). A safety net (the DIF/LOG3
@@ -57,6 +253,59 @@ static vfft_plan _c2c_ip_finish_split(struct vfft_plan_s *h,
      * single-threaded creates skip the check and its cost. */
     if (h->cplan)
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+    /* zturn-ts (split/rank1/zts_race.h): the cell's race, on a MEASURED
+     * natural verdict only (feedback: race only when the banked cell is
+     * missing, or under recalibrate), where the registry serves N in this
+     * batch form — K=1 (lanes 1) or the lane-major 4 (lanes 4). The
+     * incumbent = this handle's deployed forward. A win hands the handle to
+     * zturn-ts (the stride plan and its tapes go) and banks eng=zts on the
+     * cell — the stride row the natural block just banked gives way (same
+     * key, same day, same metric); a loss leaves the stride row as the
+     * record, or banks mode=free where the block banked nothing. */
+    if (zts_try && h->cplan && !h->padded && vfft_zts_serves(N) &&
+        (K == 1 || (K % (size_t)VFFT_ZTS_VW == 0 && K <= (size_t)VFFT_ZTS_LANES_MAX)))
+    {
+        const int lanes = K == 1 ? 1 : (int)K;
+        const size_t n = (size_t)N * K;
+        double *re = (double *)vfft_aligned_alloc(n * sizeof(double));
+        double *im = (double *)vfft_aligned_alloc(n * sizeof(double));
+        if (re && im)
+        {
+            _zts_inc_ip_t ic = { h, re, im };
+            vfft_race_arm_t inc = { "stride", _zts_inc_ip_run, &ic };
+            double *bufs[2] = { re, im };
+            double wns = 0.0, ins = 0.0;
+            vfft_zts_plan_t *z = vfft_zts_race(N, lanes, 1, &inc, bufs, 2, &wns, &ins);
+            if (z)
+            {
+                vfft_proto_plan_destroy(h->cplan);
+                h->cplan = NULL;
+                h->exec_fwd = h->exec_bwd = NULL;
+                free(h->nat_list);
+                h->nat_list = NULL;
+                vfft_aligned_free(h->nat_tmp);
+                h->nat_tmp = NULL;
+                free(h->nat_cyc_off);
+                h->nat_cyc_off = NULL;
+                if (h->nat_scr)
+                {
+                    natorder_scr_free(h->nat_scr);
+                    free(h->nat_scr);
+                    h->nat_scr = NULL;
+                }
+                h->nat_mode = 0;
+                h->nat_ncyc = 0;
+                h->mt_unsafe = 0;
+                h->zts = z;
+                vw2_zts_bank(&W->vw2, N, K, 1, z->chain, z->nf, z->tile, wns);
+                _vw2_persist(W, cfg);
+            }
+            else if (zts_try == 2)
+                _bank_nat_1d(W, cfg, N, K, VFFT_NAT_FREE, ins, NULL, NULL, 0, 0);
+        }
+        vfft_aligned_free(re);
+        vfft_aligned_free(im);
+    }
     return h;
 }
 
@@ -158,12 +407,60 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_cfg_t *cfg,
             h->exec_bwd = vfft_proto_plan_jit_bwd(p);
         }
 #endif
-        return _c2c_ip_finish_split(h, W, cfg, N);
+        return _c2c_ip_finish_split(h, W, cfg, N, K, 0);
     }
 
     /* ── c2c IN-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
     {
+        int zts_try = 0;
+        if (K > 1 && cfg->batch_geom == VFFT_BATCH_CONTIGUOUS)
+        {
+            /* a CONTIGUOUS split batch (transform t at offset t*N in each
+             * plane; owner 2026-11-04) = K independent K=1 transforms: the
+             * q=1 cell's engine serves it when that engine has a contiguous
+             * form — zturn-ts's _batch twin; the stride engine has none.
+             * Plan the K=1 cell through this same create (its race and bank
+             * included), then run that handle K times. */
+            vfft_cfg_t c1 = *cfg;
+            struct vfft_plan_s *h1;
+            c1.howmany = 1;
+            c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1 */
+            h1 = (struct vfft_plan_s *)_vfft_create_c2c_ip_split(&c1, NULL, W, reg, N, 1);
+            if (!h1)
+                return NULL;
+            if (!h1->zts)
+            {
+                _vfft_warn("vfft_create: batch=VFFT_BATCH_CONTIGUOUS on a SPLIT in-place C2C "
+                           "N=%d K=%zu: the N=%d K=1 split cell is served by the stride "
+                           "natural engine, which has no contiguous batch form (zturn-ts, "
+                           "the only contiguous split engine, %s) — ask "
+                           "VFFT_BATCH_LANE_MAJOR, or recalibrate the cell",
+                           N, K, N, vfft_zts_serves(N) ? "lost the cell's race" : "has no cell at this N");
+                vfft_destroy(h1);
+                return NULL;
+            }
+            h1->K = K;
+            _zts_tcmt_decide(h1, cfg, W, N, K); /* the threading verdict at T > 1 */
+            return h1;
+        }
+        if (!cfg->recalibrate && cfg->order != VFI_ORDER_SCRAMBLED &&
+            (K == 1 || (K % (size_t)VFFT_ZTS_VW == 0 && K <= (size_t)VFFT_ZTS_LANES_MAX)))
+        {
+            /* the cell's banked zturn-ts verdict, before the stride engine
+             * plans anything (its scrambled cell, its natural tape). A
+             * refusal (a build without the cell) falls through: the stride
+             * reader sees the eng=zts row as absent and re-races. */
+            int held;
+            vfft_zts_plan_t *z = _zts_replay(W, N, K, 1, K == 1 ? 1 : (int)K, &held);
+            if (z)
+            {
+                struct vfft_plan_s *hz = _zts_handle(cfg, VFFT_INPLACE, N, K, z);
+                if (!hz)
+                    return NULL;
+                return _c2c_ip_finish_split(hz, W, cfg, N, K, 0);
+            }
+        }
         vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
         if (vfft_is_prime(N))
         {
@@ -299,6 +596,8 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_cfg_t *cfg,
             if (ne && ne->mode > VFFT_NAT_MAX)
                 ne = NULL;
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
+            /* zturn-ts races the cell only where this create MEASURES it */
+            zts_try = (!ne || cfg->recalibrate) ? (p->num_stages <= 1 ? 2 : 1) : 0;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
             if (mode != VFFT_NAT_FREE) /* FREE needs no tape */
@@ -539,9 +838,10 @@ static vfft_plan _vfft_create_c2c_ip_split(const vfft_cfg_t *cfg,
 #endif
             h->nat_mode = mode;
         }
-        /* the MT-safety gate is in _c2c_ip_finish_split, the tier's one exit. */
+        /* the MT-safety gate and zturn-ts's race are in _c2c_ip_finish_split,
+         * the tier's one exit. */
 
-        return _c2c_ip_finish_split(h, W, cfg, N);
+        return _c2c_ip_finish_split(h, W, cfg, N, K, zts_try);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

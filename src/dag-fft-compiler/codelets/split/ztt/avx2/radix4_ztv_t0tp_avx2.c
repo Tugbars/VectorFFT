@@ -18,18 +18,18 @@
 
 static __attribute__((always_inline)) inline void _ztvt0tp4f_body(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const size_t *rb, size_t Ls, size_t count)
+    const size_t *rb, size_t Ls, size_t ep, size_t count)
 {
     for (size_t k = 0; k + 1 <= count; k += 1) {
-        /* zturn-ts lane-batched load edge */
-        const __m256d lane_re_0 = _mm256_loadu_pd(&in_re[4*(size_t)k]);
-        const __m256d lane_im_0 = _mm256_loadu_pd(&in_im[4*(size_t)k]);
-        const __m256d lane_re_1 = _mm256_loadu_pd(&in_re[4*((size_t)1*Ls + k)]);
-        const __m256d lane_im_1 = _mm256_loadu_pd(&in_im[4*((size_t)1*Ls + k)]);
-        const __m256d lane_re_2 = _mm256_loadu_pd(&in_re[4*((size_t)2*Ls + k)]);
-        const __m256d lane_im_2 = _mm256_loadu_pd(&in_im[4*((size_t)2*Ls + k)]);
-        const __m256d lane_re_3 = _mm256_loadu_pd(&in_re[4*((size_t)3*Ls + k)]);
-        const __m256d lane_im_3 = _mm256_loadu_pd(&in_im[4*((size_t)3*Ls + k)]);
+        /* zturn-ts lane-major load edge (element pitch ep) */
+        const __m256d lane_re_0 = _mm256_loadu_pd(&in_re[ep*(size_t)k]);
+        const __m256d lane_im_0 = _mm256_loadu_pd(&in_im[ep*(size_t)k]);
+        const __m256d lane_re_1 = _mm256_loadu_pd(&in_re[ep*((size_t)1*Ls + k)]);
+        const __m256d lane_im_1 = _mm256_loadu_pd(&in_im[ep*((size_t)1*Ls + k)]);
+        const __m256d lane_re_2 = _mm256_loadu_pd(&in_re[ep*((size_t)2*Ls + k)]);
+        const __m256d lane_im_2 = _mm256_loadu_pd(&in_im[ep*((size_t)2*Ls + k)]);
+        const __m256d lane_re_3 = _mm256_loadu_pd(&in_re[ep*((size_t)3*Ls + k)]);
+        const __m256d lane_im_3 = _mm256_loadu_pd(&in_im[ep*((size_t)3*Ls + k)]);
         /* zturn-ts lane-batched run store (rb[]) */
         const size_t _rbi = (size_t)16 * rb[k];
         /* SU-scheduled body (pipeline) */
@@ -71,8 +71,8 @@ static __attribute__((always_inline)) inline void _ztvt0tp4f_body(
 __attribute__((target("avx2,fma")))
 void radix4_ztv_t0tp_fwd_avx2(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count)
+    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep)
 {
     (void)tw_re; (void)Gs; (void)OLs;
-    _ztvt0tp4f_body(in_re, in_im, out_re, out_im, rb, Ls, count);
+    _ztvt0tp4f_body(in_re, in_im, out_re, out_im, rb, Ls, ep, count);
 }

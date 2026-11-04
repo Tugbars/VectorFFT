@@ -281,6 +281,9 @@ static const vw2_field_t vw2_fields[] = {
     { "il_flat", VW2_FC_STRUCTURAL }, { "il_forms", VW2_FC_LOCAL }, { "il_tw", VW2_FC_LOCAL },
     /* ZTURN-T: the chain IS the verdict */
     { "il_ztt",  VW2_FC_STRUCTURAL },
+    /* zturn-ts (the split library's ZTURN-T, eng=zts on the split natural
+     * cell): chain= above is the verdict; the tile is cache geometry */
+    { "tile",    VW2_FC_LOCAL },
     { "t1p",     VW2_FC_STRUCTURAL },
     /* stride family: chain orientation + the blocked-execution triple
      * (emitted only when blocked). */

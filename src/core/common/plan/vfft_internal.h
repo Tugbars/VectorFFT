@@ -139,6 +139,14 @@ struct vfft_plan_s
     int k1_on;
     int k1_sp_route, k1_il_route;
     vfft_oop_plan_t *k1sp;
+    /* zturn-ts (split/rank1/zts.h, 2026-11-04): the SPLIT 1D c2c natural
+     * engine for the cells its registry serves — K=1 (both placements), a
+     * contiguous batch of K (the plan's lanes = 1, run K times), the
+     * lane-major batch of 4 (lanes = 4). Replayed from the split natural
+     * cell's eng=zts row or raced at create against the engine that holds
+     * the cell (split/rank1/zts_race.h). Non-NULL = the whole execute; the
+     * stride / classic-OOP fields are then unused. Owned. */
+    struct vfft_zts_plan_s *zts;
     /* ── 2D PLANE QUEUE (howmany > 1, sequential contiguous planes —
      * the designed 2D batching feature; docs/design/il2d_real_mt.md
      * increment 5/M6). The handle is a thin wrapper: pq_inner is the

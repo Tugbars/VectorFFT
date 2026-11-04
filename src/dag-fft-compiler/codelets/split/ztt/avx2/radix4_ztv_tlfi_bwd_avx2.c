@@ -18,17 +18,17 @@
 
 static __attribute__((always_inline)) inline void _ztvtlfi4b_body(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, size_t Ls, size_t OLs, size_t count)
+    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t count)
 {
     for (size_t k = 0; k + 1 <= count; k += 1) {
-        _mm_prefetch((const char *)&out_re[4*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_im[4*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_re[4*((size_t)1*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_im[4*((size_t)1*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_re[4*((size_t)2*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_im[4*((size_t)2*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_re[4*((size_t)3*OLs + k + 8)], _MM_HINT_T0);
-        _mm_prefetch((const char *)&out_im[4*((size_t)3*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_re[ep*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_im[ep*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_re[ep*((size_t)1*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_im[ep*((size_t)1*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_re[ep*((size_t)2*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_im[ep*((size_t)2*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_re[ep*((size_t)3*OLs + k + 8)], _MM_HINT_T0);
+        _mm_prefetch((const char *)&out_im[ep*((size_t)3*OLs + k + 8)], _MM_HINT_T0);
         /* zturn-ts lane-batched load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&in_re[4*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&in_im[4*(size_t)k]);
@@ -38,7 +38,7 @@ static __attribute__((always_inline)) inline void _ztvtlfi4b_body(
         const __m256d lane_im_2 = _mm256_loadu_pd(&in_im[4*((size_t)2*Ls + k)]);
         const __m256d lane_re_3 = _mm256_loadu_pd(&in_re[4*((size_t)3*Ls + k)]);
         const __m256d lane_im_3 = _mm256_loadu_pd(&in_im[4*((size_t)3*Ls + k)]);
-        /* zturn-ts lane-batched store edge */
+        /* zturn-ts lane-major store edge (element pitch ep) */
         /* SU-scheduled body (pipeline) */
         const __m256d t0 = lane_re_3;
         const __m256d t1 = _mm256_set1_pd(tw_re[6*(size_t)k + 4]);
@@ -72,27 +72,27 @@ static __attribute__((always_inline)) inline void _ztvtlfi4b_body(
         const __m256d t28 = lane_im_0;
         const __m256d t29 = _mm256_sub_pd(t28, t25);
         const __m256d t34 = _mm256_sub_pd(t29, t18);
-        _mm256_storeu_pd(&out_re[4*((size_t)3*OLs + k)], t32);
-        _mm256_storeu_pd(&out_im[4*((size_t)3*OLs + k)], t34);
+        _mm256_storeu_pd(&out_re[ep*((size_t)3*OLs + k)], t32);
+        _mm256_storeu_pd(&out_im[ep*((size_t)3*OLs + k)], t34);
         const __m256d t44 = _mm256_add_pd(t18, t29);
-        _mm256_storeu_pd(&out_re[4*((size_t)1*OLs + k)], t43);
-        _mm256_storeu_pd(&out_im[4*((size_t)1*OLs + k)], t44);
+        _mm256_storeu_pd(&out_re[ep*((size_t)1*OLs + k)], t43);
+        _mm256_storeu_pd(&out_im[ep*((size_t)1*OLs + k)], t44);
         const __m256d t38 = _mm256_add_pd(t25, t28);
         const __m256d t42 = _mm256_sub_pd(t38, t35);
-        _mm256_storeu_pd(&out_re[4*((size_t)2*OLs + k)], t40);
-        _mm256_storeu_pd(&out_im[4*((size_t)2*OLs + k)], t42);
+        _mm256_storeu_pd(&out_re[ep*((size_t)2*OLs + k)], t40);
+        _mm256_storeu_pd(&out_im[ep*((size_t)2*OLs + k)], t42);
         const __m256d t46 = _mm256_add_pd(t35, t38);
-        _mm256_storeu_pd(&out_re[4*(size_t)k], t45);
-        _mm256_storeu_pd(&out_im[4*(size_t)k], t46);
+        _mm256_storeu_pd(&out_re[ep*(size_t)k], t45);
+        _mm256_storeu_pd(&out_im[ep*(size_t)k], t46);
     }
 }
 
 __attribute__((target("avx2,fma")))
 void radix4_ztv_tlfi_bwd_avx2(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count)
+    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep)
 {
     (void)rb;
     for (size_t g = 0; g < Gs; g++)
-        _ztvtlfi4b_body(in_re + g * 16 * Ls, in_im + g * 16 * Ls, out_re + g * 16 * OLs, out_im + g * 16 * OLs, tw_re, Ls, OLs, count);
+        _ztvtlfi4b_body(in_re + g * 16 * Ls, in_im + g * 16 * Ls, out_re + g * ep * 4 * OLs, out_im + g * ep * 4 * OLs, tw_re, Ls, OLs, ep, count);
 }

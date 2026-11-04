@@ -90,6 +90,13 @@ type zs_edge =
     (* zturn-ts LANE-BATCHED data[n*VW + lane] (K = VW transforms): column k
        of leg l is ONE vector per plane at buf[VW*(l*STRIDE + k)]; lane =
        transform, so no turn anywhere and the twiddles are broadcast. *)
+  | E_vplanes_ep of string
+    (* zturn-ts LANE-MAJOR CALLER planes at a RUNTIME element pitch (the K=8+
+       form, 2026-11-04): column k of leg l is ONE vector (the group's VW
+       lanes) at buf[ep*(l*STRIDE + k)], ep = K doubles per element, the
+       group's lane offset folded into the base pointer by the driver. The
+       ingest's load edge and the terminator's store edge; the interior keeps
+       E_vplanes (pitch VW). The kernel takes `size_t ep`. *)
   | E_vruns
     (* zturn-ts ingest store, lane-batched: the column's R0 digits are R0
        consecutive vectors per plane at rb[k]*R0. *)
@@ -375,7 +382,7 @@ let kind_of_string (s : string) : zs_kind =
     ; fam = (if v then "ztv" else "zts")
     ; bwd = String.length s = 6
     ; twiddled = false
-    ; in_edge = (if v then E_vplanes "Ls" else E_splanes "Ls")
+    ; in_edge = (if v then E_vplanes_ep "Ls" else E_splanes "Ls")
     ; out_edge = (if v then E_vruns else E_bruns)
     }
   | "tsmg" | "tsmgb" | "tvmg" | "tvmgb" ->
@@ -405,7 +412,7 @@ let kind_of_string (s : string) : zs_kind =
     ; tw_off = "%TWF*(size_t)k"
     ; tw_group_reset = true
     ; in_edge = (if v then E_vplanes "Ls" else E_planes "Ls")
-    ; out_edge = (if v then E_vplanes "OLs" else E_splanes "OLs")
+    ; out_edge = (if v then E_vplanes_ep "OLs" else E_splanes "OLs")
     ; prefetch_out = (if ip then 4 else 0)
     }
   | other ->
@@ -704,6 +711,12 @@ let emit_codelet
     then Printf.sprintf "%s[%d*(size_t)k]" buf_name vw
     else Printf.sprintf "%s[%d*((size_t)%d*%s + k)]" buf_name vw leg stride
   in
+  (* the caller's lane-major planes at the runtime element pitch ep *)
+  let vleg_addr_ep (buf_name : string) (leg : int) (stride : string) : string =
+    if leg = 0
+    then Printf.sprintf "%s[ep*(size_t)k]" buf_name
+    else Printf.sprintf "%s[ep*((size_t)%d*%s + k)]" buf_name leg stride
+  in
   (* ── column loop: load edge + SU-scheduled body + store edge for ONE
         prepared DAG (radix slots = the VW columns k..k+VW-1). open_line is
         the C for-statement (the narrow arms share one function-scope k). ── *)
@@ -735,9 +748,10 @@ let emit_codelet
     then (
       let ostride =
         match k.out_edge with
-        | E_planes s | E_z s | E_splanes s | E_vplanes s -> s
+        | E_planes s | E_z s | E_splanes s | E_vplanes s | E_vplanes_ep s -> s
         | E_blocks | E_runs | E_zcol | E_sruns | E_vruns | E_bruns -> "OLs"
       in
+      let out_ep = (match k.out_edge with E_vplanes_ep _ -> true | _ -> false) in
       match k.plane with
       | P_split ->
         (* zturn-ts: both output planes, 2*VW*prefetch_out columns ahead =
@@ -765,9 +779,9 @@ let emit_codelet
                Buffer.add_string
                  buf
                  (Printf.sprintf
-                    "        _mm_prefetch((const char *)&%s[%d*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
+                    "        _mm_prefetch((const char *)&%s[%s*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
                     pl
-                    wide_vw
+                    (if out_ep then "ep" else string_of_int wide_vw)
                     r
                     ostride
                     (2 * k.prefetch_out)))
@@ -823,6 +837,24 @@ let emit_codelet
                  isa
                  (Printf.sprintf "lane_im_%d" leg)
                  (Isa.loadu_pd isa (vleg_addr "in_im" leg s))))
+       done
+     | E_vplanes_ep s ->
+       (* ── zturn-ts lane-major load edge at the runtime element pitch:
+             column k of leg l is ONE vector per plane at in_re / in_im[ep*(l*S + k)] ── *)
+       Buffer.add_string buf "        /* zturn-ts lane-major load edge (element pitch ep) */\n";
+       for leg = 0 to radix - 1 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_re_%d" leg)
+                 (Isa.loadu_pd isa (vleg_addr_ep "in_re" leg s)))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_im_%d" leg)
+                 (Isa.loadu_pd isa (vleg_addr_ep "in_im" leg s))))
        done
      | E_sruns | E_vruns | E_bruns ->
        failwith "codelet_zsplit: E_sruns / E_vruns / E_bruns are store-only edges (the zturn-ts ingest)"
@@ -1089,6 +1121,13 @@ let emit_codelet
               "        %s;\n        %s;\n"
               (Isa.storeu_pd isa (vleg_addr "out_re" leg s) (Printf.sprintf "t%d" re_tag.(leg)))
               (Isa.storeu_pd isa (vleg_addr "out_im" leg s) (Printf.sprintf "t%d" im_tag.(leg)))) )
+      | E_vplanes_ep s ->
+        ( "        /* zturn-ts lane-major store edge (element pitch ep) */\n"
+        , Array.init radix (fun leg ->
+            Printf.sprintf
+              "        %s;\n        %s;\n"
+              (Isa.storeu_pd isa (vleg_addr_ep "out_re" leg s) (Printf.sprintf "t%d" re_tag.(leg)))
+              (Isa.storeu_pd isa (vleg_addr_ep "out_im" leg s) (Printf.sprintf "t%d" im_tag.(leg)))) )
       | E_sruns ->
         (* ── zturn-ts ingest store (P_split): column c's R0 digits land
               contiguous at out_re / out_im[R0*rb[k+c] ..] — per quartet q of
@@ -1212,7 +1251,7 @@ let emit_codelet
     let soc = k.plane <> P_block in
     let unit_tags : int list array =
       match k.out_edge with
-      | E_planes _ | E_z _ | E_splanes _ | E_vplanes _ | E_zcol | E_vruns ->
+      | E_planes _ | E_z _ | E_splanes _ | E_vplanes _ | E_vplanes_ep _ | E_zcol | E_vruns ->
         Array.init radix (fun leg -> [ re_tag.(leg); im_tag.(leg) ])
       | E_sruns | E_bruns | E_blocks ->
         Array.init (radix / vw) (fun q ->
@@ -1276,7 +1315,7 @@ let emit_codelet
   (* ── the shared 11-arg z ABI signature + computed (void) list ── *)
   let uses stride =
     let edge_uses = function
-      | E_planes s | E_z s | E_splanes s | E_vplanes s -> s = stride
+      | E_planes s | E_z s | E_splanes s | E_vplanes s | E_vplanes_ep s -> s = stride
       | E_blocks | E_runs | E_zcol | E_sruns | E_vruns | E_bruns -> false
     in
     edge_uses k.in_edge || edge_uses k.out_edge
@@ -1593,14 +1632,18 @@ let emit_codelet
        the mids run in place) *)
     let ts_in =
       match k.in_edge with
-      | E_splanes _ | E_vplanes _ -> "const double *in_re, const double *in_im"
+      | E_splanes _ | E_vplanes _ | E_vplanes_ep _ -> "const double *in_re, const double *in_im"
       | E_planes _ -> "const double *zin"
       | _ -> failwith "codelet_zsplit: zturn-ts input edge"
     and ts_out =
       match k.out_edge with
-      | E_splanes _ | E_vplanes _ | E_sruns | E_vruns -> "double *out_re, double *out_im"
+      | E_splanes _ | E_vplanes _ | E_vplanes_ep _ | E_sruns | E_vruns -> "double *out_re, double *out_im"
       | E_planes _ | E_bruns -> "double *zout"
       | _ -> failwith "codelet_zsplit: zturn-ts output edge"
+    in
+    let has_ep =
+      (match k.in_edge with E_vplanes_ep _ -> true | _ -> false)
+      || (match k.out_edge with E_vplanes_ep _ -> true | _ -> false)
     in
     if ts
     then
@@ -1609,13 +1652,14 @@ let emit_codelet
         (Printf.sprintf
            "static __attribute__((always_inline)) inline void %s(\n\
            \    %s, %s,\n\
-           \    %s, size_t Ls, %ssize_t count)\n\
+           \    %s, size_t Ls, %s%ssize_t count)\n\
             {\n"
            body_name
            ts_in
            ts_out
            (if k.base = "t0tp" then "const size_t *rb" else "const double *tw_re")
-           (if uses "OLs" then "size_t OLs, " else ""))
+           (if uses "OLs" then "size_t OLs, " else "")
+           (if has_ep then "size_t ep, " else ""))
     else
     Buffer.add_string
       buf
@@ -1703,10 +1747,12 @@ let emit_codelet
       let in_ptrs, in_adv =
         match k.in_edge with
         | E_planes _ -> "zin", Printf.sprintf "zin + g * %d * Ls" (2 * radix)
+        | E_vplanes_ep _ -> "in_re, in_im", Printf.sprintf "in_re + g * ep * %d * Ls, in_im + g * ep * %d * Ls" radix radix
         | _ -> "in_re, in_im", Printf.sprintf "in_re + g * %d * Ls, in_im + g * %d * Ls" (sc * radix) (sc * radix)
       and out_ptrs, out_adv =
         match k.out_edge with
         | E_planes _ | E_bruns -> "zout", Printf.sprintf "zout + g * %d * OLs" (2 * radix)
+        | E_vplanes_ep _ -> "out_re, out_im", Printf.sprintf "out_re + g * ep * %d * OLs, out_im + g * ep * %d * OLs" radix radix
         | _ -> "out_re, out_im", Printf.sprintf "out_re + g * %d * OLs, out_im + g * %d * OLs" (sc * radix) (sc * radix)
       in
       Buffer.add_string
@@ -1715,21 +1761,23 @@ let emit_codelet
            "__attribute__((target(\"%s\")))\n\
             void %s(\n\
            \    %s, %s,\n\
-           \    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count)\n\
+           \    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count%s)\n\
             {\n"
            isa.Isa.target_attr
            fname
            ts_in
-           ts_out);
+           ts_out
+           (if has_ep then ", size_t ep" else ""));
       if k.base = "t0tp"
       then
         Buffer.add_string
           buf
           (Printf.sprintf
-             "    (void)tw_re; (void)Gs; (void)OLs;\n    %s(%s, %s, rb, Ls, count);\n}\n"
+             "    (void)tw_re; (void)Gs; (void)OLs;\n    %s(%s, %s, rb, Ls, %scount);\n}\n"
              body_name
              in_ptrs
-             out_ptrs)
+             out_ptrs
+             (if has_ep then "ep, " else ""))
       else if k.base = "tlf" || k.base = "tlfi"
       then
         Buffer.add_string
@@ -1737,11 +1785,12 @@ let emit_codelet
           (Printf.sprintf
              "    (void)rb;\n\
              \    for (size_t g = 0; g < Gs; g++)\n\
-             \        %s(%s, %s, tw_re, Ls, OLs, count);\n\
+             \        %s(%s, %s, tw_re, Ls, OLs, %scount);\n\
               }\n"
              body_name
              in_adv
-             out_adv)
+             out_adv
+             (if has_ep then "ep, " else ""))
       else
         (* the in-place mids: the group pitch on Ls for both sides *)
         Buffer.add_string

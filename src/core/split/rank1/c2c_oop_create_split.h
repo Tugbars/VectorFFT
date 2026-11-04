@@ -180,6 +180,99 @@ static struct vfft_plan_s *_c2c_oop_create_k1_split(const vfft_cfg_t *cfg,
     return NULL;
 }
 
+/* the incumbent arm of zturn-ts's K=1 out-of-place race: the kind-3 split
+ * route as deployed (split_execute.h _exec_k1_split: the route fns or the
+ * JIT), on the race's own planes */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *ire, *iim, *ore, *oim;
+} _zts_inc_oop_t;
+static void _zts_inc_oop_run(void *v)
+{
+    _zts_inc_oop_t *c = (_zts_inc_oop_t *)v;
+    _exec_k1_split(c->h, 1, c->ire, c->iim, c->ore, c->oim);
+}
+
+/* the K=1 out-of-place split cell with zturn-ts: the cell's eng=zts row
+ * replayed; else the kind-3 route built as today and, on an UNBANKED cell
+ * (or recalibrate), raced against zturn-ts's pool — the winner serves and
+ * the cell banks (eng=zts, or eng=k1: held by the kind-3 route). A cell the
+ * registry does not serve never races. */
+static struct vfft_plan_s *_c2c_oop_create_k1_split_zts(const vfft_cfg_t *cfg,
+                                                        struct vfft_wisdom_s *W,
+                                                        int N)
+{
+    const int natural = cfg->order != VFI_ORDER_SCRAMBLED;
+    struct vfft_plan_s *hk;
+    int held = 0;
+    if (natural && !cfg->recalibrate)
+    {
+        vfft_zts_plan_t *z = _zts_replay(W, N, 1, 0, 1, &held);
+        if (z)
+            return _zts_handle(cfg, VFFT_OUTOFPLACE, N, 1, z);
+    }
+    hk = _c2c_oop_create_k1_split(cfg, W, N);
+    if (!natural || held || !vfft_zts_serves(N))
+        return hk;
+    {
+        const size_t n = (size_t)N;
+        double *ire = (double *)vfft_aligned_alloc(n * sizeof(double));
+        double *iim = (double *)vfft_aligned_alloc(n * sizeof(double));
+        double *ore = (double *)vfft_aligned_alloc(n * sizeof(double));
+        double *oim = (double *)vfft_aligned_alloc(n * sizeof(double));
+        if (ire && iim && ore && oim)
+        {
+            _zts_inc_oop_t ic = { hk, ire, iim, ore, oim };
+            vfft_race_arm_t inc = { "k1", _zts_inc_oop_run, &ic };
+            double *bufs[2] = { ire, iim };
+            double wns = 0.0, ins = 0.0;
+            vfft_zts_plan_t *z = vfft_zts_race(N, 1, 0, hk ? &inc : NULL, bufs, 2, &wns, &ins);
+            if (z)
+            {
+                if (hk)
+                    vfft_destroy(hk);
+                hk = _zts_handle(cfg, VFFT_OUTOFPLACE, N, 1, z);
+                if (hk)
+                {
+                    vw2_zts_bank(&W->vw2, N, 1, 0, z->chain, z->nf, z->tile, wns);
+                    _vw2_persist(W, cfg);
+                }
+            }
+            else if (hk)
+            {
+                vw2_zts_bank_held(&W->vw2, N, 1, 0, "k1", ins);
+                _vw2_persist(W, cfg);
+            }
+        }
+        vfft_aligned_free(ire);
+        vfft_aligned_free(iim);
+        vfft_aligned_free(ore);
+        vfft_aligned_free(oim);
+    }
+    return hk;
+}
+
+static vfft_plan _vfft_create_c2c_oop_classic_split(const vfft_cfg_t *cfg,
+                                                   vfft_batch ob,
+                                                   struct vfft_wisdom_s *W,
+                                                   const vfft_proto_registry_t *reg,
+                                                   int N,
+                                                   size_t K);
+
+/* the incumbent arm of zturn-ts's lane-major out-of-place race: the classic
+ * champion's handle run as deployed (the split execute) */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *ire, *iim, *ore, *oim;
+} _zts_inc_oopx_t;
+static void _zts_inc_oopx_run(void *v)
+{
+    _zts_inc_oopx_t *c = (_zts_inc_oopx_t *)v;
+    _vfft_split_execute(c->h, VFFT_FORWARD, c->ire, c->iim, c->ore, c->oim);
+}
+
 static vfft_plan _vfft_create_c2c_oop_split(const vfft_cfg_t *cfg,
                                            vfft_batch ob,
                                            struct vfft_wisdom_s *W,
@@ -187,13 +280,104 @@ static vfft_plan _vfft_create_c2c_oop_split(const vfft_cfg_t *cfg,
                                            int N,
                                            size_t K)
 {
+    if (K > 1 && !ob && cfg->batch_geom == VFFT_BATCH_CONTIGUOUS)
+    {
+        /* a CONTIGUOUS split batch = K independent K=1 transforms, served
+         * from the q=1 out-of-place cell when its engine has a contiguous
+         * form (zturn-ts's _batch twin; the kind-3 routes have none). Plan
+         * the K=1 cell through this same create, then run it K times. */
+        vfft_cfg_t c1 = *cfg;
+        struct vfft_plan_s *h1;
+        c1.howmany = 1;
+        c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1 */
+        h1 = (struct vfft_plan_s *)_vfft_create_c2c_oop_split(&c1, NULL, W, reg, N, 1);
+        if (!h1)
+            return NULL;
+        if (!h1->zts)
+        {
+            _vfft_warn("vfft_create: batch=VFFT_BATCH_CONTIGUOUS on a SPLIT out-of-place C2C "
+                       "N=%d K=%zu: the N=%d K=1 split cell is served by its kind-3 route, "
+                       "which has no contiguous batch form (zturn-ts, the only contiguous "
+                       "split engine, %s) — ask VFFT_BATCH_LANE_MAJOR, or recalibrate the cell",
+                       N, K, N, vfft_zts_serves(N) ? "lost the cell's race" : "has no cell at this N");
+            vfft_destroy(h1);
+            return NULL;
+        }
+        h1->K = K;
+        _zts_tcmt_decide(h1, cfg, W, N, K); /* the threading verdict at T > 1 */
+        return h1;
+    }
     if (K == 1 && !ob)
     {
-        struct vfft_plan_s *hk = _c2c_oop_create_k1_split(cfg, W, N);
+        struct vfft_plan_s *hk = _c2c_oop_create_k1_split_zts(cfg, W, N);
         if (hk)
             return hk;
         /* fall through to the classic OOP path */
     }
+    if (K > 1 && K % (size_t)VFFT_ZTS_VW == 0 && K <= (size_t)VFFT_ZTS_LANES_MAX && !ob &&
+        cfg->order != VFI_ORDER_SCRAMBLED && vfft_zts_serves(N))
+    {
+        /* the LANE-MAJOR batch out of place (K a multiple of the vector
+         * width): zturn-ts's lane-major engine (ztv_*), the q=K out-of-place
+         * cell. The incumbent is the classic out-of-place champion where one
+         * exists (its natural kinds need K % 8 == 0: none at K = 4, so that
+         * cell races zturn-ts's pool alone); a cell held by another family
+         * falls through to the classic path. */
+        int held = 0;
+        vfft_zts_plan_t *z = cfg->recalibrate ? NULL : _zts_replay(W, N, K, 0, (int)K, &held);
+        if (!z && !held)
+        {
+            struct vfft_plan_s *hc = (struct vfft_plan_s *)_vfft_create_c2c_oop_classic_split(cfg, ob, W, reg, N, K);
+            const size_t n = (size_t)N * K;
+            double *ire = (double *)vfft_aligned_alloc(n * sizeof(double));
+            double *iim = (double *)vfft_aligned_alloc(n * sizeof(double));
+            double *ore = (double *)vfft_aligned_alloc(n * sizeof(double));
+            double *oim = (double *)vfft_aligned_alloc(n * sizeof(double));
+            double wns = 0.0, ins = 0.0;
+            if (ire && iim && ore && oim)
+            {
+                _zts_inc_oopx_t ic = { hc, ire, iim, ore, oim };
+                vfft_race_arm_t inc = { "classic", _zts_inc_oopx_run, &ic };
+                double *bufs[2] = { ire, iim };
+                z = vfft_zts_race(N, (int)K, 0, hc ? &inc : NULL, bufs, 2, &wns, &ins);
+                if (z)
+                {
+                    vw2_zts_bank(&W->vw2, N, K, 0, z->chain, z->nf, z->tile, wns);
+                    _vw2_persist(W, cfg);
+                }
+                else if (hc)
+                {
+                    vw2_zts_bank_held(&W->vw2, N, K, 0, "classic", ins);
+                    _vw2_persist(W, cfg);
+                }
+            }
+            vfft_aligned_free(ire);
+            vfft_aligned_free(iim);
+            vfft_aligned_free(ore);
+            vfft_aligned_free(oim);
+            if (z)
+            {
+                if (hc)
+                    vfft_destroy(hc);
+            }
+            else
+                return hc; /* the classic champion holds, or nothing serves the cell */
+        }
+        if (z)
+            return _zts_handle(cfg, VFFT_OUTOFPLACE, N, K, z);
+    }
+    return _vfft_create_c2c_oop_classic_split(cfg, ob, W, reg, N, K);
+}
+
+/* the CLASSIC out-of-place path: the owned-batch (padded) arm, the
+ * order-aware champion lookup, calibrate-on-miss of both champions */
+static vfft_plan _vfft_create_c2c_oop_classic_split(const vfft_cfg_t *cfg,
+                                                   vfft_batch ob,
+                                                   struct vfft_wisdom_s *W,
+                                                   const vfft_proto_registry_t *reg,
+                                                   int N,
+                                                   size_t K)
+{
     /* PADDED (opt-in): build at Kp so the OOP plan strides the caller's Kp-wide 4 planes
      * exactly. Pad-only (OOP bakes K, no runtime me). Kp = the handle's roundup(K,8), which
      * keeps all 3 kinds AND lets the (N,Kp) OOP wisdom cell cache (BAILEY2 + the wisdom

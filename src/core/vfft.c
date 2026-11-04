@@ -62,6 +62,9 @@ static void _vfft_create_unlock(void);
 #include "il_flatdit_race.h"                      /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"                     /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h"                   /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
+#include "split/rank1/zts.h"                      /* zturn-ts: ZTURN-T's engine on the split layout (2026-11-04); its plan type, before vfft_internal.h */
+#include "split/wisdom/wisdom2_zts_split.h"       /* its cell rows (eng=zts on the split natural cell) */
+#include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -1367,6 +1370,14 @@ static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_cfg_t *cfg,
     return stride;
 }
 
+/* the deployed split executes the split creates race as the INCUMBENT arms
+ * of zturn-ts's cell race (2026-11-04): defined below (_exec_c2c_inplace)
+ * and in split/split_execute.h (_exec_k1_split) */
+static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir, double *re, double *im);
+static void _exec_k1_split(struct vfft_plan_s *h, int fwd, double *sre, double *sim, double *dre, double *dim);
+/* ...and the split execute itself: the serial-vs-slabs race of zturn-ts's
+ * threaded contiguous form runs the deployed execute as both arms */
+static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim);
 #include "split/split_create.h"      /* the SPLIT create: the split side of the one fork */
 #include "il/rank1/lm_batch_il.h"    /* the LANE-MAJOR 1D batch on the column pass (2026-10-14); after the 2D tier, before the door */
 #include "il/rank2/lm_batch2d_il.h"  /* the LANE-MAJOR 2D batch: the first axis a column pass, the last the 1D batch per block (2026-10-15) */
@@ -2171,13 +2182,19 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
      * served as lane-major: the padding design's rule is that no combination
      * quietly means something other than what it says. (batch_geom is simply
      * not applicable at K==1, where both geometries are the same addressing.) */
+    /* The one exception (owner 2026-11-04): a 1D C2C split batch, both
+     * placements, which zturn-ts serves transform-contiguous from the K=1
+     * cell (split/rank1/c2c_ip_create_split.h, c2c_oop_create_split.h — a
+     * loud refusal of their own where that cell's engine has no contiguous
+     * form). */
     if (cfg->batch_geom == VFFT_BATCH_CONTIGUOUS &&
-        cfg->layout != VFI_LAYOUT_IL && K > 1)
+        cfg->layout != VFI_LAYOUT_IL && K > 1 &&
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 1 && !ob))
     {
         _vfft_warn("vfft_create: batch=VFFT_BATCH_CONTIGUOUS is not "
-                   "supported for layout=SPLIT (split batches are lane-major: element e "
-                   "of transform t at plane[e*K + t]) — use VFFT_LAYOUT_INTERLEAVED for a "
-                   "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
+                   "supported for layout=SPLIT outside 1D C2C (split batches are lane-major: "
+                   "element e of transform t at plane[e*K + t]) — use VFFT_LAYOUT_INTERLEAVED "
+                   "for a transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
         return NULL;
     }
     /* A real INTERLEAVED batch of rank 3 is contiguous volumes by DEFAULT (the
@@ -2767,6 +2784,8 @@ const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 static const char *_vfft_plan_route(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
+    if (h && h->zts)
+        return "zts"; /* zturn-ts, the split 1D c2c engine (2026-11-04) */
     if (!h || h->layout != (int)VFI_LAYOUT_IL)
         return "-";
     if (h->ilndr)
