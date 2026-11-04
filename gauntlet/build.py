@@ -62,6 +62,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'split' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
         DAG / 'codelets' / 'split' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
         DAG / 'codelets' / 'split' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
+        DAG / 'codelets' / 'split' / 'ztt' / DAG_ISA,   # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels (avx2 only so far)
         DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
         # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per
         # engine, listed explicitly (globs are non-recursive; a dropped folder must be loud)
@@ -290,10 +291,17 @@ def dag_codelet_lib(tc) -> str | None:
     # Drop objects whose source is gone -- a regen that renames or retires a
     # codelet would otherwise leave it in the archive forever.
     keep = {o.name for (_, o) in pairs}
+    dropped = 0
     for old in list(objdir.glob('*.o')):
         if old.name not in keep:
             old.unlink()
             old.with_suffix('.d').unlink(missing_ok=True)
+            dropped += 1
+    if dropped:
+        # a dropped object must leave the archive too: the cached-lib shortcut below
+        # would otherwise serve the old archive, dead members included (2026-11-04:
+        # 367 retired codelets stayed linkable until the archive was deleted by hand)
+        print(f'  [codelets] {dropped} retired object(s) dropped; re-archiving')
 
     # THE KERNELS' STACK ALIGNMENT (Windows, gcc; src/tools/build/align_kernel_stacks.py): every codelet that
     # spills a vector register runs on a 64-byte aligned frame. The archive is processed before it replaces the
@@ -315,7 +323,7 @@ def dag_codelet_lib(tc) -> str | None:
     align_ok = align_stamp.exists() and align_stamp.read_text(encoding='ascii').strip() == align_key
 
     stale = [(s, o) for (s, o) in pairs if _is_stale(s, o)]
-    if not stale and lib.exists() and align_ok:
+    if not stale and not dropped and lib.exists() and align_ok:
         print(f'  [codelets] cached lib ({len(srcs)} codelets)')
         stamp.write_text(key, encoding='ascii')
         return str(lib)

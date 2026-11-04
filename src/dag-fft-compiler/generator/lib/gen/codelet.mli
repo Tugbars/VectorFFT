@@ -92,6 +92,22 @@ type zs_kind =
   | Tmgd
   | Tld
   | Tldb
+  | Ts0tp (* zturn-ts: the split library's ZTURN-T stage kernels (cascade_z.ml) *)
+  | Ts0tpb
+  | Tsmg
+  | Tsmgb
+  | Tslf
+  | Tslfb
+  | Tslfi
+  | Tslfib
+  | Tv0tp
+  | Tv0tpb
+  | Tvmg
+  | Tvmgb
+  | Tvlf
+  | Tvlfb
+  | Tvlfi
+  | Tvlfib
 
 type kind =
   | C2c_inplace_su of { il : il3 }

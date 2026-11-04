@@ -96,6 +96,9 @@ module Cfg = struct
     | Tw_perpos
     | Tw_linear of int (* nlegs — the streaming-cursor leg count *)
     | Tw_zsplit of string (* the [c x VW][s x VW] record offset expr, "" = none *)
+    | Tw_zsplit_bcast of string
+      (* zturn-ts lane-batched (cascade_z.ml P_vec): (c, s) SCALAR pairs per
+         (column, leg) in tw_re at the same offset expr, each broadcast *)
 
   (* projections matching the historical int / string-option read shapes *)
   let tw_linear_legs = function
@@ -105,6 +108,11 @@ module Cfg = struct
 
   let tw_zsplit_off = function
     | Tw_zsplit off -> Some off
+    | _ -> None
+  ;;
+
+  let tw_zsplit_bcast_off = function
+    | Tw_zsplit_bcast off -> Some off
     | _ -> None
   ;;
 
@@ -370,6 +378,16 @@ let render_load
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
+      (match Cfg.tw_zsplit_bcast_off cfg.Cfg.tw with
+       | Some off ->
+         (* zturn-ts lane-batched: the (c, s) scalar pair of (column, leg),
+            broadcast — a pure load uop, no shuffle port *)
+         Isa.set1_pd_str
+           isa
+           (if off = ""
+            then Printf.sprintf "tw_re[%d]" (2 * j)
+            else Printf.sprintf "tw_re[%s + %d]" off (2 * j))
+       | None ->
       (match Cfg.tw_zsplit_off cfg.Cfg.tw with
        | Some off ->
          (* zsplit record [c×VW][s×VW] in tw_re (tw_im slot dead) — see
@@ -404,8 +422,16 @@ let render_load
            (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
              in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
              are lane-independent and stay unmasked. *)
-           Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
+           Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j)))
     | Expr.Twiddle (j, false) ->
+      (match Cfg.tw_zsplit_bcast_off cfg.Cfg.tw with
+       | Some off ->
+         Isa.set1_pd_str
+           isa
+           (if off = ""
+            then Printf.sprintf "tw_re[%d]" ((2 * j) + 1)
+            else Printf.sprintf "tw_re[%s + %d]" off ((2 * j) + 1))
+       | None ->
       (match Cfg.tw_zsplit_off cfg.Cfg.tw with
        | Some off ->
          (* zsplit: the sin half lives at +VW inside the tw_re record. *)
@@ -433,7 +459,7 @@ let render_load
              (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
          else if t1s
          then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-         else Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
+         else Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j)))
     | Expr.Output _ ->
       failwith "render_load: Output ref shouldn't appear as a Load source")
   else (

@@ -104,6 +104,16 @@
    ztt_registry_avx2.h
    (run %{exe:../bin/emit_ztt_registry.exe} --isa avx2))))
 
+; zturn-ts (2026-11-04): the SPLIT library's fused-driver registry, derived
+; from the same cell list as fused_codelets/zts_drivers_* (Zts_drivers.cells)
+(rule
+ (targets zts_registry_avx2.h)
+ (deps %{exe:../bin/emit_zts_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to zts_registry_avx2.h
+   (run %{exe:../bin/emit_zts_registry.exe} --isa avx2))))
+
 ; the avx512 IL + ztt registries (2026-09-26)
 (rule
  (targets il_registry_avx512.h)

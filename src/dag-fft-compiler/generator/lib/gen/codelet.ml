@@ -98,6 +98,26 @@ type zs_kind =
   | Tmgd
   | Tld
   | Tldb
+  (* zturn-ts (2026-11-04): ZTURN-T's natural class on the SPLIT layout, the
+     split library's own stage kernels (cascade_z.ml P_split / P_vec):
+     ts* = K=1 true split planes at the edges, the block plane inside;
+     tv* = lane-major K=VW (lane = transform). Kind string = flag suffix. *)
+  | Ts0tp
+  | Ts0tpb
+  | Tsmg
+  | Tsmgb
+  | Tslf
+  | Tslfb
+  | Tslfi
+  | Tslfib
+  | Tv0tp
+  | Tv0tpb
+  | Tvmg
+  | Tvmgb
+  | Tvlf
+  | Tvlfb
+  | Tvlfi
+  | Tvlfib
 
 type kind =
   | C2c_inplace_su of { il : il3 } (* --in-place --su [--ip-il-*] *)
@@ -216,6 +236,22 @@ let zs_name = function
   | Tmgd -> "tmgd"
   | Tld -> "tld"
   | Tldb -> "tldb"
+  | Ts0tp -> "ts0tp"
+  | Ts0tpb -> "ts0tpb"
+  | Tsmg -> "tsmg"
+  | Tsmgb -> "tsmgb"
+  | Tslf -> "tslf"
+  | Tslfb -> "tslfb"
+  | Tslfi -> "tslfi"
+  | Tslfib -> "tslfib"
+  | Tv0tp -> "tv0tp"
+  | Tv0tpb -> "tv0tpb"
+  | Tvmg -> "tvmg"
+  | Tvmgb -> "tvmgb"
+  | Tvlf -> "tvlf"
+  | Tvlfb -> "tvlfb"
+  | Tvlfi -> "tvlfi"
+  | Tvlfib -> "tvlfib"
 ;;
 
 let zs_of_name = function
@@ -234,6 +270,22 @@ let zs_of_name = function
   | "tmgd" -> Tmgd
   | "tld" -> Tld
   | "tldb" -> Tldb
+  | "ts0tp" -> Ts0tp
+  | "ts0tpb" -> Ts0tpb
+  | "tsmg" -> Tsmg
+  | "tsmgb" -> Tsmgb
+  | "tslf" -> Tslf
+  | "tslfb" -> Tslfb
+  | "tslfi" -> Tslfi
+  | "tslfib" -> Tslfib
+  | "tv0tp" -> Tv0tp
+  | "tv0tpb" -> Tv0tpb
+  | "tvmg" -> Tvmg
+  | "tvmgb" -> Tvmgb
+  | "tvlf" -> Tvlf
+  | "tvlfb" -> Tvlfb
+  | "tvlfi" -> Tvlfi
+  | "tvlfib" -> Tvlfib
   | s -> fail "unknown zp kind %s" s
 ;;
 

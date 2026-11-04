@@ -148,7 +148,7 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
   let g = geom n ch in
   let r = Array.of_list ch in
   let k = Array.length r in
-  let body base radix = Cascade_z.ztt_body_name ~base ~radix ~bwd in
+  let body base radix = Cascade_z.ztt_body_name ~fam:"z" ~base ~radix ~bwd in
   let b = Buffer.create 4096 in
   let add = Buffer.add_string b in
   add (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.Isa.target_attr);
@@ -287,7 +287,7 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
   let g = geom_plain n ch in
   let r = Array.of_list ch in
   let k = Array.length r in
-  let body base radix ~bwd = Cascade_z.ztt_body_name ~base ~radix ~bwd in
+  let body base radix ~bwd = Cascade_z.ztt_body_name ~fam:"z" ~base ~radix ~bwd in
   let b = Buffer.create 4096 in
   let add = Buffer.add_string b in
   add (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.Isa.target_attr);

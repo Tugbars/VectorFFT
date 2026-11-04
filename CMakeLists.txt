@@ -353,7 +353,7 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # reason): 94 are the whole of shared/col/half, real/pair and real/rows, which
 # therefore have no avx512 folder, and 4 are the radix-4 t0tp/tld kernels of ztt.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 zil/shared/col/half zil/real/pair zil/real/rows)
+set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/pair zil/real/rows)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04)
 
 set(VFFT_CODELET_SRCS)
 
@@ -414,7 +414,7 @@ macro(vfft_add_codelet_dir _label _dir)
 endmacro()
 
 message(STATUS "codelet families (${VFFT_ISA}):")
-foreach(_fam inplace rfft c2r oop strided il)
+foreach(_fam inplace rfft c2r oop strided ztt il)
     vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/split/${_fam}/${VFFT_ISA}")
 endforeach()
 # The zil family sits one level DEEPER (zil/<isa>/<folder>, one folder per engine

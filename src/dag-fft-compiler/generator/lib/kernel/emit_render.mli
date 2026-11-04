@@ -27,9 +27,11 @@ module Cfg : sig
     | Tw_perpos
     | Tw_linear of int
     | Tw_zsplit of string
+    | Tw_zsplit_bcast of string
 
   val tw_linear_legs : tw_source -> int
   val tw_zsplit_off : tw_source -> string option
+  val tw_zsplit_bcast_off : tw_source -> string option
 
   type t =
     { r2r : bool

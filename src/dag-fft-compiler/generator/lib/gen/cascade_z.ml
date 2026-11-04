@@ -77,6 +77,30 @@
    Each stride-using edge carries the C stride NAME ("Ls" | "OLs") —
    the ingest/mids run on Ls, the terminator's packed output on OLs. *)
 type zs_edge =
+  | E_splanes of string
+    (* zturn-ts (2026-11-04), TRUE split planes: leg l's column k at
+       in_re / in_im[l*STRIDE + k], 4 consecutive columns per vector. Plain
+       vector loads/stores, no shuffle: the SPLIT library's K=1 engine. *)
+  | E_sruns
+    (* zturn-ts ingest store on true planes: column c's R0 digits land
+       contiguous at out_re / out_im[R0*rb[c] ..]; per quartet of digits a
+       TR4 PER PLANE turns 4 digit vectors (over columns k..k+3) into 4
+       column vectors — the split twin of the turn lattice. *)
+  | E_vplanes of string
+    (* zturn-ts LANE-BATCHED data[n*VW + lane] (K = VW transforms): column k
+       of leg l is ONE vector per plane at buf[VW*(l*STRIDE + k)]; lane =
+       transform, so no turn anywhere and the twiddles are broadcast. *)
+  | E_vruns
+    (* zturn-ts ingest store, lane-batched: the column's R0 digits are R0
+       consecutive vectors per plane at rb[k]*R0. *)
+  | E_bruns
+    (* zturn-ts ingest store into the BLOCK plane (the 64-B [re x4][im x4]
+       interior ZTURN-T uses): column c's R0 digits land at plane complex
+       rb[c]*R0 as R0/4 consecutive blocks — a column's re and im lines are
+       ADJACENT (one 128-B pair at R0 = 8), which is what the L2 spatial
+       prefetcher pairs; two planes 32 KB apart (E_sruns) doubled the RFO
+       streams and cost 1.28x on the ingest (measured 2026-11-04). The turn is
+       a TR4 per plane per quartet, as E_sruns. *)
   | E_planes of string
   | E_z of string
   | E_blocks
@@ -100,10 +124,23 @@ type zs_edge =
        what the E_blocks edge on the other side reads/writes, both kinds are
        in place. *)
 
+(* zturn-ts (2026-11-04): the SAME stage algebra on other memory planes.
+   P_block = ZTURN-T's 64-B [re x4][im x4] interior with packed z edges (the
+   IL family, unchanged); P_split = TRUE split planes re[] / im[] (the SPLIT
+   library's K=1 engine: the lanes are 4 consecutive columns of one
+   transform); P_vec = lane-batched data[n*VW + lane] (K = VW transforms, a
+   column is ONE vector per plane, lane = transform). *)
+type zs_plane =
+  | P_block
+  | P_split
+  | P_vec
+
 type zs_kind =
   { base : string
     (* C-name stem: "t0tp" | "tmg" | "tlf" | "tlfi" | "t0d" | "tmgd" | "tld"
        | "msz" | "mszt" *)
+  ; plane : zs_plane
+  ; fam : string (* symbol / body prefix: "z" (P_block), "zts" (P_split), "ztv" (P_vec) *)
   ; bwd : bool
   ; twiddled : bool (* false: n1 math + (void)tw_re (t0tp, tld) *)
   ; tw_off : string
@@ -156,6 +193,8 @@ type zs_kind =
 let kind_of_string (s : string) : zs_kind =
   let dflt =
     { base = ""
+    ; plane = P_block
+    ; fam = "z"
     ; bwd = false
     ; twiddled = true
     ; tw_off = ""
@@ -317,6 +356,58 @@ let kind_of_string (s : string) : zs_kind =
     ; in_edge = E_zcol
     ; out_edge = E_blocks
     }
+  (* ── zturn-ts: ZTURN-T's natural class on true split planes (ts*, the
+        SPLIT library's K=1 engine) and on lane-batched data (tv*, K = VW):
+        the DAG, the stream shape and the group structure are ZTURN-T's,
+        the edges are the plane's. Kind = "ts"|"tv" ^ base without its
+        leading 't' ^ "b" for the backward twin. ── *)
+  (* The S family's INTERIOR is the block plane (E_planes, ZTURN-T's own
+     [re x4][im x4] lines): only the EDGES touch true split planes — the
+     ingest loads split legs (no deinterleave) into block runs (E_bruns), the
+     terminator loads blocks and stores split planes (no reinterleave); the
+     mids are the block combine, emitted under the split library's own
+     symbols. The V family stays on its lane-batched planes throughout. *)
+  | "ts0tp" | "ts0tpb" | "tv0tp" | "tv0tpb" ->
+    let v = s.[1] = 'v' in
+    { dflt with
+      base = "t0tp"
+    ; plane = (if v then P_vec else P_split)
+    ; fam = (if v then "ztv" else "zts")
+    ; bwd = String.length s = 6
+    ; twiddled = false
+    ; in_edge = (if v then E_vplanes "Ls" else E_splanes "Ls")
+    ; out_edge = (if v then E_vruns else E_bruns)
+    }
+  | "tsmg" | "tsmgb" | "tvmg" | "tvmgb" ->
+    let v = s.[1] = 'v' in
+    let bwd = String.length s = 5 in
+    { dflt with
+      base = "tmg"
+    ; plane = (if v then P_vec else P_split)
+    ; fam = (if v then "ztv" else "zts")
+    ; bwd
+    ; dif = bwd (* PRE-twiddle at Bwd, as tmgb *)
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; in_edge = (if v then E_vplanes "Ls" else E_planes "Ls")
+    ; out_edge = (if v then E_vplanes "Ls" else E_planes "Ls")
+    }
+  | "tslf" | "tslfb" | "tvlf" | "tvlfb" | "tslfi" | "tslfib" | "tvlfi" | "tvlfib" ->
+    let v = s.[1] = 'v' in
+    let bwd = s.[String.length s - 1] = 'b' in
+    let ip = String.length s >= 5 && s.[4] = 'i' in
+    { dflt with
+      base = (if ip then "tlfi" else "tlf")
+    ; plane = (if v then P_vec else P_split)
+    ; fam = (if v then "ztv" else "zts")
+    ; bwd
+    ; dif = bwd
+    ; tw_off = "%TWF*(size_t)k"
+    ; tw_group_reset = true
+    ; in_edge = (if v then E_vplanes "Ls" else E_planes "Ls")
+    ; out_edge = (if v then E_vplanes "OLs" else E_splanes "OLs")
+    ; prefetch_out = (if ip then 4 else 0)
+    }
   | other ->
     failwith
       (Printf.sprintf
@@ -355,8 +446,8 @@ let zu_noperm = ref false
 (* ZTURN-T body names (the probe's: zt_ingest2.c / zt_mid.c / zt_last.c):
    the fused driver TU (ztt_drivers.ml) re-emits these bodies beside the
    per-kind codelets, so the name is shared here. *)
-let ztt_body_name ~(base : string) ~(radix : int) ~(bwd : bool) : string =
-  Printf.sprintf "_z%s%d%s_body" base radix (if bwd then "b" else "f")
+let ztt_body_name ~(fam : string) ~(base : string) ~(radix : int) ~(bwd : bool) : string =
+  Printf.sprintf "_%s%s%d%s_body" fam base radix (if bwd then "b" else "f")
 ;;
 
 let emit_codelet
@@ -399,7 +490,7 @@ let emit_codelet
          "codelet_zsplit: %s radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)"
          k.base radix vw);
   let dir_s = if k.bwd then "bwd" else "fwd" in
-  let fname = Printf.sprintf "radix%d_z_%s_%s_%s" radix k.base dir_s isa.Isa.name in
+  let fname = Printf.sprintf "radix%d_%s_%s_%s_%s" radix k.fam k.base dir_s isa.Isa.name in
   let sign : [ `Fwd | `Bwd ] = if k.bwd then `Bwd else `Fwd in
   let force_fma_lift =
     try Sys.getenv "VFFT_FORCE_FMA_LIFT" = "1" with
@@ -563,13 +654,13 @@ let emit_codelet
   (* t0tp: the turn lattice needs the (im,re)-swap sign mask; the quarter-turn
      mask picks the sign (x(-i) fwd = im_mask, x(+i) bwd = re_mask). File-scope
      const so gcc hoists ONE load out of the loop. *)
-  if k.base = "t0tp" && not body_only
+  if k.base = "t0tp" && k.plane = P_block && not body_only
   then
     Buffer.add_string
       buf
       ((if k.bwd then Isa.re_mask_decl isa "_zs0t_pim" else Isa.im_mask_decl isa "_zs0t_mim")
        ^ "\n\n");
-  if k.base = "t0tp" && radix = 8 && not body_only
+  if k.base = "t0tp" && k.plane = P_block && radix = 8 && not body_only
   then
     Buffer.add_string
       buf
@@ -599,6 +690,19 @@ let emit_codelet
     if plus = 0
     then Printf.sprintf "%s[%s]" buf_name base
     else Printf.sprintf "%s[%s + %d]" buf_name base plus
+  in
+  (* zturn-ts addresses: a TRUE split plane holds column k of leg l at
+     buf[l*STRIDE + k] (P_split, 4 consecutive columns per vector); the
+     lane-batched plane at buf[VW*(l*STRIDE + k)] (P_vec, one vector per column) *)
+  let sleg_addr (buf_name : string) (leg : int) (stride : string) : string =
+    if leg = 0
+    then Printf.sprintf "%s[(size_t)k]" buf_name
+    else Printf.sprintf "%s[(size_t)%d*%s + k]" buf_name leg stride
+  in
+  let vleg_addr (buf_name : string) (leg : int) (stride : string) : string =
+    if leg = 0
+    then Printf.sprintf "%s[%d*(size_t)k]" buf_name vw
+    else Printf.sprintf "%s[%d*((size_t)%d*%s + k)]" buf_name vw leg stride
   in
   (* ── column loop: load edge + SU-scheduled body + store edge for ONE
         prepared DAG (radix slots = the VW columns k..k+VW-1). open_line is
@@ -631,9 +735,45 @@ let emit_codelet
     then (
       let ostride =
         match k.out_edge with
-        | E_planes s | E_z s -> s
-        | E_blocks | E_runs | E_zcol -> "OLs"
+        | E_planes s | E_z s | E_splanes s | E_vplanes s -> s
+        | E_blocks | E_runs | E_zcol | E_sruns | E_vruns | E_bruns -> "OLs"
       in
+      match k.plane with
+      | P_split ->
+        (* zturn-ts: both output planes, 2*VW*prefetch_out columns ahead =
+           ZTURN-T's byte distance (a quad's 32 B is half a line; the repeat
+           prefetch of a line is cheap) *)
+        for r = 0 to radix - 1 do
+          List.iter
+            (fun pl ->
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "        _mm_prefetch((const char *)&%s[(size_t)%d*%s + k + %d], _MM_HINT_T0);\n"
+                    pl
+                    r
+                    ostride
+                    (2 * wide_vw * k.prefetch_out)))
+            [ "out_re"; "out_im" ]
+        done
+      | P_vec ->
+        (* lane-batched: one 32-B vector per column per plane; 2*prefetch_out
+           columns ahead = the same byte distance *)
+        for r = 0 to radix - 1 do
+          List.iter
+            (fun pl ->
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "        _mm_prefetch((const char *)&%s[%d*((size_t)%d*%s + k + %d)], _MM_HINT_T0);\n"
+                    pl
+                    wide_vw
+                    r
+                    ostride
+                    (2 * k.prefetch_out)))
+            [ "out_re"; "out_im" ]
+        done
+      | P_block ->
       for r = 0 to radix - 1 do
         (* one prefetch per 64-B line of the leg's 16*VW-byte output span *)
         for ln = 0 to max 1 (wide_vw / 4) - 1 do
@@ -648,6 +788,44 @@ let emit_codelet
         done
       done);
     (match k.in_edge with
+     | E_splanes s ->
+       (* ── zturn-ts split-plane load edge: leg l's columns k..k+3 at
+             in_re / in_im[l*S + k] — plain vector loads, no shuffle ── *)
+       Buffer.add_string buf "        /* zturn-ts split-plane load edge */\n";
+       for leg = 0 to radix - 1 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_re_%d" leg)
+                 (Isa.loadu_pd isa (sleg_addr "in_re" leg s)))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_im_%d" leg)
+                 (Isa.loadu_pd isa (sleg_addr "in_im" leg s))))
+       done
+     | E_vplanes s ->
+       (* ── zturn-ts lane-batched load edge: column k of leg l is ONE
+             vector per plane at in_re / in_im[VW*(l*S + k)] ── *)
+       Buffer.add_string buf "        /* zturn-ts lane-batched load edge */\n";
+       for leg = 0 to radix - 1 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_re_%d" leg)
+                 (Isa.loadu_pd isa (vleg_addr "in_re" leg s)))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_im_%d" leg)
+                 (Isa.loadu_pd isa (vleg_addr "in_im" leg s))))
+       done
+     | E_sruns | E_vruns | E_bruns ->
+       failwith "codelet_zsplit: E_sruns / E_vruns / E_bruns are store-only edges (the zturn-ts ingest)"
      | E_planes s ->
        (* ── ZBlockSplit load edge: lane_{re,im}_l from the split planes.
              Leg l's re half at zin + 2*(l*S + k), im half +VW. ── *)
@@ -897,12 +1075,162 @@ let emit_codelet
                  isa
                  (blk_addr "zout" 0 ((2 * vw * sl) + vw))
                  (Printf.sprintf "%s(t%d, t%d)" unhi re_tag.(sl) im_tag.(sl)))) )
+      | E_splanes s ->
+        ( "        /* zturn-ts split-plane store edge */\n"
+        , Array.init radix (fun leg ->
+            Printf.sprintf
+              "        %s;\n        %s;\n"
+              (Isa.storeu_pd isa (sleg_addr "out_re" leg s) (Printf.sprintf "t%d" re_tag.(leg)))
+              (Isa.storeu_pd isa (sleg_addr "out_im" leg s) (Printf.sprintf "t%d" im_tag.(leg)))) )
+      | E_vplanes s ->
+        ( "        /* zturn-ts lane-batched store edge */\n"
+        , Array.init radix (fun leg ->
+            Printf.sprintf
+              "        %s;\n        %s;\n"
+              (Isa.storeu_pd isa (vleg_addr "out_re" leg s) (Printf.sprintf "t%d" re_tag.(leg)))
+              (Isa.storeu_pd isa (vleg_addr "out_im" leg s) (Printf.sprintf "t%d" im_tag.(leg)))) )
+      | E_sruns ->
+        (* ── zturn-ts ingest store (P_split): column c's R0 digits land
+              contiguous at out_re / out_im[R0*rb[k+c] ..] — per quartet q of
+              digits a TR4 per plane turns 4 digit vectors (over columns
+              k..k+3) into 4 column vectors; the split twin of the turn
+              lattice, 8 shuffles per plane per quartet ── *)
+        let quartets = radix / vw in
+        (* ONE run INDEX per column (scaled-index addressing off both plane
+           bases), not two pointers: the ingest's loop body spilled 8 run
+           pointers + 7 leg offsets to the stack (73 scalar insns per quad
+           against IL's 10, measured 2026-11-04) *)
+        ( "        /* zturn-ts run-contiguous store edge (TR4 per plane through rb[]) */\n"
+          ^ String.concat
+              ""
+              (List.init vw (fun c ->
+                 Printf.sprintf "        const size_t _rbi_%d = (size_t)%d * rb[k + %d];\n" c radix c))
+        , Array.init quartets (fun q ->
+            let slot j = (q * vw) + j in
+            let sr =
+              tr4_str
+                ~qid:(Printf.sprintf "sr%d" q)
+                (Array.init vw (fun j -> Printf.sprintf "t%d" re_tag.(slot j)))
+                (Array.init vw (fun c -> Printf.sprintf "_cr%d_%d" q c))
+            and si =
+              tr4_str
+                ~qid:(Printf.sprintf "si%d" q)
+                (Array.init vw (fun j -> Printf.sprintf "t%d" im_tag.(slot j)))
+                (Array.init vw (fun c -> Printf.sprintf "_ci%d_%d" q c))
+            in
+            let stores =
+              String.concat
+                ""
+                (List.init vw (fun c ->
+                   Printf.sprintf
+                     "        %s;\n        %s;\n"
+                     (Isa.storeu_pd
+                        isa
+                        (if q = 0
+                         then Printf.sprintf "out_re[_rbi_%d]" c
+                         else Printf.sprintf "out_re[_rbi_%d + %d]" c (q * vw))
+                        (Printf.sprintf "_cr%d_%d" q c))
+                     (Isa.storeu_pd
+                        isa
+                        (if q = 0
+                         then Printf.sprintf "out_im[_rbi_%d]" c
+                         else Printf.sprintf "out_im[_rbi_%d + %d]" c (q * vw))
+                        (Printf.sprintf "_ci%d_%d" q c))))
+            in
+            sr ^ si ^ stores) )
+      | E_bruns ->
+        (* ── zturn-ts ingest store into the BLOCK plane: column c's run at
+              plane complex R0*rb[k+c] = doubles 2*R0*rb[k+c]; quartet q's re
+              vector at +8q, its im at +8q+4 (one 64-B block per quartet, the
+              column's blocks adjacent) ── *)
+        let quartets = radix / vw in
+        ( "        /* zturn-ts block-run store edge (TR4 per plane through rb[]) */\n"
+          ^ String.concat
+              ""
+              (List.init vw (fun c ->
+                 Printf.sprintf "        const size_t _rbi_%d = (size_t)%d * rb[k + %d];\n" c (2 * radix) c))
+        , Array.init quartets (fun q ->
+            let slot j = (q * vw) + j in
+            let sr =
+              tr4_str
+                ~qid:(Printf.sprintf "sr%d" q)
+                (Array.init vw (fun j -> Printf.sprintf "t%d" re_tag.(slot j)))
+                (Array.init vw (fun c -> Printf.sprintf "_cr%d_%d" q c))
+            and si =
+              tr4_str
+                ~qid:(Printf.sprintf "si%d" q)
+                (Array.init vw (fun j -> Printf.sprintf "t%d" im_tag.(slot j)))
+                (Array.init vw (fun c -> Printf.sprintf "_ci%d_%d" q c))
+            in
+            let stores =
+              String.concat
+                ""
+                (List.init vw (fun c ->
+                   Printf.sprintf
+                     "        %s;\n        %s;\n"
+                     (Isa.storeu_pd
+                        isa
+                        (if q = 0
+                         then Printf.sprintf "zout[_rbi_%d]" c
+                         else Printf.sprintf "zout[_rbi_%d + %d]" c (2 * q * vw))
+                        (Printf.sprintf "_cr%d_%d" q c))
+                     (Isa.storeu_pd
+                        isa
+                        (Printf.sprintf "zout[_rbi_%d + %d]" c ((2 * q * vw) + vw))
+                        (Printf.sprintf "_ci%d_%d" q c))))
+            in
+            sr ^ si ^ stores) )
+      | E_vruns ->
+        (* ── zturn-ts ingest store (P_vec): the column's R0 digits are R0
+              consecutive vectors per plane at rb[k]*R0 — no turn ── *)
+        ( Printf.sprintf
+            "        /* zturn-ts lane-batched run store (rb[]) */\n        const size_t _rbi = (size_t)%d * rb[k];\n"
+            (vw * radix)
+        , Array.init radix (fun d ->
+            Printf.sprintf
+              "        %s;\n        %s;\n"
+              (Isa.storeu_pd
+                 isa
+                 (if d = 0 then "out_re[_rbi]" else Printf.sprintf "out_re[_rbi + %d]" (vw * d))
+                 (Printf.sprintf "t%d" re_tag.(d)))
+              (Isa.storeu_pd
+                 isa
+                 (if d = 0 then "out_im[_rbi]" else Printf.sprintf "out_im[_rbi + %d]" (vw * d))
+                 (Printf.sprintf "t%d" im_tag.(d)))) )
       | E_runs ->
         failwith "codelet_zsplit: E_runs is template-emitted (t0tp's turn lattice)"
     in
     (* ── SU-scheduled body. Defs in schedule order (first occurrence per
           tag); single-use tags render inline at their consumer. Twiddle
           loads render via the zsplit record mode. ── *)
+    (* zturn-ts STORE ON COMPUTE (2026-11-04): a store unit is emitted the
+       moment every tag it consumes has been rendered — a leg's pair for the
+       plane edges, a quartet's eight for the turn edges — so the outputs
+       stop piling up live until the body's end and the turn's shuffles
+       spread through the arithmetic. The IL kinds keep the trailing edge
+       (byte-identical corpus). *)
+    let soc = k.plane <> P_block in
+    let unit_tags : int list array =
+      match k.out_edge with
+      | E_planes _ | E_z _ | E_splanes _ | E_vplanes _ | E_zcol | E_vruns ->
+        Array.init radix (fun leg -> [ re_tag.(leg); im_tag.(leg) ])
+      | E_sruns | E_bruns | E_blocks ->
+        Array.init (radix / vw) (fun q ->
+          List.concat (List.init vw (fun j -> [ re_tag.((q * vw) + j); im_tag.((q * vw) + j) ])))
+      | E_runs -> [||]
+    in
+    let unit_done = Array.make (Array.length store_units) false in
+    let rendered : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    let flush_ready () =
+      Array.iteri
+        (fun u tags ->
+           if (not unit_done.(u)) && List.for_all (fun t -> Hashtbl.mem rendered t) tags
+           then (
+             unit_done.(u) <- true;
+             Buffer.add_string buf store_units.(u)))
+        unit_tags
+    in
+    if soc then Buffer.add_string buf store_hdr;
     Buffer.add_string buf "        /* SU-scheduled body (pipeline) */\n";
     Fun.protect
       ~finally:(fun () ->
@@ -910,7 +1238,10 @@ let emit_codelet
       (fun () ->
          cfg :=
            { !cfg with
-             Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit (resolve_tw_off radix k.tw_off)
+             Emit_render.Cfg.tw =
+               (if k.plane = P_vec
+                then Emit_render.Cfg.Tw_zsplit_bcast (resolve_tw_off radix k.tw_off)
+                else Emit_render.Cfg.Tw_zsplit (resolve_tw_off radix k.tw_off))
            ; Emit_render.Cfg.tw_vw = wide_vw
            };
          let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
@@ -933,18 +1264,20 @@ let emit_codelet
                      ~strided:true
                      ~inline_set:(Some inline_set)
                      e);
-                Buffer.add_char buf '\n'))
+                Buffer.add_char buf '\n';
+                Hashtbl.replace rendered e.Ir.tag ();
+                if soc then flush_ready ()))
            scheduled);
-    (* trailing store edge = the unit table in order *)
-    Buffer.add_string buf store_hdr;
-    Array.iter (Buffer.add_string buf) store_units;
+    (* trailing store edge = the unit table in order (what store-on-compute left) *)
+    if not soc then Buffer.add_string buf store_hdr;
+    Array.iteri (fun u s -> if not unit_done.(u) then Buffer.add_string buf s) store_units;
     Buffer.add_string buf "    }\n"
   in
   (* ── the shared 11-arg z ABI signature + computed (void) list ── *)
   let uses stride =
     let edge_uses = function
-      | E_planes s | E_z s -> s = stride
-      | E_blocks | E_runs | E_zcol -> false
+      | E_planes s | E_z s | E_splanes s | E_vplanes s -> s = stride
+      | E_blocks | E_runs | E_zcol | E_sruns | E_vruns | E_bruns -> false
     in
     edge_uses k.in_edge || edge_uses k.out_edge
   in
@@ -1209,12 +1542,12 @@ let emit_codelet
       [ "a", 0, 0; "b", vw, vw / 2 ];
     Buffer.add_string buf "    }\n"
   in
-  if k.base = "t0tp"
+  if k.base = "t0tp" && k.plane = P_block
   then (
     (* -- t0tp: the turn lattice as an always_inline BODY (the fused driver
           TU inlines it), stores through rb[]; the exported wrapper hands rb
           over from the tw_im slot (CONTRACT.md 7.1). -- *)
-    let body_name = ztt_body_name ~base:"t0tp" ~radix ~bwd:k.bwd in
+    let body_name = ztt_body_name ~fam:"z" ~base:"t0tp" ~radix ~bwd:k.bwd in
     body_start := Buffer.length buf;
     Buffer.add_string
       buf
@@ -1247,13 +1580,43 @@ let emit_codelet
            wrapper. The body carries NO target attribute (always_inline
            requires the callee's target ⊆ caller's; it inlines into the
            attributed wrapper). ── *)
-    let ztt = List.mem k.base [ "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] in
+    let ts = k.plane <> P_block in
+    let ztt = ts || List.mem k.base [ "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] in
     let body_name =
       if ztt
-      then ztt_body_name ~base:k.base ~radix ~bwd:k.bwd
+      then ztt_body_name ~fam:k.fam ~base:k.base ~radix ~bwd:k.bwd
       else Printf.sprintf "_zsg%d%s_body" radix (if k.bwd then "b" else "f")
     in
     body_start := Buffer.length buf;
+    (* zturn-ts pointer lists, derived from the edges: a true split plane is
+       a pointer pair, the block plane one pointer (no __restrict__ anywhere:
+       the mids run in place) *)
+    let ts_in =
+      match k.in_edge with
+      | E_splanes _ | E_vplanes _ -> "const double *in_re, const double *in_im"
+      | E_planes _ -> "const double *zin"
+      | _ -> failwith "codelet_zsplit: zturn-ts input edge"
+    and ts_out =
+      match k.out_edge with
+      | E_splanes _ | E_vplanes _ | E_sruns | E_vruns -> "double *out_re, double *out_im"
+      | E_planes _ | E_bruns -> "double *zout"
+      | _ -> failwith "codelet_zsplit: zturn-ts output edge"
+    in
+    if ts
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "static __attribute__((always_inline)) inline void %s(\n\
+           \    %s, %s,\n\
+           \    %s, size_t Ls, %ssize_t count)\n\
+            {\n"
+           body_name
+           ts_in
+           ts_out
+           (if k.base = "t0tp" then "const size_t *rb" else "const double *tw_re")
+           (if uses "OLs" then "size_t OLs, " else ""))
+    else
     Buffer.add_string
       buf
       (Printf.sprintf
@@ -1276,7 +1639,7 @@ let emit_codelet
          (if uses "OLs" then "size_t OLs, " else ""));
     (* a twiddle-free group-looped body (tld/tldb) keeps the shared body
        signature; silence its unused stream pointer *)
-    if not k.twiddled then Buffer.add_string buf "    (void)tw_re;\n";
+    if (not k.twiddled) && not (ts && k.base = "t0tp") then Buffer.add_string buf "    (void)tw_re;\n";
     (let ordered = function E_z _ -> not k.lanes_u | _ -> false in
      let blocks = function E_blocks -> true | _ -> false in
      Buffer.add_string
@@ -1284,11 +1647,13 @@ let emit_codelet
        (Isa.shuffle_consts isa ~deint:(ordered k.in_edge) ~reint:(ordered k.out_edge)
           ~transpose:(blocks k.in_edge || blocks k.out_edge)));
     let dag = prepare () in
+    (* P_vec: one column (vector) per iteration; the others VW columns *)
+    let step = if k.plane = P_vec then 1 else vw in
     if not k.narrow_arms
     then
       emit_col_loop
         ~open_line:
-          (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw)
+          (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" step step)
         dag
     else (
       (* il_odd_count_tail.md §3 arms: function-scope k, the wide loop,
@@ -1326,7 +1691,81 @@ let emit_codelet
         dag;
       emit_col_loop ~nisa:Isa.scalar ~open_line:"    for (; k < count; ++k) {\n" dag end);
     Buffer.add_string buf "}\n\n";
-    if not body_only
+    if (not body_only) && ts
+    then begin
+      (* zturn-ts exported stage kernel = the staged executor's form: the
+         group loop over the plane pair; rb[] rides its own slot. The group
+         pitch is R*Ls complexes = R*Ls doubles per plane (P_split) or
+         VW*R*Ls (P_vec). *)
+      (* group pitch in doubles per plane pointer: a true split plane R*Ls
+         (P_split) or VW*R*Ls (P_vec); the block plane 2*R*Ls *)
+      let sc = if k.plane = P_vec then vw else 1 in
+      let in_ptrs, in_adv =
+        match k.in_edge with
+        | E_planes _ -> "zin", Printf.sprintf "zin + g * %d * Ls" (2 * radix)
+        | _ -> "in_re, in_im", Printf.sprintf "in_re + g * %d * Ls, in_im + g * %d * Ls" (sc * radix) (sc * radix)
+      and out_ptrs, out_adv =
+        match k.out_edge with
+        | E_planes _ | E_bruns -> "zout", Printf.sprintf "zout + g * %d * OLs" (2 * radix)
+        | _ -> "out_re, out_im", Printf.sprintf "out_re + g * %d * OLs, out_im + g * %d * OLs" (sc * radix) (sc * radix)
+      in
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "__attribute__((target(\"%s\")))\n\
+            void %s(\n\
+           \    %s, %s,\n\
+           \    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count)\n\
+            {\n"
+           isa.Isa.target_attr
+           fname
+           ts_in
+           ts_out);
+      if k.base = "t0tp"
+      then
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "    (void)tw_re; (void)Gs; (void)OLs;\n    %s(%s, %s, rb, Ls, count);\n}\n"
+             body_name
+             in_ptrs
+             out_ptrs)
+      else if k.base = "tlf" || k.base = "tlfi"
+      then
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "    (void)rb;\n\
+             \    for (size_t g = 0; g < Gs; g++)\n\
+             \        %s(%s, %s, tw_re, Ls, OLs, count);\n\
+              }\n"
+             body_name
+             in_adv
+             out_adv)
+      else
+        (* the in-place mids: the group pitch on Ls for both sides *)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "    (void)rb; (void)OLs;\n\
+             \    for (size_t g = 0; g < Gs; g++)\n\
+             \        %s(%s, %s, tw_re, Ls, count);\n\
+              }\n"
+             body_name
+             in_adv
+             (let s = out_adv in
+              (* the mids advance the output on Ls, not OLs *)
+              let b = Buffer.create 64 in
+              let n = String.length s in
+              let i = ref 0 in
+              while !i < n do
+                if !i + 3 <= n && String.sub s !i 3 = "OLs"
+                then (Buffer.add_string b "Ls"; i := !i + 3)
+                else (Buffer.add_char b s.[!i]; incr i)
+              done;
+              Buffer.contents b))
+    end
+    else if not body_only
     then begin
       (* M4 phase 3: the driver wrapper's FROZEN z ABI also comes from
          Abi.z11_signature. *)

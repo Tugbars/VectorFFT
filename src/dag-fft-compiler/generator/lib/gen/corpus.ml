@@ -97,6 +97,31 @@ let oop_base (isa : string) : string list =
    Â§14.3, queued for its own announced regen).  A gen_set rewrite of
    zil-boundary before that regen shows 32 prologue-only diffs in git â
    that is THIS item, never silent drift. *)
+(* zturn-ts (2026-11-04): the SPLIT library's ZTURN-T stage kernels, quadrant
+   ztt-ISA -> codelets/split/ztt/ISA. Two families x four kinds x radix 4/8 x
+   two directions = 32 cells: zts = K=1 (split planes at the edges, the block
+   plane inside), ztv = lane-major K=VW (lane = transform). The fused drivers
+   in generated/fused_codelets (zts_drivers_ and ztv_drivers_ files) inline
+   these bodies; cascade_z.ml emits both. File radixR_FAM_KIND[_bwd]_ISA.c,
+   symbol radixR_FAM_KIND_fwd|bwd_ISA. *)
+let zts_cells (isa : string) : (string * string list) list =
+  List.concat_map
+    (fun (fam, pfx) ->
+       List.concat_map
+         (fun base ->
+            List.concat_map
+              (fun r ->
+                 List.map
+                   (fun bwd ->
+                      let kind = pfx ^ String.sub base 1 (String.length base - 1) ^ if bwd then "b" else "" in
+                      ( Printf.sprintf "radix%d_%s_%s%s_%s.c" r fam base (if bwd then "_bwd" else "") isa
+                      , [ string_of_int r; "--zp-" ^ kind; "--isa"; isa; "--uarch"; "raptor_lake_" ^ isa ] ))
+                   [ false; true ])
+              [ 4; 8 ])
+         [ "t0tp"; "tmg"; "tlf"; "tlfi" ])
+    [ "zts", "ts"; "ztv", "tv" ]
+;;
+
 let zil_boundary_cells : (string * string list) list =
   (* the ZTURN-T stage kernels (natural: t0tp/tmg/tlf/tlfi; plain: t0d/tmgd/tld/tldb;
      the odd mids tmg/tmgb/tmgd at 3/5/7/9/15) and the msz/mszt odd mids of il2p —
@@ -2560,11 +2585,10 @@ let zil_pure_cells : (string * string list) list =
    quadrants (75/75 byte-identical at entry).  Excluded, with cause:
    the non-reproducing 29 (orphans / tangent / stale — pool-sunset or
    announced-numeric-event material); the 9 sed-renamed zil variants
-   (need an emitter suffix knob); and radix256_r2c_term_ls_r8_avx512 —
-   its recorded argv carries --isa AFTER --emit-c (the M5 placement
-   quirk), which emit_one's append-last convention cannot reproduce;
-   it enters when that family's argv order is normalized (naturally
-   alongside its known ULP defect, codelet_corpus_reproducibility). *)
+   (need an emitter suffix knob). (radix256_r2c_term_ls_r8_avx512, once
+   excluded for its --isa-after---emit-c argv, was referenced by nothing and
+   was deleted 2026-11-04 with the other dead split codelets; the four
+   `_spec1024/4096` edge cells left with the `_spec` twins the same day.) *)
 let oop_edges_avx2_cells : (string * string list) list =
     [ "radix10_t1_dif_oop_avx2.c", [ "10"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
     ; "radix16_n1_oop_ugul_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
@@ -2575,8 +2599,6 @@ let oop_edges_avx2_cells : (string * string list) list =
     ; "radix20_t1_dif_oop_avx2.c", [ "20"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
     ; "radix25_t1_dif_oop_avx2.c", [ "25"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
     ; "radix32_n1_oop_ugul_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
-    ; "radix32_n1_oop_ugul_spec1024_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2"; "--oop-strides"; "32,1,1,32"; "--oop-spec-named" ]
-    ; "radix32_t1_oop_spec1024_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-strides"; "32,1,32,1"; "--oop-spec-named" ]
     ; "radix32_t1_oop_ugug_log3_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
     ; "radix32_t1_oop_ul_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
     ; "radix32_t1_oop_ul_log3_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
@@ -2587,12 +2609,10 @@ let oop_edges_avx2_cells : (string * string list) list =
     ; "radix4_t1_oop_ul_log3_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
     ; "radix4_t1_oop_ul_twl_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
     ; "radix5_t1_dif_oop_avx2.c", [ "5"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
-    ; "radix64_n1_oop_spec4096_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--oop-strides"; "64,1,64,1"; "--oop-spec-named" ]
     ; "radix64_n1_oop_ugul_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
     ; "radix64_t1_oop_ugug_log3_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
     ; "radix64_t1_oop_ul_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
     ; "radix64_t1_oop_ul_log3_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
-    ; "radix64_t1_oop_ul_log3_spec4096_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3"; "--oop-strides"; "1,64,64,1"; "--oop-spec-named" ]
     ; "radix64_t1_oop_ul_twl_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
     ; "radix8_n1_oop_ugul_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
     ; "radix8_t1_oop_ugug_log3_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
@@ -2762,6 +2782,7 @@ let matrix_files (quadrant : string) : (string * string list) list =
   | "oop-edges-avx512" -> oop_edges_avx512_cells
   | "strided-r2c-avx2" -> strided_r2c_avx2_cells
   | "strided-r2c-avx512" -> strided_r2c_avx512_cells
+  | "ztt-avx2" -> zts_cells "avx2"
   | "zil-boundary" -> zil_boundary_cells
   | "zil-pure" -> zil_pure_cells
   | "inplace-avx2" | "inplace-avx512" ->
@@ -2959,6 +2980,7 @@ let quadrants =
   ; "oop-edges-avx512"
   ; "strided-r2c-avx2"
   ; "strided-r2c-avx512"
+  ; "ztt-avx2"
   ; "zil-boundary"
   ; "zil-pure"
   ; "zil-boundary-avx512"

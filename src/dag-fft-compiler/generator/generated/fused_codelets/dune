@@ -23,3 +23,24 @@
  (mode promote)
  (action
   (run %{exe:../../bin/emit_ztt_drivers.exe} --isa avx2 --uarch raptor_lake_avx2 --split .)))
+
+; zturn-ts (2026-11-04): the SPLIT library's fused codelets, one file per
+; (family, N): zts_ = K=1 on split planes, ztv_ = lane-major K=4. The stage
+; kernels they inline are codelets/split/ztt/avx2 (the product); the cell
+; list is ZTURN-T's (Ztt_drivers.cells). Registry: ../zts_registry_avx2.h.
+(rule
+ (targets
+  zts_drivers_avx2_16.c zts_drivers_avx2_32.c zts_drivers_avx2_64.c
+  zts_drivers_avx2_128.c zts_drivers_avx2_256.c zts_drivers_avx2_512.c
+  zts_drivers_avx2_1024.c zts_drivers_avx2_2048.c zts_drivers_avx2_4096.c
+  zts_drivers_avx2_8192.c zts_drivers_avx2_16384.c zts_drivers_avx2_32768.c
+  zts_drivers_avx2_65536.c zts_drivers_avx2_131072.c zts_drivers_avx2_262144.c
+  ztv_drivers_avx2_16.c ztv_drivers_avx2_32.c ztv_drivers_avx2_64.c
+  ztv_drivers_avx2_128.c ztv_drivers_avx2_256.c ztv_drivers_avx2_512.c
+  ztv_drivers_avx2_1024.c ztv_drivers_avx2_2048.c ztv_drivers_avx2_4096.c
+  ztv_drivers_avx2_8192.c ztv_drivers_avx2_16384.c ztv_drivers_avx2_32768.c
+  ztv_drivers_avx2_65536.c ztv_drivers_avx2_131072.c ztv_drivers_avx2_262144.c)
+ (deps %{exe:../../bin/emit_zts_drivers.exe})
+ (mode promote)
+ (action
+  (run %{exe:../../bin/emit_zts_drivers.exe} --isa avx2 --uarch raptor_lake_avx2 --split .)))

@@ -430,6 +430,12 @@ let run (argv : string array) : unit =
     then zp_kind := "tld"
     else if arg = "--zp-tldb"
     then zp_kind := "tldb"
+    else if String.length arg > 5 && String.sub arg 0 5 = "--zp-"
+            && List.mem (String.sub arg 5 (String.length arg - 5))
+                 [ "ts0tp"; "ts0tpb"; "tsmg"; "tsmgb"; "tslf"; "tslfb"; "tslfi"; "tslfib"
+                 ; "tv0tp"; "tv0tpb"; "tvmg"; "tvmgb"; "tvlf"; "tvlfb"; "tvlfi"; "tvlfib" ]
+    then (* zturn-ts: the split library's ZTURN-T stage kernels (cascade_z.ml) *)
+      zp_kind := String.sub arg 5 (String.length arg - 5)
     else if arg = "--cil-split3" && !i + 1 < Array.length arr
     then (
       cil_split3 := arr.(!i + 1);
