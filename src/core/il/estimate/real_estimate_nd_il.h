@@ -648,7 +648,7 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
          * and 11 slower); at 128 x 256 x N its stage of 16 one row apart crowds (1.07 - 1.22 -> 1.18 - 1.51). */
         int Rn[8], Rw[8], k = 0;
         const long long wn = (long long)m->l1d / (16 * EST_ND_R16);   /* the narrow rows' bound (est__narrow) */
-        const int kn = est_col_chain(m, N1, wn, 0, Rn), kw = est_col_chain(m, N1, wn + 1, 0, Rw);
+        const int kn = est__col_chain_x(m, N1, wn, 0, 0, Rn), kw = est__col_chain_x(m, N1, wn + 1, 0, 0, Rw);
         const int *R = NULL;
         if (est__chain_crowds(m, N1, p->col.R, p->col.nst, w0))
         {

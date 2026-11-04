@@ -119,10 +119,9 @@ typedef struct est_plan3d_s
  * it should cover is open, sketch §14) */
 #define EST_ND_BLOCKED_L1_DIV 4
 /* the 2D band: none while the plane fits L2 / EST_ND_2D_PLANE_DIV (the 3D plan's plane child:
- * L2 / EST_ND_3D_PLANE_DIV); the band within L2 / EST_ND_2D_BAND_DIV (sketch §7) */
+ * L2 / EST_ND_3D_PLANE_DIV); else one wide stage (est__wl_one_sweep, sketch §7) */
 #define EST_ND_2D_PLANE_DIV 4
 #define EST_ND_3D_PLANE_DIV 2
-#define EST_ND_2D_BAND_DIV 4
 /* the 2D row route (sketch §8): the skewed pass up to N1 = 16, and at the odd N1 up to 31 on rows of at
  * least 128 but at the kernels that spill (est__spills_single); the turn from N1 = 128 at N2 <= 8; the
  * batched rows up to N2 = 16, the batched two-pass rows up to N2 = 64; the two-pass tile 8 KB. The odd
@@ -298,16 +297,6 @@ typedef struct est_plan3d_s
 #define EST_ND_MT3_NSW_L2_DIV 4
 #define EST_ND_MT3_CYCLE_LAST 64
 
-/* the scrambled pass's exceptions (sketch §4 step 5): the races repeat these where the formula names
- * another chain; keyed by N and the row regime (1 = narrow) */
-static const struct { int N, narrow, nst, R[4]; } est_col_exc[] = {
-    { 512, 1, 3, { 4, 8, 16, 0 } },
-    { 1024, 0, 4, { 8, 8, 4, 4 } },
-    { 4096, 0, 3, { 16, 32, 8, 0 } },
-    { 8192, 1, 3, { 32, 8, 32, 0 } },
-    { 8192, 0, 4, { 32, 8, 4, 8 } },
-};
-
 /* ── the column chain ───────────────────────────────────────────────────── */
 
 /* the door's column pool at N (il2d_cols.h:160-253): every ordered composition over the column
@@ -347,6 +336,38 @@ static inline int est__in_pool(const est_pool_t *P, const int *R, int nst)
     for (i = 0; i < P->n; i++)
         if (P->len[i] == nst && !memcmp(P->c[i], R, sizeof(int) * (size_t)nst))
             return 1;
+    return 0;
+}
+/* the L1d's set geometry: its ways (8 where the CPU reports none, which leads a column of legs 4 KiB apart with radix
+ * 4 below: the small L1d the owner assumed, 2026-11-03) and the bytes one way holds, the stride at which addresses
+ * meet in one set (4 KiB on the 14900KF, 48 KiB / 12, and on Zen 4, 32 KiB / 8) */
+static inline long long est__l1_ways(const est_machine_t *m)
+{
+    return m->l1d_ways > 0 ? m->l1d_ways : 8;
+}
+static inline long long est__l1_way(const est_machine_t *m)
+{
+    return (long long)m->l1d / est__l1_ways(m);
+}
+/* 1 = a stage of the column chain R over N, on rows of w complex, holds more lines in one L1d set than the L1d has
+ * ways. Stage s reads R[s] legs N / (R[0] ... R[s]) rows apart (il2d_cols.h:265-283); they fall into
+ * way / gcd(stride, way) sets, R[s] min(lowbit(stride), way) / way legs to a set, and stage 0 holds them twice: it
+ * moves the plane out of place, src to the scratch (il2d_cols.h:633-655; the scrambled pass src to dst). The leaf's
+ * scattered stores are staged (il2d_cols.h:297) */
+static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, int nst, long long w)
+{
+    const long long way = est__l1_way(m), ways = est__l1_ways(m);
+    long long L = N;
+    int s;
+    for (s = 0; s < nst; s++)
+    {
+        L /= R[s];
+        {
+            const long long st = 16 * L * w, low = st & -st;
+            if ((long long)R[s] * (low < way ? low : way) * (s == 0 ? 2 : 1) > ways * way)
+                return 1;
+        }
+    }
     return 0;
 }
 /* a narrow row: a radix-16 butterfly across the row fits the L1d */
@@ -478,27 +499,33 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
     memcpy(R, P->c[best], sizeof(int) * (size_t)P->len[best]);
     return P->len[best];
 }
-/* The leading stage of a power of two from 2^s1 (sketch §4 step 3; docs/roadmap/estimate_microarch_plan.md
- * §7): the first stage reads R legs and writes R, N / R rows apart, a multiple of 4 KB at every power-of-two
- * row width there, so its 2R lines share one L1d set and stay in it while 2R <= the L1d's ways. The largest
- * power of two R with 2R <= ways, at least 4; ways not reported: 4 (a small L1d assumed). 8 ways (Zen 4) and
- * 12 (14900KF) give 4: on the 14900KF 0.98-1.05 x the planner's 8-led chains at 2048 x 120-126 and 4096 x
- * 60-62, 0.73-0.80 x its radix-32 rows of 2026-09-24 at 2048 x 128 and 4096 x 64, where Zen 4's planner leads
- * 4 itself; the radix-32 lead lost 1.02-1.37 x on the 14900KF and 1.30-7.49 x on Zen 4 at those seven. */
+/* THE COLUMN CHAIN AND THE L1d's SETS (sketch §4 step 3; docs/roadmap/estimate_microarch_plan.md §7-§8). On a row
+ * shorter than one way (16 w < L1d / ways) the pick takes only the chains no stage of which crowds an L1d set
+ * (est__col_crowds), where one exists: a first stage of 32 or 16 holds 64 or 32 lines in one set, and at 2048 x
+ * 120-128 and 4096 x 60-64 the radix-32 start lost 1.02-1.37 x to the planner on the 14900KF (12 ways) and 1.30-7.49 x
+ * on Zen 4 (8 ways), where the radix-4 start ran 0.98-1.05 x the 14900KF's fresh rows and 0.73-0.80 x its rows of
+ * 2026-09-24. Over both stores' fresh narrow rows the first radix agrees 10 of 11 (14900KF; 1 before) and 25 of 28
+ * (Zen 4; 11), the chain 6 of 11 and 17 of 28 (0 and 5); counted without the stage-0 doubling, 0 and 3. On a row of
+ * one way or more every stage's legs meet in one set; there a power of two from 2^s1 leads with the largest power
+ * of two R within the ways (est_col_lead: 8 on both machines; 4 where the CPU reports no ways, a small L1d assumed,
+ * the owner 2026-11-03): both planners' fresh rows lead with 8 there (Zen 4 at 9 of 9 planes of 2048 - 8192 rows;
+ * the 14900KF at 2 of 4, 16 at the others). */
 static inline int est_col_lead(const est_machine_t *m)
 {
     int r = 4;
-    while (4 * r <= m->l1d_ways)
+    while (m->l1d_ways > 0 && 2 * r <= m->l1d_ways)
         r *= 2;
     return r;
 }
 /* The column chain at N over rows of w complex on the natural (nat = 1) or scrambled pass
- * (sketch §4): one stage when it may serve; a Rader prime first, then the rest; the scrambled pass's
- * exceptions; a power of two from 2^s1 led by est_col_lead; else the pick above. 0 = the pool holds
- * no chain at N (the door's column Bluestein). */
-static inline int est_col_chain(const est_machine_t *m, int N, long long w, int nat, int *R)
+ * (sketch §4): one stage when it may serve; a Rader prime first, then the rest; on a plane past the L1d whose rows
+ * are within one L1d way, the chains that crowd no set (sets = 1; a plane within the L1d is a cheap pass whatever
+ * its sets, and the lane-major batches' are); a power of two from 2^s1 on wider rows led by est_col_lead; else the
+ * pick above. sets = 0: the pick's own regime chain (the real 3D axis-0 rule asks for the narrow and the wide
+ * regime's by their row widths). 0 = the pool holds no chain at N (the door's column Bluestein). */
+static inline int est__col_chain_x(const est_machine_t *m, int N, long long w, int nat, int sets, int *R)
 {
-    est_pool_t P;
+    est_pool_t P, Q;
     int k, i, pre[1] = { 0 }, one = 0;
     est__pool(N, &P);
     if (P.n == 0)
@@ -521,21 +548,41 @@ static inline int est_col_chain(const est_machine_t *m, int N, long long w, int 
         R[0] = N;
         return 1;
     }
-    if (!nat && est_is_pow2(N))
-        for (i = 0; i < EST_NELEM(est_col_exc); i++)
-            if (est_col_exc[i].N == N && est_col_exc[i].narrow == est__narrow(m, w) &&
-                est__in_pool(&P, est_col_exc[i].R, est_col_exc[i].nst))
+    if (sets && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d)
+    {   /* a row within one way: the chains that crowd no set, where one exists; a power of two from 2^s1 led by the
+         * largest first radix among them (4 on both machines), the rest picked as N / R0's own column, so that the
+         * radix-16 regime's few stages do not end on a radix of 32 or 64 (2048 x 120 4.8.64, 4096 x 62 4.32.32
+         * against the planners' four-stage 8.16.16, 8.8.8.8 and the timed 4.8.8.8, 4.8.8.16, 0.98 - 1.05 x) */
+        Q.n = 0;
+        for (i = 0; i < P.n; i++)
+            if (!est__col_crowds(m, N, P.c[i], P.len[i], w))
             {
-                memcpy(R, est_col_exc[i].R, sizeof(int) * (size_t)est_col_exc[i].nst);
-                return est_col_exc[i].nst;
+                memcpy(Q.c[Q.n], P.c[i], sizeof Q.c[0]);
+                Q.len[Q.n++] = P.len[i];
             }
-    if (est_is_pow2(N) && N >= (1 << est_s1(m)))
+        if (Q.n && est_is_pow2(N) && N >= (1 << est_s1(m)))
+        {
+            for (i = 0; i < Q.n; i++)
+                if (Q.len[i] > 1 && Q.c[i][0] > pre[0])
+                    pre[0] = Q.c[i][0];
+            if (pre[0] && (k = est__pick(&Q, pre, 1, N / pre[0], m, w, nat, 0, 1, R)) > 0)
+                return k;
+            pre[0] = 0;
+        }
+        if (Q.n && (k = est__pick(&Q, pre, 0, N, m, w, nat, 0, 1, R)) > 0)
+            return k;
+    }
+    else if (est_is_pow2(N) && N >= (1 << est_s1(m)))
     {
         pre[0] = est_col_lead(m);
         if ((k = est__pick(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, R)) > 0)
             return k;
     }
     return est__pick(&P, pre, 0, N, m, w, nat, 0, 1, R);
+}
+static inline int est_col_chain(const est_machine_t *m, int N, long long w, int nat, int *R)
+{
+    return est__col_chain_x(m, N, w, nat, 1, R);
 }
 /* the Bluestein inner chain at M: raced unbanded on the scrambled pass (il2d_tier.h:2405), so the
  * radix-8 regime's chain whatever the row width, two stages or more (sketch §5) */
@@ -577,9 +624,10 @@ static inline void est__spans(int N, const int *R, int nst, int *L)
         l /= R[s];
     }
 }
-/* the door's band-width pool below N (2D: il2d_tier.h:4009-4046; 3D: fftnd_il.h:1133-1157): the ladder
- * under the tcut law, the stage spans of 8 rows or more whose band fits the L2 */
-static inline int est__wl_pool(const est_machine_t *m, const est_col_t *c, int *out)
+/* the band widths the door serves below N (2D: il2d_tier.h:4009-4046; 3D: fftnd_il.h:1133-1157): the ladder
+ * under the tcut law and the stage spans of 8 rows or more (its race offers a span only while the span's band
+ * fits the L2; a create serves any legal width, c2c_estimate_nd_il.h's check) */
+static inline int est__wl_pool(const est_col_t *c, int *out)
 {
     int L[8], n = 0, p, s, q, dup;
     est__spans(c->N, c->R, c->nst, L);
@@ -589,7 +637,7 @@ static inline int est__wl_pool(const est_machine_t *m, const est_col_t *c, int *
     for (s = 1; s < c->nst; s++)
     {
         const int w = L[s];
-        if (w >= c->N || !vfft_policy_il2d_band_ok(c->N, c->nst, L, w) || 16LL * w * c->w > (long long)m->l2)
+        if (w >= c->N || !vfft_policy_il2d_band_ok(c->N, c->nst, L, w))
             continue;
         for (q = 0, dup = 0; q < n; q++)
             if (out[q] == w) dup = 1;
@@ -742,36 +790,42 @@ static inline int est__col_unbanded(const est_machine_t *m, est_col_t *c)
     est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
     return 1;
 }
-/* the 2D band (sketch §7): none beside the skew or the turn, on a one-stage or Bluestein chain, or
- * while the plane fits L2 / plane_div (EST_ND_2D_PLANE_DIV, or EST_ND_3D_PLANE_DIV for the 3D plan's plane
- * child); else the widest pool width whose band fits L2 / 4, 0 when none does */
-static inline int est_wl_2d(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn, int plane_div)
+/* THE BAND: ONE WIDE STAGE (sketch §7 and §9; docs/roadmap/estimate_microarch_plan.md §8). The banded walk sweeps the
+ * whole plane once for each stage before the band's and runs the rest band by band, the row pass fused behind them
+ * (il_execute.h:672-760); a band that holds stage 1's span L[1] = N / R[0] leaves one sweep. The narrowest legal width
+ * that holds it, else the widest (the fewest sweeps there are). No cache bound: both planners band at 0.01 - 16 L2,
+ * past the L2 at 2 - 8 MiB (the 14900KF 1024 x 4096 and 512 x 8192 at 32 rows; Zen 4 256 x 4096 at 32, 1024 x 4096 at
+ * 128, 512 x 8192 at 64: the widths this gives), where the old bound, the band within L2 / 4, banded none (1.29 - 1.49
+ * x the planner on Zen 4, 512 x 8192 1.097 on the 14900KF). On the stores' rows the planner's own chain gives: banded
+ * or not 60 of 60 (14900KF; 56 before), 58 of 69 (Zen 4; 53); the 3D axis 0's width exact at 386 rows (231). */
+static inline int est__wl_one_sweep(const est_col_t *c)
 {
-    int pool[16], n, i, best = 0;
-    if (csk || turn || c->blu > 0 || c->nst < 2 || 16LL * c->N * N2 <= (long long)m->l2 / plane_div)
-        return 0;
-    n = est__wl_pool(m, c, pool);
-    for (i = 0; i < n; i++)
-        if (16LL * pool[i] * N2 <= (long long)m->l2 / EST_ND_2D_BAND_DIV && pool[i] > best)
-            best = pool[i];
-    return best;
-}
-/* the 3D axis-0 band (sketch §9): none on a one-stage or Bluestein axis 0; else the widest pool width
- * whose band fits the L2, else the narrowest pool width */
-static inline int est_wl_3d(const est_machine_t *m, const est_col_t *c)
-{
-    int pool[16], n, i, best = 0, least = 0;
-    if (c->blu > 0 || c->nst < 2)
-        return 0;
-    n = est__wl_pool(m, c, pool);
+    int pool[16], L[8], n, i, best = 0, widest = 0;
+    est__spans(c->N, c->R, c->nst, L);
+    n = est__wl_pool(c, pool);
     for (i = 0; i < n; i++)
     {
-        if (16LL * pool[i] * c->w <= (long long)m->l2 && pool[i] > best)
+        if (pool[i] >= L[1] && (!best || pool[i] < best))
             best = pool[i];
-        if (!least || pool[i] < least)
-            least = pool[i];
+        if (pool[i] > widest)
+            widest = pool[i];
     }
-    return best ? best : least;
+    return best ? best : widest;
+}
+/* the 2D band: none beside the skew or the turn, on a one-stage or Bluestein chain, or while the plane fits
+ * L2 / plane_div (EST_ND_2D_PLANE_DIV, or EST_ND_3D_PLANE_DIV for the 3D plan's plane child); else one wide stage */
+static inline int est_wl_2d(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn, int plane_div)
+{
+    if (csk || turn || c->blu > 0 || c->nst < 2 || 16LL * c->N * N2 <= (long long)m->l2 / plane_div)
+        return 0;
+    return est__wl_one_sweep(c);
+}
+/* the 3D axis-0 band: none on a one-stage or Bluestein axis 0; else one wide stage */
+static inline int est_wl_3d(const est_col_t *c)
+{
+    if (c->blu > 0 || c->nst < 2)
+        return 0;
+    return est__wl_one_sweep(c);
 }
 /* the door's strip widths at this axis 0, read off its own pool (_ilnd_sw_pool, fftnd_il.h:826-836):
  * the powers of two from 8 to 1024 whose strip scratch, 16 N1 w bytes, fits the L2 (the host's) and
@@ -1118,7 +1172,7 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
         out->col1.wl = 0;
     }
     out->nf = est_nf_3d(m, &out->col, N2, N3, &out->nsw);
-    out->col.wl = out->nf == 2 ? 0 : est_wl_3d(m, &out->col);   /* the strips serve axis 0 unbanded (fftnd_il.h:1619) */
+    out->col.wl = out->nf == 2 ? 0 : est_wl_3d(&out->col);   /* the strips serve axis 0 unbanded (fftnd_il.h:1619) */
     return 0;
 }
 /* est_mt_3d: the one-thread plan p (est_plan_3d) threaded at T (EST_ND_MT3_*): serial while the cube times the
@@ -1166,7 +1220,7 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
             memcpy(p->col.R, R, sizeof(int) * (size_t)k);
             p->col.nst = k;
             est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
-            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(m, &p->col);
+            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(&p->col);
         }
     }
     else if (p->cmtf == 1 && pow2 && p->col.nst >= 2)
@@ -1197,7 +1251,7 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
             memcpy(p->col.R, P.c[best], sizeof(int) * (size_t)P.len[best]);
             p->col.nst = P.len[best];
             est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
-            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(m, &p->col);
+            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(&p->col);
         }
     }
 }

@@ -274,12 +274,102 @@ runs). Not yet tried: rows of 256 and wider (Zen 4 starts those with 8, the 1490
 The library already reads the L1d's ways (cpu_cache.h:154 CPUID, :197 Windows, :240/:262 Linux); the
 estimate's machine record does not carry them.
 
-**Built (2026-11-03, uncommitted):** the estimate reads the L1d's ways (`vfft_cpu_l1d_ways()`, cpu_cache.h, the
-same refuse rule as the size; `est_machine_t.l1d_ways`), and the leading radix of a power-of-two column from 2^s1
-is `est_col_lead`: the largest power of two R with 2R <= the ways, at least 4, and 4 when no ways are reported
-(the owner: assume a small L1d). Both machines get 4. It reaches every caller of `est_col_chain` (2D, the 3D first
-axis, real 2D and 3D, lane-major batches), not the 1D four-step, which builds its own chain. The estimate gate:
-ALL PASS. The timing is next, on the power-of-two lists; at 2^s1 = 2048 on both machines it changes the 2D cells
-2048x2048, 2048x4, 2048x128, 8192x8, 4096x64, 4096x256, 4096x1024 and 8192x512, and the real 2D cells with a
-column of 2048 or more. On wide rows the chain after the 4 comes out 4.16.8.8 (4096) and 4.16.16.8 (8192): the
-pool's 4-stage limit and the wide-row picker's largest-first order put the large radix second.
+**Built (2026-11-03, committed by the owner as e62fdb2c):** the estimate reads the L1d's ways (`vfft_cpu_l1d_ways()`,
+cpu_cache.h, the same refuse rule as the size; `est_machine_t.l1d_ways`), and the leading radix of a power-of-two
+column from 2^s1 is `est_col_lead`: the largest power of two R with 2R <= the ways, at least 4, and 4 when no ways
+are reported (the owner: assume a small L1d). Both machines get 4. It reaches every caller of `est_col_chain` (2D,
+the 3D first axis, real 2D at T > 1 and real 3D, lane-major batches), not the 1D four-step, which builds its own
+chain, and not the real 2D column at one thread from 512 to 8192 rows, which the real estimate replaces with its own
+table (`est_col_real_tall`, real_estimate_nd_il.h). The estimate gate: ALL PASS. At 2^s1 = 2048 on both machines it
+changes the 2D cells 2048x2048, 2048x4, 2048x128, 8192x8, 4096x64, 4096x256, 4096x1024 and 8192x512. On wide rows the
+chain after the 4 comes out 4.16.8.8 (4096) and 4.16.16.8 (8192): the pool's 4-stage limit and the wide-row picker's
+largest-first order put the large radix second. Superseded on 2026-11-04 by the per-stage set rule (section 8).
+
+## 8. Grounded rules (2026-11-04)
+
+The owner: "base our estimates on the properties of the microarchitecture (cache sizes etc), the properties of the
+problem (how much ram does it take etc), maybe properties of the each radix too ... scout around the 1/2/3D C2C, R2C
+and C2R estimate methods that are table/heuristics/overfitted to 14900KF and see if you can replace them more
+grounded parameters ... it may be generally a better solution for all platforms".
+
+**The method.** Six read-only readers went through the eight estimate headers, one area each, and listed 98
+decisions that are a fit rather than a law of the code: the mechanism each stands for, a form from what the CPU
+reports or the problem's own sizes, and a desk test against both machines' stores (the planner's banked choice
+against the current rule and the candidate). A rule was built where the candidate names a mechanism, agrees with
+both planners at least as well as the current rule, and stays within the 14900KF's own timing. Then the estimate
+before (e62fdb2c) and after was timed against the same banked plans. Only missing rows were raced.
+
+**Built** (the estimate gate: ALL PASS):
+
+| rule | before | after | reads | desk (agreement with the planner) |
+|---|---|---|---|---|
+| 2D / 3D band (`est__wl_one_sweep`) | the widest legal width within L2 / 4; 2D unbanded when none fits | one wide stage: the narrowest legal width that holds stage 1's span, else the widest | the chain's spans (the banded walk sweeps the plane once per stage before the band) | banded or not: 56 -> 60 of 60 (14900KF), 53 -> 58 of 69 (Zen 4); 3D plane width exact 143 -> 152 of 206; 3D axis 0 exact 231 -> 386 of 637 |
+| column chain, rows shorter than one way (`est__col_crowds`) | radix 32 / 16 first (radix 4 from 2^s1 since 11-03) | no stage puts more lines in one L1d set than the ways (stage 0 twice: it moves the plane out of place); from 2^s1 the largest first radix that passes | L1d size and ways (way = L1d / ways) | first radix: 1 -> 10 of 11 (14900KF fresh rows), 11 -> 25 of 28 (Zen 4) |
+| column chain, rows of one way or more (`est_col_lead`) | 4 from 2^s1 | the largest power of two within the ways: 8 on both; 4 when the CPU reports no ways (a small L1d, the owner 11-03) | L1d ways | first radix: 0 -> 9 of 9 (Zen 4, 2048 - 8192 rows), 0 -> 2 of 4 (14900KF fresh) |
+| the 3D scrambled pass's exception table | five chains copied from September races | removed: the two rules above | -- | its rows all predate the 2026-10-06 chain race |
+| ZTURN-T tile span `est_s1` | log2(L1d / 16) | log2(L1d / 24): the tile's data within two thirds of the L1d | L1d | 14900KF unchanged (11); Zen 4 10, its tiles 9 -> 12 of 18 |
+| power-of-two pair split | middle radix 4 - 128 | middle radix at least the lanes | lanes | AVX2 unchanged; Zen 4 AVX-512 128 = 4.32 -> 8.16 (the old split lost 1.17 x) |
+| Rader-stage chain | rest N / p at least 4 | rest at least the lanes | lanes | AVX2 unchanged; Zen 4 AVX-512 81.6 -> 88.9 % of 2,157 cells |
+| flat tile, one thread, past the L2 | the widest span within the L1d | the widest span within the L2 | L1d, L2 | 14900KF rows past the L2: 0 -> 10 of 10 |
+| real contiguous batch, whole or split | whole per thread while one transform fits the L2 | all threads together only for a plan that threads its own work, past L2 / 2 (its input and output in the L2) | L2, the recipe's own threaded part | on the 11-03 run's timings of both ways: 336 cells 1.042 -> 1.024 |
+| R2C fold on threads | 16 N / 2 past 2 L1d | the child's input and output, 16 N, past the L2 | L2 | 77 -> 85 of 86 |
+| real ZTURN-T at its stage cap and on threads | -- | real_estimate_plan.md section 19 | the ZTT's own limits, L1d | timed there: 1.155 -> 1.012 (one thread), 5.19 -> 1.028 and 1.163 -> 1.042 (8 threads) |
+
+**Timed** on the 14900KF: one thread pinned, 15 rounds, the before and after tools alternated twice against
+the same banked plans in a copy of the store. E/B below 1 = the estimate's plan faster than the planner's banked
+plan; B2/B = the banked plan created again (the noise floor):
+
+| set | cells | recipes changed | E/B, all cells | E/B, changed cells | within 10 % of the planner | B2/B |
+|---|---|---|---|---|---|---|
+| 2D complex | 39 | 28 | 1.007 -> 0.962 | 0.993 -> 0.937 | 34 -> 37 | 0.995 |
+| 3D complex | 28 | 21 | 1.003 -> 0.960 | 1.008 -> 0.954 | 27 -> 27 | 0.998 |
+| 1D odd flat (151875 - 390625) | 6 | 5 | 1.000 -> 0.988 | 1.022 -> 1.006 | 4 -> 5 | 1.004 |
+
+The R2C fold at 8 threads, the same estimate plan with its fold flipped (the old rule's fold on the same child),
+on the 5 lengths the rule changes: 1.205 -> 1.020 against the planner (28000 1.642 -> 1.000, 100000 1.266 -> 1.005).
+The real 2D and 3D sets (one thread and 8): no recipe changed.
+
+- The gain is on long columns over wide planes (2048 - 8192 rows, rows of 128 - 1024; 3D 4096 - 8192 x 8 - 32):
+  8.8.8.8 with a band of one wide stage. The banked rows there start with radix 16 or 32, and the estimate now
+  runs 15-28 % faster than them (11 cells at E/B 0.72 - 0.84). Those rows are stale, as section 7 found for
+  the 2D ones.
+- Five cells lost more than 5 % to the old estimate, all still within 10 % of the planner:
+  - 2D 512x128 (1.11 x): 8.8.8 -> 4.8.16; the planner banks 8.4.4.4.
+  - 2D 512x32 (1.05 x): -> 4.8.16, which is the planner's own chain.
+  - 2D 256x256 (1.05 x): band 128 -> 32; the planner banks 128.
+  - 3D 64x64x64 (1.07 x) and 8x64x64 (1.05 x): the 64 x 64 plane 8.8 -> 4.16. The planner banks 4.4.4 there,
+    so the first radix agrees and the rest does not.
+- 1024x16 moved out of the 10 % band (1.098 -> 1.124), inside its own noise (the old passes read 1.036 and
+  1.163). The planner banks 8.8.16 there; the set rule starts with 4.
+
+**Not built** (each needs a run, or a parameter the stores cannot separate; the readers' full list is in the
+session's scratchpad, `scout_results.json`):
+- The four-step's split and band (estimate_il.h:961-1015). The 14900KF's planner bands within its L2, Zen 4's
+  up to L3 / 2, and no capacity the CPU reports separates the two (the 14900KF has the larger L3 and still
+  bands in the L2).
+- The odd radices that spill (21, 25, 27; `EST_ODD_SPLIT_MAX`). This differs per ISA and follows the
+  generator's own spill count, not a register formula: Zen 4 AVX-512 keeps 21 and 25 as one stage and splits 27.
+- The lane-major first axis: twiddled stages up to radix 8, the closing stage exempt (14900KF rank 1 exact
+  11 -> 20 of 67). Zen 4 has no lane-major rows.
+- Desk-positive, not timed:
+  - Rader or Bluestein at 8 lanes (16 | N - 1);
+  - Rader rests of 15 and 21 kept whole;
+  - real ZTURN-T's one-thread tile by the L1d;
+  - the zrf tile within two thirds of the L1d;
+  - zrb's length margin;
+  - the real Rader window by pieces per thread;
+  - one-stage lane-major chains on the threaded walk.
+- No grounded form found: the 3D flat tier, the 3D 32 KiB serial bound, the real C2R plane past 5/8 of the L2.
+
+**For Zen 4** (the laptop plugged in, nothing else running, these changes in its tree), from the repository root:
+
+```
+python benchmark_scripts/estimate_pow2.py --sets 2d,3d
+python benchmark_scripts/estimate_pow2.py --isa avx2 --sets 2d,3d
+python benchmark_scripts/estimate_pow2.py --sets 1d
+python benchmark_scripts/estimate_pow2.py --sets 1d --cells "151875 177147 200013 225225 253125 390625"
+```
+
+The `# machine:` line should read `L1d 32768 (8-way)`. The first two runs time the set rule, the lead and the
+band at both ISAs. The third covers `est_s1` = 10 and the pair split's middle radix at 8 lanes. The fourth covers
+the flat tile past Zen 4's 1 MiB L2.

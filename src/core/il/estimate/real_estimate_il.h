@@ -103,11 +103,58 @@ static inline int est_zttr_grammar(long long M)
         while (o % VFFT_ZTT_ODD_MIDS[i] == 0) o /= VFFT_ZTT_ODD_MIDS[i];
     return o == 1;
 }
+/* a zttr tile of width w at M after the stages c (zrp_build.h:445-458: w < M, M % w == 0, a multiple of R0 R1) */
+static inline int est__zttr_tile_ok(long long M, const int *c, long long w)
+{
+    return w < M && M % w == 0 && w % ((long long)c[0] * c[1]) == 0;
+}
+/* ZTT-r's laws on a whole chain (est_ztt_ok, natural) and its terminator: the last stage 4 or 8 over a run
+ * M / R_last of at least 8 whole blocks of 8 (zttr.h:173-180) */
+static inline int est__zttr_legal(long long M, const int *c, int k)
+{
+    return k <= VFFT_ZTT_MAX_NF && est_ztt_ok(M, c, k, 0) && (c[k - 1] == 4 || c[k - 1] == 8) && M / c[k - 1] >= 8 &&
+           (M / c[k - 1]) % 8 == 0;
+}
+/* 2^a odd M: the first power-of-two stage, the odd stages mids, the other power-of-two stages, the closing
+ * radix; 2^(a - lg close) as 8s, one 4 and 8s, or two 4s and 8s. 0 = none within the laws. */
+static inline int est__zttr_odd(long long M, int a, const int *mids, int nm, int close, int *c)
+{
+    const int r = a - (close == 8 ? 3 : 2);
+    int p2[16], np = 0, k = 0, i;
+    if (r < 0) return 0;
+    if (r % 3 == 0) { for (i = 0; i < r / 3; i++) p2[np++] = 8; }
+    else if (r % 3 == 2) { p2[np++] = 4; for (i = 0; i < r / 3; i++) p2[np++] = 8; }
+    else { if (r < 4) return 0; p2[np++] = 4; p2[np++] = 4; for (i = 0; i < (r - 4) / 3; i++) p2[np++] = 8; }
+    if (!np || np + nm + 1 > 16) return 0;
+    c[k++] = p2[0];
+    for (i = 0; i < nm; i++) c[k++] = mids[i];
+    for (i = 1; i < np; i++) c[k++] = p2[i];
+    c[k++] = close;
+    return est__zttr_legal(M, c, k) ? k : 0;
+}
+/* ZTT-r's fewest stages at 2^a odd M: the odd part greedily largest first over {15, 9, 7, 5, 3} (the ZTT's own odd
+ * grammar, dp_planner_il.h:1470-1490), the power of two in the fewest stages, closing 8 (else 4). 0 = none. */
+static inline int est_zttr_fewest(long long M, int *c)
+{
+    int mids[16], nm = 0, a = est_v2(M), i, k, close;
+    long long o = M >> a;
+    for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
+        while (o % VFFT_ZTT_ODD_MIDS[i] == 0 && nm < 16) { mids[nm++] = VFFT_ZTT_ODD_MIDS[i]; o /= VFFT_ZTT_ODD_MIDS[i]; }
+    if (o != 1 || !nm) return 0;
+    for (close = 8; close >= 4; close -= 4)
+        if ((k = est__zttr_odd(M, a, mids, nm, close, c)) > 0)
+            return k;
+    return 0;
+}
 /* section 6 even rule 4, the zttr chain at M = N/2. Power-of-two M: c2r 4, then 8s, then 4s; r2c 8,
  * the 4s, then 8s, closing 4 (with no forced 4, two 8s become three 4s). 2^a odd M: the first pow2
- * stage, the odd primes 7, 5, 3, the other pow2 stages, closing 4. Tile: untiled below M = 4096,
- * else the first legal width of 2048, 3072, 1024, 512 (zrp_build.h:445-458: tile < M, M % tile
- * == 0, a multiple of R0 R1). Validated by ZTT's natural laws and zttr.h:173-180. 0 = none. */
+ * stage, the odd primes 7, 5, 3, the other pow2 stages, closing 4. ZTT-r holds at most VFFT_ZTT_MAX_NF = 7
+ * stages; past it the fewest stages (est_zttr_fewest). Before 2026-11-04, 77 of the 294 lengths N >= 1024 with N/2
+ * in the grammar, 68 of them from 100,000, had no chain and fell to zr2c, whose child runs one thread: 4.7 x the
+ * planner at 400,000 and 6.7 x at 276,480 on 8 threads, 1.15 x at one thread; with the fewest stages, 16 of them
+ * 1.01 x at one thread (the planner's 31,104 8.3.9.9.8, 400,000 8.5.5.5.5.5.8, 103,680 4.15.9.3.4.8). Tile: untiled
+ * below M = 4096, else the first legal width of 2048, 3072, 1024, 512. Validated by ZTT's natural laws and
+ * zttr.h:173-180. 0 = none. */
 static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
 {
     const long long M = N / 2;
@@ -136,23 +183,15 @@ static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
     }
     else
     {
-        int mids[16], nm = 0, p2[16], np = 0;
-        const int r = a - 2;
+        int mids[16], nm = 0;
         static const int op[3] = { 7, 5, 3 };
         for (i = 0; i < 3; i++)
             while (o % op[i] == 0 && nm < 16) { mids[nm++] = op[i]; o /= op[i]; }
         if (o != 1) return 0;
-        if (r % 3 == 0) { for (i = 0; i < r / 3; i++) p2[np++] = 8; }
-        else if (r % 3 == 2) { p2[np++] = 4; for (i = 0; i < r / 3; i++) p2[np++] = 8; }
-        else { if (r < 4) return 0; p2[np++] = 4; p2[np++] = 4; for (i = 0; i < (r - 4) / 3; i++) p2[np++] = 8; }
-        if (!np || np + nm + 1 > 16) return 0;
-        c[k++] = p2[0];
-        for (i = 0; i < nm; i++) c[k++] = mids[i];
-        for (i = 1; i < np; i++) c[k++] = p2[i];
-        c[k++] = 4;
+        if (!(k = est__zttr_odd(M, a, mids, nm, 4, c)))
+            k = est_zttr_fewest(M, c);
     }
-    if (k > VFFT_ZTT_MAX_NF || !est_ztt_ok(M, c, k, 0)) return 0;
-    if ((c[k - 1] != 4 && c[k - 1] != 8) || M / c[k - 1] < 8 || (M / c[k - 1]) % 8) return 0;
+    if (!est__zttr_legal(M, c, k)) return 0;
     *tile = 0;
     if (M >= 4096)
         for (i = 0; i < 4; i++)
@@ -162,6 +201,35 @@ static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
                 break;
             }
     return k;
+}
+/* zttr on threads that take tiles (zttr_mt.h TILES): a tile must hold the first two stages, R0 R1 | w, so the
+ * power-of-two stages lead, ascending, then the odd stages, the largest power-of-two stage last; the tile the
+ * widest of 512, 1024, 2048, 3072 that is legal and whose data, 16 w bytes, fits half the L1d (1024 on 48 and on
+ * 32 KiB). At M a power of two that is the chain ascending: on the 10 cells 16,384 - 262,144 at 8 threads
+ * (docs/roadmap/real_estimate_plan.md section 7) ascending with the tile 1024 1.042 against the planner, the
+ * one-thread order 1.104 - 1.123, ascending alone 1.075, the tile alone 1.152. Rewrites c and *tile; 0 = no
+ * legal tile in that order (the one-thread chain stays). */
+static inline int est_zttr_mt_order(const est_machine_t *m, long long M, int *c, int k, size_t *tile)
+{
+    static const int widths[4] = { 3072, 2048, 1024, 512 };
+    int d[VFFT_ZTT_MAX_NF], p[VFFT_ZTT_MAX_NF], np = 0, n = 0, i;
+    for (i = 0; i < k; i++)
+        if (c[i] == 4 || c[i] == 8) p[np++] = c[i];
+    if (np < 2 || k > VFFT_ZTT_MAX_NF) return 0;
+    est_sort_asc(p, np);
+    for (i = 0; i < np - 1; i++) d[n++] = p[i];
+    for (i = 0; i < k; i++)
+        if (c[i] != 4 && c[i] != 8) d[n++] = c[i];
+    d[n++] = p[np - 1];
+    if (!est__zttr_legal(M, d, n)) return 0;
+    for (i = 0; i < 4; i++)
+        if (16LL * widths[i] <= m->l1d / 2 && est__zttr_tile_ok(M, d, widths[i]))
+        {
+            memcpy(c, d, sizeof(int) * (size_t)n);
+            *tile = (size_t)widths[i];
+            return n;
+        }
+    return 0;
 }
 /* section 6 zrf's chain: the prime factors, 3.3 -> 9, ascending; 2 <= K <= 10 (zrf.h:228), the
  * section 4.4 merges above 10 stages, re-sorted ascending (29296875 = 3.5.5.5.5.5.5.5.5.25); then the
@@ -405,6 +473,22 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
                 in.ztt = 1;
                 in.tw = (int)tile;
                 o->zttr.mt = est_inner_mt(m, &in, N / 2, N / 2, T);
+                if (o->zttr.mt && (k = est_zttr_mt_order(m, N / 2, c, k, &tile)) > 0)
+                {   /* threaded: the order and the tile that let the threads take tiles */
+                    memcpy(o->zttr.chain, c, sizeof(int) * (size_t)k);
+                    o->zttr.nf = k;
+                    o->zttr.tile = tile;
+                    in.tw = (int)tile;
+                    o->zttr.mt = est_inner_mt(m, &in, N / 2, N / 2, T);
+                }
+                if (o->zttr.mt == 1 && (k = est_zttr_fewest(N / 2, c)) > 0)
+                {   /* BLOCKS cuts every stage by units, one fork-join a stage (zttr_mt.h): the fewest stages, untiled, as
+                     * the planner's threaded untiled rows take them (62,208 4.9.9.3.4.8, 103,680 4.15.9.3.4.8; the
+                     * one-thread chains, 7 stages there, ran 1.17 - 1.30 x the planner at 8 threads, these 1.02) */
+                    memcpy(o->zttr.chain, c, sizeof(int) * (size_t)k);
+                    o->zttr.nf = k;
+                    o->zttr.tile = 0;
+                }
             }
             return 0;
         }
@@ -450,7 +534,10 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
                     if (!*p) break;
                 }
             }
-            if (!est_serial(m, prime ? M : N / 2))
+            /* R2C's fold reads the one-thread child's output in the calling core's L2: it threads once the child's
+             * input and output, 16 N bytes, pass that L2 (2026-11-04: the store's 86 rows agree at 85, the bound
+             * 16 N / 2 > 2 L1d at 77; the misses were R2C 28000 - 220034 the planner keeps serial, 100000 1.32 x) */
+            if (prime ? !est_serial(m, M) : (c2r ? !est_serial(m, N / 2) : 16LL * N > (long long)m->l2))
             {
                 o->zr2c.fold_mt = 1;
                 if (prime)
@@ -484,16 +571,30 @@ static inline int est__real_copies(const est_real_recipe_t *rc, int ip)
  * work per byte, so its floor is half the C2C one (69 x 27, 19 x 53, 375 x 5: whole transforms 1.5 - 3.9 times
  * faster below 16 KiB); and odd Bluestein with its own threaded arm (zrb mt) scales on its transform from
  * EST_REAL_BATCH_ZRB_MT bytes (24031 x 2, 92861 x 6, 97217 x 56: all threads on each 1.7 - 2.1 times faster). With
- * both, all 314 cells 1.049 -> 1.032 against the planner. Left open: the large zr2c and zrb transforms that pass or
- * near the L2 (168214, 569746, 639401: the way follows the half's factorization, not the bytes). */
+ * both, all 314 cells 1.049 -> 1.032 against the planner. The large transforms (2026-11-04): all threads on each pay
+ * only where the one transform's plan threads its own work (real ZTURN-T, odd Bluestein or the odd flat DIT on their
+ * threaded arms, a prime half whose convolution threads; est__real_threads_own), and there only once its input and
+ * output, 2 x 16 (N/2 + 1) bytes, pass the L2; a zr2c whose child runs one thread threads only its fold, so whole
+ * transforms win at any size (480240 x 24 2.0 x, 311722 x 5 2.3 x, 720000 x 12, 1e6 x 8, 1024000 x 4 past the L2).
+ * The store's 364 rows agree at 332, the bytes-within-L2 bound for every engine at 322. */
 #define EST_REAL_BATCH_ZRB_MT (128 << 10)
+static inline int est__real_threads_own(const est_real_recipe_t *rc)
+{
+    if (!strcmp(rc->eng, "zttr")) return rc->zttr.mt > 0;
+    if (!strcmp(rc->eng, "zrb")) return rc->zrb.mt > 0;
+    if (!strcmp(rc->eng, "zrf")) return rc->zrf.mt > 0;
+    if (!strcmp(rc->eng, "zr2c")) return rc->c.il_mt > 0;
+    return 0;
+}
 static inline int est__real_batch_whole(const est_machine_t *m, const est_real_recipe_t *rc, long long N, size_t K)
 {
     const size_t bytes = 16 * ((size_t)N / 2 + 1);
     const int prime = vfft_policy_prime_cell((int)((N & 1) ? N : N / 2));
-    if (K < 2 || m->l2 <= 0 || bytes > (size_t)m->l2)
+    if (K < 2 || m->l2 <= 0)
         return 0;
     if (!strcmp(rc->eng, "zrb") && rc->zrb.mt && bytes >= EST_REAL_BATCH_ZRB_MT)
+        return 0;
+    if (est__real_threads_own(rc) && 2 * bytes > (size_t)m->l2)
         return 0;
     return prime || (double)K * (double)bytes >= ((N & 1) ? EST_BATCH_FLOOR / 2 : EST_BATCH_FLOOR);
 }

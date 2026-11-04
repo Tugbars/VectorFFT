@@ -59,7 +59,9 @@ Rader-or-Bluestein verdicts, 2 four-step band widths).
 
 ## 3. The decision procedure, complex 1D
 
-Derived once per machine: s1 = floor(log2(L1d/16)), which is 11 for any L1d of 32-63 KiB;
+Derived once per machine: s1 = floor(log2(L1d/24)), the largest power of two of complexes whose data fills at most
+two thirds of the L1d, the rest for the twiddle streams (2026-11-04; it was L1d/16): 11 at 48-95 KiB, 10 at 32 KiB
+(Zen 4, whose ZTURN-T rows then agree on the tile at 12 of 18 against 9);
 W_lo = 2^(s1-1) and W_hi = 2^s1 (1024 / 2048 at s1 = 11, which is the planner's own ladder,
 `il/planning/dp_planner_il.h:1455`; at other L1d sizes see Open decisions);
 floor = 16 at 4 lanes, 64 at 8 lanes (`il/planning/policy_il.h:63-67`). The first test that holds
@@ -71,8 +73,9 @@ decides the route:
    composite with 2N−1 > 2^24 is refused, as the code refuses it (`policy_il.h:298-302`).
 4. N is a power of two:
    - a. N ≥ 2^19: **four-step** (4.5). ZTURN-T ends at 262144 (`il/rank1/ztt.h:121`).
-   - b. N < floor, or the natural class with 32 ≤ N ≤ 512: **pair**. The mid R1 = 4 up to 128, else
-     16; R2 = N/R1.
+   - b. N < floor, or the natural class with 32 ≤ N ≤ 512: **pair**. The mid R1 = the lanes up to 128
+     (the leaf runs R1 columns, at least two vectors of them: 4 at AVX2, 8 at AVX-512; never a leaf
+     below 4), else 16; R2 = N/R1.
    - c. Otherwise: **ZTURN-T** (4.1).
 5. N is in ZTURN-T's odd band: 2^a times a product of at most 5 factors from {15, 9, 7, 5, 3}, in
    2048..262144, with a ≥ 4 (a ≥ 6 at 8 lanes): **ZTURN-T odd chain** (4.2).
@@ -171,7 +174,9 @@ the column pass of N rows over K lanes, planned from the 2D sketch's column form
 - **`il_forms`:** `t` on every middle stage. The last stage is `t` at K = 2, otherwise `n`, and `o`
   in the natural class from K = 5. Every pool radix has the `t2csgn` tail (`il_flatdit.h:286-289`).
 - **`il_tw`:** untiled while 16N ≤ 2·L1d. Otherwise it is the widest block span R_s·D_s of a
-  non-tail stage (D_s > 4) with 16·span ≤ L1d (`il_flatdit.h:904-916`).
+  non-tail stage (D_s > 4) with 16·span ≤ L1d (`il_flatdit.h:904-916`); on one thread past the L2
+  (16N > L2) with 16·span ≤ L2 (2026-11-04: the planner tiles at the stage-1 span N/R0 at 10 of its 10
+  rows past the 14900KF's L2, the L1 span at none).
 
 ### 4.5 Four-step
 
@@ -304,9 +309,15 @@ The door picks by parity (`il/real/real_create_il.h:30-34`). A real N plans like
      ZTT-r's grammar and 32 | N/2 (`il/real/zttr.h:113-143,180`). Chain:
      - power-of-two N/2, c2r: 4, then 8s, then 4s; r2c: 8, the 4s, then 8s, closing 4;
      - 2^a·odd N/2: the first power-of-two stage, the odd primes 7, 5, 3, the other power-of-two
-       stages, closing 4;
+       stages, closing 4. ZTT-r holds at most 7 stages; past it each step drops one: closing 8, then
+       3·3 as 9, then 3·5 as 15 (before 2026-11-04, 77 of the 294 such N from 1,024 had no chain and
+       fell to zr2c, whose child runs one thread);
      - tile: untiled below N/2 = 4096, else the first legal width of 2048, 3072, 1024, 512;
-       `stk=3`.
+       `stk=3`;
+     - on threads that take tiles (section 7): the power-of-two stages ascending, the odd stages, the
+       largest power-of-two stage last, so a tile holds the first two stages; the tile the widest
+       legal width whose data, 16 w bytes, fits half the L1d (1,024 on 32 and 48 KiB). Where that order
+       has no legal tile the one-thread chain stays.
   5. Otherwise **zr2c**: the child is this c2c procedure at N/2, natural. The route token is
      `child_nat_ip` in place and for c2r with N ≥ 1024, else `child_oop_il`. For c2r a pair
      child is mirrored, leaf and mid swapped, and then **both** `il_kv` and `il_bkv` are

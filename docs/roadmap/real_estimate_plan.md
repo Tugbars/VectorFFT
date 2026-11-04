@@ -838,3 +838,37 @@ The rest of the time is the prime cell's own race (up to 480 candidates), unchan
 cells: 592 lane-major batches; the real sections as at 05:16, the real recipes unchanged); `zr2c_fd_gate` all correct;
 the canonical CMake build of `vfft_core` with its three earlier warnings only. After the prime cell's one race
 (09:05): `zr2c_fd_gate` all correct.
+
+## 19. Real ZTURN-T at its stage cap and on threads (2026-11-04)
+
+The owner: "start with real zturn-t threading gap and finalize it". Section 16 had noted the estimate at 4.7 times the
+planner at 400,000 and 6.7 times at 276,480 on 8 threads, whichever threading way was chosen.
+
+**The cause.** `est_zttr_chain` split N/2's odd part into 7, 5 and 3 only and closed with 4, and ZTT-r holds at most
+seven stages (`VFFT_ZTT_MAX_NF`). Of the 294 lengths from 1,024 whose half is in ZTT-r's grammar, 77 (68 of them from
+100,000) needed more and had no chain; the estimate then fell to zr2c, whose child runs one thread.
+
+**The rules** (`real_estimate_il.h`):
+- Past the cap, the fewest stages (`est_zttr_fewest`): the odd part greedily largest first over {15, 9, 7, 5, 3}, the
+  ZTT's own odd grammar; the power of two in the fewest stages; closing 8. One thread below the cap is unchanged.
+- On threads that take tiles (TILES, each tile's whole prefix on one thread): the power-of-two stages ascending, the
+  odd stages, the largest power-of-two stage last, so that a tile holds the first two stages (R0 R1 divides it); the
+  tile the widest legal width whose data, 16 w bytes, fits half the L1d (1,024 on 32 and on 48 KiB). This is section
+  7's proposal (ascending with the tile 1,024), checked here on fresh cells.
+- On threads that cut every stage by units (BLOCKS, one fork-join a stage, `zttr_mt.h`): the fewest stages, untiled.
+
+**Timing** (14900KF, 15 rounds, one process per thread count; P the planner's row, the 45 missing rows raced into
+`src/wisdom/14900KF` first; the arms are recipes built by `est_build_real`; scratch `ztr/`):
+
+| Set | Cells | Old estimate | New | Within 10 % | The planner's recipe as an arm | Control |
+|---|---|---|---|---|---|---|
+| the cap class, one thread | 16 | 1.155 (zr2c) | 1.012 | 14 | 0.997 | 1.005 |
+| the cap class, 8 threads | 16 | 5.190 (zr2c) | 1.028 | 15 | 0.999 | 1.003 |
+| lengths that had a chain, 8 threads | 24 | 1.163 (the one-thread chain) | 1.042 | 18 | 0.997 | 1.000 |
+
+The cap class: 31,104 - 466,560, both directions. The other set: six banked threaded rows, six fresh lengths in both
+directions, six powers of two. On the same cells the tile 2,048 ran 1.019 against 1.025 (a tie), 3,072 1.088,
+BLOCKS on the tiled cells 1.090, and in the first timing (the one-thread chains on BLOCKS) the cap class at 8 threads
+ran 1.080: the fewest stages take it to 1.028. Outside 10 %: small cells of 7 - 10 us (16,384 and 19,200 in place,
+23,040, 32,768), where the tile or the odd split (15.3 against the planner's 9.5) moves 10 - 18 %; at 524,288 in
+place the planner's row is zfsr, 1.4 times slower than the estimate.

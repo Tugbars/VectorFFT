@@ -87,12 +87,21 @@ names always exists and resolves (the pre-flight checks it with the door's resol
 2. **A Rader prime** (`vfft_policy_il2d_rader_prime(N)` = p, the engine builds it,
    `_ilrd_col0_ok`): the chain [p] followed by this formula's chain of N / p (at most 3 stages,
    nothing when N = p).
-3. **A power of two from 2^s1** (s1 = floor(log2(L1d / 16)) = 11, the 1D estimate's tile span):
-   a leading R, the largest power of two with 2R <= the L1d's ways and at least 4 (4 when the CPU
-   reports no ways), then this formula's chain of N / R (at most 3 stages). The first stage reads R
-   legs and writes R, N / R rows apart, a multiple of 4 KB at every power-of-two row width there, so
-   its 2R lines share one L1d set (docs/roadmap/estimate_microarch_plan.md §7). 8 ways (Zen 4) and 12
-   (14900KF) both give 4.
+3. **The L1d's sets** (2026-11-04, docs/roadmap/estimate_microarch_plan.md §7-§8). Stage s reads R_s
+   legs N / (R_0 ... R_s) rows apart; they meet in way / gcd(stride, way) sets of the L1d, way = L1d /
+   ways (4 KiB on both machines; 8 ways assumed when the CPU reports none), R_s min(lowbit(stride),
+   way) / way legs to a set, twice at stage 0, which moves the plane out of place. On a plane past the
+   L1d whose rows are shorter than one way (16 w < way) the steps below choose only among the chains in
+   which no stage puts more lines in a set than there are ways, when one exists (`est__col_crowds`); a
+   power of two from 2^s1 keeps a lead there, the largest first radix among those chains (4 on both
+   machines), and the rest is N / R_0's own pick, so that the radix-16 regime's few stages do not end on
+   32 or 64 (2048 rows of 120 would take 4.8.64). 2048 rows of 128 take 4.8.8.8, 4096 of 64 4.8.8.16,
+   128 of 128 4.4.8, 8192 of 16 4.8.8.32, the planners' chains on both machines. On a row of one way or
+   more, a power of two from 2^s1 leads with the largest power of two within the ways
+   (`est_col_lead`, 8 on both machines, 4 when the CPU reports no ways: a small L1d assumed, the owner
+   2026-11-03; s1 = floor(log2(L1d / 24)), the 1D estimate's tile span), then this formula's chain of
+   N / R_0 (at most 3 stages). The real 3D axis-0 rule asks for the regime chains
+   without the sets (`est__col_chain_x`, sets = 0).
 4. **Otherwise** the pool's chains of two stages or more, the first by:
    - the stage count nearest k* = ceil(n / 4) on narrow rows (the radix-16 regime), ceil(n / 3) on
      wide ones (the radix-8 regime); on a tie the fewer;
@@ -106,18 +115,11 @@ names always exists and resolves (the pre-flight checks it with the door's resol
    - then the order: the largest radix last (ascending), except the natural pass on wide rows,
      which closes on its smallest radix (descending); a closing-only radix stays last;
    - then the pool's own order.
-5. **The exception table** (the scrambled pass only; the races repeat these):
-
-   | N1 | rows | chain | banked rows it fixes |
-   |---|---|---|---|
-   | 512 | narrow | 4.8.16 | 14 of 21 (formula: 8.8.8) |
-   | 1024 | wide | 8.8.4.4 | 21 of 45 (formula: 4.4.8.8) |
-   | 4096 | wide | 16.32.8 | 15 of 24 (formula: 16.4.8.8) |
-   | 8192 | narrow | 32.8.32 | 10 of 21 (formula: 32.16.16) |
-   | 8192 | wide | 32.8.4.8 | 6 of 15 (formula: 16.8.8.8); the most banked there is 32.8.32, 7 of 15 (open decision 9) |
-
-   (The 3D rows, natural, one thread, at that N1 and row regime: the entry's chain banked on the
-   first count of rows, out of the second.)
+5. **No exception table** (removed 2026-11-04). The scrambled pass's five entries (512 narrow 4.8.16,
+   1024 wide 8.8.4.4, 4096 wide 16.32.8, 8192 narrow 32.8.32, 8192 wide 32.8.4.8) copied 3D rows raced in
+   September by the chain race as it was before 2026-10-06 (unbanded arms, the fewest stages crowned);
+   no row raced since sits at those cells, and the 16- and 32-led entries crowd an L1d set at stage 0
+   (step 3).
 
 **What it gives at a power of two** (2D natural pass / 3D scrambled pass; the 3D column shows the
 table's entries in brackets):
@@ -206,8 +208,15 @@ L[s], s >= 1, of eight rows or more. The formula:
   il2d_tier.h:4082, 4091), on a one-stage or Bluestein chain, or while the plane fits a quarter of
   the L2: 16 N1 N2 <= L2 / 4 (the owner's rule, 2026-10-23; it was L2 / 2); the 3D plan's plane
   child keeps half the L2, 16 N2 N3 <= L2 / 2 (the owner's rule, 2026-10-23, below);
-- otherwise the widest legal width below N1 whose band fits a quarter of the L2:
-  16 wl N2 <= L2 / 4; 0 when none does.
+- otherwise one wide stage (2026-11-04, `est__wl_one_sweep`): the banded walk sweeps the whole plane
+  once for each stage before the band's (il_execute.h:672-760), so the narrowest legal width that holds
+  stage 1's span L[1] = N1 / R_0 leaves one sweep; when none does, the widest legal width. Any legal
+  width is served (the race offers a span only while its band fits the L2). No cache bound: both
+  planners band at 0.01 - 16 L2, past the L2 at 2 - 8 MiB, where the old bound, the band within L2 / 4,
+  banded none (Zen 4 256x4096, 1024x4096, 512x8192 1.29 - 1.49 x the planner; the 14900KF 512x8192
+  1.097). Given the banked chain, banded or not: 60 of 60 standalone rows (14900KF; 56 under L2 / 4),
+  58 of 69 (Zen 4; 53); the 3D plane child's width exact at 152 of 206 rows (143), its 3D axis-0 band
+  (section 9, the same rule) at 386 rows (231). The old rule's scores below are kept for the record.
 - `tf` = (wl > 0), as the race banks it (il2d_tier.h:4199).
 
 [M] Given the banked chain: the exact width in 125 of 159 standalone rows (79%) and 926 of 1,008
@@ -341,7 +350,7 @@ keeps 5 (the best share of its pool).
 |---|---|---|
 | `s` | 1: the 2D plan per plane; 2: the flat tier (axis 1's natural pass, unbanded, and the row plan) on the planes `est__flat_plane` names (2026-10-26/27: a plain column chain, the plane within 125% of the L2, 75% past the L3, and either even, not both sides powers of two, at least 40% of the L2, or with an odd side, no skewed column pass and rows that are not one odd solo kernel; the evidence beside `EST_ND_FLAT_*` in `estimate_nd_il.h`) | `s=1` alone: 1,008 (78%) |
 | axis-0 `chain` | §4 on the scrambled pass at (N1, w = N2 N3), with the table | 1,039 (81%) |
-| axis-0 `wl`, `tf` | with the cycle walk: 0 on a one-stage or Bluestein axis 0; otherwise the widest legal width below N1 (`_ilnd_wl_pool`, fftnd_il.h:1133) whose band fits the L2, 16 wl N2 N3 <= L2, else the narrowest legal width; `tf` = (wl > 0). With the strips: not written (below) | given the banked chain: 607 of 1,201 rows that carry a width (51%); banded or not: 1,014 (84%). The race's own repeatability of this width: 41% |
+| axis-0 `wl`, `tf` | with the cycle walk: 0 on a one-stage or Bluestein axis 0; otherwise one wide stage, as section 7 (2026-11-04): the narrowest legal width below N1 (`_ilnd_wl_pool`, fftnd_il.h:1133) that holds stage 1's span N1 / R_0, else the widest; `tf` = (wl > 0). With the strips: not written (below) | given the banked chain: 386 rows exact (the old rule, the widest within the L2, 231); banded or not unchanged. The race's own repeatability of this width: 41% |
 | `nf`, `nsw` | the owner's rule (2026-10-23). The strips, `nf=2`, when the volume passes the L3, 16 N1 N2 N3 > L3 (no L3 reported counts as past, as at rank 1), and axis 0 is short, 16 N1 <= L1d / 4 (N1 <= 768 at a 48 KiB L1d: 512 among the powers of two); `nsw` = the widest of the door's strip widths (`_ilnd_sw_pool`, fftnd_il.h:826-836: 8 to 1024 columns, powers of two, the strip scratch 16 N1 w within the L2, w within the plane) whose scratch fits half the L2, 16 N1 nsw <= L2 / 2. The strips serve axis 0 unbanded (the door applies no band beside them, fftnd_il.h:1619), and `wl`, `tf` are not written: the race banks the band only where the cycle form won (fftnd_il.h:1733). Otherwise the cycle walk, `nf=1`, no `nsw` -- also on a one-stage or Bluestein axis 0 (the door's strip pool is empty there) and where no width fits | against the 796 rows that carry the race's `nf`: 739 (92.8%); the cycle walk always: 709 (89.1%). The misses: 43 rows where the strips won at volumes up to 32 MiB (19 at 32 MiB), and 14 at 64 MiB where the cycle walk won. The strip width: exact at 43 of the 87 strip rows (41 without the door's w <= plane bound) |
 | `plane_` | the 2D plan at N2 x N3, natural, by §3-§8 | see the 2D rows |
 

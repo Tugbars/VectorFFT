@@ -46,8 +46,8 @@ typedef struct est_machine_s
     long l3;    /* bytes, vfft_cpu_l3_bytes() (cpu_cache.h:569), shared, 0 = not reported: the
                  * threaded four-step's super-band and the 3D strips rule (estimate_nd_il.h) */
     int cores;  /* vfft_topology()->ncores: reported, no rule reads it */
-    int l1d_ways; /* vfft_cpu_l1d_ways() (cpu_cache.h:564), 0 = not reported: the column chain's first
-                   * radix (est_col_lead, estimate_nd_il.h) */
+    int l1d_ways; /* vfft_cpu_l1d_ways() (cpu_cache.h:564), 0 = not reported: the column chain's L1d set
+                   * rule and first radix (est__l1_ways, est_col_lead, estimate_nd_il.h) */
 } est_machine_t;
 
 /* The request: the row's key. The values are the public enums' (include/vfft.h). */
@@ -235,10 +235,14 @@ static inline int est_refuse(char *why, size_t whylen, const char *fmt, ...)
 
 /* ── the machine ────────────────────────────────────────────────────────── */
 
-/* s1 = floor(log2(L1d / 16)): the largest power of two of complexes the L1d holds (11 at 32-63 KiB) */
-static inline int est_s1(const est_machine_t *m) { return est_lg(m->l1d / 16); }
+/* s1 = floor(log2(L1d / 24)): the largest power of two of complexes whose data, 16 bytes each, fills at most two
+ * thirds of the L1d, the rest for the twiddle streams (the planner's own reason for its 2048 ceiling,
+ * dp_planner_il.h:1450-1451): 11 on the 14900KF's 48 KiB, as before; 10 on Zen 4's 32 KiB (L1d / 16 gave 11 there),
+ * where its ZTURN-T rows then agree on the tile at 12 of 18 against 9 */
+static inline int est_s1(const est_machine_t *m) { return est_lg(m->l1d / 24); }
 /* a tile the L1 formula puts off the planner's raced widths is clamped onto them (at an L1d of
- * 32-63 KiB the formula gives 1024 and 2048 and nothing moves); 0 (untiled) stays 0 */
+ * 48-95 KiB the formula gives 1024 and 2048 and nothing moves; at 32 KiB both clamp to 1024); 0 (untiled)
+ * stays 0 */
 static inline int est_ztt_clamp(long long t)
 {
     if (t <= 0) return 0;
@@ -517,13 +521,25 @@ static inline int est_pair_shape_ct(long long N, int *R1, int *R2, int ct)
     return 1;
 }
 static inline int est_pair_shape(long long N, int *R1, int *R2) { return est_pair_shape_ct(N, R1, R2, 1); }
-/* a convolution inner's pair at M: a power of two from 16 to 512 takes mid 4 up to 128, else 16;
+/* the power-of-two pair's mid R1 at N = 16 .. 512 (sketch 5.3): the leaf runs N / R2 = R1 columns, R1 / (lanes / 2)
+ * vectors, and wants two of them: R1 >= VFFT_IL_VW (4 at AVX2, the fitted split; 8 at AVX-512, where Zen 4's planner
+ * takes 8.16 at 128 and the split 4.32 lost 1.17 x), with a leaf of 4 at least; past 128 the balanced 16 */
+static inline int est_pair_mid_pow2(long long N)
+{
+    long long r = VFFT_IL_VW;
+    if (N > 128)
+        return 16;
+    if (r > N / 4)
+        r = N / 4;
+    return r < 4 ? 4 : (int)r;
+}
+/* a convolution inner's pair at M: a power of two from 16 to 512 takes the mid above;
  * any other M the pair above, without the spilling radices */
 static inline int est_inner_pair(long long M, int *R1, int *R2)
 {
     if (est_is_pow2(M) && M >= 16 && M <= 512)
     {
-        *R1 = M <= 128 ? 4 : 16;
+        *R1 = est_pair_mid_pow2(M);
         *R2 = (int)(M / *R1);
         return est_pair_legal(M, *R1, *R2);
     }
@@ -716,17 +732,19 @@ static inline int est_flat_chain(long long N, int *c)
     return k < 2 ? 0 : k;
 }
 /* THE RADER-STAGE CHAIN (the owner's rule, 2026-10-23): a composite N whose one prime factor p above
- * 47 appears once, whose p - 1 has no prime factor above 47, and whose rest N / p is at least 4 runs
- * as a flat chain with the Rader stage p (il_rader_stage.h) at stage 0, or at stage 1 after a lone 2
+ * 47 appears once, whose p - 1 has no prime factor above 47, and whose rest N / p is at least the lanes
+ * runs as a flat chain with the Rader stage p (il_rader_stage.h) at stage 0, or at stage 1 after a lone 2
  * when N = 2 (mod 4); the rest is the flat chain above. Natural class, out of place: a Rader stage
  * serves no scrambled walk (il_rader_stage.h:497), and in place the record banked none. Over the
  * 2,146 composites of the 2026-10-13 race record the planner chose the flat chain exactly where this
- * holds in 2,064. 0 = not this class. */
+ * holds in 2,064. The stage vectorizes along its N / p columns, never along p - 1: it needs two vectors of
+ * them, N / p >= VFFT_IL_VW (4 at AVX2, as fitted; 8 at AVX-512, where the Zen 4 store's 2,157 composite prime
+ * cells agree 88.9 % against 81.6 % at 4, the peak of the scan over the bound). 0 = not this class. */
 static inline int est_rader_flat_chain(long long N, int *c)
 {
     const long long p = est_lpf(N), rest = N / p;
     int r[64], k, i, j = 0;
-    if (p == N || p <= VFFT_POLICY_CHAIN_MAX_PRIME || rest < 4 || rest % p == 0 ||
+    if (p == N || p <= VFFT_POLICY_CHAIN_MAX_PRIME || rest < VFFT_IL_VW || rest % p == 0 ||
         est_lpf(rest) > VFFT_POLICY_CHAIN_MAX_PRIME || est_lpf(p - 1) > VFFT_POLICY_CHAIN_MAX_PRIME)
         return 0;
     k = est_flat_chain(rest, r);
@@ -814,10 +832,14 @@ static inline void est_flat_forms(int K, int scr, char *f, size_t cap)
     est_sb_add(&s, "%s", (!scr && K >= 5) ? "o" : "n");
 }
 /* the tile: untiled while 16 N <= 2 L1d; otherwise the widest block span R_s D_s of a stage s in
- * [1, K-2] that is no tail (D_s > VFFT_ILFD_TAIL_D) with 16 R_s D_s <= L1d (vfft_ilfd_apply_tw,
- * il_flatdit.h:904-916) */
-static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c, int K)
+ * [1, K-2] that is no tail (D_s > VFFT_ILFD_TAIL_D; vfft_ilfd_apply_tw, il_flatdit.h:904-916) whose data fits the
+ * L1d, or on one thread past the L2 (16 N > L2) the L2: a tile then keeps the rest of the chain L2-resident, one pass
+ * over memory per tile. The 14900KF's planner tiles at the stage-1 span N / R0 (16 w = 270 KB - 1.25 MB) at 10 of its
+ * 10 rows past the L2 (151,875 - 390,625, both orders), the L1 span at none. On T threads the tiles are the workers'
+ * pieces and the L1 span stays. */
+static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c, int K, int T)
 {
+    const long long cap = (T <= 1 && 16LL * N > (long long)m->l2) ? (long long)m->l2 : (long long)m->l1d;
     long long best = 0;
     int s;
     if (16LL * N <= 2LL * m->l1d) return 0;
@@ -826,7 +848,7 @@ static inline int est_flat_tw(const est_machine_t *m, long long N, const int *c,
     for (s = 1; s <= K - 2; s++)
     {
         const long long D = est_prod(c + s + 1, K - s - 1), w = c[s] * D;
-        if (D > VFFT_ILFD_TAIL_D && 16LL * w <= m->l1d && w > best) best = w;
+        if (D > VFFT_ILFD_TAIL_D && 16LL * w <= cap && w > best) best = w;
     }
     return (int)best;
 }
@@ -1401,7 +1423,7 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
         if (N < VFFT_POLICY_ZTT_MIN_N || (!scr && N >= 32 && N <= 512))
         {   /* 4b: the pair, mid 4 up to 128, else 16 */
             o->k1_il_route = VFFT_K1_IL_2P_PURE;
-            o->il_R1 = N <= 128 ? 4 : 16;
+            o->il_R1 = est_pair_mid_pow2(N);
             o->il_R2 = (int)(N / o->il_R1);
             if (!est_pair_legal(N, o->il_R1, o->il_R2))
                 return est_refuse(why, whylen, "N = %lld: the pair %d.%d is not legal", N, o->il_R1, o->il_R2);
@@ -1471,7 +1493,7 @@ flat_chain:
     memcpy(o->il_fl, c, sizeof(int) * (size_t)k);
     o->il_fl_n = k;
     est_flat_forms(k, scr, o->il_flf, sizeof o->il_flf);
-    o->il_tw = est_flat_tw(m, N, c, k);
+    o->il_tw = est_flat_tw(m, N, c, k, T);
     o->il_kv = 0;
     if (T > 1 && !est_serial(m, N))   /* TILES at the tile's width when tiled, else BLOCKS */
     {
