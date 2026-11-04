@@ -166,12 +166,6 @@ typedef void (*rfft_hc2c_nat_bwd_fn)(
     double *out_re, double *out_im,
     const double *tw_re, const double *tw_im,
     ptrdiff_t isp, ptrdiff_t ism, ptrdiff_t os, size_t vl);
-typedef void (*rfft_hc2c_nat_bwd_rng_fn)(
-    const double *Rp, const double *Ip, const double *Rm, const double *Im,
-    double *out_re, double *out_im,
-    const double *tw_re, const double *tw_im,
-    ptrdiff_t isp, ptrdiff_t ism, ptrdiff_t os,
-    ptrdiff_t cs_in, ptrdiff_t cs_out, int kcount, size_t vl);
 
 /* radix-indexed codelet registry; 0 entries = radix unavailable */
 typedef struct {

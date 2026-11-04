@@ -73,26 +73,9 @@ real FFT cascade — no pack stage, no separate Hermitian terminator:
   call (fewer call boundaries).
 Forward only; the backward (c2r) cascade is a future phase.
 
-### `trig_registry_avx2.h` / `trig_registry_avx512.h` — real-to-real trig
-Struct `trig_codelets_t`, filled by `trig_register_all_<isa>()`. One uniform
-3-arg ABI `(in, out, K)`; the kind selects the slot, N is the index:
-- **dct1..dct4, dst1..dst4** — the eight DCT/DST variants (Makhoul reduction
-  for DCT-II, Lee 1984 for DCT-IV, odd/even extension for the boundary kinds
-  DCT-I/DST-I). Forward direction only (II/III are an inverse pair, IV/DHT
-  self-inverse up to scaling).
-- **dht** — discrete Hartley transform.
-Sizes N ∈ {8,16,32,64} for the main kinds; boundary kinds run at logical-
-extension sizes (DCT-I at 2^k+1, DST-I at 2^k-1).
-
-### `strided_registry_avx2.h` / `strided_registry_avx512.h` — 2D Design-C
-Struct `strided_codelets_t`, filled by `strided_register_all_<isa>()`. The
-batched 2D row-FFT codelets: matrix → register transpose → butterfly DAG →
-inverse transpose → matrix, with no scratch buffer (doc 56). One uniform 6-arg
-in-place ABI:
-- **n1_fwd / n1_bwd** — single-stage no-twiddle 2D row FFT, forward/backward.
-Single-stage by design. Radix sets differ per ISA (avx2 {4,8,12,16,20,32,64};
-avx512 {8,16,32,64}) — avx2's 16-register file spills past R=256, so the high
-radices are avx512-only; the registry mirrors that (missing slots stay NULL).
+(The trig and strided registries were removed 2026-11-04: the DCT/DST/DHT
+shells dispatch stride plans and two hand kernels, and the strided row pass
+declares its kernels by hand; neither registry had a consumer.)
 
 ## Other files
 
@@ -122,6 +105,4 @@ emitters or `coverage.ml` / `spike_wisdom.txt` change.
 | c2c in-place | `registry_*.h` | wired |
 | c2c out-of-place | `oop_registry_*.h` | wired |
 | r2c forward (rfft) | `rfft_registry_*.h` | wired |
-| trig (dct/dst/dht) | `trig_registry_*.h` | wired |
-| 2D strided (Design C) | `strided_registry_*.h` | wired |
 | c2r (inverse real) | — | future phase (monolithic construction exists; cascade + coverage not yet built) |
