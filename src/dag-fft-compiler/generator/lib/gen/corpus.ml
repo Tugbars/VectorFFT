@@ -3039,20 +3039,23 @@ let quadrants =
   ]
 ;;
 
-(* directory under codelets/ for each quadrant *)
+(* directory under codelets/ for each quadrant. The SPLIT library's families
+   live under codelets/split/<family>/<isa> (2026-11-04: one folder per
+   library, beside zil/ for the IL library); the zil arms are reached only by
+   the uniqueness law, zil files land through zil_folder. *)
 let dir_of_quadrant (q : string) : string =
   match q with
-  | "oop-edges-avx2" -> "oop/avx2"
-  | "oop-edges-avx512" -> "oop/avx512"
-  | "strided-r2c-avx2" -> "strided/avx2"
-  | "strided-r2c-avx512" -> "strided/avx512"
+  | "oop-edges-avx2" -> "split/oop/avx2"
+  | "oop-edges-avx512" -> "split/oop/avx512"
+  | "strided-r2c-avx2" -> "split/strided/avx2"
+  | "strided-r2c-avx512" -> "split/strided/avx512"
   | "zil-boundary" -> "zil/avx2/boundary_split"
   | "zil-pure" -> "zil/avx2/pure_il"
   | "zil-boundary-avx512" -> "zil/avx512/boundary_split"
   | "zil-pure-avx512" -> "zil/avx512/pure_il"
   | _ ->
     (match String.split_on_char '-' q with
-     | [ fam; isa ] -> fam ^ "/" ^ isa
+     | [ fam; isa ] -> "split/" ^ fam ^ "/" ^ isa
      | _ -> failwith ("Corpus.dir_of_quadrant: " ^ q))
 ;;
 

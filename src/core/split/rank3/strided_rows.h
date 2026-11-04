@@ -4,7 +4,7 @@
 #include "common/math/pi.h"
 
 /* ── OPT-IN STRIDED ROW PASS (define VFFT_STRIDED_ROWS) ──────────────────
- * The strided mono n1 codelets (codelets/strided/, "Design C, 2D rows")
+ * The strided mono n1 codelets (codelets/split/strided/, "Design C, 2D rows")
  * load VW CONSECUTIVE rows in their natural contiguous layout, transpose
  * IN REGISTERS, FFT, and store back -- eliminating the through-scratch
  * gather/scatter entirely. Measured at 64^3 rows: 1.72x over

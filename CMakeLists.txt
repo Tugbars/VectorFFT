@@ -2,7 +2,8 @@
 # VectorFFT — the library, the examples and the gauntlet
 #
 #   - VectorFFT::vfft  : the library, ONE static archive (libvfft.a): the dag SIMD
-#     codelets (codelets/<family>/<isa>/*.c, an OBJECT library compiled once) plus
+#     codelets (codelets/split/<family>/<isa>/*.c and codelets/zil/<isa>/<folder>/*.c,
+#     an OBJECT library compiled once) plus
 #     the header-only core (src/core/, bare cross-includes -> recursive -I walk)
 #     compiled through its one .c, src/core/vfft.c. Consumers get include/ only.
 #   - how-to-use/examples/ (VFFT_BUILD_EXAMPLES) and the gauntlet's tools, gauntlet/
@@ -128,7 +129,7 @@ set(DAG_JIT      "${DAG}/jit")
 set(DAG_CODELETS "${DAG}/codelets")
 
 # Resolve VFFT_ISA to a CONCRETE codelet ISA. Codelets are pre-generated per ISA
-# (codelets/*/avx2, codelets/*/avx512) — there is no "auto" tree.
+# (codelets/split/*/avx2, codelets/split/*/avx512, codelets/zil/<isa>) — there is no "auto" tree.
 #   - explicit avx2 / avx512  -> trust the user.
 #   - auto (the default) -> DETECT the host: pick avx512 only if the avx512 codelets
 #     exist AND this CPU actually runs AVX-512. Else avx2.
@@ -166,7 +167,7 @@ int main(void)
         set(VFFT_HOST_AVX512 "no")
     endif()
 endif()
-file(GLOB _a512_probe "${DAG_CODELETS}/inplace/avx512/*.c")
+file(GLOB _a512_probe "${DAG_CODELETS}/split/inplace/avx512/*.c")
 if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
     set(_isa_why "set by VFFT_ISA")
 elseif(VFFT_ISA STREQUAL "auto")
@@ -414,7 +415,7 @@ endmacro()
 
 message(STATUS "codelet families (${VFFT_ISA}):")
 foreach(_fam inplace rfft c2r oop strided il trig)
-    vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/${_fam}/${VFFT_ISA}")
+    vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/split/${_fam}/${VFFT_ISA}")
 endforeach()
 # The zil family sits one level DEEPER (zil/<isa>/<folder>, one folder per engine
 # since 2026-09-24: docs/roadmap/il_codelet_reorg.md), so it never matched the <fam>/<isa> pattern above and was
@@ -437,7 +438,7 @@ endif()
 
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)
 if(_ncodelets EQUAL 0)
-    message(FATAL_ERROR "no codelet .c found under ${DAG_CODELETS}/*/${VFFT_ISA}/")
+    message(FATAL_ERROR "no codelet .c found under ${DAG_CODELETS}/split/*/${VFFT_ISA}/")
 endif()
 message(STATUS "    ----------------------------")
 message(STATUS "    TOTAL                   ${_ncodelets}")

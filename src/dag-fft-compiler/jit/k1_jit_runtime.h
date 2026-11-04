@@ -94,11 +94,11 @@ static inline int _vfft_k1jit_route_srcs(int route, int R1, int R2,
     /* stage 1 */
     switch (route) {
     case 2: /* 2PB: leaf with UL (transposed) stores */
-        snprintf(s1, cap, "codelets/oop/avx2/radix%d_n1_oop_ugul_avx2.c", R2);
+        snprintf(s1, cap, "codelets/split/oop/avx2/radix%d_n1_oop_ugul_avx2.c", R2);
         snprintf(f1, cap, "radix%d_n1_oop_fwd_avx2_UG_UL", R2);
         break;
     case 1: case 3: case 5: /* 2PA family: plain UG leaf */
-        snprintf(s1, cap, "codelets/oop/avx2/radix%d_n1_oop_avx2.c", R2);
+        snprintf(s1, cap, "codelets/split/oop/avx2/radix%d_n1_oop_avx2.c", R2);
         snprintf(f1, cap, "radix%d_n1_oop_fwd_avx2_UG_UG", R2);
         break;
     default:
@@ -107,19 +107,19 @@ static inline int _vfft_k1jit_route_srcs(int route, int R1, int R2,
     /* stage 2 */
     switch (route) {
     case 1: /* 2PA: t1 with UL loads */
-        snprintf(s2, cap, "codelets/oop/avx2/radix%d_t1_oop_ul_avx2.c", R1);
+        snprintf(s2, cap, "codelets/split/oop/avx2/radix%d_t1_oop_ul_avx2.c", R1);
         snprintf(f2, cap, "radix%d_t1_oop_fwd_avx2_UL_UG", R1);
         break;
     case 3: /* TWL: linear-table t1_ul (caller passes Qlr/Qli) */
-        snprintf(s2, cap, "codelets/oop/avx2/radix%d_t1_oop_ul_twl_avx2.c", R1);
+        snprintf(s2, cap, "codelets/split/oop/avx2/radix%d_t1_oop_ul_twl_avx2.c", R1);
         snprintf(f2, cap, "radix%d_t1_oop_fwd_avx2_UL_UG_twl", R1);
         break;
     case 5: /* 2PA_L3: log3 t1_ul */
-        snprintf(s2, cap, "codelets/oop/avx2/radix%d_t1_oop_ul_log3_avx2.c", R1);
+        snprintf(s2, cap, "codelets/split/oop/avx2/radix%d_t1_oop_ul_log3_avx2.c", R1);
         snprintf(f2, cap, "radix%d_t1_oop_fwd_avx2_UL_UG_log3", R1);
         break;
     case 2: /* 2PB: standard flat t1 */
-        snprintf(s2, cap, "codelets/oop/avx2/radix%d_t1_oop_avx2.c", R1);
+        snprintf(s2, cap, "codelets/split/oop/avx2/radix%d_t1_oop_avx2.c", R1);
         snprintf(f2, cap, "radix%d_t1_oop_fwd_avx2_UG_UG", R1);
         break;
     default:

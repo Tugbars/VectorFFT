@@ -14,7 +14,7 @@ way. That is what makes it safe to refactor a compiler whose output nobody
 reads line by line.
 
 ```text
-codelets/     the product — 1,431 emitted .c files (see codelets/README.md)
+codelets/     the product — the emitted .c files: split/<family>/<isa> and zil/<isa>/<folder> (see codelets/README.md)
 generator/    the compiler itself (dune project) — this document is mostly about this
 jit/          runtime codegen: emit_*.py + prelude/runtime headers for JIT plans
 tools/        research harnesses (schedulers, ablations, probes) — not in the build

@@ -32,7 +32,8 @@ HERE = Path(__file__).parent.resolve()
 ROOT = HERE.parent  # repo root: highSpeedFFT/
 
 # ── The trees ─────────────────────────────────────────────────────────
-# The codelets are separately compiled .c files (codelets/inplace/{isa}/*.c)
+# The codelets are separately compiled .c files (codelets/split/<family>/{isa}/*.c
+# for the split library, codelets/zil/{isa}/<folder>/*.c for the IL library)
 # linked in; the generated registry_{isa}.h holds their externs and the init
 # that wires them.
 DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated)
@@ -41,7 +42,7 @@ DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZ
 WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
 ALIGN_TOOL   = ROOT / 'src' / 'tools' / 'build' / 'align_kernel_stacks.py'   # the codelets' 64-byte frames (Windows, gcc)
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
-DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
+DAG_CODELETS = DAG / 'codelets' / 'split' / 'inplace' / DAG_ISA
 # The ISA flags of the codelet library and the drivers, placed after -march=native
 # as CMakeLists.txt places _isa_clamp: avx512 adds CMake's avx512 set (_arch:
 # -mavx512f -mavx512dq; -mfma is in both flag lists already), so an avx512 build
@@ -57,10 +58,10 @@ def dag_codelet_srcs() -> list[str]:
     in sibling dirs; including them here lets r2c/c2r benches link the same lib."""
     dirs = [
         DAG_CODELETS,                          # c2c in-place
-        DAG / 'codelets' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
-        DAG / 'codelets' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
-        DAG / 'codelets' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
-        DAG / 'codelets' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
+        DAG / 'codelets' / 'split' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
+        DAG / 'codelets' / 'split' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
+        DAG / 'codelets' / 'split' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
+        DAG / 'codelets' / 'split' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
         DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
         # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per
         # engine, listed explicitly (globs are non-recursive; a dropped folder must be loud)
@@ -82,7 +83,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat',   # the real flat DIT (il/real/zrf.h): r1c, the real leaf
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'flat' / 'herm',   # its Hermitian last stage: t2csgh, t2csght
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'real' / 'rows',   # the real rows (the 2D real tier's row pass): r2zr
-        DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
+        DAG / 'codelets' / 'split' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
         # the avx512 drivers sit in their own subfolder so an avx2 build never compiles them
         (DAG / 'generator' / 'generated' / 'fused_codelets' / 'avx512' if DAG_ISA == 'avx512'
          else DAG / 'generator' / 'generated' / 'fused_codelets'),  # ZTURN-T FUSED CODELETS: one whole-transform function per pow2 cell with the boundary_split stage kernels inlined — the pow2 solution's executable form ONLY (owner's ruling 2026-09-14, README.md there); one file per (family, N), DERIVED from the corpus cells by a promote rule (ztt_drivers.ml)

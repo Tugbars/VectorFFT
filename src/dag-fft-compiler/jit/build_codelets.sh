@@ -9,7 +9,7 @@ set -e
 GCC="${GCC:-gcc}"
 JIT="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$JIT")"
-SRC="$ROOT/codelets/inplace/avx2"
+SRC="$ROOT/codelets/split/inplace/avx2"
 OUT="$JIT/generated/codelets_linux"
 RSP="$JIT/generated/codelets_linux.rsp"
 mkdir -p "$OUT"

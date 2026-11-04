@@ -364,11 +364,13 @@ session's scratchpad, `scout_results.json`):
 **For Zen 4** (the laptop plugged in, nothing else running, these changes in its tree), from the repository root:
 
 ```
-python benchmark_scripts/estimate_pow2.py --sets 2d,3d
-python benchmark_scripts/estimate_pow2.py --isa avx2 --sets 2d,3d
-python benchmark_scripts/estimate_pow2.py --sets 1d
-python benchmark_scripts/estimate_pow2.py --sets 1d --cells "151875 177147 200013 225225 253125 390625"
+python benchmark_scripts/estimate_pow2.py --sets "2d,3d"
+python benchmark_scripts/estimate_pow2.py --isa avx2 --sets "2d,3d"
+python benchmark_scripts/estimate_pow2.py --sets "1d"
+python benchmark_scripts/estimate_pow2.py --sets "1d" --cells "151875 177147 200013 225225 253125 390625"
 ```
+
+The quotes matter in PowerShell, which reads a bare `2d` as the number 2.
 
 The `# machine:` line should read `L1d 32768 (8-way)`. The first two runs time the set rule, the lead and the
 band at both ISAs. The third covers `est_s1` = 10 and the pair split's middle radix at 8 lanes. The fourth covers
