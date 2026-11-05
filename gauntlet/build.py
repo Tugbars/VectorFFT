@@ -60,6 +60,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG_CODELETS,                          # c2c in-place
         DAG / 'codelets' / 'split' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
         DAG / 'codelets' / 'split' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
+        DAG / 'codelets' / 'split' / 'oop'  / DAG_ISA,   # the odd radices (5/10/20/25 n1 + t1_dif) the split real odd engine links; the classic OOP engine went 2026-11-05
         DAG / 'codelets' / 'split' / 'ztt' / DAG_ISA,   # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels (avx2 only so far)
         DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
         # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per

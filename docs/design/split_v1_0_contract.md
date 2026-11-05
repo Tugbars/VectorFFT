@@ -29,7 +29,8 @@ Everything in the split tree that is the stride engine or stands on it:
 - the engine (`split/engine`: planner, executor, the generated executor table, twiddles), its
   planning (`split/planning`: the DP, exhaustive, measure, padding), the natural-order tapes
   (`split/natorder`), the padded batch (`split/rank1/vfft_batch.h`). The JIT stays (owner,
-  2026-11-05): `src/dag-fft-compiler/jit` and the VFFT_USE_JIT paths are not part of the cut;
+  2026-11-05): `src/dag-fft-compiler/jit` and the VFFT_USE_JIT paths are not part of the cut, nor
+  is `common/move/transpose.h` (a tool for users, kept though no engine includes it);
 - the classic out-of-place kinds and the kind-3 K=1 routes (`split/oop`, the K=1 create's route
   table), the split primes (`split/primes`), the split real engines and routes (`split/real`), the
   trig family (`split/trig`), the current rank-2/3 creates on the stride engine (`split/rank2`,

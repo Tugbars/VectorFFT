@@ -845,122 +845,9 @@ static inline void _r2c_fused_first_stage(
     }
 }
 
-/* ── fused DIF first stage ─────────────────────────────────────────────
- * out = tw (.) DFT(in) via the post-twiddle OOP family
- * (radix{R}_t1_dif_oop_fwd, R in {5,10,20,25}); untwiddled groups via the
- * n1_oop siblings. Direct 11-arg calls (the engine's 7-arg n1 slot is the
- * OTHER family — dual-ABI landmine, documented). kb-blocked broadcast of
- * the per-leg grp_tw scalars, leg 0 untwiddled by construction.
- * Variant-independent: log3-bound plans fuse too (log3 changes tw
- * DERIVATION only; the table rows read here are identical). Returns -1
- * with NOTHING done when the radix is uncovered — the explicit-pack
- * fallback continues. */
-typedef void (*_r2c_oop11_fn)(const double *, const double *, double *,
-                              double *, const double *, const double *,
-                              size_t, size_t, size_t, size_t, size_t);
-#define _R2C_DIFOOP_DECL(R, ISA) \
-    void radix##R##_t1_dif_oop_fwd_##ISA##_UG_UG(const double *, \
-        const double *, double *, double *, const double *, const double *, \
-        size_t, size_t, size_t, size_t, size_t); \
-    void radix##R##_n1_oop_fwd_##ISA##_UG_UG(const double *, const double *, \
-        double *, double *, const double *, const double *, size_t, size_t, \
-        size_t, size_t, size_t);
-_R2C_DIFOOP_DECL(5, avx2) _R2C_DIFOOP_DECL(10, avx2)
-_R2C_DIFOOP_DECL(20, avx2) _R2C_DIFOOP_DECL(25, avx2)
-#if defined(VFFT_BUILD_ISA_AVX512)
-_R2C_DIFOOP_DECL(5, avx512) _R2C_DIFOOP_DECL(10, avx512)
-_R2C_DIFOOP_DECL(20, avx512) _R2C_DIFOOP_DECL(25, avx512)
-#endif
-#undef _R2C_DIFOOP_DECL
-
-static int _r2c_dif_fused_hits;   /* gate hook (same-TU visibility) */
-
-static inline _r2c_oop11_fn _r2c_difoop_t1(int r) {
-#if defined(VFFT_BUILD_ISA_AVX512)
-    switch (r) {
-    case 5:  return radix5_t1_dif_oop_fwd_avx512_UG_UG;
-    case 10: return radix10_t1_dif_oop_fwd_avx512_UG_UG;
-    case 20: return radix20_t1_dif_oop_fwd_avx512_UG_UG;
-    case 25: return radix25_t1_dif_oop_fwd_avx512_UG_UG;
-    }
-#endif
-    switch (r) {
-    case 5:  return radix5_t1_dif_oop_fwd_avx2_UG_UG;
-    case 10: return radix10_t1_dif_oop_fwd_avx2_UG_UG;
-    case 20: return radix20_t1_dif_oop_fwd_avx2_UG_UG;
-    case 25: return radix25_t1_dif_oop_fwd_avx2_UG_UG;
-    default: return 0;
-    }
-}
-static inline _r2c_oop11_fn _r2c_difoop_n1(int r) {
-#if defined(VFFT_BUILD_ISA_AVX512)
-    switch (r) {
-    case 5:  return radix5_n1_oop_fwd_avx512_UG_UG;
-    case 10: return radix10_n1_oop_fwd_avx512_UG_UG;
-    case 20: return radix20_n1_oop_fwd_avx512_UG_UG;
-    case 25: return radix25_n1_oop_fwd_avx512_UG_UG;
-    }
-#endif
-    switch (r) {
-    case 5:  return radix5_n1_oop_fwd_avx2_UG_UG;
-    case 10: return radix10_n1_oop_fwd_avx2_UG_UG;
-    case 20: return radix20_n1_oop_fwd_avx2_UG_UG;
-    case 25: return radix25_n1_oop_fwd_avx2_UG_UG;
-    default: return 0;
-    }
-}
-
-static inline void _r2c_bcast2(double *dr, double *di, size_t n, double vr,
-                               double vi) {
-    for (size_t i = 0; i < n; i++) { dr[i] = vr; di[i] = vi; }
-}
-
-static inline int _r2c_fused_first_stage_dif(
-        const stride_plan_t *inner, double *re,
-        double *sr, double *si, size_t K, size_t B, size_t b0)
-{
-    /* OPT-IN (VFFT_DIF_FUSED=1). Measured mixed: fused wins ~-10% at K=256
-     * and {5,16} inners, loses ~+6..7% at {25,5}/small-K, and there is no
-     * per-plan measured adoption, so the default must not regress anyone. */
-    /* 🔴 Read ONCE per process, not per transform: this runs on the r2c
-     * forward execute path, where a getenv per call would be charged to every
-     * benchmarked transform just to answer "not enabled". */
-    static int _fused_opt = -1;
-    if (_fused_opt < 0) _fused_opt = getenv("VFFT_DIF_FUSED") ? 1 : 0;
-    if (!_fused_opt) return -1;
-    const stride_stage_t *st = &inner->stages[0];
-    _r2c_oop11_fn tf = _r2c_difoop_t1(st->radix);
-    _r2c_oop11_fn nf = _r2c_difoop_n1(st->radix);
-    if (!tf || !nf) return -1;
-    const size_t leg_scr = st->stride;
-    const size_t elem_per_leg = leg_scr / B;
-    const size_t leg_in = elem_per_leg * 2 * K;
-    const int Rm1 = st->radix - 1;
-    double twb_r[24 * VFFT_PROTO_TW_BLOCK_K];
-    double twb_i[24 * VFFT_PROTO_TW_BLOCK_K];
-    for (int g = 0; g < st->num_groups; g++) {
-        const size_t sb = st->group_base[g];
-        const size_t in_off = (sb / B) * 2 * K + b0;
-        if (!st->needs_tw[g]) {
-            nf(re + in_off, re + K + in_off, sr + sb, si + sb, 0, 0,
-               leg_in, 1, leg_scr, 1, B);
-            continue;
-        }
-        for (size_t kb = 0; kb < B; kb += VFFT_PROTO_TW_BLOCK_K) {
-            size_t tK = B - kb;
-            if (tK > VFFT_PROTO_TW_BLOCK_K) tK = VFFT_PROTO_TW_BLOCK_K;
-            for (int j = 0; j < Rm1; j++)
-                _r2c_bcast2(twb_r + (size_t)j * tK, twb_i + (size_t)j * tK,
-                            tK, st->grp_tw_re[g][(size_t)j * inner->K],
-                            st->grp_tw_im[g][(size_t)j * inner->K]);
-            tf(re + in_off + kb, re + K + in_off + kb,
-               sr + sb + kb, si + sb + kb, twb_r, twb_i,
-               leg_in, 1, leg_scr, 1, tK);
-        }
-    }
-    _r2c_dif_fused_hits++;
-    return 0;
-}
+/* the opt-in DIF fused first stage (VFFT_DIF_FUSED, the post-twiddle
+ * out-of-place radix 5/10/20/25 kernels) went with the out-of-place codelet
+ * family, 2026-11-05: measured mixed, never adopted; the explicit pack serves. */
 
 /* Remaining stages use _stride_execute_fwd_slice_from(plan, sr, si, B, B, 1)
  * defined in executor.h — no duplicated executor code needed. */
@@ -1005,14 +892,6 @@ static void _r2c_worker_fwd(void *arg) {
 #ifdef VFFT_R2C_PROFILE
             { double _t1=vfft_now_ns(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
-            if (d->inner_jit_fwd)
-                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
-            else
-                _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
-        } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
-                   && _r2c_fused_first_stage_dif(d->inner, re, sr, si,
-                                                 K, B, b0) == 0) {
-            /* fused DIF entry fired; run stages 1.. */
             if (d->inner_jit_fwd)
                 d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
             else
@@ -1612,16 +1491,6 @@ static void _r2c_worker_fwd_oop(void *arg) {
             } else {
                 _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
             }
-        } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
-                   && _r2c_fused_first_stage_dif(d->inner, in, sr, si,
-                                                 K, B, b0) == 0) {
-            /* fused DIF entry fired; run stages 1.. (the last-stage-fusion
-             * fork mirrors the DIT branch above). */
-            if (d->ls_fwd && !d->zo)
-                _stride_execute_fwd_slice_until(d->inner, sr, si, B, B, 1,
-                                                d->inner->num_stages - 1);
-            else
-                _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
         } else {
             for (int n = 0; n < halfN; n++) {
                 const double *even = in + (size_t)(2 * n) * K + b0;
