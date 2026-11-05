@@ -99,8 +99,10 @@ let oop_base (isa : string) : string list =
    that is THIS item, never silent drift. *)
 (* zturn-ts (2026-11-04): the SPLIT library's ZTURN-T stage kernels, quadrant
    ztt-ISA -> codelets/split/ztt/ISA. Two families x four kinds x radix 4/8 x
-   two directions = 32 cells, plus the odd mids 3/5/7/9/15 (tmg, both
-   families, both directions: 20 cells, the 2^a*odd band's staged form): zts = K=1 (split planes at the edges, the block
+   two directions = 32 cells, plus the odd radices 3/5/7/9/15 at the mids of
+   both families and at the lane-major family's ends (tv0tp, tvlfi: no lane
+   lattice there), both directions: the staged forms of the 2^a*odd band and
+   of the lane-major flat DIT (2026-11-06): zts = K=1 (split planes at the edges, the block
    plane inside), ztv = lane-major K=VW (lane = transform). The fused drivers
    in generated/fused_codelets (zts_drivers_ and ztv_drivers_ files) inline
    these bodies; cascade_z.ml emits both. File radixR_FAM_KIND[_bwd]_ISA.c,
@@ -120,7 +122,7 @@ let zts_cells (isa : string) : (string * string list) list =
                    [ false; true ])
               (* the mids carry no lane lattice: the odd radices of the 2^a*odd band
                  (ztt_odd_design.md) join them, 2026-11-06; the ends stay 4/8 *)
-              (if base = "tmg" then [ 4; 8; 3; 5; 7; 9; 15 ] else [ 4; 8 ]))
+              (if base = "tmg" || (fam = "ztv" && base <> "tlf") then [ 4; 8; 3; 5; 7; 9; 15 ] else [ 4; 8 ]))
          [ "t0tp"; "tmg"; "tlf"; "tlfi" ])
     [ "zts", "ts"; "ztv", "tv" ]
 ;;

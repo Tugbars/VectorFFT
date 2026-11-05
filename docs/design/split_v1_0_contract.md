@@ -10,17 +10,29 @@ of the work it implies. The measurements behind it: docs/research/split_layout_s
 | request under the split layout | v1.0 |
 |---|---|
 | 1D C2C, power-of-two N in zturn-ts's registry, natural order, both placements | served: K = 1; a contiguous batch of any K (serial, or slabs over the pool at T > 1); a lane-major batch of any K that is a multiple of the vector width |
+| 1D C2C at N = 2^a·m, a >= 4, m over 3, 5, 7, 9, 15 (the odd band, 2026-11-06) | served in every form above, staged (one stage kernel call per stage and block; the chain grammar is the race's pool) |
+| a lane-major 1D C2C batch, or a column axis of a plane or volume, at any N that is a product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15 (the lane-major band, 2026-11-06) | served, staged: the lane-major family's kinds carry no lane lattice, so its ends take the odd radices (the split side's lane-major flat DIT) |
+| any other N up to 131072 (a prime, 2·odd, a pure-odd K = 1 or contiguous batch) | served by Bluestein over zturn-ts (`split/rank1/zts_bluestein.h`, 2026-11-06): the convolution on the fused cell at the next power of two, in the request's form (K = 1 / contiguous serial; lane-major with the chirp broadcast over the lanes); no row of its own, the M cell's verdicts inside; not threaded |
 | 2D C2C, both extents in the registry, natural order on both axes, both placements | served: the row pass as a contiguous batch of N1 rows, the column pass as a lane-major batch of N2 lanes (one vector per column, the column twiddles broadcast) |
 | 3D C2C, all extents in the registry, natural order, both placements | served: the plane passes as 2D, the third axis as a lane-major batch of N2 x N3 lanes |
-| any extent outside the registry (odd, prime, 2^a x odd, above the ceiling) | refused at create; the message names the interleaved layout |
+| an extent above 131072, or a shape whose column pass has a lane count (the product of the extents after the first) that is not a multiple of the vector width | refused at create; the message names the interleaved layout |
 | scrambled order | refused at create (beta on the interleaved side; the split engine is natural by construction) |
 | R2C, C2R, DCT, DST, DHT | refused at create: not a split transform in v1.0 |
 | rank 4, padded batches (VFFT_FLAG_OWN_PITCH), the estimate flag | refused at create |
 
 One engine serves the whole table: zturn-ts (split/rank1/zts.h), its two families (the K=1 driver with
-its contiguous twin, the lane-major driver) and its two threaded forms (slabs of whole transforms;
-lane groups over the pool's slots, to be built). One wisdom grammar: the split natural cell rows
-(eng=zts chain= tile=, the threading rows eng=tcb tcmt=) and, for rank 2 and 3, the per-axis cells.
+its contiguous twin, the lane-major driver; the staged executor of both for the cells without a fused
+driver) and its three threaded forms, each a verdict raced at the plan's thread count and banked on the
+cell's threading row (2026-11-06): slabs of whole transforms for a contiguous batch of K >= T; lane
+blocks over the pool's slots for a lane-major batch of two or more blocks; the SECTIONED walk
+(split/rank1/zts_mt.h, ZTURN-T's on the split layout) for one transform, a contiguous batch of K < T
+(every stage's dispatch covering all K transforms with T / K ranges each) and the single-group
+lane-major batch — every stage's units cut into ranges, one fork-join per stage, bitwise the serial
+walk, with its BLOCKS and TILES arms. The row's value names the form with the arm (0 serial, 1 slabs or
+lane blocks, 3 sectioned blocks, 4 sectioned tiles), so a row banked under one form is never read under
+the other. One wisdom grammar: the split natural cell rows (eng=zts chain= tile= blk=, the lane-major
+cells at lay=slm, the threading rows eng=tcb tcmt=) and, for rank 2 and 3, the per-axis cells plus a
+rank-3 plan's own threading row (its middle axis's planes over the slots).
 
 ## What goes
 

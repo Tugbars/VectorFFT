@@ -475,7 +475,12 @@ let emit_codelet
   zu_noperm := k.lanes_u;
   if radix <> 4 && radix <> 8
      && not
-          ((k.base = "msz" || k.base = "mszt" || k.base = "tmg" || k.base = "tmgd")
+          ((k.base = "msz" || k.base = "mszt" || k.base = "tmg" || k.base = "tmgd"
+            (* the LANE-MAJOR family (P_vec) has no lane lattice anywhere: its
+               ingest stores R0 vectors per column through rb[], its terminator
+               loads any leg count — so its ENDS take the odd radices too (the
+               split side's lane-major flat DIT, 2026-11-06) *)
+            || k.plane = P_vec)
            && List.mem radix [ 3; 5; 7; 9; 15 ])
   then
     failwith
@@ -489,8 +494,10 @@ let emit_codelet
   (* the LANE-LATTICE kinds need whole blocks: t0tp writes one R0-run per
      column as R0/VW blocks, tld/tldb read/write R-runs as R/VW blocks. At
      VW=4 every radix in {4,8} qualifies; at VW=8 only 8. The mids and the
-     natural terminator have radix-agnostic edges. *)
-  if (k.base = "t0tp" || k.base = "tld") && radix mod vw <> 0
+     natural terminator have radix-agnostic edges, and so does the whole
+     LANE-MAJOR family (P_vec): its ingest stores R0 vectors per column, no
+     blocks, any radix (2026-11-06). *)
+  if (k.base = "t0tp" || k.base = "tld") && k.plane <> P_vec && radix mod vw <> 0
   then
     failwith
       (Printf.sprintf

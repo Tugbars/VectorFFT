@@ -55,6 +55,8 @@ static void _vfft_create_unlock(void);
 #include "split/rank1/zts.h"                      /* zturn-ts: ZTURN-T's engine on the split layout (2026-11-04); its plan type, before vfft_internal.h */
 #include "split/wisdom/wisdom2_zts_split.h"       /* its cell rows (eng=zts on the split natural cell) */
 #include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
+#include "split/rank1/zts_bluestein.h"            /* Bluestein over zturn-ts: the split lengths outside the bands (2026-11-06) */
+#include "split/rank1/zts_mt.h"                   /* the sectioned walk: one transform over the pool (2026-11-06) */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -2262,7 +2264,7 @@ const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 static const char *_vfft_plan_route(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
-    if (h && h->zts || h->zts_row)
+    if (h && h->zts || h->zts_row || h->zts_blu)
         return "zts"; /* zturn-ts, the split 1D c2c engine (2026-11-04) */
     if (!h || h->layout != (int)VFI_LAYOUT_IL)
         return "-";

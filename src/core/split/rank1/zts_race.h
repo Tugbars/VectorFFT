@@ -100,33 +100,64 @@ static size_t _zts_chain_bytes(const int *chain, int nf)
  * mids at every interior position, the pow2 slots over ordered {4, 8}, the
  * ends in {4, 8}, nf <= 7, (N / R0) % VW == 0 (the port of the interleaved
  * planner's _il_dp_enumerate_ztt_odd) */
-static int _zts_pool_odd(int N, _zts_cand_t *out, int max)
+static int _zts_pool_odd(int N, int lanes, _zts_cand_t *out, int max)
 {
     int mids[VFFT_ZTS_MAX_NF], nm = 0, m = N, i, nf, n = 0;
     long pw;
-    if (!vfft_zts_odd_band(N)) return 0;
+    /* the S family (lanes = 1): the odd band, the odd mids between pow2 ends;
+     * the V family: the lane-major band, the odd radices at every position */
+    const int ends_odd = lanes > 1;
+    const int lo = ends_odd ? 0 : 1;   /* the first position an odd radix may take */
+    if (!(ends_odd ? vfft_zts_v_band(N) : vfft_zts_odd_band(N))) return 0;
     while ((m & 1) == 0) m >>= 1;
     for (i = 0; i < VFFT_ZTS_ODD_MIDS_N; i++)
         while (m % VFFT_ZTS_ODD_MIDS[i] == 0) { mids[nm++] = VFFT_ZTS_ODD_MIDS[i]; m /= VFFT_ZTS_ODD_MIDS[i]; }
+    if (ends_odd && nm == 1 && (N == 9 || N == 15))
+    {   /* a lone 9 or 15 (one stage is no chain): its two-radix chains */
+        const int a0 = 3, b0 = N / 3;
+        memset(&out[0], 0, sizeof out[0]); out[0].chain[0] = a0; out[0].chain[1] = b0; out[0].nf = 2; out[0].bytes = _zts_chain_bytes(out[0].chain, 2);
+        n = 1;
+        if (b0 != a0 && n < max)
+        {
+            memset(&out[1], 0, sizeof out[1]); out[1].chain[0] = b0; out[1].chain[1] = a0; out[1].nf = 2; out[1].bytes = _zts_chain_bytes(out[1].chain, 2);
+            n = 2;
+        }
+        return n;
+    }
     pw = N;
     for (i = 0; i < nm; i++) pw /= mids[i];
-    for (nf = nm + 2; nf <= VFFT_ZTS_MAX_NF && n < max; nf++)
+    for (nf = (ends_odd ? (nm > 2 ? nm : 2) : nm + 2); nf <= VFFT_ZTS_MAX_NF && n < max; nf++)
     {
         const int np = nf - nm;                /* power-of-two slots */
+        const int hi = ends_odd ? nf - 1 : nf - 2;   /* the last position an odd radix may take */
         long mask;
+        if (np < 0 || (np == 0 && pw != 1)) continue;
         for (mask = 0; mask < (1L << np) && n < max; mask++)
         {
             int pchain[VFFT_ZTS_MAX_NF], pos[VFFT_ZTS_MAX_NF];
             long prod = 1;
             for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
             if (prod != pw) continue;
-            for (i = 0; i < nm; i++) pos[i] = i + 1;
+            if (nm == 0)
+            {   /* a pure pow2 chain without a fused driver: nothing to place */
+                if (n < max)
+                {
+                    memset(&out[n], 0, sizeof out[n]);
+                    for (i = 0; i < nf; i++) out[n].chain[i] = pchain[i];
+                    out[n].nf = nf;
+                    out[n].bytes = _zts_chain_bytes(pchain, nf);
+                    n++;
+                }
+                continue;
+            }
+            for (i = 0; i < nm; i++) pos[i] = lo + i;
+            if (lo + nm - 1 > hi) continue;
             for (;;)
             {
                 int chain[VFFT_ZTS_MAX_NF], pi = 0, mi = 0, q, k;
                 for (i = 0; i < nf; i++)
                     chain[i] = (mi < nm && pos[mi] == i) ? mids[mi++] : pchain[pi++];
-                if ((N / chain[0]) % VFFT_ZTS_VW == 0 && chain[0] % VFFT_ZTS_VW == 0 && n < max)
+                if ((ends_odd || ((N / chain[0]) % VFFT_ZTS_VW == 0 && chain[0] % VFFT_ZTS_VW == 0)) && n < max)
                 {
                     memset(&out[n], 0, sizeof out[n]);
                     for (q = 0; q < nf; q++) out[n].chain[q] = chain[q];
@@ -135,7 +166,7 @@ static int _zts_pool_odd(int N, _zts_cand_t *out, int max)
                     n++;
                 }
                 k = nm - 1;
-                while (k >= 0 && pos[k] == nf - 2 - (nm - 1 - k)) k--;
+                while (k >= 0 && pos[k] == hi - (nm - 1 - k)) k--;
                 if (k < 0) break;
                 pos[k]++;
                 for (q = k + 1; q < nm; q++) pos[q] = pos[q - 1] + 1;
@@ -146,7 +177,7 @@ static int _zts_pool_odd(int N, _zts_cand_t *out, int max)
 }
 /* the pool at N: the registry's cells, in registry order; a cell without a
  * fused driver draws its pool from the odd band's grammar */
-static int _zts_pool(int N, _zts_cand_t *out, int max)
+static int _zts_pool(int N, int lanes, _zts_cand_t *out, int max)
 {
     int i, n = 0;
     for (i = 0; i < VFFT_ZTS_NCELLS && n < max; i++)
@@ -159,7 +190,7 @@ static int _zts_pool(int N, _zts_cand_t *out, int max)
         out[n].bytes = _zts_chain_bytes(c->chain, c->nf);
         n++;
     }
-    if (n == 0) n = _zts_pool_odd(N, out, max);
+    if (n == 0) n = _zts_pool_odd(N, lanes, out, max);
     return n;
 }
 
@@ -279,7 +310,7 @@ static vfft_zts_plan_t *vfft_zts_race(int N, int lanes, int inplace,
     double bns = 0.0, ins = 0.0;
     if (win_ns) *win_ns = 0.0;
     if (inc_ns) *inc_ns = 0.0;
-    np = _zts_pool(N, pool, (int)(sizeof pool / sizeof pool[0]));
+    np = _zts_pool(N, lanes, pool, (int)(sizeof pool / sizeof pool[0]));
     if (np <= 0) return NULL;
     for (i = 0; i < np; i++) if (pool[i].bytes > maxb) maxb = pool[i].bytes;
     /* the buffers: the zts arms' planes (+ the out planes out of place), the

@@ -121,6 +121,14 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         _vfft_split_execute(h->zts_col, dir, ore, oim, ore, oim);
         return;
     }
+    if (h->zts_blu && h->transform == VFFT_C2C)
+    { /* Bluestein over zturn-ts (zts_bluestein.h): K = 1, the contiguous batch
+       * (serial), or the lane-major batch; in place when the plan is */
+        double *ore = h->placement == VFFT_INPLACE ? sre : dre;
+        double *oim = h->placement == VFFT_INPLACE ? sim : dim;
+        vfft_zts_blu_execute(h->zts_blu, dir != VFFT_FORWARD, sre, sim, ore, oim, h->zts_blu->lanes > 1 ? 1 : h->K);
+        return;
+    }
     if (!h->zts || h->transform != VFFT_C2C)
     {
         _vfft_warn("vfft_execute: a split plan without its zturn-ts engine — create/execute wiring bug");
@@ -138,7 +146,31 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         double *oim = h->placement == VFFT_INPLACE ? sim : dim;
         const size_t K = h->zts->lanes == 1 ? h->K : 1;
         const int bwd = dir != VFFT_FORWARD;
-        if (K > 1 && h->zts->mt && h->zts->mt_n > 0)
+        if (h->zts->mt && h->zts->lanes == 1 && (K == 1 || (K > 1 && h->zts->mt_sect)))
+        { /* THE SECTIONED WALK (zts_mt.h): one transform's stages over the
+           * pool, or K < T transforms sharing every stage's dispatch; the
+           * verdict (mt = 1 blocks, 2 tiles) raced on the cell at T */
+            int T;
+            _vfft_pool_arm(h->nthreads);
+            T = thread_pool_workers_for(h->nthreads);
+            if (T > 1 && vfft_zts_execute_sect(h->zts, T, bwd, K, sre, sim, ore, oim))
+            {
+                _vfft_tc_mt_dispatch_count += T - 1;
+                return;
+            }
+        }
+        if (h->zts->mt && h->zts->lanes == VFFT_ZTS_VW && h->zts->mt_sect)
+        { /* the lane-major single group, sectioned */
+            int T;
+            _vfft_pool_arm(h->nthreads);
+            T = thread_pool_workers_for(h->nthreads);
+            if (T > 1 && vfft_zts_execute_sect(h->zts, T, bwd, 1, sre, sim, ore, oim))
+            {
+                _vfft_tc_mt_dispatch_count += T - 1;
+                return;
+            }
+        }
+        if (K > 1 && h->zts->mt && h->zts->mt_n > 0 && !h->zts->mt_sect)
         { /* THE THREADED FORM (the verdict h->zts->mt, raced at create on
            * this cell at the plan's thread count, or replayed from its
            * eng=tcb row): the K transforms in slabs of ceil(K/T) over the
@@ -179,7 +211,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
                 return;
             }
         }
-        if (h->zts->lanes > 1 && h->zts->mt && h->zts->mt_n > 0)
+        if (h->zts->lanes > 1 && h->zts->mt && h->zts->mt_n > 0 && !h->zts->mt_sect)
         { /* THE THREADED LANE-MAJOR FORM (the same verdict, raced on the
            * lane-major cell at the plan's thread count): the lane groups in
            * ranges of whole blocks over the pool's slots, slot 0 the caller

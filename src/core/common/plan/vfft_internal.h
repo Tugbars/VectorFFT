@@ -135,6 +135,8 @@ struct vfft_plan_s
      * the cell (split/rank1/zts_race.h). Non-NULL = the whole execute; the
      * stride / classic-OOP fields are then unused. Owned. */
     struct vfft_zts_plan_s *zts;
+    struct vfft_zts_blu_s *zts_blu;   /* Bluestein over zturn-ts (split/rank1/zts_bluestein.h): the
+                                       * lengths the split bands do not reach; the M cell inside */
     /* zturn-ts at rank 2 and 3 (split/rankn/c2c_nd_create_split.h, 2026-11-05):
      * the axes as 1D cell handles — zts_row = the last axis as the contiguous
      * batch (the caller's placement), zts_mid = a 3D plan's middle axis as a

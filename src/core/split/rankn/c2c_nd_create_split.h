@@ -193,13 +193,25 @@ static vfft_plan _vfft_create_c2c_nd_split(const vfft_cfg_t *cfg,
                    pname, rank, shape);
         return NULL;
     }
-    if (!vfft_zts_serves(N1) || !vfft_zts_serves(N2) || (rank == 3 && !vfft_zts_serves(N3)))
-    {
-        _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be a power of two "
-                   "from %d to %d or a length 2^a * m (a >= 4, m over 3, 5, 7, 9, 15) — use "
-                   "VFFT_LAYOUT_INTERLEAVED for this shape",
-                   pname, rank, shape, VFFT_ZTS_MIN_N, VFFT_ZTS_MAX_N);
-        return NULL;
+    /* the last extent runs as rows (the S family: a power of two, or 2^a * odd
+     * with a >= 4); every other extent runs lane-major (the V family: any
+     * product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15) */
+    {   /* every axis a cell of its form: the bands, else Bluestein (any length
+         * up to 131072); the lane-major passes need their lane count (the
+         * product of the extents after the axis) a multiple of the vector width */
+        const int Nl = rank == 3 ? N3 : N2;
+        const size_t lanes1 = rank == 3 ? (size_t)N2 * (size_t)N3 : (size_t)N2;
+        const int ok_rows = vfft_zts_serves(Nl) || vfft_zts_blu_m(Nl);
+        const int ok_col = (vfft_zts_serves_v(N1) || vfft_zts_blu_m(N1)) && lanes1 % VFFT_ZTS_VW == 0;
+        const int ok_mid = rank < 3 || ((vfft_zts_serves_v(N2) || vfft_zts_blu_m(N2)) && (size_t)N3 % VFFT_ZTS_VW == 0);
+        if (!ok_rows || !ok_col || !ok_mid)
+        {
+            _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be at most 131072, "
+                       "and the extents after the first (their product the lane count of the column pass) a "
+                       "multiple of %d — use VFFT_LAYOUT_INTERLEAVED for this shape",
+                       pname, rank, shape, VFFT_ZTS_VW);
+            return NULL;
+        }
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)

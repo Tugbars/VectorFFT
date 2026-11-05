@@ -4,9 +4,11 @@
  * kernels are codelets/split/ztt/<isa> (gen_set quadrant ztt-<isa>): the S
  * family (zts: split planes at the edges, ZTURN-T's block plane inside) and
  * the V family (ztv: lane-major, the blocked edges). The ends are radix 4 or
- * 8 (the ingest's turn lattice, the terminator's lane transposes); the mids
- * are radix-agnostic and exist at 3, 4, 5, 7, 8, 9 and 15. A radix without
- * a kernel resolves to NULL and the create refuses the chain.
+ * 8 in the S family (the ingest's turn lattice, the terminator's lane
+ * transposes); the mids are radix-agnostic and exist at 3, 4, 5, 7, 8, 9 and
+ * 15, and so do the V family's ends (no lattice in the lane-major kinds: the
+ * split side's lane-major flat DIT). A radix without a kernel resolves to
+ * NULL and the create refuses the chain.
  *
  * The exported ABIs (cascade_z.ml, the "ts" wrappers):
  *   S ingest      (in_re, in_im, zout, tw, rb, Ls, Gs, OLs, count)
@@ -57,8 +59,8 @@ typedef void (*vfft_zts_vl_fn)(const double *, const double *, double *, double 
 _ZTS_DECL_S0(4) _ZTS_DECL_S0(8)
 _ZTS_DECL_SL(4) _ZTS_DECL_SL(8)
 _ZTS_DECL_SM(3) _ZTS_DECL_SM(4) _ZTS_DECL_SM(5) _ZTS_DECL_SM(7) _ZTS_DECL_SM(8) _ZTS_DECL_SM(9) _ZTS_DECL_SM(15)
-_ZTS_DECL_V0(4) _ZTS_DECL_V0(8)
-_ZTS_DECL_VL(4) _ZTS_DECL_VL(8)
+_ZTS_DECL_V0(3) _ZTS_DECL_V0(4) _ZTS_DECL_V0(5) _ZTS_DECL_V0(7) _ZTS_DECL_V0(8) _ZTS_DECL_V0(9) _ZTS_DECL_V0(15)
+_ZTS_DECL_VL(3) _ZTS_DECL_VL(4) _ZTS_DECL_VL(5) _ZTS_DECL_VL(7) _ZTS_DECL_VL(8) _ZTS_DECL_VL(9) _ZTS_DECL_VL(15)
 _ZTS_DECL_VM(3) _ZTS_DECL_VM(4) _ZTS_DECL_VM(5) _ZTS_DECL_VM(7) _ZTS_DECL_VM(8) _ZTS_DECL_VM(9) _ZTS_DECL_VM(15)
 
 #define _ZTS_PICK2(R, F, B) case R: return bwd ? B : F;
@@ -86,9 +88,14 @@ static inline vfft_zts_sl_fn _zts_sl_fn(int R, int bwd)
     return NULL;
 }
 static inline vfft_zts_v0_fn _zts_v0_fn(int R, int bwd)
-{
-    switch (R) { _ZTS_PICK2(4, radix4_ztv_t0tp_fwd_avx2, radix4_ztv_t0tp_bwd_avx2)
-                 _ZTS_PICK2(8, radix8_ztv_t0tp_fwd_avx2, radix8_ztv_t0tp_bwd_avx2) }
+{   /* the lane-major ingest has no lane lattice: the odd radices too */
+    switch (R) { _ZTS_PICK2(3, radix3_ztv_t0tp_fwd_avx2, radix3_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(4, radix4_ztv_t0tp_fwd_avx2, radix4_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(5, radix5_ztv_t0tp_fwd_avx2, radix5_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(7, radix7_ztv_t0tp_fwd_avx2, radix7_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(8, radix8_ztv_t0tp_fwd_avx2, radix8_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(9, radix9_ztv_t0tp_fwd_avx2, radix9_ztv_t0tp_bwd_avx2)
+                 _ZTS_PICK2(15, radix15_ztv_t0tp_fwd_avx2, radix15_ztv_t0tp_bwd_avx2) }
     return NULL;
 }
 static inline vfft_zts_vm_fn _zts_vm_fn(int R, int bwd)
@@ -104,8 +111,13 @@ static inline vfft_zts_vm_fn _zts_vm_fn(int R, int bwd)
 }
 static inline vfft_zts_vl_fn _zts_vl_fn(int R, int bwd)
 {
-    switch (R) { _ZTS_PICK2(4, radix4_ztv_tlfi_fwd_avx2, radix4_ztv_tlfi_bwd_avx2)
-                 _ZTS_PICK2(8, radix8_ztv_tlfi_fwd_avx2, radix8_ztv_tlfi_bwd_avx2) }
+    switch (R) { _ZTS_PICK2(3, radix3_ztv_tlfi_fwd_avx2, radix3_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(4, radix4_ztv_tlfi_fwd_avx2, radix4_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(5, radix5_ztv_tlfi_fwd_avx2, radix5_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(7, radix7_ztv_tlfi_fwd_avx2, radix7_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(8, radix8_ztv_tlfi_fwd_avx2, radix8_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(9, radix9_ztv_tlfi_fwd_avx2, radix9_ztv_tlfi_bwd_avx2)
+                 _ZTS_PICK2(15, radix15_ztv_tlfi_fwd_avx2, radix15_ztv_tlfi_bwd_avx2) }
     return NULL;
 }
 #undef _ZTS_PICK2

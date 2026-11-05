@@ -55,7 +55,7 @@ static inline int vw2__tcmt_read(const vw2_store_t *s, const vw2_key_t *k, int *
     if (!eng || strcmp(eng, "tcb")) return 0;
     v = vw2_rec_get(r, "tcmt");
     if (!v) return 0;
-    *tcmt = atoi(v) ? 1 : 0;
+    *tcmt = atoi(v);   /* 0 = serial, 1 = slabs / blocks, 2 = tiles (the sectioned walk) */
     return 1;
 }
 
@@ -81,7 +81,7 @@ static inline int vw2_tcmt_lookup(const vw2_store_t *s, int t, int N,
     if (!eng || strcmp(eng, "tcb")) return 0;
     v = vw2_rec_get(r, "tcmt");
     if (!v) return 0;
-    *tcmt = atoi(v) ? 1 : 0;
+    *tcmt = atoi(v);   /* 0 = serial, 1 = slabs / blocks, 2 = tiles (the sectioned walk) */
     return 1;
 }
 
@@ -110,8 +110,9 @@ static inline int vw2__tcmt_bank_key(vw2_store_t *st, const vw2_key_t *key, size
     int rc;
     memset(&rec, 0, sizeof rec);
     rec.key = *key;
+    snprintf(b, sizeof b, "%d", tcmt);
     if (vw2_rec_set(&rec, 1, "eng", "tcb") != VW2_OK ||
-        vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK)
+        vw2_rec_set(&rec, 1, "tcmt", b) != VW2_OK)
         goto refuse;
     snprintf(b, sizeof b, "%zu", K);
     if (vw2_rec_set(&rec, 2, "ran", b) != VW2_OK) goto refuse;

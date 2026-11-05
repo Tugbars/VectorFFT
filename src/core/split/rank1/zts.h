@@ -117,6 +117,27 @@ static inline int vfft_zts_mid_ok(int R)
 {
     return R == 4 || R == 8 || R == 3 || R == 5 || R == 7 || R == 9 || R == 15;
 }
+/* THE LANE-MAJOR BAND (the split side's lane-major flat DIT, 2026-11-06): the
+ * V family's kinds carry no lane lattice (one vector per element: the ingest
+ * stores R0 vectors per column through rb[], the terminator loads any leg
+ * count), so its ENDS take the odd radices too and a lane-major chain is any
+ * 2..7 radices over {3, 4, 5, 7, 8, 9, 15} with product N: N = 2^a * m, m
+ * smooth over the odd mids (greedy decomposition), the pow2 part in 4s and 8s
+ * (a != 1), nf <= 7; N >= 9. A pure-odd N is served lane-major ONLY (the S
+ * family's ends are the lattice). The chain pool: zts_race.h _zts_pool_odd. */
+static inline int vfft_zts_v_band(int N)
+{
+    int m = N, a = 0, nm = 0, i, np;
+    if (N < 9 || N > VFFT_ZTS_MAX_N) return 0;
+    while ((m & 1) == 0) { m >>= 1; a++; }
+    if (a == 1) return 0;
+    for (i = 0; i < VFFT_ZTS_ODD_MIDS_N; i++)
+        while (m % VFFT_ZTS_ODD_MIDS[i] == 0) { m /= VFFT_ZTS_ODD_MIDS[i]; nm++; }
+    if (m != 1) return 0;
+    np = a == 0 ? 0 : (a + 2) / 3;   /* the fewest pow2 slots: 8s then one 4 */
+    if (nm + np < 2) return N == 9 || N == 15;   /* a lone 9 or 15 runs as 3.3 / 3.5 (the pool splits it) */
+    return nm + np <= VFFT_ZTS_MAX_NF;
+}
 
 typedef struct vfft_zts_plan_s
 {
@@ -152,8 +173,12 @@ typedef struct vfft_zts_plan_s
      * serial loop. mt = the verdict (1 = slabs; raced at create, banked
      * eng=tcb tcmt= at the plan's thread count, split/rank1/c2c_ip_create_split.h
      * _zts_tcmt_decide); mt_n = the worker planes built (0 = no arm). */
-    int mt;
+    int mt;                           /* lanes 1, K > 1: 1 = slabs; K = 1 (and the lane-major
+                                       * single group): 1 = the sectioned walk's BLOCKS arm,
+                                       * 2 = its TILES arm (zts_mt.h) */
     int mt_n;
+    int mt_sect;                      /* 1 = mt names the SECTIONED walk (zts_mt.h), 0 = the
+                                       * slab / lane-block form */
     double *mtplane[VFFT_ZTS_MT_MAX];
     /* THE STAGED FORM (the odd band): no fused driver, the stage kernels
      * resolved at create (zts_stages.h), the executor _zts_staged_s / _v */
@@ -188,11 +213,17 @@ static inline int vfft_zts_fused_at(int N)
         if (vfft_zts_cells[i].n == N) return 1;
     return 0;
 }
-/* 1 = zturn-ts serves N: a fused cell, or the odd band's staged form (the
- * race's admission) */
+/* 1 = zturn-ts serves N in the S family (K = 1, the contiguous batch, the
+ * rows of a plane): a fused cell, or the odd band's staged form */
 static inline int vfft_zts_serves(int N)
 {
     return vfft_zts_fused_at(N) || vfft_zts_odd_band(N);
+}
+/* 1 = the V family serves N (a lane-major batch, the column axes of a plane
+ * or volume): a fused cell, or the lane-major band's staged form */
+static inline int vfft_zts_serves_v(int N)
+{
+    return vfft_zts_fused_at(N) || vfft_zts_v_band(N);
 }
 
 static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
@@ -349,27 +380,34 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     const char *why = NULL;
     memset(&st, 0, sizeof st);
     if (nf < 2 || nf > VFFT_ZTS_MAX_NF) why = "nf outside 2..7";
-    else if (N < 16 || N > VFFT_ZTS_MAX_N) why = "N outside 16..262144";
+    else if (N < (lanes > 1 ? 9 : 16) || N > VFFT_ZTS_MAX_N) why = "N outside 16..262144 (lane-major: 9..)";
     else if (lanes != 1 && (lanes % VFFT_ZTS_VW || lanes > VFFT_ZTS_LANES_MAX))
         why = "lanes is neither 1 nor a multiple of the vector width up to 64";
     for (s = 0; !why && s < nf; s++)
     {
-        if (s == 0 || s == nf - 1)
-        {
+        if ((s == 0 || s == nf - 1) && lanes == 1)
+        {   /* the S family's ends are the lane lattice (the ingest's turn, the
+             * terminator's section transposes): 4 or 8; the V family's ends
+             * carry no lattice and take every radix of the pool */
             if (chain[s] != 4 && chain[s] != 8) why = "an end radix not in {4, 8}";
         }
-        else if (!vfft_zts_mid_ok(chain[s])) why = "a mid radix not in {4, 8, 3, 5, 7, 9, 15}";
+        else if (!vfft_zts_mid_ok(chain[s])) why = "a radix not in {4, 8, 3, 5, 7, 9, 15}";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
-    if (!why && (N / chain[0]) % VFFT_ZTS_VW) why = "(N / R0) % VW != 0";
-    if (!why && chain[0] % VFFT_ZTS_VW) why = "R0 % VW != 0 (the ingest writes whole blocks)";
+    if (!why && lanes == 1 && (N / chain[0]) % VFFT_ZTS_VW) why = "(N / R0) % VW != 0";
+    if (!why && lanes == 1 && chain[0] % VFFT_ZTS_VW) why = "R0 % VW != 0 (the ingest writes whole blocks)";
     cell = why ? NULL : vfft_zts_lookup(N, chain, nf);
     staged = !why && !cell;
     if (!why && staged && (N & (N - 1)) == 0) why = "no fused driver for this pow2 cell (zts_registry)";
-    if (!why && staged && !vfft_zts_odd_band(N)) why = "N outside the odd band (2^a * {3,5,7,9,15}-smooth, a >= 4)";
-    if (!why && staged)
-    {   /* the stage table: every kernel resolved now, none looked up at run time */
+    if (!why && staged && lanes == 1 && !vfft_zts_odd_band(N)) why = "N outside the odd band (2^a * {3,5,7,9,15}-smooth, a >= 4)";
+    if (!why && staged && lanes > 1 && !vfft_zts_v_band(N)) why = "N outside the lane-major band ({3,4,5,7,8,9,15}-smooth)";
+    if (!why)
+    {   /* the stage table: every kernel resolved now, none looked up at run
+         * time — for every plan, the fused cells too: the sectioned walk
+         * (zts_mt.h) runs this table at any cell; a fused cell without a
+         * stage kernel keeps its driver (the table stays NULL) and cannot
+         * section */
         int ok = 1;
         for (s = 0; s < nf; s++)
         {
@@ -387,7 +425,8 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
                 else                  { st.vmf[s] = _zts_vm_fn(R, 0); st.vmb[s] = _zts_vm_fn(R, 1); ok = ok && st.vmf[s] && st.vmb[s]; }
             }
         }
-        if (!ok) why = "no stage kernel for a radix in this chain (zts_stages.h)";
+        if (!ok && staged) why = "no stage kernel for a radix in this chain (zts_stages.h)";
+        if (!ok) memset(&st, 0, sizeof st);   /* a fused cell: no sectioned form */
     }
     if (why)
     {
@@ -403,7 +442,6 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     p->blk = 1;
     p->gp = vfft_zts_group_pitch(N);
     p->staged = staged;
-    if (staged)
     {
         p->s0f = st.s0f; p->s0b = st.s0b; p->slf = st.slf; p->slb = st.slb;
         p->v0f = st.v0f; p->v0b = st.v0b; p->vlf = st.vlf; p->vlb = st.vlb;

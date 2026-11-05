@@ -846,3 +846,6 @@
 @cell t=c2c n=512 q=8 ord=scr place=ip | eng=stride chain=32.16 vars=flat.t1s dif=0 | ran=8 ns=2809.86 metric=fwd1 units=ns src=race date=2026-11-04 bld=0.1.0-620d789a-dirty
 @cell t=c2c n=64 q=1024 ord=scr place=ip | eng=stride chain=4.4.4 vars=flat.t1s.t1s dif=0 | ran=1024 ns=34589.06 metric=fwd1 units=ns src=race date=2026-11-04 bld=0.1.0-620d789a-dirty
 @cell t=c2c n=1024 q=64 ord=scr place=ip | eng=stride chain=8.8.16 vars=flat.t1s.t1s dif=0 | ran=64 ns=44335.94 metric=fwd1 units=ns src=race date=2026-11-04 bld=0.1.0-620d789a-dirty
+@cell t=c2c n=1440 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=chain3 il_pair=90.16 il_chain=16.9.10 il_kv=256 | ran=1 ns=1539.5 metric=fwd1 units=ns src=race date=2026-11-05 bld=0.1.0-5fc0c5a3
+@cell t=c2c n=3360 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=4.15.7.8 il_kv=0 | ran=1 ns=3978.0 metric=fwd1 units=ns src=race date=2026-11-05 bld=0.1.0-5fc0c5a3
+@cell t=c2c n=4093 q=1 ord=scr place=ip role=comp lay=il | eng=k1 il_route=prime il_kv=0 | ran=1 ns=22657.8 metric=fwd1 units=ns src=race date=2026-11-05 bld=0.1.0-5fc0c5a3-dirty
