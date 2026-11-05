@@ -47,9 +47,13 @@ static void _vfft_create_unlock(void);
 #include "split/rank1/zts.h"                      /* zturn-ts: ZTURN-T's engine on the split layout (2026-11-04); its plan type, before vfft_internal.h */
 #include "split/wisdom/wisdom2_zts_split.h"       /* its cell rows (eng=zts on the split natural cell) */
 #include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
+#ifdef VFFT_SPLIT_BLUESTEIN   /* the split Bluestein is OUT OF THE BUILD (owner 2026-11-07: too weak to refine and release unless customers ask); its files stay behind VFFT_SPLIT_BLUESTEIN, which no build defines */
 #include "split/rank1/zts_bluestein.h"            /* Bluestein over zturn-ts: the split lengths outside the bands (2026-11-06) */
+#endif
 #include "split/rank1/zts_mt.h"                   /* the sectioned walk: one transform over the pool (2026-11-06) */
+#ifdef VFFT_SPLIT_BLUESTEIN
 #include "split/rank1/zts_blu_mt.h"             /* Bluestein over zturn-ts: its threaded forms (2026-11-06) */
+#endif
 
 #include "zr2c.h"           /* §D2: interleaved-CCE real folds (zr2c route) */
 #include "fft2d_real_il.h"  /* native IL 2D real tier kernels */
@@ -1832,7 +1836,11 @@ const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 static const char *_vfft_plan_route(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
-    if (h && h->zts || h->zts_row || h->zts_blu)
+    if (h && (h->zts || h->zts_row
+#ifdef VFFT_SPLIT_BLUESTEIN
+              || h->zts_blu
+#endif
+              ))
         return "zts"; /* zturn-ts, the split 1D c2c engine (2026-11-04) */
     if (!h || h->layout != (int)VFI_LAYOUT_IL)
         return "-";

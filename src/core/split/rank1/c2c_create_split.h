@@ -34,7 +34,9 @@
 #include "split/rank1/zts_race.h"
 #include "split/wisdom/wisdom2_zts_split.h"
 #include "common/wisdom/wisdom2_tcmt.h"
+#ifdef VFFT_SPLIT_BLUESTEIN   /* the split Bluestein is OUT OF THE BUILD (owner 2026-11-07: too weak to refine and release unless customers ask); its files stay behind VFFT_SPLIT_BLUESTEIN, which no build defines */
 #include "split/rank1/zts_bluestein.h"
+#endif
 #ifdef VFFT_USE_JIT
 #include "jit/zts_jit_runtime.h"       /* a cell without a fused driver gets one compiled at create */
 #endif
@@ -192,19 +194,24 @@ static size_t _zts_lane_unit(int blk, int grp)
 /* the form onto the handle's engine: zturn-ts, or Bluestein over it */
 static void _zts_tcmt_set(struct vfft_plan_s *h, const _zts_tcmt_form_t *f)
 {
+#ifdef VFFT_SPLIT_BLUESTEIN
     if (h->zts_blu)
-        _zts_blu_set_mt(h->zts_blu, f->mt, f->sect, f->grp, _zts_lane_unit(h->zts_blu->inner->blk, f->grp));
-    else
     {
-        h->zts->mt = f->mt;
-        h->zts->mt_sect = f->sect;
-        h->zts->mt_grp = f->grp;
-        h->zts->mt_unit = _zts_lane_unit(h->zts->blk, f->grp);
+        _zts_blu_set_mt(h->zts_blu, f->mt, f->sect, f->grp, _zts_lane_unit(h->zts_blu->inner->blk, f->grp));
+        return;
     }
+#endif
+    h->zts->mt = f->mt;
+    h->zts->mt_sect = f->sect;
+    h->zts->mt_grp = f->grp;
+    h->zts->mt_unit = _zts_lane_unit(h->zts->blk, f->grp);
 }
 static int _zts_tcmt_mt(const struct vfft_plan_s *h)
 {
-    return h->zts_blu ? h->zts_blu->mt : h->zts->mt;
+#ifdef VFFT_SPLIT_BLUESTEIN
+    if (h->zts_blu) return h->zts_blu->mt;
+#endif
+    return h->zts->mt;
 }
 typedef struct
 {
@@ -435,6 +442,7 @@ static void _zts_tcmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
         return;
     _zts_tcmt_race(h, cfg, W, N, K, ip, pl, lay, forms, nf, lg, "zts");
 }
+#ifdef VFFT_SPLIT_BLUESTEIN   /* the split Bluestein is OUT OF THE BUILD (owner 2026-11-07: too weak to refine and release unless customers ask); its files stay behind VFFT_SPLIT_BLUESTEIN, which no build defines */
 /* ── THE BLUESTEIN CELLS' THREADING RULE (owner 2026-11-06: the split side's
  * threading lives in the split ESTIMATE, Bluestein first — the cells with
  * the evidence; the default create takes the rule too: no race, no threading
@@ -603,6 +611,7 @@ static vfft_plan _vfft_create_c2c_blu_split(const vfft_cfg_t *cfg, struct vfft_w
         fprintf(stderr, "[zts-blu] N=%d K=%zu %s: Bluestein over the M=%d cell\n", N, K, lm ? "lane-major" : "contiguous", M);
     return (vfft_plan)h;
 }
+#endif /* VFFT_SPLIT_BLUESTEIN */
 
 /* the 1D C2C create, split tier: the refusals of the contract, then the
  * cell (the padded batch was retired 2026-11-06: vfft.c refuses the flag) */
@@ -624,12 +633,17 @@ static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
     }
     if (K > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS ? !vfft_zts_serves_v(N) : !vfft_zts_serves(N))
     {
-        /* outside the bands: Bluestein over zturn-ts (zts_bluestein.h), the
-         * M = next-pow2 cell of this form inside; a lane-major K above the
-         * lane bound is refused below like any lane-major request */
-        const int lm = K > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS;
-        if (vfft_zts_blu_m(N) && !(lm && K > (size_t)VFFT_ZTS_LANES_MAX))
-            return _vfft_create_c2c_blu_split(cfg, W, N, K, lm);
+        /* outside the bands: refused (a prime among them). The split Bluestein
+         * that served these lengths (zts_bluestein.h, the M = next-pow2 cell
+         * of the request's form inside) is out of the build, owner
+         * 2026-11-07: VFFT_SPLIT_BLUESTEIN is defined by no build. */
+#ifdef VFFT_SPLIT_BLUESTEIN
+        {
+            const int lm = K > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS;
+            if (vfft_zts_blu_m(N) && !(lm && K > (size_t)VFFT_ZTS_LANES_MAX))
+                return _vfft_create_c2c_blu_split(cfg, W, N, K, lm);
+        }
+#endif
         if (K > 1 && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS)
             _vfft_warn("vfft_create: %s C2C N=%d K=%zu lane-major on the SPLIT layout: the lane-major "
                        "engine serves N a product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15 (the "

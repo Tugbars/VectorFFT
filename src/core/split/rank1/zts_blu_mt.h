@@ -1,3 +1,6 @@
+/* OUT OF THE BUILD (owner 2026-11-07): the split Bluestein is too weak to refine and release unless
+ * customers ask for it. The file stays, compiled only under VFFT_SPLIT_BLUESTEIN, which no build defines;
+ * the lengths it served (a prime among them) are refused at create on the split layout. */
 /* zts_blu_mt.h — the THREADED FORMS of Bluestein over zturn-ts
  * (zts_bluestein.h), 2026-11-06. The owner's law for the convolutions
  * (2026-10-03): they take c2c's threading. Three forms, the zturn-ts forms

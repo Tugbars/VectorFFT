@@ -196,18 +196,28 @@ static vfft_plan _vfft_create_c2c_nd_split(const vfft_cfg_t *cfg,
     /* the last extent runs as rows (the S family: a power of two, or 2^a * odd
      * with a >= 4); every other extent runs lane-major (the V family: any
      * product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15) */
-    {   /* every axis a cell of its form: the bands, else Bluestein (any length
-         * up to 131072); the lane-major passes take any lane count (the
-         * product of the extents after the axis) up to the lane bound; a
-         * count off the vector width runs its tail (2026-11-07) */
+    {   /* every axis a cell of its form, from the bands (the split Bluestein
+         * that served any other length is out of the build: VFFT_SPLIT_BLUESTEIN,
+         * defined by no build, owner 2026-11-07); the lane-major passes take
+         * any lane count (the product of the extents after the axis) up to
+         * the lane bound; a count off the vector width runs its tail (2026-11-07) */
         const int Nl = rank == 3 ? N3 : N2;
         const size_t lanes1 = rank == 3 ? (size_t)N2 * (size_t)N3 : (size_t)N2;
+#ifdef VFFT_SPLIT_BLUESTEIN
         const int ok_rows = vfft_zts_serves(Nl) || vfft_zts_blu_m(Nl);
         const int ok_col = (vfft_zts_serves_v(N1) || vfft_zts_blu_m(N1)) && lanes1 <= (size_t)VFFT_ZTS_LANES_MAX;
         const int ok_mid = rank < 3 || ((vfft_zts_serves_v(N2) || vfft_zts_blu_m(N2)) && (size_t)N3 <= (size_t)VFFT_ZTS_LANES_MAX);
+#else
+        const int ok_rows = vfft_zts_serves(Nl);
+        const int ok_col = vfft_zts_serves_v(N1) && lanes1 <= (size_t)VFFT_ZTS_LANES_MAX;
+        const int ok_mid = rank < 3 || (vfft_zts_serves_v(N2) && (size_t)N3 <= (size_t)VFFT_ZTS_LANES_MAX);
+#endif
         if (!ok_rows || !ok_col || !ok_mid)
-            _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be at most 131072 "
-                       "and the lane count of a column pass at most %d — use VFFT_LAYOUT_INTERLEAVED for this shape",
+        {
+            _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: the last extent must be a power of two "
+                       "from 16 to 131072 or 2^a * m (a >= 4, m over 3, 5, 7, 9, 15), every other extent a product of "
+                       "2 to 7 radices over 3, 4, 5, 7, 8, 9, 15, and the lane count of a column pass at most %d "
+                       "(a prime extent is refused) — use VFFT_LAYOUT_INTERLEAVED for this shape",
                        pname, rank, shape, VFFT_ZTS_LANES_MAX);
             return NULL;
         }

@@ -498,7 +498,9 @@ void vfft_destroy(vfft_plan h)
     vfft_ztt_destroy(h->k1ztt);
     vfft_k1fs_destroy(h->k1fs);
     vfft_zts_destroy(h->zts);       /* zturn-ts (split/rank1/zts.h) */
+#ifdef VFFT_SPLIT_BLUESTEIN
     vfft_zts_blu_destroy(h->zts_blu); /* Bluestein over zturn-ts (zts_bluestein.h) */
+#endif
     if (h->zts_row) vfft_destroy((vfft_plan)h->zts_row); /* the rank-2/3 axes (split/rankn) */
     if (h->zts_mid) vfft_destroy((vfft_plan)h->zts_mid);
     if (h->zts_col) vfft_destroy((vfft_plan)h->zts_col);

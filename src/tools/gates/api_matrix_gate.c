@@ -47,9 +47,10 @@ int main(int argc, char **argv) {
         { "1D c2c OOP IL K=4 CONTIGUOUS",         1, VFFT_C2C, OOP, IL, NAT, 1, 256, 0, 0, 0, 4, TC },
         { "1D c2c OOP IL K=4 LANE_MAJOR",         1, VFFT_C2C, OOP, IL, NAT, 1, 256, 0, 0, 0, 4, LM },
         { "1D c2c IP IL K=4 LANE_MAJOR",          1, VFFT_C2C, IP,  IL, NAT, 1, 256, 0, 0, 0, 4, LM },
-        /* ── 1D C2C: SPLIT — zturn-ts, every N (Bluestein past its bands), both placements, both geometries ── */
-        { "1D c2c IP SPLIT prime 127",            1, VFFT_C2C, IP,  SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
-        { "1D c2c OOP SPLIT prime 127",           1, VFFT_C2C, OOP, SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
+        /* ── 1D C2C: SPLIT — zturn-ts on its bands, both placements, both geometries; a prime is refused
+         * (the split Bluestein is out of the build: VFFT_SPLIT_BLUESTEIN, defined by no build; owner 2026-11-07) ── */
+        { "1D c2c IP SPLIT prime 127",            0, VFFT_C2C, IP,  SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
+        { "1D c2c OOP SPLIT prime 127",           0, VFFT_C2C, OOP, SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
         { "1D c2c OOP SPLIT K=4 CONTIGUOUS",      1, VFFT_C2C, OOP, SP, NAT, 1, 256, 0, 0, 0, 4, TC },
         /* ── 1D real: INTERLEAVED any N in both placements; SPLIT even N; natural only ── */
         { "1D r2c OOP IL prime 101",              1, VFFT_R2C, OOP, IL, NAT, 1, 101, 0, 0, 0, 1, 0 },

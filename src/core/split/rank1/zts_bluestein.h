@@ -1,3 +1,6 @@
+/* OUT OF THE BUILD (owner 2026-11-07): the split Bluestein is too weak to refine and release unless
+ * customers ask for it. The file stays, compiled only under VFFT_SPLIT_BLUESTEIN, which no build defines;
+ * the lengths it served (a prime among them) are refused at create on the split layout. */
 /* zts_bluestein.h — Bluestein over zturn-ts: the split library's engine for
  * every length its bands do not reach (a prime, 2·odd, a pure-odd K = 1,
  * anything up to 131072), built 2026-11-06 (the owner's odd plan, item 4).

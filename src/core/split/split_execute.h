@@ -121,6 +121,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         _vfft_split_execute(h->zts_col, dir, ore, oim, ore, oim);
         return;
     }
+#ifdef VFFT_SPLIT_BLUESTEIN   /* the split Bluestein is OUT OF THE BUILD (owner 2026-11-07: too weak to refine and release unless customers ask); its files stay behind VFFT_SPLIT_BLUESTEIN, which no build defines */
     if (h->zts_blu && h->transform == VFFT_C2C)
     { /* Bluestein over zturn-ts (zts_bluestein.h): K = 1, the contiguous batch
        * or the lane-major batch; in place when the plan is. Its threaded forms
@@ -144,6 +145,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
         vfft_zts_blu_execute(b, dir != VFFT_FORWARD, sre, sim, ore, oim, K);
         return;
     }
+#endif
     if (!h->zts || h->transform != VFFT_C2C)
     {
         _vfft_warn("vfft_execute: a split plan without its zturn-ts engine — create/execute wiring bug");
