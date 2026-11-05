@@ -18,7 +18,9 @@
  * registry's chains and tiles at N (zts_race.h) with NO incumbent — nothing
  * else serves a split cell — and banks the winner. A contiguous batch's
  * threading verdict is its own row (eng=tcb tcmt= at nthreads=T,
- * common/wisdom/wisdom2_tcmt.h), raced at create at the plan's thread count.
+ * common/wisdom/wisdom2_tcmt.h), raced at create at the plan's thread count;
+ * so is the lane-major batch's (lane blocks over the slots), on the lane-major
+ * cell (lay=slm, its own cell beside the contiguous rows at the same q).
  *
  * Depends on common/ and split/ only. POSITION IN vfft.c IS LOAD-BEARING:
  * calls file-scope statics of vfft.c (_vfft_plan_threads, _vw2_persist,
@@ -75,12 +77,17 @@ static vfft_zts_plan_t *_zts_replay(struct vfft_wisdom_s *W, int N, size_t K, in
         vfft_zts_destroy(z);
         z = NULL;
     }
+    if (z && ze.blk > 1 && !vfft_zts_set_blk(z, ze.blk))
+    {
+        vfft_zts_destroy(z);
+        z = NULL;
+    }
     if (z && getenv("VFFT_NAT_LOG"))
     {
         char cs[48];
         vfft_zts_chain_str(z, cs, sizeof cs);
-        fprintf(stderr, "[zts] N=%d q=%zu %s: replay chain %s tile=%zu src=wisdom\n",
-                N, K, place_ip ? "ip" : "oop", cs, z->tile);
+        fprintf(stderr, "[zts] N=%d q=%zu %s: replay chain %s tile=%zu blk=%d src=wisdom\n",
+                N, K, place_ip ? "ip" : "oop", cs, z->tile, z->blk);
     }
     return z;
 }
@@ -99,9 +106,15 @@ static vfft_zts_plan_t *_zts_plan_cell(struct vfft_wisdom_s *W, const vfft_cfg_t
         fprintf(stderr, "[zts] N=%d q=%zu %s: the banked row names a retired engine; racing zturn-ts\n",
                 N, K, place_ip ? "ip" : "oop");
     z = vfft_zts_race(N, lanes, place_ip, NULL, NULL, 0, &wns, &ins);
+    if (z && lanes > 1)
+    {   /* the lane-major cell's block: raced on the winner (zts_race.h) */
+        double bns = 0.0;
+        if (vfft_zts_race_blk(z, place_ip, &bns) > 1 && bns > 0.0)
+            wns = bns;
+    }
     if (z && W)
     {
-        vw2_zts_bank(&W->vw2, N, K, place_ip, z->chain, z->nf, z->tile, wns);
+        vw2_zts_bank(&W->vw2, N, K, place_ip, z->chain, z->nf, z->tile, z->blk, wns);
         _vw2_persist(W, cfg);
     }
     return z;
@@ -145,15 +158,21 @@ static void _zts_tcmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     const int T = h->nthreads;
     const int ip = (h->placement == VFFT_INPLACE);
     const int pl = ip ? VW2_PL_IP : VW2_PL_OOP;
+    const int lm = h->zts->lanes > 1;                       /* the lane-major batch: lane blocks over the slots */
+    const uint8_t lay = lm ? VW2_LAY_SLM : VW2_LAY_SPLIT;   /* its own cell beside the contiguous batch's rows */
     const int lg = getenv("VFFT_TCMT_VERBOSE") || getenv("VFFT_TCMT_LOG");
     const char *pin = getenv("VFFT_TCMT");
+    size_t units;                                           /* the work units a slab holds whole: transforms, or lane blocks */
     int nw;
     h->zts->mt = 0;
     if (T <= 1 || K <= 1 || getenv("VFFT_NO_TCMT"))
         return;
+    units = lm ? ((size_t)h->zts->lanes + (size_t)h->zts->blk * VFFT_ZTS_VW - 1) / ((size_t)h->zts->blk * VFFT_ZTS_VW) : K;
+    if (units <= 1)
+        return; /* one unit: nothing to slice */
     nw = T - 1;
-    if ((size_t)nw > K - 1)
-        nw = (int)(K - 1);
+    if ((size_t)nw > units - 1)
+        nw = (int)(units - 1);
     if (nw > VFFT_ZTS_MT_MAX)
         nw = VFFT_ZTS_MT_MAX;
     if (vfft_zts_mt_planes(h->zts, nw) == 0)
@@ -168,7 +187,7 @@ static void _zts_tcmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     if (W && !cfg->recalibrate)
     {
         int v = 0;
-        if (vw2_tcmt_lookup(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, VW2_LAY_SPLIT, T, &v))
+        if (vw2_tcmt_lookup(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, lay, T, &v))
         {
             h->zts->mt = v;
             if (lg)
@@ -233,7 +252,7 @@ static void _zts_tcmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
         if (!ip) { vfft_aligned_free(ore); vfft_aligned_free(oim); }
         vfft_aligned_free(re0);
         vfft_aligned_free(im0);
-        if (W && vw2_tcmt_bank(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, VW2_LAY_SPLIT,
+        if (W && vw2_tcmt_bank(&W->vw2, VW2_T_C2C, N, K, VW2_ORD_NAT, pl, lay,
                                h->zts->mt, T, h->zts->mt ? mt : st) == VW2_OK)
             _vw2_persist(W, cfg);
     }
@@ -307,7 +326,12 @@ static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
                    pname, N, K);
         return NULL;
     }
-    return (vfft_plan)_zts_handle(cfg, cfg->placement, N, K, z);
+    {
+        struct vfft_plan_s *h = _zts_handle(cfg, cfg->placement, N, K, z);
+        if (h && K > 1)
+            _zts_tcmt_decide(h, cfg, W, N, K); /* the lane-major batch's threading verdict at T > 1 */
+        return (vfft_plan)h;
+    }
 }
 
 #endif /* VFFT_SPLIT_C2C_CREATE_SPLIT_H */

@@ -18,9 +18,14 @@
 
 static __attribute__((always_inline)) inline void _ztvtlfi8b_body(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t count)
+    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t nb, size_t gp, size_t count)
 {
+    const double *const in_re0 = in_re, *const in_im0 = in_im;
+    double *const out_re0 = out_re, *const out_im0 = out_im;
     for (size_t k = 0; k + 1 <= count; k += 1) {
+    for (size_t g = 0; g < nb; g++) {
+        const double *in_re = in_re0 + g * gp, *in_im = in_im0 + g * gp;
+        double *out_re = out_re0 + g * 4, *out_im = out_im0 + g * 4;
         _mm_prefetch((const char *)&out_re[ep*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
         _mm_prefetch((const char *)&out_im[ep*((size_t)0*OLs + k + 8)], _MM_HINT_T0);
         _mm_prefetch((const char *)&out_re[ep*((size_t)1*OLs + k + 8)], _MM_HINT_T0);
@@ -170,14 +175,15 @@ static __attribute__((always_inline)) inline void _ztvtlfi8b_body(
         _mm256_storeu_pd(&out_re[ep*(size_t)k], t128);
         _mm256_storeu_pd(&out_im[ep*(size_t)k], t129);
     }
+    }
 }
 
 __attribute__((target("avx2,fma")))
 void radix8_ztv_tlfi_bwd_avx2(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep)
+    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep, size_t nb, size_t gp)
 {
     (void)rb;
     for (size_t g = 0; g < Gs; g++)
-        _ztvtlfi8b_body(in_re + g * 32 * Ls, in_im + g * 32 * Ls, out_re + g * ep * 8 * OLs, out_im + g * ep * 8 * OLs, tw_re, Ls, OLs, ep, count);
+        _ztvtlfi8b_body(in_re + g * 32 * Ls, in_im + g * 32 * Ls, out_re + g * ep * 8 * OLs, out_im + g * ep * 8 * OLs, tw_re, Ls, OLs, ep, nb, gp, count);
 }

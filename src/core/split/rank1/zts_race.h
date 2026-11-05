@@ -236,8 +236,8 @@ static vfft_zts_plan_t *vfft_zts_race(int N, int lanes, int inplace,
         ore = (double *)vfft_aligned_alloc(n * sizeof(double));
         oim = (double *)vfft_aligned_alloc(n * sizeof(double));
     }
-    scr_a = (double *)vfft_aligned_alloc(vfft_zts_plane_bytes(N, lanes));
-    if (lanes != 1) scr_b = (double *)vfft_aligned_alloc(vfft_zts_plane_bytes(N, lanes));
+    scr_a = (double *)vfft_aligned_alloc(vfft_zts_plane_bytes(N, lanes, 1));
+    if (lanes != 1) scr_b = (double *)vfft_aligned_alloc(vfft_zts_plane_bytes(N, lanes, 1));
     if (!ire || !iim || (!inplace && (!ore || !oim)) || !scr_a || (lanes != 1 && !scr_b))
         goto out;
     memset(&rs, 0, sizeof rs);
@@ -305,6 +305,109 @@ out:
     vfft_aligned_free(scr_a);
     vfft_aligned_free(scr_b);
     return win;
+}
+
+/* ── THE BLOCK RACE of a lane-major plan (2026-11-05): the winner of the
+ * chain race at its tile, run at every legal block of the ladder (1, 2, 4, 8,
+ * 16 lane groups per blocked ingest/terminator pass), same protocol as the
+ * chain race, on the plan's OWN planes (sized for the ladder's top first).
+ * The blocked form pays off where the lane-major plane set exceeds L2 (the
+ * TLB law of the column pass); below it the race keeps blk = 1. Sets the
+ * plan's blk to the winner, returns it (1 when nothing could run); *win_ns
+ * = the winner's aggregate. */
+static const int VFFT_ZTS_BLK_LADDER[] = { 1, 2, 4, 8, 16 };
+#define VFFT_ZTS_BLK_LADDER_N 5
+typedef struct
+{
+    vfft_zts_plan_t *p;
+    int blk;
+    const double *ire, *iim;
+    double *ore, *oim;
+} _zts_blk_arm_t;
+static void _zts_blk_arm_run(void *v)
+{
+    _zts_blk_arm_t *a = (_zts_blk_arm_t *)v;
+    a->p->blk = a->blk;
+    vfft_zts_execute_fwd(a->p, a->ire, a->iim, a->ore, a->oim, 1);
+}
+static int vfft_zts_race_blk(vfft_zts_plan_t *p, int inplace, double *win_ns)
+{
+    const int N = p->N, lanes = p->lanes;
+    const size_t n = (size_t)N * (size_t)lanes;
+    int ladder[VFFT_ZTS_BLK_LADDER_N], nl = 0, i, best = -1, top = 1;
+    double *ire, *iim, *ore = NULL, *oim = NULL;
+    _zts_blk_arm_t ac[VFFT_ZTS_BLK_LADDER_N];
+    vfft_race_arm_t arms[VFFT_ZTS_BLK_LADDER_N];
+    double ns[VFFT_ZTS_BLK_LADDER_N];
+    _zts_reseed_t rs;
+    if (win_ns) *win_ns = 0.0;
+    if (lanes <= 1) return 1;
+    for (i = 0; i < VFFT_ZTS_BLK_LADDER_N; i++)
+        if (vfft_zts_blk_legal(lanes, VFFT_ZTS_BLK_LADDER[i]))
+        {
+            ladder[nl++] = VFFT_ZTS_BLK_LADDER[i];
+            top = VFFT_ZTS_BLK_LADDER[i];
+        }
+    if (nl <= 1) { p->blk = 1; return 1; }
+    if (!vfft_zts_set_blk(p, top)) { p->blk = 1; return 1; }   /* the planes hold the ladder's top */
+    ire = (double *)vfft_aligned_alloc(n * sizeof(double));
+    iim = (double *)vfft_aligned_alloc(n * sizeof(double));
+    if (!inplace)
+    {
+        ore = (double *)vfft_aligned_alloc(n * sizeof(double));
+        oim = (double *)vfft_aligned_alloc(n * sizeof(double));
+    }
+    if (!ire || !iim || (!inplace && (!ore || !oim)))
+    {
+        vfft_aligned_free(ire); vfft_aligned_free(iim); vfft_aligned_free(ore); vfft_aligned_free(oim);
+        p->blk = 1;
+        return 1;
+    }
+    memset(&rs, 0, sizeof rs);
+    rs.n = n;
+    rs.b[rs.nb++] = ire;
+    rs.b[rs.nb++] = iim;
+    for (i = 0; i < nl; i++)
+    {
+        ac[i].p = p;
+        ac[i].blk = ladder[i];
+        ac[i].ire = ire;
+        ac[i].iim = iim;
+        ac[i].ore = inplace ? ire : ore;
+        ac[i].oim = inplace ? iim : oim;
+        arms[i].name = "blk";
+        arms[i].run = _zts_blk_arm_run;
+        arms[i].ctx = &ac[i];
+    }
+    {
+        vfft_race_proto_t proto;
+        memset(&proto, 0, sizeof proto);
+        proto.rounds = VFFT_ZTS_RACE_ROUNDS;
+        proto.reps = _zts_race_reps(N);
+        proto.agg = VFFT_RACE_MEDIAN;
+        proto.alternate = 1;
+        proto.warm = 1;
+        proto.reset = _zts_reseed;
+        proto.reset_ctx = &rs;
+        proto.pace = 1;
+        if (vfft_race_run(&proto, arms, nl, ns) >= 0)
+            for (i = 0; i < nl; i++)
+                if (best < 0 || ns[i] < ns[best]) best = i;
+    }
+    vfft_aligned_free(ire); vfft_aligned_free(iim); vfft_aligned_free(ore); vfft_aligned_free(oim);
+    if (best < 0) { p->blk = 1; return 1; }
+    /* blk = 1 keeps the cell unless a block beats it by the house hysteresis */
+    if (ladder[best] != 1 && !vfft_race_beats(ns[best], ns[0], VFFT_RACE_HYST)) best = 0;
+    p->blk = ladder[best];
+    if (win_ns) *win_ns = ns[best];
+    if (getenv("VFFT_NAT_LOG"))
+    {
+        char line[256];
+        int off = 0;
+        for (i = 0; i < nl; i++) off += snprintf(line + off, sizeof line - (size_t)off, "%s%d:%.0f", i ? " " : "", ladder[i], ns[i]);
+        fprintf(stderr, "[zts-blk] N=%d lanes=%d %s: %s -> blk=%d\n", N, lanes, inplace ? "ip" : "oop", line, p->blk);
+    }
+    return p->blk;
 }
 
 #endif /* VFFT_ZTS_RACE_H */

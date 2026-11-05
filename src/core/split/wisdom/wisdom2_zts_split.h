@@ -4,7 +4,8 @@
  * THE CELL is the split natural row the stride verdicts already use:
  *   @cell t=c2c n=N q=K ord=nat place=ip|oop lay=split
  * and the legend's eng-on-nat rule names the WINNING family on it:
- *   eng=zts chain=8.8.4.4 [tile=1024]   zturn-ts serves (lanes by q: 1 or 4)
+ *   eng=zts chain=8.8.4.4 [tile=1024] [blk=8]   zturn-ts serves (lanes by q: 1, or q
+ *                                       lane-major; blk = its blocked column form)
  *   eng=stride mode=... chain=...       the stride natural engine (its codec,
  *                                       wisdom2_stride_reader.h, reads it)
  *   eng=k1                              the kind-3 split route (q=1 place=oop;
@@ -18,8 +19,9 @@
  * races only an UNBANKED cell (feedback: race only when the banked cell is
  * missing, or under recalibrate).
  *
- * Reads and writes only lay=split rows. The split library's own; the IL
- * library's ZTURN-T rows (lay=il, il_ztt=) are a different cell. */
+ * Reads and writes only lay=split (K = 1) and lay=slm (lane-major) rows. The
+ * split library's own; the IL library's ZTURN-T rows (lay=il, il_ztt=) and its
+ * lane-major rows (lay=lm) are different cells. */
 #ifndef VFFT_WISDOM2_ZTS_SPLIT_H
 #define VFFT_WISDOM2_ZTS_SPLIT_H
 
@@ -40,6 +42,7 @@ typedef struct
     int nf;
     int chain[VFFT_ZTS_MAX_NF];
     size_t tile;
+    int blk;                          /* lane-major rows: the block (blk=); 0/absent = 1 */
     double ns;
 } vfft_zts_entry_t;
 
@@ -52,7 +55,10 @@ static inline void _vw2_zts_key(vw2_key_t *k, int N, size_t K, int place_ip)
     k->q = (int64_t)K;
     k->ord = VW2_ORD_NAT;
     k->pl = place_ip ? VW2_PL_IP : VW2_PL_OOP;
-    k->lay = VW2_LAY_SPLIT;
+    /* the lane-major cell (K > 1 lanes) is its own cell beside the contiguous
+     * batch's rows at the same q (lay=slm, the law of the interleaved lay=lm);
+     * the K = 1 cell, which a contiguous batch runs K times, stays lay=split */
+    k->lay = K > 1 ? VW2_LAY_SLM : VW2_LAY_SPLIT;
 }
 
 /* "8.8.4.4" -> ints in {4, 8}; the count, or 0 when the token is not a chain */
@@ -84,7 +90,7 @@ static inline int vw2_zts_lookup(const vw2_store_t *s, int N, size_t K, int plac
     const char *eng, *ns;
     _vw2_zts_key(&k, N, K, place_ip);
     r = vw2_lookup(s, &k);
-    if (!r || r->key.lay != VW2_LAY_SPLIT) return 0;
+    if (!r || r->key.lay != k.lay) return 0;
     eng = vw2_rec_get(r, "eng");
     if (!eng) return 0;
     memset(e, 0, sizeof *e);
@@ -99,7 +105,9 @@ static inline int vw2_zts_lookup(const vw2_store_t *s, int N, size_t K, int plac
     if (e->nf < 2) return 1;                       /* an undecodable zts row: held, not served */
     {
         const char *t = vw2_rec_get(r, "tile");
+        const char *b = vw2_rec_get(r, "blk");
         e->tile = t ? (size_t)atol(t) : 0;
+        e->blk = b ? atoi(b) : 0;
     }
     e->zts = 1;
     return 1;
@@ -130,9 +138,10 @@ static inline int _vw2_zts_tail(vw2_rec_t *r, size_t ran, double ns)
     return 0;
 }
 
-/* bank the cell as zturn-ts's: the chain, the tile, the measured forward */
+/* bank the cell as zturn-ts's: the chain, the tile, the block (lane-major
+ * rows, blk > 1 only), the measured forward */
 static inline int vw2_zts_bank(vw2_store_t *s, int N, size_t K, int place_ip,
-                               const int *chain, int nf, size_t tile, double ns)
+                               const int *chain, int nf, size_t tile, int blk, double ns)
 {
     vw2_rec_t r;
     char b[64];
@@ -149,6 +158,11 @@ static inline int vw2_zts_bank(vw2_store_t *s, int N, size_t K, int place_ip,
     {
         snprintf(b, sizeof b, "%zu", tile);
         if (vw2_rec_set(&r, 1, "tile", b) != VW2_OK) goto refuse;
+    }
+    if (blk > 1)
+    {
+        snprintf(b, sizeof b, "%d", blk);
+        if (vw2_rec_set(&r, 1, "blk", b) != VW2_OK) goto refuse;
     }
     if (_vw2_zts_tail(&r, K, ns)) goto refuse;
     if (vw2_bank(s, &r) != VW2_OK) goto refuse;

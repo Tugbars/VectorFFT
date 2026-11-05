@@ -18,9 +18,14 @@
 
 static __attribute__((always_inline)) inline void _ztvtlf4f_body(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t count)
+    const double *tw_re, size_t Ls, size_t OLs, size_t ep, size_t nb, size_t gp, size_t count)
 {
+    const double *const in_re0 = in_re, *const in_im0 = in_im;
+    double *const out_re0 = out_re, *const out_im0 = out_im;
     for (size_t k = 0; k + 1 <= count; k += 1) {
+    for (size_t g = 0; g < nb; g++) {
+        const double *in_re = in_re0 + g * gp, *in_im = in_im0 + g * gp;
+        double *out_re = out_re0 + g * 4, *out_im = out_im0 + g * 4;
         /* zturn-ts lane-batched load edge */
         const __m256d lane_re_0 = _mm256_loadu_pd(&in_re[4*(size_t)k]);
         const __m256d lane_im_0 = _mm256_loadu_pd(&in_im[4*(size_t)k]);
@@ -77,14 +82,15 @@ static __attribute__((always_inline)) inline void _ztvtlf4f_body(
         _mm256_storeu_pd(&out_re[ep*(size_t)k], t45);
         _mm256_storeu_pd(&out_im[ep*(size_t)k], t46);
     }
+    }
 }
 
 __attribute__((target("avx2,fma")))
 void radix4_ztv_tlf_fwd_avx2(
     const double *in_re, const double *in_im, double *out_re, double *out_im,
-    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep)
+    const double *tw_re, const size_t *rb, size_t Ls, size_t Gs, size_t OLs, size_t count, size_t ep, size_t nb, size_t gp)
 {
     (void)rb;
     for (size_t g = 0; g < Gs; g++)
-        _ztvtlf4f_body(in_re + g * 16 * Ls, in_im + g * 16 * Ls, out_re + g * ep * 4 * OLs, out_im + g * ep * 4 * OLs, tw_re, Ls, OLs, ep, count);
+        _ztvtlf4f_body(in_re + g * 16 * Ls, in_im + g * 16 * Ls, out_re + g * ep * 4 * OLs, out_im + g * ep * 4 * OLs, tw_re, Ls, OLs, ep, nb, gp, count);
 }

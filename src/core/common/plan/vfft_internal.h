@@ -135,6 +135,15 @@ struct vfft_plan_s
      * the cell (split/rank1/zts_race.h). Non-NULL = the whole execute; the
      * stride / classic-OOP fields are then unused. Owned. */
     struct vfft_zts_plan_s *zts;
+    /* zturn-ts at rank 2 and 3 (split/rankn/c2c_nd_create_split.h, 2026-11-05):
+     * the axes as 1D cell handles — zts_row = the last axis as the contiguous
+     * batch (the caller's placement), zts_mid = a 3D plan's middle axis as a
+     * lane-major pass run per plane, zts_col = the first axis as the
+     * lane-major pass; the later passes in place on the destination */
+    struct vfft_plan_s *zts_row, *zts_mid, *zts_col;
+    int zts_pmt;   /* rank 3 at T > 1: the middle axis's planes over the pool's slots (1), or
+                    * the per-plane pass under the axis cell's own verdict (0); raced at
+                    * create, banked eng=tcb tcmt= on the 3D plan's own row at nthreads=T */
     /* ── 2D PLANE QUEUE (howmany > 1, sequential contiguous planes —
      * the designed 2D batching feature; docs/design/il2d_real_mt.md
      * increment 5/M6). The handle is a thin wrapper: pq_inner is the

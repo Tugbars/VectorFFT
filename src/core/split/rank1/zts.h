@@ -103,7 +103,14 @@ typedef struct vfft_zts_plan_s
     size_t twoff[VFFT_ZTS_MAX_NF];
     size_t *rb;                       /* the run-base table, ncol entries              */
     double *plane;                    /* lanes = 1: the block plane, 2N doubles + slack */
-    double *plane_re, *plane_im;      /* lanes = VW: the two lane-batched planes       */
+    double *plane_re, *plane_im;      /* lanes > 1: the two lane-group plane sets, blk
+                                       * group planes each at pitch gp doubles           */
+    int blk;                          /* lanes > 1: lane groups per BLOCK of the blocked
+                                       * ingest/terminator (one row visit reads blk*VW
+                                       * lanes); 1 = one group at a time. A raced axis
+                                       * of the lane-major cell (blk= on its row).      */
+    size_t gp;                        /* the group plane pitch in doubles (N*VW + a set
+                                       * stagger)                                        */
     int planes_owned;                 /* 0 = the race's shared scratch (never freed here) */
     const vfft_zts_cell_t *cell;      /* the registry row                              */
     size_t tile;
@@ -161,14 +168,18 @@ static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
 
 /* the worker planes of the threaded contiguous form (lanes = 1): n of them,
  * one per pool slot beyond the caller; returns the count built */
+static inline size_t vfft_zts_plane_bytes(int N, int lanes, int blk); /* below */
 static inline int vfft_zts_mt_planes(vfft_zts_plan_t *p, int n)
 {
     int i;
-    if (p->lanes != 1) return 0;
+    /* lanes = 1: a block plane per worker; lane-major: a worker's re and im
+     * plane sets back to back in ONE allocation (vfft_zts_run_lanes splits
+     * it), sized for the plan's block -- set the block before the workers */
+    const size_t bytes = vfft_zts_plane_bytes(p->N, p->lanes, p->blk);
     if (n > VFFT_ZTS_MT_MAX) n = VFFT_ZTS_MT_MAX;
     for (i = p->mt_n; i < n; i++)
     {
-        p->mtplane[i] = (double *)vfft_aligned_alloc((size_t)2 * (size_t)p->N * sizeof(double) + VFFT_ZTS_SLACK);
+        p->mtplane[i] = (double *)vfft_aligned_alloc(p->lanes == 1 ? bytes : 2 * bytes);
         if (!p->mtplane[i]) break;
         p->mt_n = i + 1;
     }
@@ -193,18 +204,27 @@ static inline int vfft_zts_set_tile(vfft_zts_plan_t *p, size_t tile)
     return 1;
 }
 
+/* the group plane pitch (doubles) of a lane-major plan: one lane group of VW
+ * per element, plus a 512-B stagger so the blk planes of a block do not share
+ * their cache sets at equal offsets */
+static inline size_t vfft_zts_group_pitch(int N)
+{
+    return (size_t)N * (size_t)VFFT_ZTS_VW + 64u;
+}
+
 /* the bytes of ONE scratch plane for this lane mode (lanes = 1: the block
- * plane; lane-major: each of the two lane planes holds ONE lane group of VW) */
-static inline size_t vfft_zts_plane_bytes(int N, int lanes)
+ * plane; lane-major: each of the two lane planes holds blk lane groups at
+ * the group pitch) */
+static inline size_t vfft_zts_plane_bytes(int N, int lanes, int blk)
 {
     return lanes == 1 ? (size_t)2 * (size_t)N * sizeof(double) + VFFT_ZTS_SLACK
-                      : (size_t)N * (size_t)VFFT_ZTS_VW * sizeof(double) + VFFT_ZTS_SLACK;
+                      : (size_t)(blk < 1 ? 1 : blk) * vfft_zts_group_pitch(N) * sizeof(double) + VFFT_ZTS_SLACK;
 }
 
 /* own scratch planes for the plan (the create's default; the race's winner) */
 static inline int vfft_zts_own_planes(vfft_zts_plan_t *p)
 {
-    const size_t bytes = vfft_zts_plane_bytes(p->N, p->lanes);
+    const size_t bytes = vfft_zts_plane_bytes(p->N, p->lanes, p->blk);
     p->plane = p->plane_re = p->plane_im = NULL;
     if (p->lanes == 1)
         p->plane = (double *)vfft_aligned_alloc(bytes);
@@ -223,6 +243,29 @@ static inline void vfft_zts_share_planes(vfft_zts_plan_t *p, double *a, double *
     p->planes_owned = 0;
     if (p->lanes == 1) { p->plane = a; p->plane_re = p->plane_im = NULL; }
     else { p->plane = NULL; p->plane_re = a; p->plane_im = b; }
+}
+
+/* the BLOCK of a lane-major plan: blk lane groups per blocked ingest /
+ * terminator pass. Legal when blk >= 1 and blk*VW <= lanes. Owned planes
+ * are re-sized for it; shared planes must already hold blk groups (the
+ * race sizes its scratch for the ladder's top). 1 = ok. */
+static inline int vfft_zts_blk_legal(int lanes, int blk)
+{
+    return lanes > 1 && blk >= 1 && (size_t)blk * (size_t)VFFT_ZTS_VW <= (size_t)lanes;
+}
+static inline int vfft_zts_set_blk(vfft_zts_plan_t *p, int blk)
+{
+    if (!vfft_zts_blk_legal(p->lanes, blk)) return 0;
+    if (p->blk == blk) return 1;
+    p->blk = blk;
+    if (p->planes_owned)
+    {
+        vfft_aligned_free(p->plane_re);
+        vfft_aligned_free(p->plane_im);
+        p->plane_re = p->plane_im = NULL;
+        return vfft_zts_own_planes(p);
+    }
+    return 1;
 }
 
 /* the backward stream (the race builds candidates forward-only) */
@@ -280,6 +323,8 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     p->N = N;
     p->nf = nf;
     p->lanes = lanes;
+    p->blk = 1;
+    p->gp = vfft_zts_group_pitch(N);
     for (s = 0; s < nf; s++) p->chain[s] = chain[s];
     p->cell = cell;
     p->ncol = N / chain[0];
@@ -406,8 +451,25 @@ static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
     else
     {
         double *Wr = _zts_vplane(p->plane_re, 1024u), *Wi = _zts_vplane(p->plane_im, 3072u);
-        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes);
+        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
+                                                (size_t)p->blk, p->gp, 0, (size_t)p->lanes);
     }
+}
+
+/* the lane-major pass over the lane range [g0, g1) (multiples of VW) on a
+ * plane set: the plan's own (pre = plane_re, pim = plane_im) or a worker's
+ * allocation (pre = mtplane[t], pim = NULL: the im set follows the re set) */
+static inline void vfft_zts_run_lanes(const vfft_zts_plan_t *p, int bwd,
+                                      const double *ire, const double *iim, double *ore, double *oim,
+                                      size_t g0, size_t g1, double *pre, double *pim)
+{
+    const double *tw = bwd ? p->twb : p->tw;
+    double *Wr, *Wi;
+    if (!pim) pim = pre + vfft_zts_plane_bytes(p->N, p->lanes, p->blk) / sizeof(double);
+    Wr = _zts_vplane(pre, 1024u);
+    Wi = _zts_vplane(pim, 3072u);
+    (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
+                                            (size_t)p->blk, p->gp, g0, g1);
 }
 
 static inline void vfft_zts_execute_fwd(const vfft_zts_plan_t *p, const double *ire, const double *iim,

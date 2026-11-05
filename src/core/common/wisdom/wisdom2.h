@@ -117,6 +117,9 @@ typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1, VW2_ROLE_METHOD = 2 } vw2_r
  * vw2_key_serves; the pre-1.2 fallback lives in vw2_lookup as a second
  * resolution phase, NOT as a serves wildcard — see vw2_lookup. */
 typedef enum { VW2_LAY_ANY = 0, VW2_LAY_SPLIT = 1, VW2_LAY_IL = 2,
+               VW2_LAY_SLM = 4, /* the SPLIT lane-major batch (q = K lanes, element e of lane t at
+                                * re[e K + t], im likewise): its own cell beside the split
+                                * transform-contiguous q = K rows, the law of lay=lm (2026-11-06) */
                VW2_LAY_LM = 3 /* the interleaved LANE-MAJOR batch (q = K transforms, element e of
                                * transform t at z[2 (e K + t)]): its own cell beside the
                                * transform-contiguous q = K row (docs/roadmap/lane_major_batch_design.md) */
@@ -284,6 +287,7 @@ static const vw2_field_t vw2_fields[] = {
     /* zturn-ts (the split library's ZTURN-T, eng=zts on the split natural
      * cell): chain= above is the verdict; the tile is cache geometry */
     { "tile",    VW2_FC_LOCAL },
+    { "blk",     VW2_FC_LOCAL },   /* zturn-ts: the lane-major cell's blocked column form (2026-11-05) */
     { "t1p",     VW2_FC_STRUCTURAL },
     /* stride family: chain orientation + the blocked-execution triple
      * (emitted only when blocked). */
@@ -630,6 +634,7 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
                 else if (!strcmp(v, "il"))    k->lay = VW2_LAY_IL;
                 else if (!strcmp(v, "lm"))    k->lay = VW2_LAY_LM;
+                else if (!strcmp(v, "slm"))   k->lay = VW2_LAY_SLM;
                 else return 0;  /* future lay values: opaque carry           */
             } else if (!strcmp(tok, "nthreads")) {
                 char *end;
@@ -661,7 +666,8 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
     if (k->role != VW2_ROLE_NONE)
         VW2__CAT(" role=%s", k->role == VW2_ROLE_METHOD ? "method" : "comp");
     if (k->lay != VW2_LAY_ANY)
-        VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : k->lay == VW2_LAY_LM ? "lm" : "il");
+        VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : k->lay == VW2_LAY_LM ? "lm"
+                                                                   : k->lay == VW2_LAY_SLM ? "slm" : "il");
     if (k->nthreads > 1)
         VW2__CAT(" nthreads=%d", (int)k->nthreads);
 #undef VW2__CAT

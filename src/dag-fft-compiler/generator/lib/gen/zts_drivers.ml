@@ -75,7 +75,8 @@ let driver_params = function
      const double *tw, const size_t *rb, size_t tile"
   | V ->
     "const double *in_re, const double *in_im, double *out_re, double *out_im, double *plane_re, \
-     double *plane_im, const double *tw, const size_t *rb, size_t tile, size_t K"
+     double *plane_im, const double *tw, const size_t *rb, size_t tile, size_t K, size_t blk, \
+     size_t gp, size_t g0, size_t g1"
 ;;
 
 (* the cells: every natural-class ZTURN-T cell (R0 % VW == 0: the S ingest
@@ -121,7 +122,7 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
             g.Ztt_drivers.l.(s)
             g.Ztt_drivers.l.(s) )
     | V ->
-      ( "    double *W = plane_re, *Wi = plane_im;   /* the lane-batched scratch planes */\n"
+      ( "    double *W0 = plane_re, *Wi0 = plane_im;   /* the block's lane-group planes: blk of them at pitch gp */\n"
       , (fun s (base, bi) ->
           Printf.sprintf
             "%s(%s, %s, %s, %s, tw + %d, (size_t)%d, (size_t)%d);"
@@ -135,7 +136,7 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
             g.Ztt_drivers.l.(s))
       , fun s ->
           Printf.sprintf
-            "    %s(W, Wi, go_re, go_im, tw + %d, (size_t)%d, (size_t)%d, K, (size_t)%d);\n"
+            "    %s(W0, Wi0, go_re, go_im, tw + %d, (size_t)%d, (size_t)%d, K, nb, gp, (size_t)%d);\n"
             (body "tlfi" r.(s))
             off.(s)
             g.Ztt_drivers.l.(s)
@@ -144,7 +145,7 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
   in
   (* V: the whole pipeline per lane group of VW lanes (the driver's loop);
      the body below is written once and indented one level inside it *)
-  let ind = if fam = V then "    " else "" in
+  let ind = ref (if fam = V then "    " else "") in
   let add s =
     if fam = V
     then (
@@ -152,7 +153,7 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
       let n = List.length parts in
       List.iteri
         (fun i l ->
-           if l <> "" then Buffer.add_string b (ind ^ l);
+           if l <> "" then Buffer.add_string b (!ind ^ l);
            if i < n - 1 then Buffer.add_char b '\n')
         parts)
     else Buffer.add_string b s
@@ -165,11 +166,16 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
   then
     add_raw
       (Printf.sprintf
-         "    /* the lane groups: VW = %d lanes of the K at element pitch K, in and out */\n\
-         \    for (size_t gl = 0; gl < K; gl += %d)\n\
+         "    /* the lane-group BLOCKS: blk groups of VW = %d lanes per block over the lane range\n\
+         \     * [g0, g1) at element pitch K; the ingest and the terminator walk the block's groups\n\
+         \     * per row visit (the blocked edges), the mids run per group on its own plane */\n\
+         \    for (size_t gl = g0; gl < g1; gl += %d * blk)\n\
          \    {\n\
+         \        const size_t nb = ((g1 - gl) / %d < blk) ? (g1 - gl) / %d : blk;\n\
          \        const double *gi_re = in_re + gl, *gi_im = in_im + gl;\n\
          \        double *go_re = out_re + gl, *go_im = out_im + gl;\n"
+         isa.Isa.vec_width
+         isa.Isa.vec_width
          isa.Isa.vec_width
          isa.Isa.vec_width);
   (* ingest: (in, W, rb, Ls = N/R0, [ep,] count = N/R0) *)
@@ -183,10 +189,18 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
          g.Ztt_drivers.ncol
      | V ->
        Printf.sprintf
-         "    %s(gi_re, gi_im, W, Wi, rb, (size_t)%d, K, (size_t)%d);\n"
+         "    %s(gi_re, gi_im, W0, Wi0, rb, (size_t)%d, K, nb, gp, (size_t)%d);\n"
          (body "t0tp" r.(0))
          g.Ztt_drivers.ncol
          g.Ztt_drivers.ncol);
+  (* V: the mids per group of the block, on the group's own plane pair *)
+  if fam = V
+  then (
+    add_raw
+      "        for (size_t gb = 0; gb < nb; gb++)\n\
+      \        {\n\
+      \            double *W = W0 + gb * gp, *Wi = Wi0 + gb * gp;\n";
+    ind := "        ");
   if k >= 3
   then (
     (* IN-TILE: the mids with R*L <= tile, per tile, a prefix of the mids *)
@@ -232,6 +246,10 @@ let emit_driver ~(isa : Isa.t) ~(fam : fam) (n : int) (ch : int list) ~(bwd : bo
               , Printf.sprintf "Wi + g * (size_t)%d" (pitch s) )));
     add "    }\n"
   done;
+  if fam = V
+  then (
+    ind := "    ";
+    add_raw "        }\n");
   let s = k - 1 in
   assert (g.Ztt_drivers.gs.(s) = 1);
   add (last s);
@@ -286,7 +304,7 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(fam : fam) (n : int) : string 
        (match fam with
         | S ->
           "(in_re, in_im, out_re, out_im, plane, tw, rb, tile), + a _batch twin (..., K) for K contiguous transforms"
-        | V -> "(in_re, in_im, out_re, out_im, plane_re, plane_im, tw, rb, tile, K), lane-major K a multiple of VW (the pipeline per lane group of VW)")
+        | V -> "(in_re, in_im, out_re, out_im, plane_re, plane_im, tw, rb, tile, K, blk, gp, g0, g1), lane-major K a multiple of VW: the pipeline per BLOCK of blk lane groups (planes at pitch gp) over the lane range [g0, g1)")
        isa.Isa.name
        uarch.Uarch.name);
   add "#include <immintrin.h>\n#include <stddef.h>\n\n";

@@ -35,6 +35,38 @@ static inline void vw2__tcmt_key(vw2_key_t *k, int t, int N, size_t K,
     k->nthreads = (uint8_t)(T > 1 ? T : 0);
 }
 
+/* the rank-N key: a 2D/3D plan's own threading verdict (the split rank-3
+ * plan's planes-over-slots form, 2026-11-06) */
+static inline void vw2__tcmt_key_nd(vw2_key_t *k, int t, int rank, const int *n, size_t K,
+                                    int ord, int pl, uint8_t lay, int T)
+{
+    int i;
+    vw2__tcmt_key(k, t, n[0], K, ord, pl, lay, T);
+    k->rank = (uint8_t)rank;
+    for (i = 1; i < rank && i < VW2_MAX_DIMS; i++) k->n[i] = n[i];
+}
+
+static inline int vw2__tcmt_read(const vw2_store_t *s, const vw2_key_t *k, int *tcmt)
+{
+    const vw2_rec_t *r = vw2_lookup(s, k);
+    const char *eng, *v;
+    if (!r) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "tcb")) return 0;
+    v = vw2_rec_get(r, "tcmt");
+    if (!v) return 0;
+    *tcmt = atoi(v) ? 1 : 0;
+    return 1;
+}
+
+static inline int vw2_tcmt_lookup_nd(const vw2_store_t *s, int t, int rank, const int *n,
+                                     size_t K, int ord, int pl, uint8_t lay, int T, int *tcmt)
+{
+    vw2_key_t k;
+    vw2__tcmt_key_nd(&k, t, rank, n, K, ord, pl, lay, T);
+    return vw2__tcmt_read(s, &k, tcmt);
+}
+
 static inline int vw2_tcmt_lookup(const vw2_store_t *s, int t, int N,
                                   size_t K, int ord, int pl,
                                   uint8_t lay, int T, int *tcmt)
@@ -54,15 +86,30 @@ static inline int vw2_tcmt_lookup(const vw2_store_t *s, int t, int N,
 }
 
 /* the verdict banked: eng=tcb tcmt= | ran= ns= metric=fwd1 units=ns src=race date= */
+static inline int vw2__tcmt_bank_key(vw2_store_t *st, const vw2_key_t *key, size_t K, int tcmt, double ns);
+static inline int vw2_tcmt_bank_nd(vw2_store_t *st, int t, int rank, const int *n,
+                                   size_t K, int ord, int pl, uint8_t lay,
+                                   int tcmt, int T, double ns)
+{
+    vw2_key_t k;
+    vw2__tcmt_key_nd(&k, t, rank, n, K, ord, pl, lay, T);
+    return vw2__tcmt_bank_key(st, &k, K, tcmt, ns);
+}
 static inline int vw2_tcmt_bank(vw2_store_t *st, int t, int N,
                                 size_t K, int ord, int pl, uint8_t lay,
                                 int tcmt, int T, double ns)
+{
+    vw2_key_t k;
+    vw2__tcmt_key(&k, t, N, K, ord, pl, lay, T);
+    return vw2__tcmt_bank_key(st, &k, K, tcmt, ns);
+}
+static inline int vw2__tcmt_bank_key(vw2_store_t *st, const vw2_key_t *key, size_t K, int tcmt, double ns)
 {
     vw2_rec_t rec;
     char b[32];
     int rc;
     memset(&rec, 0, sizeof rec);
-    vw2__tcmt_key(&rec.key, t, N, K, ord, pl, lay, T);
+    rec.key = *key;
     if (vw2_rec_set(&rec, 1, "eng", "tcb") != VW2_OK ||
         vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK)
         goto refuse;

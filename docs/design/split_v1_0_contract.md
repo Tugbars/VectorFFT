@@ -57,17 +57,22 @@ baked quarter wave.
    K > 1 in the lane-major geometry runs on the split real engines through the bridge (owner
    decision D1, "the one crossing left"). With those engines gone, that request needs an
    interleaved-native engine, or it is refused at create until one exists. **Owner's call, open.**
-3. **2D C2C on zturn-ts**: the row pass as the contiguous batch (one plan at N2, K = N1), the column
-   pass as the lane-major batch (one plan at N1, K = N2; the lane cap lifted from 64, since the
-   group planes do not grow with K), natural order on both axes, both placements; the threaded forms
-   already in the engine (slabs) plus the lane groups over the pool's slots; raced and banked per
-   axis cell. The column pass's edges take a block of lane groups per row visit (B groups into B
+3. **2D C2C on zturn-ts** (built 2026-11-06, `split/rankn/c2c_nd_create_split.h`): the row pass as
+   the contiguous batch (the K = 1 cell at N2 run N1 times, in slabs over the pool under the batch's
+   threading verdict), the column pass as the lane-major batch (the cell at N1 with N2 lanes, in
+   place where the rows landed; its lane blocks over the pool's slots under its own verdict), natural
+   order on both axes, both placements; raced and banked per axis cell, no rank-2 row of its own. The
+   lane-major cells are keyed `lay=slm` (the law of the interleaved `lay=lm`): their threading row
+   would otherwise collide with the contiguous batch's at the same q. The column pass's edges take a block of lane groups per row visit (B groups into B
    group planes resident in L2; B a raced axis of the cell, 1 where the plane fits L2): the pass
    that walks every row once per group thrashes the second-level TLB from 512x512 up, and the
    blocked form, emulated on 2026-11-05, is worth 1.4x at 512x512, 1.5x at 1024x1024 and 2.1x at
    2048x2048 on the whole transform, ahead of the stride engine at every cell and at best parity
    with the interleaved tier at the big ones (two sweeps of the plane is the floor there).
-4. **3D C2C** the same way: planes, then the third axis as a lane-major batch of N2 x N3 lanes.
+4. **3D C2C** the same way (built 2026-11-06): the rows as the contiguous batch of N1 x N2, the middle
+   axis as the lane-major cell at N2 with N3 lanes run per plane (at T > 1 the planes over the pool's
+   slots, the 3D plan's one verdict of its own, banked on its rank-3 row), the first axis as the
+   lane-major cell at N1 with N2 x N3 lanes.
 5. **The cut**, one subsystem per commit, each with the front door's refusals, the docs
    (vfft_front_door.md, the user guide, the performance pages), the gates, the benches and the store
    updated in the same commit, and the build (CMake, build.py) dropping the families as they go.

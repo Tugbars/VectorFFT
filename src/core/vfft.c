@@ -2262,7 +2262,7 @@ const char *vfft_isa(void) { return VFFT_ISA_NAME; }
 static const char *_vfft_plan_route(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
-    if (h && h->zts)
+    if (h && h->zts || h->zts_row)
         return "zts"; /* zturn-ts, the split 1D c2c engine (2026-11-04) */
     if (!h || h->layout != (int)VFI_LAYOUT_IL)
         return "-";

@@ -741,7 +741,27 @@ let emit_codelet
       | None -> isa
     in
     let vw = isa.Isa.vec_width in
+    (* zturn-ts BLOCKED lane-major edges (2026-11-05): a kind whose caller edge is
+       E_vplanes_ep walks nb lane groups per column -- the caller's planes at
+       g*VW, the group planes at g*gp -- so one row visit reads or writes
+       nb*VW lanes (the TLB law of the lane-major column pass: one vector per
+       row visit at a plane-wide pitch thrashes the second-level TLB) *)
+    let blocked_in = (match k.in_edge with E_vplanes_ep _ -> true | _ -> false)
+    and blocked_out = (match k.out_edge with E_vplanes_ep _ -> true | _ -> false) in
+    let blocked = blocked_in || blocked_out in
     Buffer.add_string buf open_line;
+    if blocked
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    for (size_t g = 0; g < nb; g++) {\n\
+           \        const double *in_re = in_re0 + g * %s, *in_im = in_im0 + g * %s;\n\
+           \        double *out_re = out_re0 + g * %s, *out_im = out_im0 + g * %s;\n"
+           (if blocked_in then string_of_int wide_vw else "gp")
+           (if blocked_in then string_of_int wide_vw else "gp")
+           (if blocked_out then string_of_int wide_vw else "gp")
+           (if blocked_out then string_of_int wide_vw else "gp"));
     (* tlfi: R output-stream prefetches per column quad, prefetch_out quads
        ahead (in the WIDE loop's columns: wide_vw * prefetch_out) *)
     if k.prefetch_out > 0
@@ -1310,6 +1330,7 @@ let emit_codelet
     (* trailing store edge = the unit table in order (what store-on-compute left) *)
     if not soc then Buffer.add_string buf store_hdr;
     Array.iteri (fun u s -> if not unit_done.(u) then Buffer.add_string buf s) store_units;
+    if blocked then Buffer.add_string buf "    }\n";
     Buffer.add_string buf "    }\n"
   in
   (* ── the shared 11-arg z ABI signature + computed (void) list ── *)
@@ -1659,7 +1680,7 @@ let emit_codelet
            ts_out
            (if k.base = "t0tp" then "const size_t *rb" else "const double *tw_re")
            (if uses "OLs" then "size_t OLs, " else "")
-           (if has_ep then "size_t ep, " else ""))
+           (if has_ep then "size_t ep, size_t nb, size_t gp, " else ""))
     else
     Buffer.add_string
       buf
@@ -1684,6 +1705,14 @@ let emit_codelet
     (* a twiddle-free group-looped body (tld/tldb) keeps the shared body
        signature; silence its unused stream pointer *)
     if (not k.twiddled) && not (ts && k.base = "t0tp") then Buffer.add_string buf "    (void)tw_re;\n";
+    (* the blocked edges: the group loop in the column loop shadows the four
+       pointers from these bases (cascade_z.ml emit_col_loop) *)
+    if has_ep
+    then
+      Buffer.add_string
+        buf
+        "    const double *const in_re0 = in_re, *const in_im0 = in_im;\n\
+        \    double *const out_re0 = out_re, *const out_im0 = out_im;\n";
     (let ordered = function E_z _ -> not k.lanes_u | _ -> false in
      let blocks = function E_blocks -> true | _ -> false in
      Buffer.add_string
@@ -1767,7 +1796,7 @@ let emit_codelet
            fname
            ts_in
            ts_out
-           (if has_ep then ", size_t ep" else ""));
+           (if has_ep then ", size_t ep, size_t nb, size_t gp" else ""));
       if k.base = "t0tp"
       then
         Buffer.add_string
@@ -1777,7 +1806,7 @@ let emit_codelet
              body_name
              in_ptrs
              out_ptrs
-             (if has_ep then "ep, " else ""))
+             (if has_ep then "ep, nb, gp, " else ""))
       else if k.base = "tlf" || k.base = "tlfi"
       then
         Buffer.add_string
@@ -1790,7 +1819,7 @@ let emit_codelet
              body_name
              in_adv
              out_adv
-             (if has_ep then "ep, " else ""))
+             (if has_ep then "ep, nb, gp, " else ""))
       else
         (* the in-place mids: the group pitch on Ls for both sides *)
         Buffer.add_string

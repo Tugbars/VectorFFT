@@ -503,6 +503,9 @@ void vfft_destroy(vfft_plan h)
     vfft_ztt_destroy(h->k1ztt);
     vfft_k1fs_destroy(h->k1fs);
     vfft_zts_destroy(h->zts);       /* zturn-ts (split/rank1/zts.h) */
+    if (h->zts_row) vfft_destroy((vfft_plan)h->zts_row); /* the rank-2/3 axes (split/rankn) */
+    if (h->zts_mid) vfft_destroy((vfft_plan)h->zts_mid);
+    if (h->zts_col) vfft_destroy((vfft_plan)h->zts_col);
     _zr2c_kid_destroy(h->zr2c_kid); /* the zr2c child: its engines (il/real/zr2c_build.h) */
     vfft_zrp_destroy(h->zrp);       /* the real pair (il/real/zrp.h) */
     vfft_zttr_destroy(h->zttr);     /* ZTT-r (il/real/zttr.h) */
