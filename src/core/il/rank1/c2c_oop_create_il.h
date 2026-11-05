@@ -386,7 +386,6 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
             hk->K = 1;
             hk->nthreads = _vfft_plan_threads(cfg);
             hk->k1_on = 1;
-            hk->k1_sp_route = -1;   /* an IL handle has no split route */
             hk->k1_il_route = ilr;
             /* PURE-IL pair route, both directions (created and
              * route-normalized above; non-NULL iff ilr==2P_PURE). */

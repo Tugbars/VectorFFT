@@ -414,7 +414,7 @@ macro(vfft_add_codelet_dir _label _dir)
 endmacro()
 
 message(STATUS "codelet families (${VFFT_ISA}):")
-foreach(_fam inplace rfft c2r oop strided ztt il)
+foreach(_fam inplace rfft c2r ztt il)
     vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/split/${_fam}/${VFFT_ISA}")
 endforeach()
 # The zil family sits one level DEEPER (zil/<isa>/<folder>, one folder per engine

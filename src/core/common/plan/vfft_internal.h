@@ -62,16 +62,6 @@ struct vfft_wisdom_s
                                * the aligned (N,Kp) entries pad reuses — no separate padded file. */
     vfft_oop_wisdom_t oop;    /* OOP 2-axis format   */
     vfft_proto_wisdom_t rfft; /* r2c rfft-path factorization+variant   */
-    /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
-     * entry per (N1,N2), two sub-plans each. r2c and c2r have separate tables
-     * (different optima, same bidirectional plan structure). */
-    vfft_fft2d_c2c_wisdom_t fft2d_c2c;
-    vfft_fft2d_r2c_wisdom_t fft2d_r2c;
-    vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
-    vfft_fft3d_wisdom_t fft3d_c2c;     /* dedicated 3D table (B + a_block + 3 axis chains) */
-    char path_bluestein[640];          /* the STORE's bluestein_wisdom.txt: where a calibrated cell is saved */
-    char path_bluestein_seed[640];     /* the frozen bundle's bluestein_wisdom.txt: read once, never written */
-    bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
     /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
      * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
      * for the non-bakeoff (MEASURE / high-K) dispatch; high rigor measures instead. */
@@ -127,7 +117,6 @@ struct vfft_plan_s
                              * allocates nothing), freed with the plan */
     size_t alias_doubles;
     stride_plan_t *cplan;   /* c2c in-place (owned)      */
-    vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
      * is the plan's COMMITTED layout (h->layout, stamped at create — the old
@@ -137,8 +126,7 @@ struct vfft_plan_s
      * Split bwd = pointer-swap identity. Kill-switch: env VFFT_NO_K1 at
      * create. */
     int k1_on;
-    int k1_sp_route, k1_il_route;
-    vfft_oop_plan_t *k1sp;
+    int k1_il_route;
     /* zturn-ts (split/rank1/zts.h, 2026-11-04): the SPLIT 1D c2c natural
      * engine for the cells its registry serves — K=1 (both placements), a
      * contiguous batch of K (the plan's lanes = 1, run K times), the
@@ -289,7 +277,7 @@ struct vfft_plan_s
      * property of (transform, placement), computed once at create and stored
      * -- never re-derived at execute, and never assumed equal. */
     size_t tcb_sn, tcb_dn;
-    vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
+    vfft_oop11_fn k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
      * time with the cell's exact geometry as literal constants. NULL = the
@@ -357,11 +345,8 @@ struct vfft_plan_s
      * banked on the cell's q=K row (eng=zrbl m= chain= forms= wc=).
      * zrbl != NULL selects it. */
     struct vfft_zrbl_s *zrbl;       /* the lane Bluestein's plan (owned)   */
-    stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     struct vfft_ilndr_s *ilndr; /* the rank-3 INTERLEAVED REAL tier (fftnd_real_il.h, 2026-10-07), owned */
-    vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
-    vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
     /* config.owned_buffers: the planes THIS plan allocated and will free.
      * NULL when the caller brings their own buffers (the drop-in default). */
     struct vfft_batch_s *own_batch;
@@ -636,34 +621,6 @@ struct vfft_plan_s
                           * plane it still reads (block b's natural
                           * targets can be block b' > b's unread comb
                           * rows — the clobber the first cut shipped) */
-    /* 1 = the c2c in-place plan's codelet IGNORES the partial-lane count `me` (processes the full baked K),
-     * so a _c2c_mt K-split slab would overrun adjacent lanes -> wrong output. Detected once at create by a
-     * whole-vs-split self-check; when set, the FFT runs WHOLE-BATCH under MT (the reorder pass still threads).
-     * Root cause: radix-8 LOG3 last-stage codelet. See memory mt_c2c_16x8_wrong_output. */
-    int mt_unsafe;
-    /* VFFT_ORDER_NATURAL (in-place 1D c2c only): the per-cell verdict + its execute tape.
-     * nat_mode==0 (UNSET) means order=DEFAULT — the scrambled path, byte-identical to
-     * pre-natural builds (kill switch). P1a wires FREE + PURE_CYCLE; SCR/PSWAP/LEAF-IP in
-     * P1b. nat_list = flattened cycle tape (natorder_perm.h), nat_tmp = 2*K doubles.
-     * natural_order_inplace_design.md §2e. */
-    int nat_mode;
-    int *nat_list;           /* PURE/SCR: flattened cycle list; PSWAP: flat pair list        */
-    double *nat_tmp;         /* nthreads*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K); sized AND indexed by h->nthreads, never the live pool */
-    int nat_ncyc;            /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
-    int *nat_cyc_off;        /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
-    natorder_scr_t *nat_scr; /* SCR: scatter terminator (forward); backward reuses cycle tape */
-    /* VFFT_ORDER_NATURAL for 2D c2c: per-axis digit-reversal reorder tapes. dim1 = whole matrix
-     * rows (plan_col chain, N1 pts, K=N2 contiguous doubles/row); dim2 = within-row (plan_row chain,
-     * N2 pts, K=1). Orthogonal axes => commute. nat2d==0 = scrambled (kill switch). First cut is
-     * single-threaded PURE cycles; a NULL axis list = FREE (already natural). */
-    int nat2d;
-    int *nat2d_row_list;    /* dim1 (N1) reorder tape; NULL = FREE axis (see nat2d_row_is_pairs) */
-    int nat2d_row_is_pairs; /* 1 = row tape is an involution PAIR list (pair_pass, no dep chain, fast);
-                             * 0 = cycle list (cycle_pass). PSWAP when the column chain is palindromic. */
-    int *nat2d_col_list;    /* dim2 (N2) cycle tape (fft2d scratch pass); NULL = FREE axis */
-    double *nat2d_tmp;      /* nthreads slots of 2*N2 doubles: per-worker dim1 cycle scratch (MT); sized AND indexed by h->nthreads, never the live pool */
-    int nat2d_ncyc;         /* dim1 unit count: cycles (cycle tape) or pairs (pair tape) — MT split */
-    int *nat2d_cyc_off;     /* dim1 cycle start offsets (ncyc+1); NULL for a pair tape */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded

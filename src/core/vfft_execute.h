@@ -69,24 +69,6 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
 {
     const int il = (h->layout == (int)VFI_LAYOUT_IL);
     const char *tn = _vfft_tname(h->transform);
-    if (_VFFT_IS_TRIG(h->transform))
-    {
-        if (!sre || !dre)
-        {
-            _vfft_warn("vfft_execute: %s needs in=real_in and out=real_out non-NULL "
-                       "(got in=%s, out=%s) — nothing executed",
-                       tn, sre ? "ok" : "NULL", dre ? "ok" : "NULL");
-            return 1;
-        }
-        if (sim || dim)
-        {
-            _vfft_warn("vfft_execute: %s is real->real (in=real_in, out=real_out); "
-                       "in_im/out_im must be NULL — nothing executed",
-                       tn);
-            return 1;
-        }
-        return 0;
-    }
     if (h->transform == VFFT_R2C)
     {
         if (dir != VFFT_FORWARD)
@@ -230,18 +212,6 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
             _vfft_warn("vfft_execute_split: SPLIT C2C needs in_re and in_im non-NULL — nothing "
                        "executed");
         return 1;
-    }
-    if (h->N2 > 0)
-    { /* 2D..4D: the executor memcpys src->dst when they differ (both
-       * placements); a NULL dst pair means in-place-on-src. */
-        if ((dre == NULL) != (dim == NULL))
-        {
-            _vfft_warn("vfft_execute_split: 2D+ SPLIT C2C got a half-NULL destination pair "
-                       "(out_re=%s, out_im=%s) — pass both or neither — nothing executed",
-                       dre ? "ok" : "NULL", dim ? "ok" : "NULL");
-            return 1;
-        }
-        return 0;
     }
     if (h->placement == VFFT_INPLACE)
     { /* in-place engine: the destination arguments are NOT read. Accept the
@@ -516,8 +486,6 @@ void vfft_destroy(vfft_plan h)
     vfft_aligned_free(h->own_plane);   /* door 2's plane (real_inplace_design.md) */
     if (h->cplan)
         vfft_proto_plan_destroy(h->cplan);
-    if (h->oplan)
-        vfft_oop_plan_destroy(h->oplan);
     if (h->tcb)
         vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
     if (h->tcbw)
@@ -534,8 +502,6 @@ void vfft_destroy(vfft_plan h)
     vfft_ilfd_destroy(h->k1ilfd);
     vfft_ztt_destroy(h->k1ztt);
     vfft_k1fs_destroy(h->k1fs);
-    if (h->k1sp)
-        vfft_oop_plan_destroy(h->k1sp);
     vfft_zts_destroy(h->zts);       /* zturn-ts (split/rank1/zts.h) */
     _zr2c_kid_destroy(h->zr2c_kid); /* the zr2c child: its engines (il/real/zr2c_build.h) */
     vfft_zrp_destroy(h->zrp);       /* the real pair (il/real/zrp.h) */
@@ -550,24 +516,6 @@ void vfft_destroy(vfft_plan h)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)
         vfft_c2r_disp_destroy(h->c2rdisp);
-    if (h->rfft_row)
-        vfft_r2c_plan_destroy(h->rfft_row);
-    if (h->c2r_row)
-        vfft_c2r_disp_destroy(h->c2r_row);
-    if (h->tplan)
-        stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
-    free(h->nat_list);
-    vfft_aligned_free(h->nat_tmp);
-    free(h->nat_cyc_off);
-    if (h->nat_scr)
-    {
-        natorder_scr_free(h->nat_scr);
-        free(h->nat_scr);
-    }
-    free(h->nat2d_row_list);
-    free(h->nat2d_col_list);
-    vfft_aligned_free(h->nat2d_tmp);
-    free(h->nat2d_cyc_off);
     free(h);
 }
 

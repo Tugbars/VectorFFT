@@ -25,21 +25,13 @@ static void _vfft_create_unlock(void);
 #include "wisdom_reader.h"                        /* c2c wisdom load/lookup/add/save/free            */
 #include "dp_planner.h"                           /* dp context (calibration)                        */
 #include "measure.h"                              /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
-#include "oop_auto.h"                             /* OOP plan + leaf/t1p slices                      */
-#include "oop_dp.h"                               /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "wisdom2_oop.h"                          /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
-#include "split/wisdom/wisdom2_2d_split_reader.h" /* wisdom2: the split rank>=2 family codec (wave-3 flip) */
 #include "il/wisdom/wisdom2_2d_il_reader.h"       /* wisdom2: the lay=il rank>=2 cells */
 #include "split/wisdom/wisdom2_stride_reader.h"   /* wisdom2: stride family codec (wave-4 flip) */
 #include "split/wisdom/wisdom2_real_reader.h"     /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
 #include "common/support/diag.h"                  /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "common/support/race_timing.h"           /* the racers' shared clock + median (step 5) */
 #include "common/support/race.h"                  /* the one race body: arms x protocol -> aggregates */
-#include "wisdom2/wisdom2_oop_reader.h"           /* wisdom2: THE store (wave-1 flip) — reads via
-                                           the vw2_oop_* twins, banks via the shared
-                                           family codec. See src/core/wisdom2/README.md */
-#include "natorder_perm.h"                        /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
-#include "natorder_exec.h"                        /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "cpu_cache.h"                            /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "common/support/cpu_identity.h"          /* the CPU identity: the store's stamp, and which folder is this CPU's */
 #include "common/wisdom/wisdom2_folders.h"        /* one CPU, one folder: the folder of a store root this identity owns */
@@ -60,8 +52,6 @@ static void _vfft_create_unlock(void);
 #include "il/rank1/il_prime_mt.h"                 /* the prime cell's threaded form: the inner's walk + the passes cut (2026-10-03) */
 #include "il/real/zrb_mt.h"                       /* the real Bluestein's threaded form, the same (2026-10-03) */
 #include "il_flatdit_race.h"                      /* its FORM / TILE races on the shared race body      */
-#include "natorder_scatter.h"                     /* ORDER_NATURAL: SCR scatter terminator             */
-#include "natorder_calibrate.h"                   /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #include "split/rank1/zts.h"                      /* zturn-ts: ZTURN-T's engine on the split layout (2026-11-04); its plan type, before vfft_internal.h */
 #include "split/wisdom/wisdom2_zts_split.h"       /* its cell rows (eng=zts on the split natural cell) */
 #include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
@@ -87,17 +77,7 @@ static void _vfft_create_unlock(void);
 #endif
 #include "c2r_dispatch.h" /* 2-axis c2r: NATURAL (split-input fast cascade) / SPLIT (stride) */
 #include "registry.h"     /* vfft_proto_registry_t (generated)              */
-#include "dct.h"          /* DCT-II/III (+ inner r2c)                        */
-#include "dct1.h"         /* DCT-I / DST-I (boundary r2c)                    */
-#include "dct4.h"         /* DCT-IV (inner c2c of N/2)                       */
-#include "dst.h"          /* DST-II/III (wrap DCT-II)                        */
-#include "dht.h"          /* DHT (inner r2c)                                 */
-#include "fft2d.h"
-#include "split/rank3/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
-#include "fft2d_r2c.h"                                                /* 2D r2c / c2r                                    */
 #include "fft2d_real_il.h"                                            /* native IL 2D real tier kernels                  */
-/* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
- * split/wisdom/wisdom2_2d_split_reader.h include above — owner folder-structure directive) */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h"    /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
                                * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */
@@ -105,10 +85,6 @@ static void _vfft_create_unlock(void);
                                  * wraps the winner route's codelets with LITERAL strides,
                                  * gcc constant-propagates -> the spec twin, for ANY cell. */
 #endif
-#include "prime_dispatch.h"       /* vfft_proto_auto_plan_dispatch (Rader/Bluestein for prime N) */
-#include "bluestein_calibrator.h" /* bluestein_calibrate_one — prime-N (M,B) calibrate-on-miss */
-#include "fft2d_c2c_planner.h"    /* 2D c2c calibrate-on-miss (plan_measure + bench_min); pulls measure.h */
-#include "fft2d_c2r_planner.h"    /* 2D r2c + c2r calibrate-on-miss (pulls fft2d_r2c_planner.h) */
 
 #include <stdlib.h>
 #include <string.h>
@@ -254,7 +230,6 @@ long vfft_ilfd_race_short_samples(void) { return _vfft_ilfd_short_count; }
  * Both are tentative definitions HERE, never `static` in a header: a static in
  * a header is one copy PER INCLUDER, which would let the accessor read a
  * different object than the increment writes and silently report zero. */
-long _vfft_trig_mt_count = 0;
 long _vfft_create_race_count = 0;
 
 /* the 2D plane queue's loop-vs-queue race, defined with its executor;
@@ -397,13 +372,6 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     const char *f = d;
 #endif
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", f);
-    /* the Bluestein table is SEEDED from the frozen bundle and SAVED to the
-     * store (the frozen bundle is build input, never written by a create):
-     * the store's path is settled once wisdom2 has resolved the store
-     * directory (_bundle_load); until then it is the bundle's directory,
-     * which a build with no store of its own keeps, as before */
-    snprintf(W->path_bluestein_seed, sizeof W->path_bluestein_seed, "%s/bluestein_wisdom.txt", f);
-    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
     snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", f);
     snprintf(W->dir, sizeof W->dir, "%s", d);
 }
@@ -413,8 +381,6 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     /* fft3d: NO load — the file never existed on any tree; the table is a
      * pure in-process scratch for the greedy creator's extraction (wave 3:
      * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
-    bluestein_wisdom_init(&W->bluestein);
-    bluestein_wisdom_load(&W->bluestein, W->path_bluestein_seed); /* the frozen seed */
     vfft_c2r_path_load(W->path_c2r_path);                         /* c2r NATURAL/STRIDE per-cell path table */
     /* wisdom2 (the live store). A bank always lands in memory, and a
      * create's winner is saved before the create returns (owner,
@@ -464,13 +430,6 @@ static void _bundle_load(struct vfft_wisdom_s *W)
             else
                 vw2_open(&W->vw2, open_dir, 1);
             vw2_set_build(&W->vw2, _vfft_build_id()); /* every row banked here carries bld= */
-            if (W->vw2.dir[0])
-            { /* the Bluestein cells calibrated on this machine live in the
-               * store beside the wisdom2 shards; the frozen seed stays read-only */
-                snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", W->vw2.dir);
-                bluestein_wisdom_merge(&W->bluestein, W->path_bluestein);
-            }
-
             /* THE STAMP. An unstamped store becomes this CPU's (in memory now,
              * on disk at the first save). A stamp from before the identity
              * carried its caches and core counts, naming this host and ISA,
@@ -511,22 +470,6 @@ static struct vfft_wisdom_s *_default_wisdom(void)
 
 /* OOP wisdom is write-by-entry (no in-memory add/save round-trip helper); provide
  * one: replace-or-append in memory, then rewrite the whole file. */
-
-/* Persistence class of a kind: 0 = MODEB (scrambled champion), 1 = native
- * (LEAF/BAILEY2), 2 = K1 engine (kind 3), 3 = zsplit cascade cell (kind 4),
- * 4 = zr2c real composite (kind 5 — keyed on the REAL N, its own class so a
- * bank can never replace the kind-3/kind-4 c2c cells at the same number).
- * One (N,K) cell may hold one entry PER CLASS. */
-static int _oop_kind_class(int kind)
-{
-    if (kind == VFFT_OOP_KIND_MODEB)
-        return 0;
-    if (kind == VFFT_OOP_KIND_BAILEY2V)
-        return 2;
-    if (kind == VFFT_OOP_KIND_ZR2C)
-        return 4;
-    return 1;
-}
 
 /* _oop_wisdom_put_and_save: DELETED at the wisdom2 wave-1 flip (2026-08-20).
  * oop_wisdom.txt is FROZEN — nothing may rewrite it again. Banks go through
@@ -778,406 +721,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
     return ps;
 }
 
-/* ════════════════════════════════════════════════════════════════════════
- * TRIG BUILDERS — every DCT/DST/DHT is a stride_plan_t wrapping an inner plan
- * (an r2c plan, or a half-N complex FFT for DCT-IV). The inner c2c cell rides
- * the c2c wisdom table (calibrate-on-miss at rigor, like r2c/c2r).
- * ════════════════════════════════════════════════════════════════════════ */
-static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
-                                 int innerN, size_t K, vfft_rigor_t rigor,
-                                 const vfft_proto_registry_t *reg,
-                                 vfft_proto_wisdom_t *cw, int recalib)
-{
-    /* wave-4 flip: the STORE is the source of truth; the legacy in-memory
-     * table survives as auto_plan's PROCESS CACHE (auto_plan walks it
-     * internally to pick chains) — a store hit is seeded into it, a miss
-     * calibrates then banks BOTH (table for this process, store for the
-     * world; persistence is the caller's guarded save). */
-    vfft_proto_wisdom_entry_t ne;
-    int have = !recalib &&
-               (W->vw2_off_stride
-                    ? (vfft_proto_wisdom_lookup(cw, innerN, K) != NULL)
-                    : vw2_stride_lookup(&W->vw2, /*is_rfft=*/0, innerN, K, &ne));
-    if (have && !W->vw2_off_stride)
-        vfft_proto_wisdom_set(cw, &ne);
-    if (!have)
-    {
-        if (_calibrate_c2c(innerN, K, rigor, reg, &ne) == 0)
-        {
-            vfft_proto_wisdom_add(cw, &ne, 1); /* miss falls back to greedy in auto_plan */
-            vw2_stride_bank_entry(&W->vw2, &ne, /*is_rfft=*/0);
-        }
-    }
-    return vfft_proto_auto_plan(innerN, K, reg, cw);
-}
-
-/* A trig inner c2c is keyed (owning transform, OUTER N, K) — never as c2c(innerN), which would
- * collide with a genuine request there. Inner size derives from vw2_stride_trig_inner_n. */
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg);
-
-/* Measure an in-place 2D c2c plan end-to-end (for the calibrate-on-miss win-gate). */
-static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
-{
-    size_t T = (size_t)N1 * (size_t)N2;
-    double *re = (double *)vfft_aligned_alloc(T * sizeof(double));
-    double *im = (double *)vfft_aligned_alloc(T * sizeof(double));
-    if (!re || !im)
-    {
-        vfft_aligned_free(re);
-        vfft_aligned_free(im);
-        return 1e18;
-    }
-    for (size_t i = 0; i < T; i++)
-    {
-        re[i] = (double)rand() / RAND_MAX - 0.5;
-        im[i] = (double)rand() / RAND_MAX - 0.5;
-    }
-    double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
-    vfft_aligned_free(re);
-    vfft_aligned_free(im);
-    return ns;
-}
-
-/* Measure a 2D r2c forward plan end-to-end (OOP), for the calibrate-on-miss
- * win-gate. SPLIT door only (the z-veneer door was deleted 2026-08-26;
- * interleaved callers are served by the native IL tier). */
-static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
-{
-    size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
-    double *x = (double *)vfft_aligned_alloc(RN * sizeof(double));
-    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
-    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
-    if (!x || !ore || !oim)
-    {
-        vfft_aligned_free(x);
-        vfft_aligned_free(ore);
-        vfft_aligned_free(oim);
-        return 1e18;
-    }
-    for (size_t i = 0; i < RN; i++)
-        x[i] = (double)rand() / RAND_MAX - 0.5;
-    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
-    vfft_aligned_free(x);
-    vfft_aligned_free(ore);
-    vfft_aligned_free(oim);
-    return ns;
-}
-
-/* Measure a 2D c2r backward plan end-to-end (OOP): produce the half-spectrum via r2c
- * first (the c2r input), then time c2r. */
-static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
-{
-    size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
-    double *x = (double *)vfft_aligned_alloc(RN * sizeof(double));
-    double *ore = (double *)vfft_aligned_alloc(CN * sizeof(double));
-    double *oim = (double *)vfft_aligned_alloc(CN * sizeof(double));
-    double *xr = (double *)vfft_aligned_alloc(RN * sizeof(double));
-    if (!x || !ore || !oim || !xr)
-    {
-        vfft_aligned_free(x);
-        vfft_aligned_free(ore);
-        vfft_aligned_free(oim);
-        vfft_aligned_free(xr);
-        return 1e18;
-    }
-    for (size_t i = 0; i < RN; i++)
-        x[i] = (double)rand() / RAND_MAX - 0.5;
-    stride_execute_2d_r2c(p, x, ore, oim); /* valid half-spectrum for c2r input */
-    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
-    vfft_aligned_free(x);
-    vfft_aligned_free(ore);
-    vfft_aligned_free(oim);
-    vfft_aligned_free(xr);
-    return ns;
-}
-
-/* Build a 2D plan (also a stride_plan_t). c2c = tiled-row + native-col (inner row/col
- * built internally). r2c/c2r = row r2c (N2,B) + col c2c (N1,K_pad), inner cells on c2c
- * wisdom. The SAME r2c plan serves both directions (fwd=2d_r2c, bwd=2d_c2r).
- *
- * Calibrate-on-miss (c2c): on a 2D-wisdom miss, run the dedicated 2D planner and KEEP it
- * only if it beats the (1D-wisdom-inner) fallback measured end-to-end — then bank it. */
-static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
-                                const vfft_proto_registry_t *reg,
-                                struct vfft_wisdom_s *W, int recalib, int order,
-                                uint8_t lay)
-{
-    vfft_proto_wisdom_t *cw = &W->c2c; /* 1D c2c table for the _inner_c2c fallback */
-    if (t == VFFT_C2C)
-    {
-        /* order=NATURAL uses the natural-optimal chain (v2 nat block, dev-calibrated) when banked; else
-         * falls back to the scrambled chain + the runtime bolt-on reorder built downstream. */
-        int nat = (order == VFI_ORDER_NATURAL);
-        /* Dedicated 2D c2c wisdom FIRST — ORDER-AWARE: order=NATURAL short-circuits on the NAT table
-         * (@nat2d), order=DEFAULT on the scrambled table. A scrambled-only cell therefore does NOT deny a
-         * cold natural cell its own calibration (the decoupling). On a miss, fall back to the 1D-wisdom
-         * inner path below (calibrate-on-miss at rigor). */
-        if (!recalib)
-        {
-            /* wave-3 flip: serve from the wisdom2 store (twins fill the
-             * legacy entry, the from-entry builders construct); the kill
-             * switch falls back to the legacy tables. Fallback semantics
-             * preserved exactly: nat build-fail -> scrambled chain ->
-             * greedy; scr build-fail -> greedy. */
-            vfft_fft2d_c2c_wisdom_entry_t seb;
-            vfft_fft2d_c2c_nat_entry_t neb;
-            if (W->vw2_off_2d)
-            {
-                if (nat)
-                {
-                    if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
-                        return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
-                }
-                else if (vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
-                    return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
-            }
-            else if (nat && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, lay, &neb))
-            {
-                stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb, reg);
-                if (!p && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb))
-                    p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
-                return p ? p : stride_plan_2d(N1, N2, reg);
-            }
-            else if (!nat && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb))
-            {
-                stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
-                return p ? p : stride_plan_2d(N1, N2, reg);
-            }
-        }
-
-        /* Build the fallback (1D-wisdom inners). A PRIME dimension has no CT factorization —
-         * _inner_c2c returns NULL there — so fall back to the prime dispatch (Rader/Bluestein,
-         * an override plan). The 2D executor dispatches override_fwd for both the col FFT
-         * (contiguous K=N2 batch) and the row FFT (transposed K=B tiles). */
-        vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
-        size_t B = _fft2d_choose_tile(N2, N1);
-        stride_plan_t *col = _inner_c2c(W, N1, (size_t)N2, rigor, reg, cw, recalib);
-        if (!col)
-            col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, cw);
-        stride_plan_t *row = _inner_c2c(W, N2, B, rigor, reg, cw, recalib);
-        if (!row)
-            row = vfft_proto_auto_plan_dispatch(N2, B, reg, cw);
-        if (!col || !row)
-        {
-            if (col)
-                stride_plan_destroy(col);
-            if (row)
-                stride_plan_destroy(row);
-            return NULL;
-        }
-        stride_plan_t *fb = stride_plan_2d_from(N1, N2, B, col, row); /* takes ownership */
-        if (!fb)
-            return NULL;
-
-        /* Calibrate-on-miss: run the dedicated 2D planner. TWO INDEPENDENT bank decisions on their OWN
-         * objectives (the whole pivot — scrambled and natural never veto each other):
-         *   SCRAMBLED: bank the scrambled chain iff it beats the fallback end-to-end (cal_ns < fb_ns).
-         *   NATURAL:   bank the self-contained natural record iff the sweep produced one (cal_nat.row_nf>0)
-         *              — the J_nat-minimal over a comprehensive pool (DP + injected palindromes), decided
-         *              on the NATURAL objective, so it is >= the scrambled-chain bolt-on for natural and
-         *              never worse than today. (A vs-fallback J_nat comparison is a possible refinement.) */
-        vfft_fft2d_c2c_wisdom_entry_t cal;
-        vfft_fft2d_c2c_nat_entry_t cal_nat;
-        cal_nat.row_nf = 0;
-        vfft_fft2d_c2c_mode_t mode =
-            (rigor == VFFT_MEASURE) ? VFFT_FFT2D_C2C_MEASURE : VFFT_FFT2D_C2C_PATIENT;
-        double nat_ns = 1e18;
-        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/nat, 0,
-                                                    nat ? &cal_nat : NULL, &nat_ns);
-        if (cal_ns < 1e17)
-        {
-            double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
-            int scr_won = (cal_ns < fb_ns);
-            if (scr_won)
-                /* REGIME SEPARATION (mirror the 1D scr_recalib guard): a NATURAL create may FILL a cold
-                 * scrambled cell (overwrite=0 appends when absent) but must NEVER clobber a warm one — else a
-                 * read-only-intent natural create silently degrades the user's calibrated scrambled 2D wisdom
-                 * (e.g. downgrades a PATIENT entry to a MEASURE one). DEFAULT keeps overwrite=1. */
-                vw2_2d_c2c_bank_entry(&W->vw2, &cal, /*fill_only=*/nat ? 1 : 0,
-                                      VW2_LAY_ANY /* one shared split interior — see vw2__2d_key */);
-            if (nat && cal_nat.row_nf > 0)
-                vw2_2d_c2c_bank_nat(&W->vw2, &cal_nat, VW2_LAY_ANY); /* natural: J_nat sweep winner, decoupled */
-            if (nat)
-            {
-                /* post-bank re-serve from the store's memory bank (under
-                 * the kill switch the bank is invisible to legacy reads —
-                 * fb serves, same wave-1 bake-window semantics). */
-                vfft_fft2d_c2c_nat_entry_t neb2;
-                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, lay, &neb2))
-                {
-                    stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb2, reg);
-                    if (p)
-                    {
-                        stride_plan_destroy(fb);
-                        return p;
-                    }
-                }
-                return fb; /* no natural record -> fb (scrambled chain + downstream bolt-on reorder) */
-            }
-            if (scr_won)
-            {
-                vfft_fft2d_c2c_wisdom_entry_t seb2;
-                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb2))
-                {
-                    stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb2, reg);
-                    if (p)
-                    {
-                        stride_plan_destroy(fb);
-                        return p;
-                    }
-                }
-                return fb;
-            }
-        }
-        return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
-    }
-    if (t == VFFT_R2C || t == VFFT_C2R)
-    {
-        if (N1 < 2 || N2 < 2 || (N2 & 1))
-        {
-            _vfft_warn("vfft_create: SPLIT 2D %s %dx%d needs both extents >= 2 and an even last "
-                       "extent; the INTERLEAVED tier serves an odd one",
-                       _vfft_tname(t), N1, N2);
-            return NULL;
-        }
-        /* r2c and c2r have separate 2D wisdom tables (different optima, same
-         * bidirectional plan). Pick the table by direction; wisdom-first, else the
-         * 1D-wisdom inner path. */
-        vfft_fft2d_r2c_wisdom_t *rw = (t == VFFT_C2R) ? &W->fft2d_c2r : &W->fft2d_r2c;
-        if (!recalib)
-        {
-            /* wave-3 flip: direction is the transform tag in wisdom2 (the
-             * legacy encoding was file membership). Twin-hit + build-fail
-             * degrades through the legacy creator (same entry via the
-             * frozen table, then its greedy tail) — legacy-identical. */
-            vfft_fft2d_r2c_wisdom_entry_t reb;
-            if (W->vw2_off_2d)
-            {
-                if (vfft_fft2d_r2c_wisdom_lookup(rw, N1, N2))
-                    return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
-            }
-            else if (vw2_2d_r2c_lookup(&W->vw2, t == VFFT_C2R, N1, N2, lay, &reb))
-            {
-                stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&reb, reg);
-                if (p)
-                    return p;
-                return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
-            }
-        }
-
-        size_t B = 8;
-        if (B > (size_t)N1)
-            B = (size_t)N1;
-        size_t hp1 = (size_t)(N2 / 2 + 1), K_pad = ((hp1 + 3) / 4) * 4;
-        stride_plan_t *inner = _inner_c2c(W, N2 / 2, B, rigor, reg, cw, recalib);
-        stride_plan_t *pr2c = inner ? stride_r2c_plan(N2, B, B, inner) : NULL;
-        stride_plan_t *pcol = _inner_c2c(W, N1, K_pad, rigor, reg, cw, recalib);
-        if (!pr2c || !pcol)
-        {
-            _vfft_warn("vfft_create: SPLIT 2D %s %dx%d: the split stride engines cover no %s of "
-                       "length %d; the INTERLEAVED tier serves it",
-                       _vfft_tname(t), N1, N2,
-                       pcol ? "row half" : "column", pcol ? N2 / 2 : N1);
-            if (pr2c)
-                stride_plan_destroy(pr2c);
-            if (pcol)
-                stride_plan_destroy(pcol);
-            return NULL;
-        }
-        stride_plan_t *fb = stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol,
-                                                    recalib); /* owns both */
-        if (!fb)
-            return NULL;
-
-        /* Calibrate-on-miss, scored by DIRECTION (r2c fwd vs c2r bwd — different optima),
-         * kept only if it beats the fallback measured end-to-end. Bank to the per-direction
-         * table (rw). */
-        vfft_fft2d_r2c_wisdom_entry_t cal;
-        vfft_fft2d_r2c_mode_t mode =
-            (rigor == VFFT_MEASURE) ? VFFT_FFT2D_R2C_MEASURE : VFFT_FFT2D_R2C_PATIENT;
-        /* SPLIT callers only reach this branch (the z-veneer was deleted
-         * 2026-08-26 — interleaved 2D real callers are served by the
-         * native IL tier and refuse/serve before _build_2d). Verdicts
-         * bank lay-concrete; legacy lay=ANY rows keep serving through
-         * vw2_lookup's fallback tier. */
-        double cal_ns = (t == VFFT_C2R)
-                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0)
-                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0);
-        if (cal_ns < 1e17)
-        {
-            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2)
-                                           : _vfft_measure_2d_r2c(fb, N1, N2);
-            if (cal_ns < fb_ns)
-            {
-                vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R,
-                                      lay); /* calibrated wins -> bank */
-                {
-                    stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&cal, reg);
-                    if (p)
-                    {
-                        stride_plan_destroy(fb);
-                        return p;
-                    }
-                }
-            }
-        }
-        return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
-    }
-    return NULL; /* 2D trig not wired */
-}
-
-#include "split/engine/mt_execute.h" /* generic K-split MT executor + trampoline (step 7) */
-
-#include "split/natorder/natorder_mt.h" /* natural-order + SCR MT reorder
-                                             * passes (migration step 8) */
-
-/* The plan-unpacking adapter STAYS here: it is the one piece of this group
- * that dereferences vfft_plan_s, so it cannot move until step 15 lifts the
- * struct. The worker it calls, _natorder_reorder_mt, took its arguments
- * explicitly and moved. Header owns the algorithm; vfft.c owns the
- * plan-to-arguments adaptation. */
-static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
-{
-    _natorder_reorder_mt(re, im, (size_t)h->N, h->K, h->nat_list, h->nat_cyc_off,
-                         h->nat_ncyc, h->nat_mode == VFFT_NAT_PSWAP, h->nat_tmp, dir == 0,
-                         h->nthreads); /* the snapshot nat_tmp was sized for */
-}
-
-/* ── ORDER_NATURAL for 2D c2c (first cut, single-thread PURE cycles). The 2D output is scrambled on
- * BOTH axes independently: buffer re[i1*N2+i2] = natural[perm1_inv(i1)][perm2_inv(i2)], perm1 from
- * plan_col's chain (axis-0/rows), perm2 from plan_row's (axis-1/within-row). The 1D natorder machinery
- * is reused verbatim — the N1xN2 matrix IS the (N rows x K doubles) shape cycle_pass was built for:
- *   dim1 = N1 whole rows at K=N2 (one cycle_pass call, big SIMD row moves);
- *   dim2 = within each row at K=1 (N1 calls, scalar — the known-slow axis, a later opt vectorizes it).
- * Orthogonal axes commute. fft2d natural §. */
-
-/* The per-axis 2D reorder-tape builder is the SHARED vfft_natorder_2d_build_axis in natorder_2d.h
- * (pulled in via fft2d_c2c_planner.h above) — the SAME one the 2D calibrator uses, so runtime and
- * calibrator build tapes identically (no drift). The private copy that used to live here was deleted. */
-
-/* Apply the dim1 (whole matrix rows, N1-axis) reorder on the user buffer. dim2 (within-row, N2-axis) is
- * fused into the row-FFT SCRATCH pass (mechanism-2, fft2d.h _fft2d_tiled_range: full-SIMD at K=B while
- * L1-hot), so it is NOT repeated here — this handles only dim1. inv=0 = forward (scrambled->natural,
- * AFTER the FFT); inv=1 = backward (natural->scrambled, BEFORE the inverse FFT). NULL list = FREE axis. */
-static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
-{
-    if (!h->nat2d_row_list)
-        return; /* dim1 FREE (single-radix / prime column axis) */
-    /* MT whole-row (N1 rows x N2 lanes) reorder via the SHARED count-split — same as the 1D pass, so the
-     * dim1 tax now scales with the pool instead of running on one core while the 2D FFT is MT. A pair tape
-     * is self-inverse (inv ignored); a cycle tape uses the inverse cycle on backward. Caller pins core 0. */
-    _natorder_reorder_mt(re, im, (size_t)h->N, (size_t)h->N2, h->nat2d_row_list,
-                         h->nat2d_cyc_off, h->nat2d_ncyc, h->nat2d_row_is_pairs, h->nat2d_tmp, inv,
-                         h->nthreads); /* the snapshot nat2d_tmp was sized for */
-}
-
-#include "split/oop/oop_mt.h" /* OOP c2c lane-slice MT dispatch (migration step 9) */
-
-/* Bank a SELF-CONTAINED 1D natural record (order-tagged @nat table) + persist. The natural verdict
- * stores its OWN deployed chain (fac/var/nf/use_dif) + mode + measured total — never a copy of the
- * scrambled entry. mode ∈ {PSWAP, PURE_CYCLE, SCR}; FREE is re-derived at create (num_stages<=1). */
-/* forward decl: the ZCASC MEASURE race (B5) times the finished incumbent
- * handle through its real execute path, which is defined further down. */
 
 #include "il/rank2/il2d_cols.h" /* IL2D column kernels, chain enumerator,
                                           * table builders (migration step 6b) */
@@ -2558,13 +2102,6 @@ static int _vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
                 tmp.vw2.dirty[i] = 1;
         rc = vw2_save(&tmp.vw2) == VW2_OK ? 0 : -1;
     }
-    /* 6a22 parity: persist the full loaded set. c2r_path persists at
-     * decision time via its own writer and is not owned by w.
-     * Wave-3 flip: the three fft2d files are FROZEN and the 3D file never
-     * existed — their records live in the wisdom2 store, persisted by the
-     * vw2_save above. The legacy 2D tables remain loaded read-only for the
-     * kill-switch bake window. */
-    bluestein_wisdom_save(&w->bluestein, tmp.path_bluestein);
     return rc;
 }
 static void _vfft_wisdom_free(vfft_wisdom *w)
@@ -2573,13 +2110,6 @@ static void _vfft_wisdom_free(vfft_wisdom *w)
         return;
     vfft_proto_wisdom_free(&w->c2c); /* OOP table is fixed-size, no free */
     vfft_proto_wisdom_free(&w->rfft);
-    /* 6a22 parity: free every table _bundle_load populates (c2r_path loads
-     * into a file-static owned by c2r_dispatch, not by w). */
-    vfft_fft2d_c2c_wisdom_free(&w->fft2d_c2c);
-    vfft_fft2d_r2c_wisdom_free(&w->fft2d_r2c);
-    vfft_fft2d_r2c_wisdom_free(&w->fft2d_c2r);
-    vfft_fft3d_wisdom_free(&w->fft3d_c2c);
-    /* bluestein table is fixed-size, no free */
     vw2_close(&w->vw2);
     free(w);
 }
@@ -2851,13 +2381,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->padded, h->exec_me);
 
     /* 2 — route selectors: the "chose differently" surface */
-    FP__ADD(" | k1=%d sp=%d il=%d zr2c=%d",
-            h->k1_on, h->k1_sp_route, h->k1_il_route,
+    FP__ADD(" | k1=%d il=%d zr2c=%d",
+            h->k1_on, h->k1_il_route,
             h->zr2c_route);
     /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
-    FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
-            h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
-            h->nat2d_ncyc, h->mt_unsafe);
     FP__ADD(" tcbw=%d tcmt=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
             h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
@@ -2869,12 +2396,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24); rw= and norowz= (ROWSPLIT) retired 2026-10-03 */
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
-            FP__P(cplan), FP__P(oplan), FP__P(k1sp),
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d", /* oplan, k1sp, tplan retired 2026-11-05 */
+            FP__P(cplan),
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
             FP__P(k1fs), /* D5, 2026-09-18: route 10 had no bit and no line */
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
-            FP__P(zr2c_kid), FP__P(tplan), /* the odd-real bridge's bit retired 2026-10-03 */
+            FP__P(zr2c_kid), /* the odd-real bridge's bit retired 2026-10-03 */
             FP__P(own_batch), FP__JIT);    /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d",          /* the OOP row child's slot deleted 2026-09-23; the rowsplit slot 2026-10-03 */
             FP__P(il2d_row), FP__P(il2d_roww),
@@ -2997,7 +2524,7 @@ void vfft__fp_counters(long *out6)
     out6[1] = _vfft_il2d_col_mt_count;
     out6[2] = _vfft_il2d_row_mt_count; /* the 2D real row plan's threaded passes (2026-10-06; the cascade's slot, retired 2026-09-15) */
     out6[3] = _vfft_pq_mt_count;
-    out6[4] = _vfft_trig_mt_count;
+    out6[4] = 0; /* the trig counter retired with the real-to-real transforms (2026-11-05) */
     out6[5] = _vfft_create_race_count;
 }
 
