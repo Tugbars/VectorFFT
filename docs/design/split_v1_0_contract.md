@@ -22,7 +22,10 @@ of the work it implies. The measurements behind it: docs/research/split_layout_s
 
 One engine serves the whole table: zturn-ts (split/rank1/zts.h), its two families (the K=1 driver with
 its contiguous twin, the lane-major driver; the staged executor of both for the cells without a fused
-driver) and its three threaded forms, each a verdict raced at the plan's thread count and banked on the
+driver; under VFFT_USE_JIT a deployed cell of that kind gets its fused driver compiled at create,
+`src/dag-fft-compiler/jit/zts_jit_runtime.h`, 2026-11-06: the build-time emitter's driver written for
+the plan's chain with the stage kernels' sources inlined, cached on disk, the staged walk kept on any
+failure) and its three threaded forms, each a verdict raced at the plan's thread count and banked on the
 cell's threading row (2026-11-06): slabs of whole transforms for a contiguous batch of K >= T; lane
 blocks over the pool's slots for a lane-major batch of two or more blocks; the SECTIONED walk
 (split/rank1/zts_mt.h, ZTURN-T's on the split layout) for one transform, a contiguous batch of K < T
@@ -34,9 +37,11 @@ the other. One wisdom grammar: the split natural cell rows (eng=zts chain= tile=
 cells at lay=slm, the threading rows eng=tcb tcmt=) and, for rank 2 and 3, the per-axis cells plus a
 rank-3 plan's own threading row (its middle axis's planes over the slots).
 
-## What goes
+## What went (deleted 2026-11-06)
 
-Everything in the split tree that is the stride engine or stands on it:
+Everything in the split tree that is the stride engine or stands on it, deleted on 2026-11-06
+(the owner: the old machinery's C code and codelets are discovered and deleted); the list as it
+was drawn:
 
 - the engine (`split/engine`: planner, executor, the generated executor table, twiddles), its
   planning (`split/planning`: the DP, exhaustive, measure, padding), the natural-order tapes
@@ -53,7 +58,10 @@ Everything in the split tree that is the stride engine or stands on it:
 - the generated kernels of those families (`codelets/split/inplace`, `oop`, `strided`, `rfft`,
   `c2r`, both ISAs: about 800 files), their registries, their gate rows and gates, the bench modes
   that drive them;
-- the split arms of the real bridge (`bridge/`): the split real create and execute paths.
+- the real bridge (`bridge/`) whole: its interleaved K = 1 door moved to `il/real/real_create_il.h`
+  (`_vfft_create_real_door`), its engine walk to `il/il_execute.h` (`_vfft_real_execute_il`);
+  the old JIT runtimes of `src/dag-fft-compiler/jit` (the stride executors', the K=1 routes', the
+  rfft and c2r ones) and the trig tools of the baseline harness went with it.
 
 What stays: `split/rank1/zts.h`, `zts_race.h`, `split/wisdom/wisdom2_zts_split.h`, the 1D creates
 reduced to the zturn-ts paths, `split_create.h` / `split_execute.h` reduced to the three ranks,
@@ -68,7 +76,12 @@ baked quarter wave.
 2. **The interleaved real lane-major batch loses its engine.** Today an interleaved R2C/C2R batch at
    K > 1 in the lane-major geometry runs on the split real engines through the bridge (owner
    decision D1, "the one crossing left"). With those engines gone, that request needs an
-   interleaved-native engine, or it is refused at create until one exists. **Owner's call, open.**
+   interleaved-native engine, or it is refused at create until one exists. **Decided 2026-11-06:
+   refused at create with a warning until the native engine exists; the bridge is deleted.** (The
+   front door already served the even-N out-of-place r2c lane-major batch natively,
+   `il/rank1/lm_batch_il.h`, and refused the rest before the bridge was reached; the lane
+   Bluestein's create, the odd-N piece of that engine, sits in `il/real/real_create_il.h`
+   unreached.)
 3. **2D C2C on zturn-ts** (built 2026-11-06, `split/rankn/c2c_nd_create_split.h`): the row pass as
    the contiguous batch (the K = 1 cell at N2 run N1 times, in slabs over the pool under the batch's
    threading verdict), the column pass as the lane-major batch (the cell at N1 with N2 lanes, in

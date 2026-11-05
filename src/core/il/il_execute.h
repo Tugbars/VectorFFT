@@ -168,10 +168,29 @@ static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * included -- executes through the real bridge in one indirect call, the
  * same fast path the c2c plans take; the general signature walk it skips
  * cost 4-6 ns per call, half of a 3-point r2c (measured 2026-09-30). */
-static void _vfft_real_bridge_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim); /* bridge/real_bridge_exec.h, later in this TU */
+/* THE 1D REAL ENGINE WALK (was bridge/real_bridge_exec.h until 2026-11-06, the
+ * split real engines retired with the stride engine): the plan's engine in
+ * the dispatch's order, R2C and C2R alike (each engine carries its direction).
+ * 🔴 The zr2c composite is pool-free and must stay so: its child re-asserts
+ * the thread count itself, so a zr2c plan serves as a transform-contiguous
+ * worker clone; nothing here arms the pool. */
+static void _vfft_real_execute_il(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim)
+{
+    (void)dir; (void)sim; (void)dim;
+    if (h->zrm)      { _exec_zrm(h, sre, dre);  return; } /* the real mono: one kernel */
+    if (h->zfsr)     { _exec_zfsr(h, sre, dre); return; } /* the real four-step */
+    if (h->zrf)      { _exec_zrf(h, sre, dre);  return; } /* the real flat DIT */
+    if (h->zrb)      { _exec_zrb(h, sre, dre);  return; } /* the real Bluestein */
+    if (h->zrbl)     { _exec_zrbl(h, sre, dre); return; } /* the lane Bluestein: K lanes on the column pass */
+    if (h->zttr)     { _exec_zttr(h, sre, dre); return; } /* ZTT-r: the fold fused into the walk */
+    if (h->zrp)      { _exec_zrp(h, sre, dre);  return; } /* the real pair */
+    if (h->zr2c_kid) { _exec_zr2c(h, sre, dre); return; } /* the zr2c composite (incl. in place) */
+    _vfft_warn("vfft_execute: %s N=%d: no interleaved real engine is bound to this plan (internal)",
+               _vfft_tname(h->transform), h->N);
+}
 static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
 {
-    _vfft_real_bridge_execute(h, dir, (double *)zin, NULL, zout, NULL);
+    _vfft_real_execute_il(h, dir, (double *)zin, NULL, zout, NULL);
     return 0;
 }
 /* the real mono (il/real/zrm.h): the kernel call itself, nothing between the

@@ -330,7 +330,7 @@ static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out
     const int trig = _VFFT_IS_TRIG(h->transform);
     const int il = (h->layout == VFI_LAYOUT_IL);
     const size_t K = h->K > 0 ? h->K : 1;
-    const size_t Kp = (!il && h->own_batch) ? h->own_batch->Kp : K;
+    const size_t Kp = K; /* the split padded batch (its own stride) retired 2026-11-06 */
     size_t lead = (size_t)h->N, last = (size_t)h->N, pts, half, a, b;
     /* the extents: the last axis and the product of the ones before it */
     if (h->N4 > 0)      { lead = (size_t)h->N * (size_t)h->N2 * (size_t)h->N3; last = (size_t)h->N4; }
@@ -385,8 +385,6 @@ static size_t _vfft_api_stride(const struct vfft_plan_s *h)
             return 2 * (h->ilndr ? (size_t)h->ilndr->hp3 : (size_t)(h->N3 / 2 + 1));
         return 2 * (h->il2d_ipP ? (size_t)h->il2d_ipP : (size_t)(h->N2 / 2 + 1));
     }
-    if (h->own_batch)
-        return h->own_batch->Kp;   /* the split padded batch: the stride its pad race chose */
     return h->K > 0 ? h->K : 1;
 }
 int vfft_info(vfft_plan p, vfft_info_t *out)

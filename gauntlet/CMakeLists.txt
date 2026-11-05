@@ -21,7 +21,7 @@
 # ============================================================================
 
 # vfft.c is the ONE runtime .c of the header-only core. Its only build-time
-# switch is VFFT_USE_JIT (build.py --jit), which this build does not set, so
+# switch is VFFT_USE_JIT (build.py: VFFT_JIT=1 in the environment), which this build does not set, so
 # every tool shares one compiled copy. vfft_core is the gauntlet's own
 # library, never installed: the clone's store (VFFT_WISDOM_DEFS) and the
 # internal include walk PUBLIC, which the bench tools need; the user's

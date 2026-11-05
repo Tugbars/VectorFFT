@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # full_corpus_gate.sh — FULL-CORPUS byte-verbatim reproducibility gate for the
-# dag-fft-compiler codelet corpus (src/dag-fft-compiler/codelets, 1432 .c files).
+# dag-fft-compiler codelet corpus (src/dag-fft-compiler/codelets, 1696 .c files).
 #
 # This is the gate the generator/lib restructure is accepted or rejected on:
 # the emitter must reproduce >=95% of the corpus BIT-VERBATIM.  It supersedes
@@ -46,8 +46,8 @@
 #       from gone.  The docs/research copies are historical snapshots.
 #   G2  `record` now writes a TRACKED baseline => every re-record is a
 #       reviewable diff.
-#   G3  the build step compiles ALL 16 executables (bin 13 — incl. all SEVEN
-#       registry emitters — and bin_test 3) and RUNS cx_pipeline_test: a
+#   G3  the build step compiles ALL 7 executables (bin 4 and bin_test 3)
+#       and RUNS cx_pipeline_test: a
 #       chain-tail or cx break can no longer hide behind a 2-exe build.
 #   G4  CORPUS_DRIFT is FATAL, all modes.  A corpus edit must go through
 #       `manifest` + re-record, as its own reviewed commit.
@@ -132,21 +132,17 @@ fi
 # footgun — @default PROMOTES tracked generated/ headers EVEN WHEN THE BUILD
 # FAILS (reproduced during review: rc=1 and plan_executors.h rewritten).
 # G3: build ALL the executables, not 2 — otherwise a break in a chain-tail
-# consumer (dbg_eval, dump_ir) is invisible and the gate reports PASS.
+# consumer (dump_ir) is invisible and the gate reports PASS.
 if [ -z "${SKIP_BUILD:-}" ]; then
   export PATH="$HOME/.opam/5.2.0/bin:$PATH"
   export DUNE_CACHE=disabled
   ( cd "$GEN" && dune build \
       bin/gen_radix.exe bin/gen_set.exe bin/dump_ir.exe \
-      bin/emit_registry_h.exe bin/emit_executor_h.exe bin/emit_rfft_registry.exe \
-      bin/emit_trig_registry.exe \
-      bin/emit_strided_registry.exe bin/emit_c2r_registry.exe \
       bin/emit_il_registry.exe \
-      bin/dbg_eval.exe \
       bin_test/cx_pipeline_test.exe bin_test/z11probe.exe \
       bin_test/argv_roundtrip.exe \
       ) \
-    || { echo "FATAL: scoped 14-target dune build failed"; exit 2; }
+    || { echo "FATAL: scoped 7-target dune build failed"; exit 2; }
   # the cx stack's only unit gate — build AND run it (it was silently
   # never built for weeks; the on-disk "ALL PASS" exe was stale).
   "$GEN/_build/default/bin_test/cx_pipeline_test.exe" > "$WORK/cx_test.log" 2>&1 \
@@ -156,7 +152,7 @@ EXE="$GEN/_build/default/bin/gen_radix.exe"
 [ -x "$EXE" ] || { echo "FATAL: $EXE missing"; exit 2; }
 
 # ------------------------------------------------------- 2. arm A: gen_set(3)
-# Coverage.quadrants is the single source of truth; one warm process, 1074 files.
+# Coverage.quadrants is the single source of truth; one warm process, 1478 files.
 "$GEN/_build/default/bin/gen_set.exe" --root "$WORK/tree" all > "$WORK/genset.log" 2>&1 \
   || { echo "FATAL: gen_set failed"; sed -n '1,20p' "$WORK/genset.log"; exit 2; }
 
@@ -164,7 +160,6 @@ EXE="$GEN/_build/default/bin/gen_radix.exe"
 # replay = the file's own recorded argv (argv[0] reproduced via exec -a)
 # derive = the zil/avx2 filename grammar (folders by kind since 2026-09-24) + the odd-radix --cil-split table
 # ship   = generator/emit_ship.sh tangent recipes (env + post-emit sed rename)
-# k1     = Codelet_oop.emit_k1_mono (--k1-mono family)
 emit_one() {  # emit_one <rel> <argv0> <env> <args> <sed_from> <sed_to>
   local rel="$1" a0="$2" envs="$3" args="$4" sf="$5" st="$6"
   local dst="$WORK/out/$rel"

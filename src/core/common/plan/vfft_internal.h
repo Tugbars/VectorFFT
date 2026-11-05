@@ -56,16 +56,7 @@
 
 struct vfft_wisdom_s
 {
-    char path_c2c[640];       /* spike_wisdom.txt   */
-    vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format. Also holds the padded
-                               * pad-vs-tail verdict per cell in each entry's exec_me field, and
-                               * the aligned (N,Kp) entries pad reuses — no separate padded file. */
-    vfft_oop_wisdom_t oop;    /* OOP 2-axis format   */
-    vfft_proto_wisdom_t rfft; /* r2c rfft-path factorization+variant   */
-    /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
-     * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
-     * for the non-bakeoff (MEASURE / high-K) dispatch; high rigor measures instead. */
-    char path_c2r_path[640]; /* c2r_path.txt */
+    vfft_oop_wisdom_t oop;    /* the frozen legacy OOP table (the interleaved reader's) */
 
     /* wisdom2 (the new store, src/core/wisdom2/README.md). Wave 1 flips the
      * OOP family here: reads via the vw2_oop_* twins, banks via
@@ -79,7 +70,6 @@ struct vfft_wisdom_s
     int vw2_off_2d;    /* kill switch: 2D reads fall back to the legacy
                           tables (3D has no legacy fallback — born in
                           wisdom2) */
-    int vw2_off_stride;/* kill switch: stride/spike reads fall back */
     char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
     int dir_too_long;  /* the directory named did not fit dir[]: the store is in memory, read-only */
 };
@@ -116,7 +106,6 @@ struct vfft_plan_s
                              * of its input made here: the input's size, allocated at create (execute
                              * allocates nothing), freed with the plan */
     size_t alias_doubles;
-    stride_plan_t *cplan;   /* c2c in-place (owned)      */
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
      * is the plan's COMMITTED layout (h->layout, stamped at create — the old
@@ -289,17 +278,6 @@ struct vfft_plan_s
      * -- never re-derived at execute, and never assumed equal. */
     size_t tcb_sn, tcb_dn;
     vfft_oop11_fn k1_mono_ilf, k1_mono_ilb;
-#ifdef VFFT_USE_JIT
-    /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
-     * time with the cell's exact geometry as literal constants. NULL = the
-     * normal route fns (JIT is a speed cache, never a correctness dep).
-     * k1_jit_qr/qi = the table the baked stage-2 expects (Qlr/Qli for TWL,
-     * Qr/Qi otherwise); scratch comes from k1sp->col_re/col_im. */
-    vfft_k1_jit_fn k1_jit;
-    const double *k1_jit_qr, *k1_jit_qi;
-#endif
-    vfft_r2c_plan_t *rplan;    /* r2c fwd (owned)           */
-    vfft_c2r_disp_t *c2rdisp;  /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     /* §D2 zr2c (2026-08-13, DESIGN_interleaved_r2c.md Phase 2): 1D
      * INTERLEAVED-CCE real transforms as reinterpret + CHILD c2c(N/2) +
      * the zr2c.h fold. zr2c_kid != NULL selects this route over
@@ -358,18 +336,6 @@ struct vfft_plan_s
     struct vfft_zrbl_s *zrbl;       /* the lane Bluestein's plan (owned)   */
     struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     struct vfft_ilndr_s *ilndr; /* the rank-3 INTERLEAVED REAL tier (fftnd_real_il.h, 2026-10-07), owned */
-    /* config.owned_buffers: the planes THIS plan allocated and will free.
-     * NULL when the caller brings their own buffers (the drop-in default). */
-    struct vfft_batch_s *own_batch;
-    /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
-     * once at create; execute calls it directly (zero JIT overhead in the hot path). */
-    vfft_proto_exec_fn exec_fwd, exec_bwd;
-    /* Padded c2c in-place (config.batch != NULL): cplan is built at Kp = the batch stride,
-     * and execute runs `exec_me` batch lanes (Kp = full-SIMD pad, or K = SSE2/scalar tail
-     * on the padded buffer — the padded wisdom's per-cell verdict). padded==0 => tight, the
-     * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
-    int padded;
-    int exec_me;
     /* ── native IL 2D c2c tier (docs/roadmap/fft2d_il_c2c_design.md):
      * n1c/t2c column chain + per-row K=1 IL child (order NATURAL). THE
      * serving for IL 2D c2c — OWNER LAW 2026-08-25: split is NOT a
@@ -634,32 +600,5 @@ struct vfft_plan_s
                           * rows — the clobber the first cut shipped) */
 };
 
-/* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
- * buffer can't be passed through the tight execute path by mistake, plus the feature
- * it was allocated for (a c2c handle must not be handed to an r2c create, etc.).
- *
- *   c2c (in-place):  real == NULL; re/im are the in-place split data, each N*Kp.
- *   c2c (OUT-OF-PLACE): re/im are the split INPUT, ore/oim the split OUTPUT, each N*Kp
- *                    (oop==1; Kp=roundup(K,8) so all 3 OOP kinds + wisdom caching work).
- *   r2c (fwd):       real = the real INPUT plane (N*Kp); re/im = the split spectrum
- *                    OUTPUT, each (N/2+1)*Kp.
- *   c2r (bwd):       re/im = the split spectrum INPUT, each (N/2+1)*Kp; real = the
- *                    real OUTPUT plane (N*Kp).
- *   trig:            real = real INPUT (N*Kp), re = real OUTPUT (N*Kp).
- * All planes are Kp-strided so the Kp-built plan addresses them correctly (element e
- * of transform t is at plane[e*Kp + t]); the pad columns t in [K,Kp) stay zeroed. */
-struct vfft_batch_s
-{
-    double *real, *re, *im, *ore, *oim;
-    size_t K, Kp;
-    int N;
-    int xform;
-    int oop;
-};
-/* INTERNAL handle type. Since 2026-07-28 the batch is no longer part of the
- * public API: vfft_create owns it (config.owned_buffers) and vfft_destroy frees
- * it, so a plan and its buffers cannot disagree. Callers reach the planes/stride
- * through vfft_plan_planes() / vfft_plan_stride(). */
-typedef struct vfft_batch_s *vfft_batch;
 
 #endif /* VFFT_INTERNAL_H */

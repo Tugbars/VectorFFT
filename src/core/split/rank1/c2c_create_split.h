@@ -34,6 +34,9 @@
 #include "split/wisdom/wisdom2_zts_split.h"
 #include "common/wisdom/wisdom2_tcmt.h"
 #include "split/rank1/zts_bluestein.h"
+#ifdef VFFT_USE_JIT
+#include "jit/zts_jit_runtime.h"       /* a cell without a fused driver gets one compiled at create */
+#endif
 
 /* a handle served by zturn-ts: the plan, the geometry, nothing else */
 static struct vfft_plan_s *_zts_handle(const vfft_cfg_t *cfg, int placement, int N, size_t K,
@@ -95,6 +98,27 @@ static vfft_zts_plan_t *_zts_replay(struct vfft_wisdom_s *W, int N, size_t K, in
 
 /* the cell planned: replayed, else raced (the registry's pool at N in this
  * lane mode, no incumbent) and banked. NULL = nothing serves the cell. */
+/* the DEPLOYED plan (never a race candidate): under VFFT_USE_JIT a cell the
+ * registry holds no fused driver for (the odd band, the lane-major band) gets
+ * one compiled now — the driver zts_drivers.ml emits for a registry cell,
+ * written for this chain, the kernels' sources inlined, cached on disk
+ * (jit/zts_jit_runtime.h). The staged walk stays on any failure. */
+static vfft_zts_plan_t *_zts_deployed(vfft_zts_plan_t *z)
+{
+#ifdef VFFT_USE_JIT
+    if (z && z->staged)
+    {
+        const vfft_zts_cell_t *c = vfft_zts_jit_resolve(z->N, z->chain, z->nf, z->lanes);
+        if (c)
+        {
+            z->cell = c;
+            z->staged = 0;
+            z->jit = 1;
+        }
+    }
+#endif
+    return z;
+}
 static vfft_zts_plan_t *_zts_plan_cell(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                        int N, size_t K, int place_ip, int lanes)
 {
@@ -102,7 +126,7 @@ static vfft_zts_plan_t *_zts_plan_cell(struct vfft_wisdom_s *W, const vfft_cfg_t
     vfft_zts_plan_t *z = cfg->recalibrate ? NULL : _zts_replay(W, N, K, place_ip, lanes, &stale);
     double wns = 0.0, ins = 0.0;
     if (z)
-        return z;
+        return _zts_deployed(z);
     if (stale && getenv("VFFT_NAT_LOG"))
         fprintf(stderr, "[zts] N=%d q=%zu %s: the banked row names a retired engine; racing zturn-ts\n",
                 N, K, place_ip ? "ip" : "oop");
@@ -118,7 +142,7 @@ static vfft_zts_plan_t *_zts_plan_cell(struct vfft_wisdom_s *W, const vfft_cfg_t
         vw2_zts_bank(&W->vw2, N, K, place_ip, z->chain, z->nf, z->tile, z->blk, wns);
         _vw2_persist(W, cfg);
     }
-    return z;
+    return _zts_deployed(z);
 }
 
 /* ── zturn-ts's CONTIGUOUS batch at T > 1: the THREADING verdict ──────
@@ -377,10 +401,8 @@ static vfft_plan _vfft_create_c2c_blu_split(const vfft_cfg_t *cfg, struct vfft_w
 }
 
 /* the 1D C2C create, split tier: the refusals of the contract, then the
- * cell. ob = a caller-owned batch descriptor (padded planes): never served
- * here. */
+ * cell (the padded batch was retired 2026-11-06: vfft.c refuses the flag) */
 static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
-                                        vfft_batch ob,
                                         struct vfft_wisdom_s *W,
                                         int N,
                                         size_t K)
@@ -388,14 +410,6 @@ static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
     const int ip = (cfg->placement == VFFT_INPLACE);
     const char *pname = ip ? "in-place" : "out-of-place";
     vfft_zts_plan_t *z;
-    if (ob)
-    {
-        _vfft_warn("vfft_create: %s C2C N=%d K=%zu on the SPLIT layout with a caller-owned "
-                   "(padded) batch: the split layout serves plain planes only — drop "
-                   "VFFT_FLAG_OWN_PITCH, or use VFFT_LAYOUT_INTERLEAVED",
-                   pname, N, K);
-        return NULL;
-    }
     if (cfg->order == VFI_ORDER_SCRAMBLED)
     {
         _vfft_warn("vfft_create: %s C2C N=%d K=%zu on the SPLIT layout at VFFT_ORDER_SCRAMBLED: "
@@ -433,7 +447,7 @@ static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
         struct vfft_plan_s *h1;
         c1.howmany = 1;
         c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1 */
-        h1 = (struct vfft_plan_s *)_vfft_create_c2c_split(&c1, NULL, W, N, 1);
+        h1 = (struct vfft_plan_s *)_vfft_create_c2c_split(&c1, W, N, 1);
         if (!h1)
             return NULL;
         h1->K = K;

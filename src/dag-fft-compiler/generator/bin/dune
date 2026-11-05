@@ -2,15 +2,10 @@
  (names
   gen_radix
   dump_ir
-  emit_registry_h
   emit_il_registry
-  emit_executor_h
-  emit_rfft_registry
-  emit_c2r_registry
   emit_ztt_registry
   emit_ztt_drivers
   emit_zts_registry
   emit_zts_drivers
-  gen_set
-  dbg_eval)
+  gen_set)
  (libraries vfft_gen vfft_kernel vfft_cx unix))

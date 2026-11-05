@@ -7,7 +7,7 @@
 #
 # Phases (each can be skipped):
 #   1. Codelet regen           — scripts/generate_codelets.sh (slow)
-#   2. Auto-emitted headers    — radix_profile, plan_executors, registry
+#   2. Auto-emitted headers    — radix_profile
 #   3. Build cost-model tools  — measure_cpe, score_and_time_plans
 #
 # Usage:
@@ -169,36 +169,6 @@ else
   ./_build/default/bin/emit_profile_h.exe --isa both > cost_model/generated/radix_profile.h
   lines=$(wc -l < cost_model/generated/radix_profile.h)
   status_line "emit_profile_h"  "cost_model/generated/radix_profile.h ($lines lines)"  "$(elapsed $T)s"
-
-  # 2b. plan_executors.h (avx2) — entries sourced from spike_wisdom.txt
-  T=$(now_s)
-  ./_build/default/bin/emit_executor_h.exe --isa avx2 \
-      --wisdom generated/spike_wisdom.txt > generated/plan_executors.h
-  lines=$(wc -l < generated/plan_executors.h)
-  entries=$(grep -cE "^[0-9]" generated/spike_wisdom.txt)
-  status_line "emit_executor_h"  "$entries wisdom entries, $lines lines"  "$(elapsed $T)s"
-
-  # 2c. registry_avx2.h
-  T=$(now_s)
-  ./_build/default/bin/emit_registry_h.exe --isa avx2 > generated/registry_avx2.h
-  lines=$(wc -l < generated/registry_avx2.h)
-  externs=$(grep -c "^extern void radix" generated/registry_avx2.h)
-  status_line "emit_registry_h avx2"  "$externs externs, $lines lines"  "$(elapsed $T)s"
-
-  # 2d. registry_avx512.h
-  T=$(now_s)
-  ./_build/default/bin/emit_registry_h.exe --isa avx512 > generated/registry_avx512.h
-  lines=$(wc -l < generated/registry_avx512.h)
-  externs=$(grep -c "^extern void radix" generated/registry_avx512.h)
-  status_line "emit_registry_h avx512"  "$externs externs, $lines lines"  "$(elapsed $T)s"
-
-  # 2e. dispatcher registry.h is hand-written — sanity check it exists
-  if [ -f generated/registry.h ]; then
-    lines=$(wc -l < generated/registry.h)
-    status_line "registry.h (manual)"  "ISA-dispatcher present ($lines lines)"  "  cached"
-  else
-    warn "generated/registry.h missing — hand-written ISA dispatcher should be in tree"
-  fi
 fi
 
 # ── Phase 3: build cost-model tools ─────────────────────────────────────

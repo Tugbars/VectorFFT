@@ -5,25 +5,22 @@
  *
  * Usage (via gen_radix):
  *   gen_radix N                          show DAG and stats (no twiddle)
- *   gen_radix N --twiddled               t1_dit (TP_Flat: load all twiddles)
- *   gen_radix N --twiddled --log3        t1_dit_log3 (load base twiddles, derive rest)
- *   gen_radix N --twiddled --emit-c      emit C code with cost-model defaults
+ *   gen_radix N --emit-c                 emit C code with cost-model defaults
  *
  * Cost-model defaults (auto-applied unless --no-recipe is passed):
- *   Spill + SU (the "full recipe") auto-enables when the cost model says yes.
+ *   Spill (the "full recipe") auto-enables when the cost model says yes.
  *   Currently that's: CT-decomposed AND (n + 6 > vec_regs OR vec_regs >= 32).
  *
  * Override flags:
- *   --no-recipe        force Topo (disable auto spill+SU)
- *   --spill / --su     explicit on (overrides --no-recipe locally per flag)
+ *   --no-recipe        force Topo (disable auto spill)
+ *   --spill            explicit on (overrides --no-recipe locally per flag)
  *
  * `run` is a single sequential function with five phases, in order:
  *   1. FLAG PARSE — ~50 ref cells, one per CLI flag / family selector.
- *   2. RECIPE — the cost-model auto-defaults above, plus the SU
- *      universal default and the Goodman-Hsu auto-enable rule.
+ *   2. RECIPE — the cost-model auto-defaults above.
  *   3. FAMILY WIRING + MATH DISPATCH — set the Emit_state signature
  *      flags for the selected family, then call the matching
- *      Dft / Dft_r2c expansion to get raw assignments (+ spill
+ *      Dft expansion to get raw assignments (+ spill
  *      markers for blocked recipes).
  *   4. PASS CASCADE — Ir.reset, of_assignments, dedup, the
  *      aggressive prime passes, then the FMA cascade with frozen-tag
@@ -31,9 +28,7 @@
  *      the shared copy of exactly this cascade (used by codelet_oop);
  *      a semantic change here must be mirrored there until the two
  *      are unified.
- *   5. NAME + EMIT — production symbol naming per family, scheduler
- *      selection, then C2c_split.emit_codelet (oop family) or
- *      Emit_body.emit_codelet (everything else); without --emit-c, DAG
+ *   5. EMIT — the selected family's emitter; without --emit-c, DAG
  *      stats instead.
  * ------------------------------------------------------------------
  * MODULE CARD (gen_main.ml — grep "MODULE CARD" for the full set)
@@ -41,8 +36,7 @@
  * PIPELINE: the top-level driver; everything else serves it.
  * PUBLIC SURFACE (measured): run — called by bin/gen_radix(1),
  * bin/gen_set(2) and the new-bin clones.
- * DEPS: Dft(31), Algsimp(28), Emit_c(23), Dft_r2c(23),
- * Codelet_oop(17), Isa(1), Uarch(1).
+ * DEPS: Dft(31), Algsimp(28), Emit_c(23), Isa(1), Uarch(1).
  * ENV: VFFT_NEWSPLIT, VFFT_FORCE_REASSOC, VFFT_NO_SUBDEDUP,
  * VFFT_DEEP_COLLECT, VFFT_FORCE_FMA_LIFT, VFFT_DISABLE_FMA_LIFT
  * (plus everything the callees read).
@@ -62,88 +56,12 @@ let run (argv : string array) : unit =
      VFFT_CX_ODDCT=1 still works as a global override. *)
   Cx_math.odd_ct_enabled := (Sys.getenv_opt "VFFT_CX_ODDCT" = Some "1");
   let n = ref 4 in
-  let twiddled = ref false in
-  let twiddled_scalar = ref false in
-  (* OOP t1s: scalar-broadcast twiddles *)
-  let twiddled_pos = ref false in
-  (* OOP t1p: per-position broadcast twiddles *)
-  let log3 = ref false in
-  let post_tw = ref false in
   let emit_c = ref false in
-  let in_place = ref false in
-  let annotate = ref false in
-  let su = ref false in
   let spill = ref false in
   let fuse = ref 0 in
-  let oop_strides = ref None in
-  let oop_store_fused = ref false in
   let store_on_compute = ref false in
   let no_recipe = ref false in
-  let t1s = ref false in
-  let dif = ref false in
   let bwd = ref false in
-  let gh = ref false in
-  let bb = ref false in
-  let bb_budget = ref 1.0 in
-  let twidsq = ref false in
-  let r2c = ref false in
-  let r2c_first = ref false in
-  let rdft = ref false in
-  let hc2hc = ref false in
-  let hc2c = ref false in
-  let hc2c_nat = ref false in
-  let ranged = ref false in
-  let il2 = ref false in
-  let r2cf = ref false in
-  let r2cb = ref false in
-  let r2c_term = ref false in
-  let r2c_term_rt = ref false in
-  let r2c_term_ls = ref false in
-  let r2c_term_ls_r = ref 8 in
-  let r2c_term_k = ref 1 in
-  let dct2 = ref false in
-  let dct2_trigII = ref false in
-  let dct3 = ref false in
-  let dht = ref false in
-  let dst2 = ref false in
-  let dst3 = ref false in
-  let dct4 = ref false in
-  let dst4 = ref false in
-  let dct1 = ref false in
-  let dst1 = ref false in
-  let c2r = ref false in
-  let strided = ref false in
-  let oop_strided = ref false in
-  let strided_il_out = ref false in
-  let strided_r2c = ref false in
-  let strided_il_in = ref false in
-  let strided_ilo_nt = ref false in
-  let ip_il_in = ref false in
-  let ip_il_out = ref false in
-  (* strided-OOP n1, pack-fix ABI *)
-  (* M2 OOP family CLI args. The --oop flag selects the new codelet
-     family (lib/codelet_oop.ml). It's mutually exclusive with --strided
-     (the legacy 2D row codelet path) — first one to set wins; we don't
-     enforce because each path validates its own preconditions and will
-     fail clearly. The four edge-pattern flags drive the new family's
-     IR config. *)
-  let oop = ref false in
-  let oop_load_pat = ref "UL" in
-  (* "UL" = UnitLeg | "UG" = UnitGroup *)
-  let oop_store_pat = ref "UL" in
-  let oop_buf_oop = ref false in
-  (* true → OutOfPlace, false → InPlace *)
-  (* §P2 interleaved-boundary edges on the OOP family (codelet_oop.ml):
-     il_in = load edge reads interleaved z; il_out = store edge writes
-     interleaved z. Replaces the deprecated il_derive.py derived twins. *)
-  let oop_il_in = ref false in
-  let oop_il_out = ref false in
-  (* _sw twins: (im,re)-swapped lattice — bwd via the swap identity folded
-     into the boundary (a z buffer cannot pointer-swap re/im). *)
-  let oop_il_in_sw = ref false in
-  let oop_il_out_sw = ref false in
-  (* §12.4 4a: linear (consumption-order) twiddle table for t1 UL configs *)
-  let oop_tw_linear = ref false in
   (* §12.4 item 3: whole-K=1-four-step mono codelet (N = the positional arg) *)
   let k1_mono = ref false in
   let k1_r1 = ref 0 in
@@ -195,7 +113,6 @@ let run (argv : string array) : unit =
   let cil_st128 = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
-  let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -205,143 +122,20 @@ let run (argv : string array) : unit =
     let arg = arr.(!i) in
     if !i = 0
     then ()
-    else if arg = "--twiddled"
-    then twiddled := true
-    else if arg = "--twiddled-scalar"
-    then (
-      twiddled_scalar := true;
-      twiddled := true)
-    else if arg = "--twiddled-pos"
-    then (
-      twiddled_pos := true;
-      twiddled := true)
-    else if arg = "--log3"
-    then log3 := true
-    else if arg = "--post-tw"
-    then post_tw := true
     else if arg = "--emit-c"
     then emit_c := true
-    else if arg = "--in-place"
-    then in_place := true
-    else if arg = "--annotate"
-    then annotate := true
     else if arg = "--bisect"
     then
       failwith
         "--bisect removed: the GPL-derived bisection port was deleted for license \
          hygiene (2026-07-02); see the REMOVED notice in lib/schedule.ml. Use --su \
          (Starve-Retire) or FFTW upstream for bisection comparisons."
-    else if arg = "--su"
-    then su := true
     else if arg = "--spill"
     then spill := true
     else if arg = "--no-recipe"
     then no_recipe := true
-    else if arg = "--t1s"
-    then t1s := true
-    else if arg = "--dif"
-    then dif := true
     else if arg = "--bwd"
     then bwd := true
-    else if arg = "--gh"
-    then gh := true
-    else if arg = "--bb"
-    then bb := true
-    else if arg = "--twidsq"
-    then twidsq := true
-    else if arg = "--r2c"
-    then r2c := true
-    else if arg = "--r2c-first"
-    then r2c_first := true
-    else if arg = "--rdft"
-    then rdft := true
-    else if arg = "--hc2hc"
-    then hc2hc := true
-    else if arg = "--hc2c"
-    then hc2c := true
-    else if arg = "--hc2c-nat"
-    then hc2c_nat := true
-    else if arg = "--ranged"
-    then ranged := true
-    else if arg = "--il2"
-    then il2 := true
-    else if arg = "--r2cf"
-    then r2cf := true
-    else if arg = "--r2cb"
-    then r2cb := true
-    else if arg = "--r2c-term"
-    then r2c_term := true
-    else if arg = "--r2c-term-rt"
-    then (
-      r2c_term := true;
-      r2c_term_rt := true)
-    else if arg = "--r2c-term-ls"
-    then r2c_term_ls := true
-    else if arg = "--dct2"
-    then dct2 := true
-    else if arg = "--dct2-trigII"
-    then dct2_trigII := true
-    else if arg = "--dct3"
-    then dct3 := true
-    else if arg = "--dht"
-    then dht := true
-    else if arg = "--dst2"
-    then dst2 := true
-    else if arg = "--dst3"
-    then dst3 := true
-    else if arg = "--dct4"
-    then dct4 := true
-    else if arg = "--dst4"
-    then dst4 := true
-    else if arg = "--dct1"
-    then dct1 := true
-    else if arg = "--dst1"
-    then dst1 := true
-    else if arg = "--c2r"
-    then c2r := true
-    else if arg = "--strided"
-    then strided := true
-    else if arg = "--oop-strided"
-    then oop_strided := true
-    else if arg = "--strided-il-out"
-    then (
-      strided := true;
-      strided_il_out := true)
-    else if arg = "--strided-il-in"
-    then (
-      strided := true;
-      strided_il_in := true)
-    else if arg = "--strided-r2c"
-    then (
-      strided := true;
-      strided_r2c := true)
-    else if arg = "--strided-il-out-nt"
-    then (
-      strided := true;
-      strided_il_out := true;
-      strided_ilo_nt := true)
-    else if arg = "--ip-il-in"
-    then (
-      in_place := true;
-      ip_il_in := true)
-    else if arg = "--ip-il-out"
-    then (
-      in_place := true;
-      ip_il_out := true)
-    else if arg = "--oop"
-    then oop := true
-    else if arg = "--oop-buffer-oop"
-    then oop_buf_oop := true
-    else if arg = "--oop-il-in"
-    then oop_il_in := true
-    else if arg = "--oop-il-out"
-    then oop_il_out := true
-    else if arg = "--oop-il-in-sw"
-    then oop_il_in_sw := true
-    else if arg = "--oop-il-out-sw"
-    then oop_il_out_sw := true
-    else if arg = "--oop-tw-linear"
-    then oop_tw_linear := true
     else if arg = "--z-native"
     then z_native := true
     else if arg = "--z-t2"
@@ -618,42 +412,10 @@ let run (argv : string array) : unit =
     then k1_il := true
     else if arg = "--k1-sw"
     then k1_sw := true
-    else if arg = "--oop-spec-named"
-    then oop_spec_named := true
-    else if arg = "--oop-load" && !i + 1 < Array.length arr
-    then (
-      oop_load_pat := arr.(!i + 1);
-      incr i)
-    else if arg = "--oop-store" && !i + 1 < Array.length arr
-    then (
-      oop_store_pat := arr.(!i + 1);
-      incr i)
-    else if arg = "--bb-budget" && !i + 1 < Array.length arr
-    then (
-      bb_budget := float_of_string arr.(!i + 1);
-      incr i)
     else if arg = "--fuse" && !i + 1 < Array.length arr
     then (
       fuse := int_of_string arr.(!i + 1);
       incr i)
-    else if arg = "--r2c-term-k" && !i + 1 < Array.length arr
-    then (
-      r2c_term_k := int_of_string arr.(!i + 1);
-      incr i)
-    else if arg = "--r2c-term-ls-r" && !i + 1 < Array.length arr
-    then (
-      r2c_term_ls_r := int_of_string arr.(!i + 1);
-      incr i)
-    else if arg = "--oop-strides" && !i + 1 < Array.length arr
-    then (
-      (match String.split_on_char ',' arr.(!i + 1) with
-       | [ a; b; c; d ] ->
-         oop_strides
-         := Some (int_of_string a, int_of_string b, int_of_string c, int_of_string d)
-       | _ -> failwith "--oop-strides expects L,G,OL,OG (four ints)");
-      incr i)
-    else if arg = "--oop-store-fused"
-    then oop_store_fused := true
     else if arg = "--store-on-compute"
     then store_on_compute := true
     else if arg = "--isa" && !i + 1 < Array.length arr
@@ -676,307 +438,35 @@ let run (argv : string array) : unit =
    * on AVX2 — narrower live windows fit better in 16 ymm). *)
   Dft_select.target_vec_regs := isa.vec_regs;
   let n = !n in
-  let policy : Dft.twiddle_policy = if !log3 then TP_Log3 else TP_Flat in
-  let direction : Dft.direction = if !dif then DIF else DIT in
   let sign = if !bwd then `Bwd else `Fwd in
   (* Cost-model auto-defaults.
    *
    * If --no-recipe is set: don't auto-enable anything.
-   * Otherwise: when the rule says yes AND user didn't override with
-   * annotate, turn on --spill --su automatically.
+   * Otherwise: when the rule says yes, turn on --spill automatically.
    *
-   * Explicit --spill / --su flags always take effect regardless of the rule.
+   * Explicit --spill always takes effect regardless of the rule.
    *
    * Doc 58: the rule now also fires for n1 (no-twiddle) codelets at sizes
    * where blocked construction beats monolithic — see
    * Dft.should_block_n1. Without auto-enable, the n1 path would stay
    * monolithic and miss the spill-recipe wins on the hot path. *)
   let recipe_applicable =
-    (not !annotate)
-    && (not !no_recipe)
-    (* strided is single-stage n1-only by design (v1); the blocked
-     * recipe emits spill_re/spill_im markers the strided emitter does
-     * not declare. Latent since doc-58 auto-blocking; caught when the
-     * strided set was first regenerated post-rule (section 38e). *)
-    && (not !strided)
-    && ((!twiddled && Dft.should_spill n isa.vec_regs)
-        (* hc cascade DIT codelets (section 66): the spill variants run
-         * the t1 spill builder + output syms; same trigger rule. DIF
-         * has no spill route (input-side syms) and stays plain. *)
-        || ((!hc2hc || !hc2c || !hc2c_nat)
-            && (not !dif)
-            && Dft.should_spill n isa.vec_regs)
-        || ((not !twiddled)
-            && (not !hc2hc)
-            && (not !hc2c)
-            && Dft.should_block_n1 n isa.vec_regs)
-        (* model-b fused last-stage: two DFT-r columns live at once = always over
-         * budget (32 zmm at r=8) -> always block via the (2,r) spill seam. *)
-        || !r2c_term_ls
+    (not !no_recipe)
+    && (Dft.should_block_n1 n isa.vec_regs
         (* NEWSPLIT blocked: E/O1/O3 seam, prototype gate. *)
-        || ((not !twiddled)
-            && (not !hc2hc)
-            && (not !hc2c)
-            && Sys.getenv_opt "VFFT_NEWSPLIT" = Some "1"
+        || (Sys.getenv_opt "VFFT_NEWSPLIT" = Some "1"
             && (match Dft_select.pick_algorithm n with
                 | Dft_select.Split_radix -> true
                 | _ -> false)
             && n >= 32))
   in
-  if recipe_applicable
-  then (
-    if not !spill then spill := true;
-    if not !su then su := true);
-  (* SU scheduler as the universal default.
-   *
-   * The recipe above enables it (together with structural spill) for the
-   * blocked/spill sizes. This rule also turns it on for the remaining
-   * monolithic n1 codelets — the small split-radix / low-n CT sizes
-   * (R<=16 n1) that otherwise ship on plain topological scheduling. SU is
-   * pressure-aware (Sethi-Ullman load deferral): it shortens live ranges
-   * so gcc reuses registers instead of spilling. It is DECOUPLED from
-   * --spill here, so these codelets stay monolithic (no cross-pass
-   * decomposition is forced on them).
-   *
-   * Measured, n1 avx2, bit-identical results (0.0e+00):
-   *   R8  : 16 -> 6 spill movs, 1.35x faster
-   *   R16 : 151 -> 78 spill movs, 0.75x (L1-resident) to 0.98x (memory-bound)
-   *   R4  : neutral (0 spills either way)
-   * Faster or neutral at every working-set size; no measured regression.
-   * The earlier topological default front-loaded loads, which only helps
-   * a memory-bound codelet's load parallelism — a case where SU measured
-   * neutral, not worse. --no-recipe still selects topological. Codelets
-   * that already had SU (all t1s, R>=32 n1) are unaffected (no-op here). *)
-  if (not !no_recipe) && (not !annotate) && not !su then su := true;
-  (* Auto-enable Goodman-Hsu mode switch when:
-   *   - the recipe is engaged (--su is on), AND
-   *   - vec_regs <= 16 (AVX2 or narrower), AND
-   *   - n >= 32 (peak live likely to exceed threshold inside clusters)
-   *
-   * Empirically this delivers 4-8% over the base recipe on AVX2 R={32,64}
-   * and is a no-op on AVX-512 (threshold=24 not reached with cluster-sequential).
-   * The flag toggle is free at runtime — pressure mode only fires when needed. *)
-  if
-    !su
-    && isa.vec_regs <= 16
-    && n >= 32
-    && (not !no_recipe)
-    &&
-    try Sys.getenv "VFFT_NO_GH" <> "1" with
-    | Not_found -> true
-  then if not !gh then gh := true;
-  (* Drive math layer with or without spill marker capture.
-   * Spill is meaningful only for twiddled CT-decomposed codelets.
-   *
-   * --twidsq selects the n×n twidsq DAG (OOP codelet,
-   * doc 43): apply inter-stage twiddle, run n parallel DFT-n's,
-   * store transposed. Bypasses the regular twiddled / spill paths
-   * (those are for in-place codelets). *)
-  Emit_render.hoist_consts_enabled
-  := !rdft
-     || !dct2
-     || !dct2_trigII
-     || !dct3
-     || !dst2
-     || !dst3
-     || !dht
-     || !dct4
-     || !dst4
-     || !dct1
-     || !dst1
-     || !r2cf
-     || !r2cb
-     || !r2c_term
-     || !r2c_term_ls
-     || !hc2hc
-     || !hc2c
-     || !hc2c_nat;
-  (* ── M5: the config globals are set FROM THE DESCRIPTOR — argv parsed
-     ONCE into Codelet.t (the word for the thing we compile), the globals
-     derived from it in this one place.  The per-flag local projections
-     they replaced are retired; exotic debug variants outside the corpus
-     descriptor (--dct2-trigII) are OR'd from their locals until the driver
-     rewrite retires them too.  Round-trip contract: to_argv (of_argv l) == l
-     verbatim over every live recorded provenance line (1,404/1,404). *)
-  let cdesc = Codelet.of_argv ~strict:false (List.tl (Array.to_list argv)) in
+  if recipe_applicable then if not !spill then spill := true;
   (* M6.1: the per-emission Scratch — created by the DRIVER, one per
      codelet, so nothing leaks across emissions in a warm gen_set process. *)
   let sc = Emit_render.Scratch.create () in
-  let cmods = cdesc.Codelet.mods in
-  let cbwd = cmods.Codelet.dir = Codelet.Bwd in
-  (* ── M6.2: emit_state is DEAD — the config is a VALUE (Emit_render.Cfg.t)
-     built here from the descriptor and passed FORWARD into emit_codelet.
-     The per-cell derivations are the M5 projections, verbatim, as record
-     fields instead of global writes. *)
-  let ccfg =
-    let k = cdesc.Codelet.kind in
-    { Emit_render.Cfg.default with
-      Emit_render.Cfg.r2r =
-        (match k with
-         | Codelet.Trig _ -> true
-         | _ -> false)
-        || !dct2_trigII
-    ; r2cf = k = Codelet.R2cf
-    ; r2cb = k = Codelet.R2cb
-    ; hc_strided =
-        (match k with
-         | Codelet.Hc2hc _ | Codelet.Hc2c | Codelet.Hc2c_nat _ -> true
-         | _ -> false)
-    ; n1_oop_strided = k = Codelet.N1_oop_strided
-    ; strided_il_in =
-        (match k with
-         | Codelet.Strided { il = `In } -> true
-         | _ -> false)
-    ; strided_il_out =
-        (match k with
-         | Codelet.Strided { il = `Out } | Codelet.Strided { il = `Out_nt } -> true
-         | _ -> false)
-    ; strided_ilo_nt =
-        (match k with
-         | Codelet.Strided { il = `Out_nt } -> true
-         | _ -> false)
-    ; strided_r2c = k = Codelet.Strided_r2c
-    ; strided_r2c_bwd = k = Codelet.Strided_r2c && cbwd
-    ; ip_il_in =
-        (match k with
-         | Codelet.C2c_inplace_su { il = `In } | Codelet.C2c_inplace_tw { il = `In } ->
-           true
-         | _ -> false)
-    ; ip_il_out =
-        (match k with
-         | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out } ->
-           true
-         | _ -> false)
-    ; hc2c_natural =
-        (match k with
-         | Codelet.Hc2c_nat _ -> not cbwd
-         | _ -> false)
-    ; hc2c_natural_bwd =
-        (match k with
-         | Codelet.Hc2c_nat _ -> cbwd
-         | _ -> false)
-    ; r2c_term =
-        (match k with
-         | Codelet.R2c_term _ -> true
-         | _ -> false)
-    ; r2c_term_rt =
-        (match k with
-         | Codelet.R2c_term { rt; _ } -> rt
-         | _ -> false)
-    ; r2c_term_ls =
-        (match k with
-         | Codelet.R2c_term_ls _ -> true
-         | _ -> false)
-    ; r2c_term_ls_r =
-        (match k with
-         | Codelet.R2c_term_ls { r } -> r
-         | _ -> 0)
-    ; hc_ranged =
-        (match k with
-         | Codelet.Hc2hc { ranged } | Codelet.Hc2c_nat { ranged } -> ranged
-         | _ -> false)
-    ; hc_ranged_r =
-        (match k with
-         | Codelet.Hc2hc { ranged = true } | Codelet.Hc2c_nat { ranged = true } -> n
-         | _ -> 0)
-    ; hc2c_nat_r =
-        (match k with
-         | Codelet.Hc2c_nat _ -> n
-         | _ -> 0)
-    ; hc2c_nat_sstar =
-        (match k with
-         | Codelet.Hc2c_nat _ -> if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2
-         | _ -> 0)
-    ; store_on_compute = !store_on_compute
-    }
-  in
-  ignore cmods;
   let raw, spill_markers, spill_ct =
-    if !r2c
-    then Dft_r2c.dft_expand_r2c ~sign n, [], None
-    else if !r2c_first
-    then Dft_r2c.dft_expand_r2c_first ~sign n, [], None
-    else if !rdft
-    then Dft_r2c.dft_expand_rdft ~sign n, [], None
-    else if !hc2hc
-    then (
-      let direction = if !dif then `Dif else `Dit in
-      if !spill && not !dif
-      then
-        Dft_r2c.dft_expand_hc2hc_spill
-          ~sign
-          ~tw_policy:(if !log3 then Dft.TP_Log3 else Dft.TP_Flat)
-          n
-      else Dft_r2c.dft_expand_hc2hc ~sign ~direction n, [], None)
-    else if !r2cf
-    then Dft_r2c.dft_expand_r2cf ~sign n, [], None
-    else if !r2cb
-    then Dft_r2c.dft_expand_r2cb ~sign n, [], None
-    else if !r2c_term
-    then
-      if !r2c_term_rt
-      then Dft_r2c.dft_expand_r2c_term_rt ~sign (), [], None
-      else Dft_r2c.dft_expand_r2c_term ~sign n !r2c_term_k, [], None
-    else if !r2c_term_ls
-    then (
-      let half = n / 2 in
-      let rr = !r2c_term_ls_r in
-      let mm = half / rr in
-      Dft_r2c.dft_expand_r2c_term_laststage_spill ~sign half rr mm)
-    else if !hc2c || !hc2c_nat
-    then (
-      let direction = if !dif then `Dif else `Dit in
-      if !spill && not !dif
-      then
-        Dft_r2c.dft_expand_hc2c_spill
-          ~sign
-          ~tw_policy:(if !log3 then Dft.TP_Log3 else Dft.TP_Flat)
-          n
-      else
-        ( Dft_r2c.dft_expand_hc2c
-            ~sign
-            ~direction
-            ~tw_policy:(if !log3 then Dft.TP_Log3 else Dft.TP_Flat)
-            n
-        , []
-        , None ))
-    else if !dct2
-    then Dft_r2c.dft_expand_dct2 n, [], None
-    else if !dct2_trigII
-    then Dft_r2c.dft_expand_dct2_trigII n, [], None
-    else if !dct3
-    then Dft_r2c.dft_expand_dct3 n, [], None
-    else if !dht
-    then Dft_r2c.dft_expand_dht n, [], None
-    else if !dst2
-    then Dft_r2c.dft_expand_dst2 n, [], None
-    else if !dst3
-    then Dft_r2c.dft_expand_dst3 n, [], None
-    else if !dct4
-    then Dft_r2c.dft_expand_dct4 n, [], None
-    else if !dst4
-    then Dft_r2c.dft_expand_dst4 n, [], None
-    else if !dct1
-    then Dft_r2c.dft_expand_dct1 n, [], None
-    else if !dst1
-    then Dft_r2c.dft_expand_dst1 n, [], None
-    else if !c2r
-    then Dft_r2c.dft_expand_c2r n, [], None
-    else if !twidsq
-    then Dft.dft_expand_twidsq ~direction ~sign n, [], None
-    else if !twiddled && !il2
-    then Dft.dft_expand_twiddled_il2 ~policy ~direction ~sign n, [], None
-    else if !spill && !twiddled
-    then (
-      let assignments, markers, ct =
-        Dft.dft_expand_twiddled_spill ~policy ~direction ~sign n
-      in
-      assignments, markers, ct)
-    else if !twiddled
-    then Dft.dft_expand_twiddled ~policy ~direction ~sign n, [], None
-    else if
+    if
       !spill
-      && (not !strided)
       && Sys.getenv_opt "VFFT_NEWSPLIT" = Some "1"
       && (match Dft_select.pick_algorithm n with
           | Dft_select.Split_radix -> true
@@ -985,7 +475,7 @@ let run (argv : string array) : unit =
     then (
       let assignments, markers, ct = Dft.dft_expand_newsplit_blocked ~sign n in
       assignments, markers, ct)
-    else if !spill && (not !strided) && Dft.should_block_n1 n isa.vec_regs
+    else if !spill && Dft.should_block_n1 n isa.vec_regs
     then (
       (* Doc 58 (updated): n1 codelets at R ≥ 25 use the blocked
        * PASS 1 / PASS 2 structure with spill markers between passes.
@@ -1007,14 +497,7 @@ let run (argv : string array) : unit =
     else Dft.dft_expand ~sign n, [], None
   in
   Ir.reset ();
-  (* POLICY SIZE (section 56): simplification policy must follow the
-   * DAG, not the CLI n. The boundary kinds wrap an internal rdft of a
-   * DIFFERENT size: dct1 builds CT-of-2(N-1), dst1 CT-of-2(N+1). Keying
-   * aggressive/reassoc/fma gates on the odd user-facing N classified
-   * them as Direct primes and ran the aggressive factor passes over a
-   * CT DAG — the documented-unsafe combination (stray same-const fires,
-   * algsimp.ml ~1418). Reproducer: dune exec bin/dbg_eval.exe -- 9. *)
-  let policy_n = if !dct1 then 2 * (n - 1) else if !dst1 then 2 * (n + 1) else n in
+  let policy_n = n in
   let reassoc =
     match Sys.getenv_opt "VFFT_FORCE_REASSOC" with
     | Some "0" -> false
@@ -1070,182 +553,8 @@ let run (argv : string array) : unit =
       ~fuse:!fuse
   in
   let deduped = pipe.Pipeline.assigns in
-  let spill_info : Algsimp.spill_info option = pipe.Pipeline.spill_info in
   if !emit_c
   then (
-    (* Symbol naming aligned with production (src/stride-fft/codelets/{isa}/):
-     * radix{R}_{variant}_{isa}. No _gen, _inplace, _su, _spill suffixes.
-     *
-     * The old suffix machinery encoded which codegen passes fired (Sethi-
-     * Ullman scheduler, spill recipe, in-place vs OOP). With M-active being
-     * universal post-doc-56 and the in-place vs OOP distinction captured
-     * by separate variant strings (n1 vs t1_oop), per-symbol decoration of
-     * codegen state is noise — the diagnostic info still lives in source
-     * comments at the top of each .c. The shorter names match production
-     * exactly so prototype codelets drop directly into core symbol slots
-     * during the eventual wire-up. *)
-    let variant = if !log3 then "_log3" else "" in
-    let t1s_infix = if !t1s then "s" else "" in
-    let dir_suffix = if !dif then "dif" else "dit" in
-    let sgn_suffix = if !bwd then "bwd" else "fwd" in
-    let name =
-      if !r2c
-      then
-        (* R2C forward codelet: radix{N}_r2c_{sgn}_{isa} *)
-        Printf.sprintf "radix%d_r2c_%s_%s" n sgn_suffix isa.name
-      else if !r2c_first
-      then
-        (* R2C first-stage cascade codelet: radix{R}_r2c_first_{sgn}_{isa}
-         * The {R} here is the SUB-DFT radix, not the total transform size. *)
-        Printf.sprintf "radix%d_r2c_first_%s_%s" n sgn_suffix isa.name
-      else if !rdft
-      then
-        (* Real-input DFT: radix{N}_rdft_{sgn}_{isa} *)
-        Printf.sprintf "radix%d_rdft_%s_%s" n sgn_suffix isa.name
-      else if !hc2hc && !ranged
-      then
-        Printf.sprintf
-          "radix%d_hc2hc_%s%s_rng_%s_%s"
-          n
-          dir_suffix
-          variant
-          sgn_suffix
-          isa.name
-      else if !hc2hc
-      then
-        (* Middle-stage Hermitian-packed cascade codelet:
-         * radix{R}_hc2hc_{dir}{_log3}_{sgn}_{isa} *)
-        Printf.sprintf "radix%d_hc2hc_%s%s_%s_%s" n dir_suffix variant sgn_suffix isa.name
-      else if !hc2c_nat && !ranged
-      then Printf.sprintf "radix%d_hc2c_nat%s_rng_%s_%s" n variant sgn_suffix isa.name
-      else if !hc2c_nat
-      then
-        (* D2 natural-split terminator (section 69), 4-pointer ABI:
-         * radix{R}_hc2c_nat{_log3}_{sgn}_{isa} *)
-        Printf.sprintf "radix%d_hc2c_nat%s_%s_%s" n variant sgn_suffix isa.name
-      else if !hc2c
-      then
-        (* Last-stage cascade codelet: Hermitian-packed in, natural complex out:
-         * radix{R}_hc2c_{dir}{_log3}_{sgn}_{isa} *)
-        Printf.sprintf "radix%d_hc2c_%s%s_%s_%s" n dir_suffix variant sgn_suffix isa.name
-      else if !r2cb
-      then
-        (* Native real-cascade BACKWARD leaf (hc2r): radix{R}_r2cb_{isa}.
-         * Always backward, so no sgn_suffix. *)
-        Printf.sprintf "radix%d_r2cb_%s" n isa.name
-      else if !r2cf
-      then
-        (* Native real-cascade leaf, stride_n1_fn ABI: radix{R}_r2cf_{isa} *)
-        Printf.sprintf "radix%d_r2cf_%s" n isa.name
-      else if !r2c_term
-      then
-        (* Fused forward terminator (step-2), dual-output ABI.
-         * rt variant: frequency-agnostic (runtime twiddle), no k in name. *)
-        if !r2c_term_rt
-        then Printf.sprintf "radix%d_r2c_term_rt_%s_%s" n sgn_suffix isa.name
-        else Printf.sprintf "radix%d_r2c_term_k%d_%s_%s" n !r2c_term_k sgn_suffix isa.name
-      else if !r2c_term_ls
-      then
-        Printf.sprintf
-          "radix%d_r2c_term_ls_r%d_%s_%s"
-          n
-          !r2c_term_ls_r
-          sgn_suffix
-          isa.name
-      else if !dct2
-      then
-        (* DCT-II via Makhoul's reduction: radix{N}_dct2_{isa} *)
-        Printf.sprintf "radix%d_dct2_%s" n isa.name
-      else if !dct2_trigII
-      then
-        (* DCT-II via trigII embedding: radix{N}_dct2_trigII_{isa} *)
-        Printf.sprintf "radix%d_dct2_trigII_%s" n isa.name
-      else if !dct3
-      then
-        (* DCT-III via inverse-Makhoul: radix{N}_dct3_{isa} *)
-        Printf.sprintf "radix%d_dct3_%s" n isa.name
-      else if !dht
-      then
-        (* DHT (Discrete Hartley Transform): radix{N}_dht_{isa} *)
-        Printf.sprintf "radix%d_dht_%s" n isa.name
-      else if !dst2
-      then
-        (* DST-II via DCT-II wrapper: radix{N}_dst2_{isa} *)
-        Printf.sprintf "radix%d_dst2_%s" n isa.name
-      else if !dst3
-      then
-        (* DST-III via DCT-III wrapper: radix{N}_dst3_{isa} *)
-        Printf.sprintf "radix%d_dst3_%s" n isa.name
-      else if !dct4
-      then
-        (* DCT-IV via Lee 1984: radix{N}_dct4_{isa} *)
-        Printf.sprintf "radix%d_dct4_%s" n isa.name
-      else if !dst4
-      then
-        (* DST-IV via DCT-IV reduction: radix{N}_dst4_{isa} *)
-        Printf.sprintf "radix%d_dst4_%s" n isa.name
-      else if !dct1
-      then
-        (* DCT-I via even-extension rdft 2(N-1): radix{N}_dct1_{isa} *)
-        Printf.sprintf "radix%d_dct1_%s" n isa.name
-      else if !dst1
-      then
-        (* DST-I via odd-extension rdft 2(N+1): radix{N}_dst1_{isa} *)
-        Printf.sprintf "radix%d_dst1_%s" n isa.name
-      else if !c2r
-      then
-        (* C2R backward codelet: radix{N}_c2r_{isa}
-         * c2r is always backward, so no separate sgn_suffix is needed. *)
-        Printf.sprintf "radix%d_c2r_%s" n isa.name
-      else if !twidsq
-      then
-        (* Twidsq codelets use their own name pattern reflecting the
-         * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}. *)
-        Printf.sprintf "radix%d_twidsq_%s_%s_%s" n dir_suffix sgn_suffix isa.name
-      else if !twiddled
-      then
-        Printf.sprintf
-          "radix%d_t1%s_%s%s_%s_%s%s"
-          n
-          t1s_infix
-          dir_suffix
-          variant
-          sgn_suffix
-          isa.name
-          (if !ip_il_in then "_il_in" else if !ip_il_out then "_il_out" else "")
-      else
-        Printf.sprintf
-          "radix%d_n1_%s_%s%s"
-          n
-          sgn_suffix
-          isa.name
-          (if !strided
-           then
-             if !strided_r2c
-             then "_strided_r2c"
-             else if !strided_ilo_nt
-             then "_strided_il_out_nt"
-             else if !strided_il_out
-             then "_strided_il_out"
-             else if !strided_il_in
-             then "_strided_il_in"
-             else "_strided"
-           else if !oop_strided
-           then "_oop_strided"
-           else if !ip_il_in
-           then "_il_in"
-           else if !ip_il_out
-           then "_il_out"
-           else "")
-    in
-    let scheduler : Emit_render.scheduler =
-      match !su, !annotate with
-      | false, false -> Topological
-      | true, false -> SU uarch
-      | false, true -> Annotated_topological
-      | true, true -> Annotated_SU uarch
-    in
-    let bb_budget_arg = if !bb then Some !bb_budget else None in
     (* MUTUAL EXCLUSION (zil_pipeline_port.md §9 review finding): the pipeline
        zsplit family (the zp flags) and the legacy interleaved-native family
        (the z flags) emit BYTE-IDENTICAL symbol names, and the dispatch below
@@ -1257,18 +566,18 @@ let run (argv : string array) : unit =
        placement luck. There is no valid reason to request both in one
        invocation, so fail loudly rather than let the loser arm masquerade as
        the winner. *)
-    if (!cil_kind <> "" || !cil_k1) && (!zp_kind <> "" || !z_native || !k1_mono || !oop)
+    if (!cil_kind <> "" || !cil_k1) && (!zp_kind <> "" || !z_native || !k1_mono)
     then
       failwith
         "gen_main: --cil-* (interleaved-complex) conflicts with another codelet family \
          in the same invocation; they emit identical symbol names, so pass exactly one \
          family per run.";
-    if !zp_kind <> "" && (!z_native || !k1_mono || !oop)
+    if !zp_kind <> "" && (!z_native || !k1_mono)
     then
       failwith
         (Printf.sprintf
            "gen_main: --zp-%s (pipeline zsplit) conflicts with a legacy \
-            --z-*/--k1-mono/--oop flag in the same invocation. They emit identical \
+            --z-*/--k1-mono flag in the same invocation. They emit identical \
             symbol names; pass exactly one family per run."
            !zp_kind);
     if !cil_k1
@@ -1434,222 +743,9 @@ let run (argv : string array) : unit =
            ~n
            ~r1_opt:(if !k1_r1 > 0 then Some !k1_r1 else None)
            ~il:!k1_il
-           ~sw:!k1_sw)
-    else if !oop
-    then (
-      (* M2 OOP codelet family path. The DAG construction inside
-         C2c_split.emit_codelet is independent of gen_radix's `deduped`
-         (it rebuilds the DAG to control the strided=true flag end-to-end);
-         we pass only the structural config and the name. The body
-         emission path is identical to what Emit_body.emit_codelet does for
-         the --strided variant, just with our new edge patterns. *)
-      let edge_of_string s =
-        match s with
-        | "UL" -> C2c_split.UnitLeg
-        | "UG" -> C2c_split.UnitGroup
-        | "SF" -> C2c_split.StridedFallback
-        | _ ->
-          failwith
-            (Printf.sprintf
-               "--oop-load/--oop-store: unknown pattern %S (expected UL | UG | SF)"
-               s)
-      in
-      let load_pat = edge_of_string !oop_load_pat in
-      let store_pat = edge_of_string !oop_store_pat in
-      let buffer = if !oop_buf_oop then C2c_split.OutOfPlace else C2c_split.InPlace in
-      let twiddles =
-        if !twiddled_pos
-        then C2c_split.PerPositionTwiddles
-        else if !twiddled_scalar
-        then C2c_split.BroadcastTwiddles
-        else if !twiddled
-        then C2c_split.PerGroupTwiddles
-        else C2c_split.NoTwiddles
-      in
-      let direction = if !bwd then C2c_split.Backward else C2c_split.Forward in
-      let cname =
-        C2c_split.canonical_name
-          ~radix:n
-          ~isa
-          ~direction
-          ~load_pat
-          ~store_pat
-          ~buffer
-          ~twiddles
-      in
-      if
-        !post_tw
-        && (twiddles <> C2c_split.PerGroupTwiddles
-            || direction <> C2c_split.Forward
-            || buffer <> C2c_split.OutOfPlace)
-      then failwith "--post-tw requires --twiddled (PerGroup) + fwd + --oop-buffer-oop";
-      if !oop_il_in && !oop_il_in_sw
-      then failwith "--oop-il-in and --oop-il-in-sw are mutually exclusive";
-      if !oop_il_out && !oop_il_out_sw
-      then failwith "--oop-il-out and --oop-il-out-sw are mutually exclusive";
-      let any_il_in = !oop_il_in || !oop_il_in_sw in
-      let any_il_out = !oop_il_out || !oop_il_out_sw in
-      if any_il_in && load_pat <> C2c_split.UnitGroup
-      then failwith "--oop-il-in[-sw] requires --oop-load UG";
-      if any_il_out && store_pat <> C2c_split.UnitGroup
-      then failwith "--oop-il-out[-sw] requires --oop-store UG";
-      if (any_il_in || any_il_out) && buffer <> C2c_split.OutOfPlace
-      then failwith "--oop-il-in[-sw]/--oop-il-out[-sw] require --oop-buffer-oop";
-      if (any_il_in || any_il_out) && Isa.(isa.vec_width) <> 4
-      then
-        failwith
-          "--oop-il-in[-sw]/--oop-il-out[-sw]: avx2 only for now (avx512 masked IL \
-           lattice pending)";
-      if any_il_out && !oop_store_fused
-      then
-        failwith
-          "--oop-il-out[-sw] is incompatible with --oop-store-fused (the IL store needs \
-           the paired out_lane re/im registers)";
-      if
-        !oop_tw_linear
-        && (twiddles <> C2c_split.PerGroupTwiddles || load_pat <> C2c_split.UnitLeg)
-      then
-        failwith
-          "--oop-tw-linear requires --twiddled (PerGroup) + --oop-load UL (UL configs \
-           carry no rem tail; the tail passes would index the flat layout)";
-      let cname =
-        if !post_tw
-        then (
-          let sub = "t1_oop"
-          and rep = "t1_dif_oop" in
-          let sl = String.length sub
-          and n = String.length cname in
-          let b = Buffer.create (n + 4) in
-          let i = ref 0 in
-          while !i < n do
-            if !i + sl <= n && String.sub cname !i sl = sub
-            then (
-              Buffer.add_string b rep;
-              i := !i + sl)
-            else (
-              Buffer.add_char b cname.[!i];
-              incr i)
-          done;
-          Buffer.contents b)
-        else cname
-      in
-      let cname = if !log3 then cname ^ "_log3" else cname in
-      (* IL suffixes match the derived-twin symbol names 1:1
-         (radixN_..._UG_UG_il_in), so emitted files REPLACE derived ones. *)
-      let cname = if !oop_il_in then cname ^ "_il_in" else cname in
-      let cname = if !oop_il_out then cname ^ "_il_out" else cname in
-      let cname = if !oop_il_in_sw then cname ^ "_il_in_sw" else cname in
-      let cname = if !oop_il_out_sw then cname ^ "_il_out_sw" else cname in
-      let cname = if !oop_tw_linear then cname ^ "_twl" else cname in
-      let cname =
-        match !oop_strides with
-        | None -> cname
-        | Some (l, g, ol, og) ->
-          if !oop_spec_named
-          then
-            (* stride tuple in the name so multiple specializations of one
-                 radix coexist (K=1 per-cell spec twins, §13.3). Opt-in via
-                 --oop-spec-named: the legacy coverage.ml _spec family keeps
-                 its unsuffixed names. *)
-            Printf.sprintf "%s_spec%d_%d_%d_%d" cname l g ol og
-          else cname ^ "_spec"
-      in
-      let cfg =
-        C2c_split.
-          { radix = n
-          ; isa
-          ; direction
-          ; load_pat
-          ; store_pat
-          ; buffer
-          ; twiddles
-          ; name = cname
-          }
-      in
-      (* M5: the OOP family knobs come from the DESCRIPTOR's C2c_oop payload —
-         the ten bare globals' values now have one source (argv), not ten locals. *)
-      (match cdesc.Codelet.kind with
-       | Codelet.C2c_oop { tw; fuse; store_fused; strides; il_in; il_out; _ } ->
-         C2c_split.current_tw_log3 := cdesc.Codelet.mods.Codelet.table = Codelet.Log3;
-         C2c_split.current_post_tw := tw = Some Codelet.Post_tw;
-         C2c_split.current_oop_strides := strides;
-         (C2c_split.current_oop_fuse
-          := match fuse with
-             | None -> 0
-             | Some v -> v);
-         C2c_split.current_oop_store_on_compute := store_fused;
-         C2c_split.current_oop_il_in := il_in = `Il;
-         C2c_split.current_oop_il_out := il_out = `Il;
-         C2c_split.current_oop_il_in_sw := il_in = `Il_sw;
-         C2c_split.current_oop_il_out_sw := il_out = `Il_sw;
-         C2c_split.current_oop_tw_linear := tw = Some Codelet.Tw_linear
-       | _ -> ());
-      print_string (C2c_split.emit_codelet cfg))
-    else (
-      (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
-      let route_real =
-        ccfg.Emit_render.Cfg.r2cf
-        || ccfg.Emit_render.Cfg.r2cb
-        || ccfg.Emit_render.Cfg.r2c_term
-        || ccfg.Emit_render.Cfg.r2c_term_ls
-        || ccfg.Emit_render.Cfg.hc2c_natural
-        || ccfg.Emit_render.Cfg.hc2c_natural_bwd
-        || ccfg.Emit_render.Cfg.hc_strided
-        || ccfg.Emit_render.Cfg.hc_ranged
-        || ccfg.Emit_render.Cfg.r2r
-        || ccfg.Emit_render.Cfg.strided_r2c
-        || ccfg.Emit_render.Cfg.strided_r2c_bwd
-      in
-      (* M8.3: real-family cells route through Real, which installs the
-         family hooks (the moved r2c/c2r/hc arms); everything else calls
-         the engine via C2c_split.emit_engine (M8.5), which installs
-         the strided-il hooks; Emit_body has no direct caller here now. *)
-      if route_real
-      then
-        print_string
-          (Real.emit_codelet
-             ~sc
-             ~cfg:ccfg
-             ~in_place:!in_place
-             ~t1s:!t1s
-             ~twidsq:!twidsq
-             ~twidsq_n:(if !twidsq then n else 0)
-             ~strided:!strided
-             ~radix:n
-             ~scheduler
-             ~isa
-             ~gh:!gh
-             ~bb_budget:bb_budget_arg
-             ~spill:spill_info
-             ~is_log3:!log3
-             deduped
-             ~name)
-      else
-        print_string
-          (C2c_split.emit_engine
-             ~sc
-             ~cfg:ccfg
-             ~in_place:!in_place
-             ~t1s:!t1s
-             ~twidsq:!twidsq
-             ~twidsq_n:(if !twidsq then n else 0)
-             ~strided:!strided
-             ~radix:n
-             ~scheduler
-             ~isa
-             ~gh:!gh
-             ~bb_budget:bb_budget_arg
-             ~spill:spill_info
-             ~is_log3:!log3
-             deduped
-             ~name)))
+           ~sw:!k1_sw))
   else (
-    let variant = if !log3 then ", log3" else "" in
-    let label =
-      if !twiddled
-      then Printf.sprintf "twiddled (t1_dit%s)" variant
-      else "no-twiddle (n1)"
-    in
+    let label = "no-twiddle (n1)" in
     Printf.printf "================================================================\n";
     Printf.printf "  DFT-%d, %s — DAG\n" n label;
     Printf.printf "================================================================\n\n";

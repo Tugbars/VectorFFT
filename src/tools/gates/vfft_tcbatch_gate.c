@@ -468,8 +468,8 @@ int main(int argc, char **argv)
     if (!run_t_rows(W, 256, 16)) fails++;
     if (!run_t_rows(W, 512, 5)) fails++;    /* 5 over 8 workers vs over 4 */
 
-    /* SPLIT is lane-major only: DEFAULT must build (resolving to lane-major),
-     * an EXPLICIT transform-contiguous request must be refused, not ignored. */
+    /* SPLIT 1D C2C serves both geometries on zturn-ts (2026-11-04): DEFAULT,
+     * an explicit transform-contiguous and an explicit lane-major request all build. */
     {
         vfft_config_t sc;
         memset(&sc, 0, sizeof sc);
@@ -483,12 +483,12 @@ int main(int argc, char **argv)
         sc.wisdom_dir = W;
         vfft_plan sd = vfft_create(&sc);          /* DEFAULT -> lane-major, OK */
         sc.batch = VFFT_BATCH_CONTIGUOUS;
-        vfft_plan sr = vfft_create(&sc);          /* must be refused */
+        vfft_plan sr = vfft_create(&sc);          /* the contiguous batch (the K=1 cell run K times), OK */
         sc.batch = VFFT_BATCH_LANE_MAJOR;
         vfft_plan sl = vfft_create(&sc);          /* explicit lane-major, OK */
-        int ok = (sd != NULL) && (sr == NULL) && (sl != NULL);
+        int ok = (sd != NULL) && (sr != NULL) && (sl != NULL);
         printf("split   K=4   default=%s  contiguous=%s  lane=%s%s\n",
-               sd ? "built" : "FAILED", sr ? "BUILT(!)" : "refused",
+               sd ? "built" : "FAILED", sr ? "built" : "FAILED",
                sl ? "built" : "FAILED", ok ? "" : "   *** FAIL ***");
         if (sd) vfft_destroy(sd);
         if (sr) vfft_destroy(sr);

@@ -14,7 +14,7 @@ produced a wrong answer at least once:
    misclassifies gates that reach the library only through a module header -
    wisdom2_2d_gate calls vfft_wisdom2_2d_gate_run and matches neither pattern, so a
    grep-based classifier reported two false build failures. The mode is DISCOVERED:
-   try standalone, fall back to --vfft. sp_ccol_decode_gate is the one hard
+   try standalone, fall back to --vfft. form_slot_gate is the one hard
    exception - it #includes vfft.c textually, so compiling vfft.c beside it is a
    duplicate-symbol error.
 
@@ -154,7 +154,6 @@ ARGSTYLE = {
     # never on the (M, N2) row a user cell owns (survey D, 2026-09-18)
     "il2d_blu_row_gate":       ("flag", False),
     "ztt_odd_gate":            ("flag", True),   # the 2^a*odd staged class (2026-09-15): its front-door pass decodes and banks on a store copy
-    "mt_c2c_gate":             ("flag", True),
     # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE
     # OCCURRED. Seeded, it correctly replays the banked verdict and reports
     # "NO RACE" with accuracy fine (7.8e-16) - a green engine, a red gate.
@@ -197,10 +196,8 @@ ARGSTYLE = {
     "il3d_real_batch_gate":    ("flag", False),   # COLD: the contiguous batches through the plane and volume queues (3D real r2c/c2r, the 2D real in place, the 3D c2c), vs K runs of the K=1 plan and the naive DFT (2026-10-18)
     "odd_partner_cells_gate":  ("bare", True),
     # decode real wisdom -> seeded copy
-    "sp_ccol_decode_gate":     ("bare", True),
     "zr2c_fd_gate":            ("bare", True),
     "pool_preserve_gate":      ("bare", True),   # SEEDED: the OOP natural race replays banked K=1 cells
-    "natorder_scratch_gate":   ("bare", True),   # SEEDED: must REPLAY mode=pcyc (cycle reorder is the scratch-using path)
     # the five checks that lived in gauntlet/ until 2026-10-19 (the real engines' own gates)
     "rn1_gate":                ("none", False),  # the real mono kernels against a naive real DFT (no store: the kernels linked directly)
     "r1c_gate":                ("none", False),  # the real flat leaf kernels against a naive digit transform (no store)
@@ -211,7 +208,7 @@ ARGSTYLE = {
     "twin_gate":               ("none", False),
 }
 
-TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
+TEXTUAL = {"form_slot_gate"}            # #includes vfft.c; must NOT add --vfft
 
 # Gates with their own build script beside them: twin_gate links BOTH ISAs' codelet
 # libraries, which no single gauntlet/build.py run does (it builds one VFFT_ISA).

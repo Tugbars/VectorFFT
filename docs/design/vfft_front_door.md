@@ -47,8 +47,8 @@ pointers), `vfft_execute_split` runs SPLIT plans (four planes); each refuses the
 
 `vfft_create` dispatches by transform and, for each one, follows the same shape: resolve
 wisdom, calibrate on a miss at PATIENT, build the plan, stamp the executor onto
-the handle. It serves C2C (in-place and out-of-place), R2C, C2R, DCT-I/II/III/IV, DST-I/II/III,
-DHT, and ranks 1 through 4.
+the handle. It serves C2C (in-place and out-of-place), R2C and C2R, and ranks 1 through 4 (the
+real-to-real family went with the stride engine on 2026-11-06).
 
 ### What is served
 
@@ -69,19 +69,19 @@ cell returns no plan and names its reason in `vfft_error()`.
 | 3D R2C / C2R, INTERLEAVED | both placements, every extent >= 2; howmany > 1 as contiguous volumes (its default; in place every row padded to 2(N3/2+1) doubles, the volumes one after another), or lane-major at N1, N2 >= 2 and an even N3 >= 4 (in place: N1 N2 rows of (N3 + 2) K doubles) | a lane-major batch at an odd N3 or N3 < 4; an extent below 2 |
 | 3D and 4D C2C, SPLIT | the scrambled order, howmany 1 | the natural order; a batch |
 | 4D, INTERLEAVED | | every request |
-| real-to-real (DCT, DST, DHT) | 1D, whatever the layout and order fields say | rank 2 and above |
+| real-to-real (DCT, DST, DHT) | | every request (retired 2026-11-06 with the stride engine) |
 
-The shipping split engine is `plan_executors.h`, `twiddle.h`, `executor_generic.h` and
-`executor.h`. (A previous executor generation, `engine/stride_executor.h`, redefined the same
-symbols and was deliberately never included by this translation unit; it was removed on
-2026-09-01 after having zero includers since the 2026-07-22 dag integration.)
+The split engine is zturn-ts (`split/rank1/zts.h`, `docs/design/split_v1_0_contract.md`): C2C at
+rank 1, 2 and 3, natural order, on one engine. The stride engine (`plan_executors.h`,
+`twiddle.h`, `executor_generic.h`, `executor.h`) and everything that stood on it were deleted on
+2026-11-06.
 
 ## 2. Wisdom is a bundle
 
-One `vfft_wisdom` holds every feature's table: the c2c spike table, the OOP two-axis table, the
-rfft factorization table, dedicated 2D c2c / 2D r2c / 2D c2r tables, the 3D table, the Bluestein
-`(M,B)` table, the 1D c2r path table, and the wisdom2 store
-([vfft.c:174-210](../../src/core/vfft.c#L174-L210)).
+One `vfft_wisdom` holds the wisdom2 store (the per-CPU shards, `common/wisdom/wisdom2.h`) and
+the frozen legacy OOP table the interleaved reader still serves; the stride engine's tables (the
+c2c spike table, the rfft table, the 2D and 3D tables, the Bluestein table, the c2r path table)
+went with it on 2026-11-06.
 
 `config.wisdom_dir == NULL` selects the library's store, rooted at `$VFFT_WISDOM_DIR`, else at
 the build's default folder (this CPU's under `src/wisdom/`). A directory's store is opened once
@@ -110,8 +110,8 @@ destination on an in-place real plan is refused rather than served
 backward consumes its own forward's comb — not any particular one, so callers must never assume
 which permutation scrambled output carries, and the identity permutation qualifies
 ([vfft.c:3231-3243](../../src/core/vfft.c#L3231-L3243)). A scrambled order on r2c/c2r and on
-padded batches is rejected up front rather than served wrong; real-to-real plans have no order
-axis.
+padded batches is rejected up front rather than served wrong (the padded batch itself was retired
+2026-11-06 with the stride engine).
 
 The rank test is `dims <= 1`, not `dims == 1`: `rank = 0` in the public config is 1D, and a
 zeroed config is the header's own quick-start shape.
@@ -312,11 +312,8 @@ Scratch planes are 64-byte aligned rather than plain `malloc`
 
 ## 9. Trig transforms
 
-Every DCT/DST/DHT is a `stride_plan_t` wrapping an inner plan — an r2c plan, or a half-N complex
-FFT for DCT-IV. The inner c2c cell is **keyed under the owning transform at the outer size**, not
-as a plain c2c cell, so a helper row and a genuine c2c row at the same `(N,K)` cannot collide.
-The inner size per family is derived, not stored: DCT-I uses `N-1`, DST-I uses `N+1`, everything
-else `N/2`.
+Retired 2026-11-06 with the stride engine: `vfft_create` refuses every DCT/DST/DHT request, on
+either layout. The enums stay in the public header for the contract.
 
 ## 10. Batch geometry
 
@@ -365,8 +362,8 @@ extent >= 2; R2C and C2R at an even last extent >= 4 with the leading extents >=
 blocks of (N2 + 2) K doubles, N1 N2 rows of (N3 + 2) K doubles). Rank 4 is not served in any
 geometry.
 
-A padded batch (`VFFT_FLAG_OWN_PITCH` on a 1D batch) combined with `layout=INTERLEAVED` is
-rejected at create: the padded planes are split, so the combination has no meaning.
+The padded 1D SPLIT batch (`VFFT_FLAG_OWN_PITCH` on a 1D batch) was retired 2026-11-06 with the
+stride engine; the flag is refused there.
 
 ## 11. Threading
 
@@ -429,11 +426,9 @@ No plan owns a caller buffer. `vfft_info()` names what an execute reads and writ
 (`in_doubles`, `out_doubles`, per plane under SPLIT) and the `stride` the plan walks; the caller
 allocates with `vfft_malloc` and frees with `vfft_free`.
 
-`VFFT_FLAG_OWN_PITCH` lets the plan choose that stride, for two kinds. An in-place INTERLEAVED
-real plan of rank 2 or 3 takes the policy's row pitch, which leaves the aliasing pitch. A 1D
-SPLIT batch is built through `_own_batch_for` from **the same config**, so the
-batch-versus-handle cross-checks inside the inner create are invariants rather than reachable
-failure modes; the plan keeps the batch's geometry and frees it with the plan. Every other
+`VFFT_FLAG_OWN_PITCH` lets the plan choose that stride, for one kind since 2026-11-06. An
+in-place INTERLEAVED real plan of rank 2 or 3 takes the policy's row pitch, which leaves the
+aliasing pitch (the second kind, the padded 1D SPLIT batch, went with the stride engine). Every other
 combination is refused at that door.
 
 Stride selection for a 1D SPLIT batch differs by kind. **Only 1D C2C in-place takes the measured tight-vs-padded
@@ -453,9 +448,9 @@ The door refuses rather than degrading, in every one of these cases, and names t
 |---|---|
 | `VFFT_FLAG_EXHAUSTIVE` in the flags | refused at create — `vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (every create plans PATIENT; drop the flag)` |
 | a scrambled order on r2c/c2r or a padded batch | refused at create |
-| a padded batch with `layout=INTERLEAVED` | refused at create |
+| a padded batch (`VFFT_FLAG_OWN_PITCH` on a 1D batch) | refused at create (retired 2026-11-06) |
 | the natural order on SPLIT C2C at rank 3 or 4 | refused at create |
-| `VFFT_FLAG_OWN_PITCH` outside its two kinds (section 13) | refused at create |
+| `VFFT_FLAG_OWN_PITCH` outside its one kind (section 13) | refused at create |
 | in-place real that cannot build zr2c | refused at create — no out-of-place substitute |
 | a K=1 cell with no split route and no IL pair | refused at create |
 | a lane-major real batch of rank 3 outside its extents | refused at create — `vfft_create: the lane-major interleaved 3D real batch serves R2C and C2R at howmany >= 2, N1 >= 2, N2 >= 2 and an even N3 >= 4 (got %s %dx%dx%d howmany=%zu) -- an odd N3 has no real column engine; lay the %zu volumes out one after another (VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS) for it` |

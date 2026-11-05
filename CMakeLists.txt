@@ -98,12 +98,10 @@ function(vfft_check_compiled_path _path)
     endif()
 endfunction()
 
-# The gauntlet's store and frozen bundle: the clone's, as build.py compiles them.
-# The frozen bundle (spike_wisdom.txt, bluestein_wisdom.txt, c2r_path.txt) stays
-# in generator/generated/ and is read from there whatever store is given.
+# The gauntlet's store: the clone's, as build.py compiles it (the frozen bundle of the
+# stride engine went with it, 2026-11-06).
 set(VFFT_WISDOM_DEFS
-    "VFFT_WISDOM_DIR_DEFAULT=\"${VFFT_WISDOM}\""
-    "VFFT_FROZEN_WISDOM_DIR=\"${DAG_GEN}\"")
+    "VFFT_WISDOM_DIR_DEFAULT=\"${VFFT_WISDOM}\"")
 # The build stamp of banked wisdom rows, bld=<version>-<commit> (src/core/vfft.c):
 # the last commit that touched the library's sources, -dirty when they carry
 # uncommitted changes. Read at CONFIGURE time; without git the library stamps
@@ -167,7 +165,7 @@ int main(void)
         set(VFFT_HOST_AVX512 "no")
     endif()
 endif()
-file(GLOB _a512_probe "${DAG_CODELETS}/split/inplace/avx512/*.c")
+file(GLOB _a512_probe "${DAG_CODELETS}/zil/avx512/shared/*.c")   # the interleaved corpus at avx512 (the split corpus is avx2 only)
 if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
     set(_isa_why "set by VFFT_ISA")
 elseif(VFFT_ISA STREQUAL "auto")
@@ -414,7 +412,7 @@ macro(vfft_add_codelet_dir _label _dir)
 endmacro()
 
 message(STATUS "codelet families (${VFFT_ISA}):")
-foreach(_fam inplace rfft c2r oop ztt il)
+foreach(_fam ztt il)   # the split corpus is zturn-ts alone since 2026-11-06; il is the retired once-home
     vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/split/${_fam}/${VFFT_ISA}")
 endforeach()
 # The zil family sits one level DEEPER (zil/<isa>/<folder>, one folder per engine
@@ -678,13 +676,9 @@ check_required_components(VectorFFT)
             DESTINATION ${VFFT_CMAKE_DIR})
 
     # runtime data: the shipped store (the live shards of every CPU folder, new/
-    # included; no backup, no lock, no README) and the frozen bundle, the three
-    # files src/core/vfft.c reads from it (c2r_path.txt when it exists)
+    # included; no backup, no lock, no README)
     install(DIRECTORY "${PROJECT_SOURCE_DIR}/src/wisdom/" DESTINATION ${VFFT_DATA_DIR}/wisdom
             FILES_MATCHING PATTERN "wisdom2_*.txt")
-    install(FILES "${DAG_GEN}/spike_wisdom.txt" "${DAG_GEN}/bluestein_wisdom.txt"
-            DESTINATION ${VFFT_DATA_DIR}/frozen)
-    install(FILES "${DAG_GEN}/c2r_path.txt" DESTINATION ${VFFT_DATA_DIR}/frozen OPTIONAL)
 endif()
 
 # ── The gauntlet's tools (the test tool; top-level builds) ───────────────────

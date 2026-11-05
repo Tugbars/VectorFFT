@@ -14,6 +14,7 @@
  * natural order (the value the handle once carried as the split enum's
  * VFFT_NAT_ILP; the split tapes are gone, 2026-11-05, the marker is local) */
 #define VFFT_IL_NAT_K1 7
+#define VFFT_IL_NAT_UNSET 0   /* no verdict yet (the split enum's UNSET; its header went with the stride engine, 2026-11-06) */
 
 /* ── IN-PLACE INTERLEAVED c2c: the IL tier's own create ───────────────────
  * Split is not a fallback of IL: no split plan is built for an interleaved
@@ -53,7 +54,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_cfg_t *cfg,
     vfft_ztt_plan_t *ztt = NULL;            /* ZTURN-T */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
-    int have_k1 = 0, mode = VFFT_NAT_UNSET;
+    int have_k1 = 0, mode = VFFT_IL_NAT_UNSET;
     vfft_cfg_t rcfg;                     /* the recalibrating config of a re-raced cell */
     if (K > 1)
     {   /* unreachable since 2026-10-14: a lane-major batch takes its own door before this one

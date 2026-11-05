@@ -32,10 +32,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from wisdom_folder import shipped_folder   # this CPU's folder of src/wisdom/, asked of the library (recal_1d_probe --where)
-FROZEN = os.path.join(ROOT, "src", "dag-fft-compiler", "generator", "generated")  # spike_wisdom.txt: the frozen bundle, the bench's argv contract
 RESULTS = os.path.join(HERE, "results")
 WISDOM_FILES = ("wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt", "wisdom2_2d.txt",
-                "wisdom2_3d.txt", "wisdom2_real.txt", "spike_wisdom.txt")
+                "wisdom2_3d.txt", "wisdom2_real.txt")
 EXE = ".exe" if os.name == "nt" else ""
 CONTROL_N = 4096
 CONTROL_3D = (64, 64, 64)   # the 3D contract's control cell (2026-09-24)
@@ -244,7 +243,7 @@ class Run:
             os.makedirs(self.store, exist_ok=True)
             shipped = self.shipped()
             for f in WISDOM_FILES:
-                src = os.path.join(FROZEN if f == "spike_wisdom.txt" else shipped, f)
+                src = os.path.join(shipped, f)
                 if os.path.isfile(src):
                     shutil.copyfile(src, os.path.join(self.store, f))
             self.note("store: fresh copy of this CPU's shipped wisdom (%s)" % shipped)
@@ -457,7 +456,9 @@ def bench_cell(run, n, csv_path):
         flag = ["--cmp", run.cmp] + flag   # the comparator arm (a --kfr build of the bench)
     ok = True
     for flip in ("0", "1"):
-        r = subprocess.run([bench] + flag + [os.path.join(run.store, "spike_wisdom.txt"), csv_path,
+        # the bench's wisdom slot: a file inside the store (the bench opens it and serves
+        # the front door from its directory; spike_wisdom.txt went with the stride engine)
+        r = subprocess.run([bench] + flag + [os.path.join(run.store, "wisdom2_oop.txt"), csv_path,
                            str(PACE_MS), nstr, kstr, str(PACE_MS), flip, "2"],
                            capture_output=True, text=True, errors="replace", env=run.env())
         if r.returncode != 0:
@@ -548,7 +549,7 @@ def stage_merge(run):
     shipped = run.shipped()
     for f in WISDOM_FILES:
         src, dst = os.path.join(run.store, f), os.path.join(shipped, f)
-        if not os.path.isfile(src) or not os.path.isfile(dst) or f == "spike_wisdom.txt":
+        if not os.path.isfile(src) or not os.path.isfile(dst):
             continue
         def parse(p):
             head, rows, order = [], {}, []

@@ -2,7 +2,7 @@
 
 One folder per library, one folder per family, one per ISA:
 
-    split/{inplace,oop,strided,rfft,c2r,trig}/{avx2,avx512}   the SPLIT library's codelets
+    split/ztt/avx2                                            the SPLIT library's codelets
     zil/{avx2,avx512}/<engine folder>                          the IL library's (zil/README.md)
 
 Every file carries a PROVENANCE header (command line + each auto-rule decision

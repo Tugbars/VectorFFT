@@ -21,8 +21,6 @@
  *
  * Usage:
  *   gen_set.exe [--root DIR] [quadrant ...]      (default: all)
- * Quadrants: inplace-avx2 inplace-avx512 oop-avx2 oop-avx512
- *            strided-avx2 strided-avx512
  * --root: the codelets/ directory (default "codelets" under cwd). *)
 
 let rec mkdir_p (dir : string) : unit =

@@ -3,7 +3,7 @@
  * @brief The VectorFFT public API: eight functions.
  *
  *   vfft_create         commit a configuration to one plan
- *   vfft_execute        run an INTERLEAVED or a real-to-real plan
+ *   vfft_execute        run an INTERLEAVED plan
  *   vfft_execute_split  run a SPLIT plan
  *   vfft_destroy        free a plan
  *   vfft_malloc         memory at the alignment the plans were measured on
@@ -44,7 +44,8 @@ extern "C"
    * At rank 2 and above the data is row-major, the last axis contiguous, and
    * the real transforms halve the last axis (N_last/2 + 1 bins).
    *
-   * Real-to-real, 1D only, N reals in and out, unnormalized:
+   * Real-to-real (NOT SERVED in this version: vfft_create refuses them, the
+   * enums stay for the contract), 1D only, N reals in and out, unnormalized:
    * - VFFT_DCT1: Y[k] = x[0] + (-1)^k x[N-1] + 2 sum_{n=1..N-2} x[n] cos(pi n k / (N-1));
    *   self-inverse, scale 2(N-1).
    * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); inverse DCT-III, scale 2N. Even N.
@@ -106,7 +107,7 @@ extern "C"
    *   transforms side by side, sample by sample. Real data: x[e K + t], bins
    *   z[2 (f K + t)].
    * - VFFT_BATCH_DEFAULT: contiguous for C2C, lane-major for R2C and C2R and
-   *   for every SPLIT batch (whose only geometry it is).
+   *   for a SPLIT batch (a split 1D C2C batch takes either geometry when named).
    * A batch of rank 2 is contiguous planes by default, or lane-major when named
    * (C2C; R2C and C2R at N1 >= 2 and an even N2 >= 4): element (r, c) of
    * transform t at z[2 ((r N2 + c) K + t)]. A batch of rank 3 is contiguous volumes by
@@ -139,7 +140,8 @@ extern "C"
     VFFT_FLAG_RECALIBRATE = 1u << 2,   /**< measure this cell again, even on a wisdom hit or
                                             after this process measured it, and save the winner */
     VFFT_FLAG_DESTROY_INPUT = 1u << 3, /**< an out-of-place plan may overwrite its input */
-    VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch or lane stride;
+    VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch (an in-place
+                                            INTERLEAVED 2D or 3D real plan);
                                             the caller reads it with vfft_info() */
     VFFT_FLAG_VERBOSE = 1u << 5,       /**< print refusals and warnings to stderr as well */
     VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths and this
@@ -208,7 +210,7 @@ extern "C"
   vfft_plan vfft_create(const vfft_config_t *config);
 
   /**
-   * @brief Run an INTERLEAVED plan, or a real-to-real plan.
+   * @brief Run an INTERLEAVED plan.
    *
    * C2C: in and out are complex pairs. R2C: in is reals, out the half
    * spectrum; VFFT_FORWARD only. C2R: in is the half spectrum, out reals;

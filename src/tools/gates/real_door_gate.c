@@ -2,12 +2,12 @@
  * flat DIT and the real Bluestein wired in: at each N, both directions and
  * both placements, the door's pick (raced on a scratch store under
  * recalibrate=1, then REPLAYED from its bank) against the incumbent pinned
- * by VFFT_ZRP=0 VFFT_ZRM=0 VFFT_ZRF=0 VFFT_ZRB=0 (zr2c at even N, the
- * odd-real routes at odd N -- out of place
- * always: in place the odd incumbent runs through a copy), gated (relerr <
- * 1e-12), the roundtrip c2r(r2c(x)) = N x checked, the replay checked, then
- * the pick raced against the incumbent (the library body, 9 rounds, paced,
- * alternated).
+ * by VFFT_ZRP=0 VFFT_ZRM=0 VFFT_ZRF=0 VFFT_ZRB=0 (zr2c at even N; at odd N
+ * the incumbent was the split odd-real route, retired 2026-11-06 with the
+ * stride engine: the odd reference is a naive DFT and the exact inverse N x,
+ * and the odd cells are not raced), gated (relerr < 1e-12), the roundtrip
+ * c2r(r2c(x)) = N x checked, the replay checked, then the pick raced against
+ * the incumbent (the library body, 9 rounds, paced, alternated).
  * Build: python gauntlet/build.py --compile --vfft --src src/tools/gates/real_door_gate.c
  * Run:   real_door_gate <scratch wisdom dir> [N | tiny | big | odd | prime]   (the store is WRITTEN) */
 #include <stdio.h>
@@ -102,18 +102,41 @@ int main(int argc, char **argv)
         memset(X0, 0, NX * sizeof(double)); memset(X1, 0, NX * sizeof(double)); memset(X2, 0, NX * sizeof(double));
         for (int ip = 0; ip < ((N & 1) && N < 33 ? 1 : 2); ip++)
         {
-            const int ip0 = (N & 1) ? 0 : ip;   /* the odd incumbent is out of place */
-            /* the incumbent, pinned; the door's pick raced (recalibrate) then replayed */
-            _putenv("VFFT_ZRP=0"); _putenv("VFFT_ZRM=0"); _putenv("VFFT_ZRF=0"); _putenv("VFFT_ZRB=0");
-            vfft_plan f0 = mk(W, N, 0, ip0, 0), b0 = mk(W, N, 1, ip0, 0);
-            _putenv("VFFT_ZRP="); _putenv("VFFT_ZRM="); _putenv("VFFT_ZRF="); _putenv("VFFT_ZRB=");
+            const int ip0 = (N & 1) ? 0 : ip;   /* the even incumbent runs in the cell's placement */
+            const int odd = N & 1;
+            /* the incumbent, pinned (even N); the door's pick raced (recalibrate) then replayed */
+            vfft_plan f0 = NULL, b0 = NULL;
+            if (!odd)
+            {
+                _putenv("VFFT_ZRP=0"); _putenv("VFFT_ZRM=0"); _putenv("VFFT_ZRF=0"); _putenv("VFFT_ZRB=0");
+                f0 = mk(W, N, 0, ip0, 0); b0 = mk(W, N, 1, ip0, 0);
+                _putenv("VFFT_ZRP="); _putenv("VFFT_ZRM="); _putenv("VFFT_ZRF="); _putenv("VFFT_ZRB=");
+            }
             vfft_plan f1 = mk(W, N, 0, ip, 1), b1 = mk(W, N, 1, ip, 1);
             vfft_plan f2 = mk(W, N, 0, ip, 0), b2 = mk(W, N, 1, ip, 0);
-            if (!f0 || !b0 || !f1 || !b1 || !f2 || !b2) { printf("N=%d ip=%d: a plan is NULL\n", N, ip); fails++; continue; }
-            run(f0, VFFT_FORWARD, ip0, x, X0, b, NX, NX);
+            if ((!odd && (!f0 || !b0)) || !f1 || !b1 || !f2 || !b2) { printf("N=%d ip=%d: a plan is NULL\n", N, ip); fails++; continue; }
+            if (odd)
+            {   /* the odd incumbent was the split odd-real route (retired 2026-11-06): the
+                 * reference is the naive DFT's half spectrum and the exact inverse N x */
+                for (size_t k = 0; k <= (size_t)N / 2; k++)
+                {
+                    double re = 0, im = 0;
+                    for (int n = 0; n < N; n++)
+                    {
+                        const double a = -2.0 * 3.14159265358979323846 * (double)n * (double)k / (double)N;
+                        re += x[n] * cos(a); im += x[n] * sin(a);
+                    }
+                    X0[2 * k] = re; X0[2 * k + 1] = im;
+                }
+                for (int i = 0; i < N; i++) y0[i] = (double)N * x[i];
+            }
+            else
+            {
+                run(f0, VFFT_FORWARD, ip0, x, X0, b, NX, NX);
+                run(b0, VFFT_BACKWARD, ip0, X0, y0, b, NX, (size_t)N);
+            }
             run(f1, VFFT_FORWARD, ip, x, X1, b, NX, NX);
             run(f2, VFFT_FORWARD, ip, x, X2, b, NX, NX);
-            run(b0, VFFT_BACKWARD, ip0, X0, y0, b, NX, (size_t)N);
             run(b1, VFFT_BACKWARD, ip, X0, y1, b, NX, (size_t)N);
             run(b2, VFFT_BACKWARD, ip, X0, y2, b, NX, (size_t)N);
             const double gf = maxrel(X1, X0, NX), gb = maxrel(y1, y0, (size_t)N);
@@ -123,8 +146,12 @@ int main(int argc, char **argv)
             rt = sc > 0 ? rt / sc : rt;
             const int ok = gf < 1e-12 && gb < 1e-12 && rt < 1e-12 && g2 < 1e-12;   /* the replay: the bank builds an equivalent plan (zr2c's child re-races under recalibrate, so not bitwise) */
             if (!ok) fails++;
-            printf("N=%-6d %s  vs incumbent: r2c %.1e  c2r %.1e | roundtrip %.1e | replay %.1e  %s\n",
-                   N, ip ? "IP " : "OOP", gf, gb, rt, g2, ok ? "PASS" : "FAIL");
+            printf("N=%-6d %s  vs %s: r2c %.1e  c2r %.1e | roundtrip %.1e | replay %.1e  %s\n",
+                   N, ip ? "IP " : "OOP", odd ? "the DFT" : "incumbent", gf, gb, rt, g2, ok ? "PASS" : "FAIL");
+            if (odd)
+                printf("  no race: the odd incumbent (the split odd-real route) retired 2026-11-06  [%s | %s]\n",
+                       vfft_plan_route(f1), vfft_plan_route(b1));
+            else
             {
                 arm_t af0 = { f0, VFFT_FORWARD, ip0 ? b : x, ip0 ? b : X2 }, af1 = { f1, VFFT_FORWARD, ip ? b : x, ip ? b : X1 };
                 arm_t ab0 = { b0, VFFT_BACKWARD, ip0 ? b : X0, ip0 ? b : y0 }, ab1 = { b1, VFFT_BACKWARD, ip ? b : X0, ip ? b : y1 };
@@ -140,7 +167,8 @@ int main(int argc, char **argv)
                        ns[0], ns[1], ns[0] / ns[1], ns[2], ns[3], ns[2] / ns[3], vfft_plan_route(f1), vfft_plan_route(b1));
                 fflush(stdout);
             }
-            vfft_destroy(f0); vfft_destroy(b0); vfft_destroy(f1); vfft_destroy(b1); vfft_destroy(f2); vfft_destroy(b2);
+            if (f0) vfft_destroy(f0); if (b0) vfft_destroy(b0);
+            vfft_destroy(f1); vfft_destroy(b1); vfft_destroy(f2); vfft_destroy(b2);
         }
         _aligned_free(x); _aligned_free(X0); _aligned_free(X1); _aligned_free(X2); _aligned_free(y0); _aligned_free(y1); _aligned_free(y2); _aligned_free(b);
     }

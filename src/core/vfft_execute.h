@@ -8,7 +8,7 @@
  * ------------------------------------------------
  * The single dispatcher behind the public API. It validates the call
  * (_vfft_sig_bad), tries the bound K=1 interleaved dispatch (k1_exec), sends
- * 1D real to bridge/real_bridge_exec.h (the D1 crossing, temporary), and then
+ * 1D interleaved real to its engine walk (il/il_execute.h), and then
  * forks ONCE on the committed layout (layout separation, phase 7.2):
  *
  *   INTERLEAVED   il/il_execute.h       _vfft_il_execute
@@ -246,7 +246,6 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
 
 #include "il/il_execute.h"           /* the INTERLEAVED execute (IL side of the fork) */
 #include "split/split_execute.h"     /* the SPLIT execute */
-#include "bridge/real_bridge_exec.h" /* 1D real: the D1 crossing (temporary) */
 
 /* THE FULL DOOR: the calls the fast path (vfft_execute, below) does not
  * finish -- no bound executor, a failed compare, an executor's decline --
@@ -282,12 +281,12 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
     }
     if (h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
         return; /* THE BOUND K=1 IL DISPATCH: one indirect call, bound at create (after a decline it declines again) */
-    /* 1D real: the one place the layouts still meet (bridge/, owner
-     * decision D1 - temporary until the IL real engine lands). */
+    /* 1D real: the interleaved engines' walk (il/il_execute.h; the bridge to
+     * the split real engines was deleted 2026-11-06) */
     if (!h->pq_inner && !h->tcb && h->N2 == 0 &&
         (h->transform == VFFT_R2C || h->transform == VFFT_C2R))
     {
-        _vfft_real_bridge_execute(h, dir, sre, sim, dre, dim);
+        _vfft_real_execute_il(h, dir, sre, sim, dre, dim);
         return;
     }
     /* ── THE LAYOUT FORK: the committed layout picks one side, once ── */
@@ -481,11 +480,7 @@ void vfft_destroy(vfft_plan h)
     }
     if (!h)
         return;
-    if (h->own_batch)
-        _own_batch_free(h->own_batch); /* config.owned_buffers planes */
     vfft_aligned_free(h->own_plane);   /* door 2's plane (real_inplace_design.md) */
-    if (h->cplan)
-        vfft_proto_plan_destroy(h->cplan);
     if (h->tcb)
         vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
     if (h->tcbw)
@@ -516,10 +511,6 @@ void vfft_destroy(vfft_plan h)
     vfft_zrbl_destroy(h->zrbl);     /* the lane Bluestein (il/real/zrb_lanes.h) */
     vfft_aligned_free(h->zr2c_aff); /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);
-    if (h->rplan)
-        vfft_r2c_plan_destroy(h->rplan);
-    if (h->c2rdisp)
-        vfft_c2r_disp_destroy(h->c2rdisp);
     free(h);
 }
 

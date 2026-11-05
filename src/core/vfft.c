@@ -14,21 +14,13 @@ static const char *_vfft_plan_route(vfft_plan p);
 static void _vfft_create_lock(void); /* one create at a time (defined with the front door) */
 static void _vfft_create_unlock(void);
 #include "vfft_diagnostics.h"                /* the MT engagement counters this file defines */
-#include "split/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
 
 #include "env.h"                                  /* vfft_env_init, ISA/version, pinning           */
 #include "threads.h"                              /* pool: set/get threads, dispatch/wait            */
 #include "common/support/race_scope.h"            /* THE RACE SCOPE (lock, pin, sibling guard, priority): before
                                           every header that reads the clock -- it redefines vfft_now_ns */
-#include "planner.h"                              /* vfft_proto_auto_plan, plan_destroy              */
-#include "executor.h"                             /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
-#include "wisdom_reader.h"                        /* c2c wisdom load/lookup/add/save/free            */
-#include "dp_planner.h"                           /* dp context (calibration)                        */
-#include "measure.h"                              /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
 #include "wisdom2_oop.h"                          /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
 #include "il/wisdom/wisdom2_2d_il_reader.h"       /* wisdom2: the lay=il rank>=2 cells */
-#include "split/wisdom/wisdom2_stride_reader.h"   /* wisdom2: stride family codec (wave-4 flip) */
-#include "split/wisdom/wisdom2_real_reader.h"     /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
 #include "common/support/diag.h"                  /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "common/support/race_timing.h"           /* the racers' shared clock + median (step 5) */
 #include "common/support/race.h"                  /* the one race body: arms x protocol -> aggregates */
@@ -57,36 +49,9 @@ static void _vfft_create_unlock(void);
 #include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
 #include "split/rank1/zts_bluestein.h"            /* Bluestein over zturn-ts: the split lengths outside the bands (2026-11-06) */
 #include "split/rank1/zts_mt.h"                   /* the sectioned walk: one transform over the pool (2026-11-06) */
-#ifndef VFFT_RFFT_MAX_RADIX
-#define VFFT_RFFT_MAX_RADIX 32
-#endif
-#ifndef VFFT_RFFT_RANGED
-#define VFFT_RFFT_RANGED 1
-#endif
-#include "r2c_dispatch.h"   /* r2c (real->complex) front-end: rfft / decoupled */
+
 #include "zr2c.h"           /* §D2: interleaved-CCE real folds (zr2c route) */
-#include "rfft_calibrate.h" /* vfft_rfft_calibrate — rfft factor+variant sweep */
-#if defined(VFFT_BUILD_ISA_AVX512)
-#include "rfft_registry_avx512.h"
-#define _VFFT_RFFT_REGISTER rfft_register_all_avx512
-#include "c2r_registry_avx512.h"
-#define _VFFT_C2R_REGISTER c2r_register_all_avx512
-#else
-#include "rfft_registry_avx2.h"
-#define _VFFT_RFFT_REGISTER rfft_register_all_avx2
-#include "c2r_registry_avx2.h"
-#define _VFFT_C2R_REGISTER c2r_register_all_avx2
-#endif
-#include "c2r_dispatch.h" /* 2-axis c2r: NATURAL (split-input fast cascade) / SPLIT (stride) */
-#include "registry.h"     /* vfft_proto_registry_t (generated)              */
-#include "fft2d_real_il.h"                                            /* native IL 2D real tier kernels                  */
-#ifdef VFFT_USE_JIT
-#include "jit/jit_runtime.h"    /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
-                               * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */
-#include "jit/k1_jit_runtime.h" /* K=1 plan-time stride-baking JIT (§13.3 generalized):
-                                 * wraps the winner route's codelets with LITERAL strides,
-                                 * gcc constant-propagates -> the spec twin, for ANY cell. */
-#endif
+#include "fft2d_real_il.h"  /* native IL 2D real tier kernels */
 
 #include <stdlib.h>
 #include <string.h>
@@ -294,7 +259,6 @@ static int _vfft_plan_threads(const vfft_cfg_t *cfg)
                              * gate is an L8 law and calls vfft_policy_exceeds_l3. */
 #include "il/rank1/k1_fourstep.h"      /* the K=1 interleaved FOUR-STEP above ZTURN-T's ceiling (2026-09-15) */
 
-static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -303,30 +267,6 @@ static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destro
  * LIBRARY SINGLETONS (lazy)
  * ════════════════════════════════════════════════════════════════════════ */
 
-static vfft_proto_registry_t _reg;
-static int _reg_init = 0;
-static const vfft_proto_registry_t *_registry(void)
-{
-    if (!_reg_init)
-    {
-        vfft_proto_registry_init(&_reg);
-        _reg_init = 1;
-    }
-    return &_reg;
-}
-static rfft_codelets_t _rreg;
-static int _rreg_init = 0;
-static const rfft_codelets_t *_rfft_registry(void)
-{
-    if (!_rreg_init)
-    {
-        memset(&_rreg, 0, sizeof _rreg);
-        _VFFT_RFFT_REGISTER(&_rreg); /* fwd: r2cf + hc2hc_dit + hc2c_nat (fwd terminator) */
-        _VFFT_C2R_REGISTER(&_rreg);  /* bwd: r2cb + hc2hc_dif_bwd + hc2c_bwd (natural initiator) */
-        _rreg_init = 1;
-    }
-    return &_rreg;
-}
 
 /* THE BUILD'S ID: <library version>-<commit>, the stamp (bld=) of every
  * wisdom row this build banks (common/wisdom/wisdom2.h, vw2_set_build). The
@@ -361,29 +301,10 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
         W->dir_too_long = 1;
         d = ".";
     }
-    /* THE FROZEN BUNDLE HAS ITS OWN HOME (2026-09-24): the wisdom2 store
-     * lives in src/wisdom/, the frozen files (spike_wisdom.txt, the dune
-     * build input of plan_executors.h; bluestein_wisdom.txt; c2r_path.txt)
-     * stay in generator/generated/. A build that knows that directory
-     * defines VFFT_FROZEN_WISDOM_DIR and the bundle is read from there
-     * whatever store directory the caller gives; a build without it reads
-     * the bundle beside the store, as before. */
-#ifdef VFFT_FROZEN_WISDOM_DIR
-    const char *f = VFFT_FROZEN_WISDOM_DIR;
-#else
-    const char *f = d;
-#endif
-    snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", f);
-    snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", f);
     snprintf(W->dir, sizeof W->dir, "%s", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
-    vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
-    /* fft3d: NO load — the file never existed on any tree; the table is a
-     * pure in-process scratch for the greedy creator's extraction (wave 3:
-     * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
-    vfft_c2r_path_load(W->path_c2r_path);                         /* c2r NATURAL/STRIDE per-cell path table */
     /* wisdom2 (the live store). A bank always lands in memory, and a
      * create's winner is saved before the create returns (owner,
      * 2026-10-04): an explicit directory, VFFT_WISDOM_DIR or the build's
@@ -480,63 +401,6 @@ static struct vfft_wisdom_s *_default_wisdom(void)
  * _vw2_persist. Its (N,K,kind-class) dedup policy lives on as the wisdom2
  * full-key upsert. See src/core/wisdom2/README.md. */
 
-/* rigor -> planner entry: MEASURE/PATIENT -> vfft_proto_dp_plan_measure (patient widens the
- * beam + re-measures top-K); EXHAUSTIVE -> vfft_proto_exhaustive_search, DP-patient on failure.
- * See docs/design/vfft_front_door.md. */
-static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
-                          const vfft_proto_registry_t *reg, vfft_proto_wisdom_entry_t *out)
-{
-    /* HARNESS replay-purity counter. Every call site guards this behind a wisdom
-     * MISS, so reaching here at all means the clock is about to decide something.
-     * Under replay this must never fire; if it does, that cell's "baseline" was
-     * produced by a race and diffing it measures thermal noise, not the code. */
-    _vfft_create_race_count++;
-    if (rigor == VFFT_EXHAUSTIVE)
-    {
-        vfft_proto_factorization_t best;
-        double ens = vfft_proto_exhaustive_search(N, K, reg, &best, 0);
-        if (best.nfactors > 0 && ens < 1e17)
-        {
-            memset(out, 0, sizeof *out);
-            out->N = N;
-            out->K = K;
-            out->nf = best.nfactors;
-            out->best_ns = ens;
-            out->use_dif_forward = 0; /* exhaustive search is DIT */
-            for (int s = 0; s < best.nfactors; s++)
-            {
-                out->factors[s] = best.factors[s];
-                out->variants[s] = best.variants[s];
-            }
-            return 0;
-        }
-        /* exhaustive failed (uncoverable / OOM) -> fall through to DP-patient */
-    }
-    vfft_proto_dp_context_t ctx;
-    vfft_proto_dp_init(&ctx, K, N);
-    if (rigor != VFFT_MEASURE)
-        vfft_proto_dp_set_patient(&ctx);
-    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
-    int npool = 0;
-    double ns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
-    vfft_proto_dp_destroy(&ctx);
-    if (ns >= 1e17 || dec.nf <= 0)
-        return -1;
-    memset(out, 0, sizeof *out);
-    out->N = N;
-    out->K = K;
-    out->nf = dec.nf;
-    out->best_ns = ns;
-    out->use_dif_forward = dec.use_dif_forward;
-    for (int s = 0; s < dec.nf; s++)
-    {
-        out->factors[s] = dec.factors[s];
-        out->variants[s] = dec.variants[s];
-    }
-    return 0;
-}
-
-#include "split/planning/pad_calibrate.h" /* pad-vs-tail calibrator + _VFFT_PADVW (step 13) */
 
 /* [2026-07-27] The 4-arm ROUTE race (_calibrate_zroute: legacy{sterm,sterm2}
  * x zturn{stf,stf2}, joint fwd+bwd verdict) was DELETED here when the runtime
@@ -567,161 +431,6 @@ static inline uint8_t _vw2_lay_of(const vfft_cfg_t *cfg)
     return cfg->layout == VFI_LAYOUT_IL ? VW2_LAY_IL : VW2_LAY_SPLIT;
 }
 
-#include "split/real/real_route_race.h" /* r2c/c2r route RACERS -
-                                             * the deciders stay here (step 11) */
-
-/* may_race gates only step 3 — a BANKED verdict is honoured at every rigor
- * tier, which is the point of banking it. */
-static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
-                                          const vfft_cfg_t *cfg,
-                                          int N, size_t K,
-                                          const vfft_proto_registry_t *reg,
-                                          int may_race)
-{
-    const int pl = (cfg->placement == VFFT_INPLACE) ? VW2_PL_IP : VW2_PL_OOP;
-    vfft_r2c_plan_t *pr, *ps;
-    double nr = 0.0, ns = 0.0;
-    int pick_rfft;
-
-    /* 1. env — the racing hook. Beats wisdom, never banks. */
-    {
-        const char *e = getenv("VFFT_R2C_ROUTE");
-        if (e && e[0])
-            return _r2c_build_arm(N, K, atoi(e) != 0, reg);
-    }
-    /* 2. banked verdict for THIS (N, K, placement). */
-    if (W && !cfg->recalibrate)
-    {
-        int v = vw2_real_route_lookup(&W->vw2, VW2_T_R2C, N, K, pl,
-                                      _vw2_lay_of(cfg));
-        if (v)
-            return _r2c_build_arm(N, K, v == VW2_RROUTE_STRIDE, reg);
-    }
-    /* 3. outside the race window, or nothing to bank into -> structural
-     * default (the decouple_min_k threshold picks). */
-    if (!may_race || !W)
-        return vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
-                                    (vfft_proto_registry_t *)reg);
-
-    /* (the race body counts this race since 2026-09-02 — no bump here) */
-    pr = _r2c_build_arm(N, K, 0, reg);
-    ps = _r2c_build_arm(N, K, 1, reg);
-    if (!pr)
-        return ps;
-    if (!ps)
-        return pr;
-    if (pr->path == ps->path)
-    {
-        /* rfft uncovered at this cell: both arms resolved to the same path,
-         * so no race happened and there is NO verdict to bank. */
-        vfft_r2c_plan_destroy(ps);
-        return pr;
-    }
-    { /* the arms are timed serially: the serial scope, on this thread only,
-       * instead of a resize of the pool under every other plan */
-        thread_pool_serial_enter();
-        if (_r2c_race_arms(pr, ps, N, K,
-                           _vw2_lay_of(cfg) == VW2_LAY_IL, &nr, &ns) != 0)
-        {
-            thread_pool_serial_leave();
-            vfft_r2c_plan_destroy(pr);
-            return ps; /* OOM in the racer: serve, do not bank a guess */
-        }
-        thread_pool_serial_leave();
-    }
-    /* Hysteresis toward stride: pick rfft only if clearly faster (>3%). Stride is the
-     * structural high-K winner and the only path that threads, so on a near-tie (where
-     * calibration timing noise lives) prefer it — a noisy run can't flip a tie to rfft. */
-    pick_rfft = (nr < ns * 0.97);
-    if (getenv("VFFT_BAKEOFF_DBG"))
-        fprintf(stderr, "[r2c route] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
-                N, (size_t)K, nr, ns, pick_rfft ? "rfft" : "STRIDE");
-    vw2_real_route_bank(&W->vw2, VW2_T_R2C, N, K, pl, _vw2_lay_of(cfg),
-                        pick_rfft ? VW2_RROUTE_RFFT : VW2_RROUTE_STRIDE,
-                        pick_rfft ? nr : ns, pick_rfft ? ns : nr);
-    _vw2_persist(W, cfg);
-    if (pick_rfft)
-    {
-        vfft_r2c_plan_destroy(ps);
-        return pr;
-    }
-    vfft_r2c_plan_destroy(pr);
-    return ps;
-}
-
-/* §W2 c2r twin of _r2c_route_decide — same precedence law. */
-static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
-                                          const vfft_cfg_t *cfg,
-                                          int N, size_t K,
-                                          const vfft_proto_registry_t *reg,
-                                          int may_race)
-{
-    const int pl = (cfg->placement == VFFT_INPLACE) ? VW2_PL_IP : VW2_PL_OOP;
-    vfft_c2r_disp_t *pn, *ps;
-    double nn = 0.0, ns = 0.0;
-    int pick_nat;
-
-    /* 1. env — the racing hook. Beats wisdom, never banks. */
-    {
-        const char *e = getenv("VFFT_C2R_ROUTE");
-        if (e && e[0])
-            return vfft_c2r_disp_create(N, K,
-                                        atoi(e) ? VFFT_C2R_SPLIT : VFFT_C2R_NATURAL,
-                                        _rfft_registry(), (vfft_proto_registry_t *)reg);
-    }
-    /* 2. banked verdict for THIS (N, K, placement). */
-    if (W && !cfg->recalibrate)
-    {
-        int v = vw2_real_route_lookup(&W->vw2, VW2_T_C2R, N, K, pl,
-                                      _vw2_lay_of(cfg));
-        if (v)
-            return vfft_c2r_disp_create(N, K,
-                                        v == VW2_RROUTE_SPLIT ? VFFT_C2R_SPLIT
-                                                              : VFFT_C2R_NATURAL,
-                                        _rfft_registry(), (vfft_proto_registry_t *)reg);
-    }
-    /* 3. outside the race window, or nothing to bank into -> the legacy
-     * c2r_path table then the vfft_c2r_best_layout threshold. */
-    if (!may_race || !W)
-        return vfft_c2r_disp_create_auto(N, K, _rfft_registry(),
-                                         (vfft_proto_registry_t *)reg);
-
-    /* (the race body counts this race since 2026-09-02 — no bump here) */
-    pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
-                              _rfft_registry(), (vfft_proto_registry_t *)reg);
-    ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
-                              _rfft_registry(), (vfft_proto_registry_t *)reg);
-    if (!pn)
-        return ps;
-    if (!ps)
-        return pn;
-    { /* timed serially in the serial scope (as the r2c race above) */
-        thread_pool_serial_enter();
-        if (_c2r_race_arms(pn, ps, N, K,
-                           _vw2_lay_of(cfg) == VW2_LAY_IL, &nn, &ns) != 0)
-        {
-            thread_pool_serial_leave();
-            vfft_c2r_disp_destroy(pn);
-            return ps; /* OOM in the racer: serve, do not bank a guess */
-        }
-        thread_pool_serial_leave();
-    }
-    pick_nat = (nn < ns * 0.97);
-    if (getenv("VFFT_BAKEOFF_DBG"))
-        fprintf(stderr, "[c2r route] N=%d K=%zu natural=%.0f ns stride=%.0f ns -> %s\n",
-                N, (size_t)K, nn, ns, pick_nat ? "natural" : "STRIDE");
-    vw2_real_route_bank(&W->vw2, VW2_T_C2R, N, K, pl, _vw2_lay_of(cfg),
-                        pick_nat ? VW2_RROUTE_NATURAL : VW2_RROUTE_SPLIT,
-                        pick_nat ? nn : ns, pick_nat ? ns : nn);
-    _vw2_persist(W, cfg);
-    if (pick_nat)
-    {
-        vfft_c2r_disp_destroy(ps);
-        return pn;
-    }
-    vfft_c2r_disp_destroy(pn);
-    return ps;
-}
 
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg);
 
@@ -823,98 +532,6 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg)
 #include "il/rank2/il2d_real_pitch.h" /* the pitch forms: the c2r column-inverse plane off hp1, the r2c one-kernel pass on a skewed plane, raced (2026-10-07) */
 #include "il/rank3/fftnd_il.h"        /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 #include "il/rank3/fftnd_real_il.h"   /* the rank-3 INTERLEAVED REAL tier: planes first, then axis 0; child vs pay-once raced (2026-10-07) */
-/* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
- * allocator and the padded-batch create tier used to retype this sequence
- * (seed both legs from the store, calibrate-on-miss, re-lookup because
- * wisdom_add may realloc, _calibrate_pad, stamp exec_me, bank, persist) —
- * comments included. The callers keep their two real differences as
- * parameters:
- *   ensure_pad_plan  — the create tier must materialise the aligned (N,Kp)
- *                      plan cell even on a PAD-verdict HIT (a verdict-only
- *                      shipped row would otherwise fall silently to the
- *                      tail); the allocator only sizes a buffer and skips.
- *   already_measured — owned-buffers runs the allocator's ladder FIRST in
- *                      the same vfft_create; the create tier passes 1 so
- *                      recalibrate=1 no longer fires the two most expensive
- *                      races in the library TWICE per create.
- * Returns the decided execute width (K or Kp; K when undecided — the
- * always-correct tail) and hands back both legs. Primes never measure. */
-static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_cfg_t *cfg,
-                          struct vfft_wisdom_s *W,
-                          const vfft_proto_registry_t *reg,
-                          int ensure_pad_plan, int already_measured,
-                          const vfft_proto_wisdom_entry_t **te_out,
-                          const vfft_proto_wisdom_entry_t **ae_out)
-{
-    const int prime = vfft_is_prime(N);
-    const int recal = cfg->recalibrate && !already_measured;
-    const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-    const vfft_proto_wisdom_entry_t *ae;
-    int dirty = 0;
-    if (!W->vw2_off_stride)
-    { /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
-        vfft_proto_wisdom_entry_t sb;
-        if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
-            vfft_proto_wisdom_set(&W->c2c, &sb);
-        if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
-            vfft_proto_wisdom_set(&W->c2c, &sb);
-        te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-    }
-    if ((!te || recal) && !prime)
-    {
-        vfft_proto_wisdom_entry_t ne;
-        if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
-        {
-            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-            vw2_stride_bank_entry(&W->vw2, &ne, 0);
-            dirty = 1;
-            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-        }
-    }
-    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-    size_t stride = K;
-    if (Kp != K && te && !prime)
-    {
-        const int measure = recal || te->exec_me == 0;
-        const int need_aligned = measure ||
-                                 (ensure_pad_plan && te->exec_me == (int)Kp);
-        if (need_aligned && (!ae || recal))
-        {
-            vfft_proto_wisdom_entry_t ne;
-            if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
-            {
-                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                vw2_stride_bank_entry(&W->vw2, &ne, 0);
-                dirty = 1;
-            }
-        }
-        te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* wisdom_add may realloc */
-        ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-        if (measure && te && ae)
-        {
-            int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
-            if (verdict > 0)
-            {
-                vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
-                upd.exec_me = verdict;
-                vfft_proto_wisdom_add(&W->c2c, &upd, 1);
-                vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
-                dirty = 1;
-                te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-                ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-            }
-        }
-        if (te && (te->exec_me == (int)K || te->exec_me == (int)Kp))
-            stride = (size_t)te->exec_me;
-    }
-    if (dirty)
-        _vw2_persist(W, cfg);
-    if (te_out)
-        *te_out = te;
-    if (ae_out)
-        *ae_out = ae;
-    return stride;
-}
 
 /* the split execute: the serial-vs-slabs race of zturn-ts's threaded
  * contiguous form runs the deployed execute as both arms (split/rank1/c2c_create_split.h) */
@@ -926,8 +543,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double
 #include "il/rank3/lm_batch3d_il.h"  /* the LANE-MAJOR 3D batch: the first axis a column pass over the volume's width, the 2D batch per block (2026-10-15) */
 #include "il/rank3/lm_batch3dr_il.h" /* its real twin, r2c and c2r: the 2D real batch per block, a complex column pass over the spectrum (2026-10-19) */
 #include "il/il_create.h"            /* the INTERLEAVED create: the IL side of the one fork */
-#include "bridge/real_bridge.h"      /* 1D real: where the layouts still meet (D1, temporary) */
-#include "vfft_batch.h"              /* owned-batch allocator (step 28) */
+#include "il/real/real_create_il.h"  /* the 1D real door, interleaved (the bridge deleted 2026-11-06) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1411,7 +1027,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
 }
 
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp); /* vfft_execute.h: the bound K=1 IL dispatch */
-static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
+static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
 {
     if (!cfg)
     {
@@ -1419,7 +1035,6 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
         return NULL;
     }
     vfft_env_init();
-    const vfft_proto_registry_t *reg = _registry();
     int N = cfg->n[0];
     size_t K = cfg->howmany;
     /* ── CONFIG-SPACE VALIDATION (the matrix commit starts here). Every knob is
@@ -1491,21 +1106,20 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
      * legally and at full speed (il_coverage_plan.md Phase A). Callers must never assume WHICH
      * permutation scrambled output carries; that has been the contract since §2.6. */
     if ((cfg->order == VFI_ORDER_NATURAL || cfg->order == VFI_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !ob) &&
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 4) &&
         /* 2D REAL grew a caller-visible n1 order axis with the native
          * IL tier (its multi-stage serving is ord=scr on n1): NATURAL
          * there = the M4-lite leaf redirection / the blu route, both
          * wired 2026-08-27. The bins (n2 axis) stay natural always. */
         !((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
           (cfg->dims == 2 || cfg->dims == 3) && cfg->order == VFI_ORDER_NATURAL && /* 3D: the real tier (fftnd_real_il.h, 2026-10-07) */
-          cfg->layout == VFI_LAYOUT_IL && !ob))
+          cfg->layout == VFI_LAYOUT_IL))
     {
-        _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "
-                   "(%s is %s) — a real spectrum is natural and a padded batch has no order "
-                   "axis; ask VFFT_ORDER_NATURAL (the default)",
+        _vfft_warn("vfft_create: order=%s is only wired for C2C plans "
+                   "(%s is %s) — a real spectrum is natural; ask VFFT_ORDER_NATURAL (the default)",
                    cfg->order == VFI_ORDER_NATURAL ? "NATURAL" : "SCRAMBLED",
                    _vfft_tname(cfg->transform),
-                   ob ? "padded" : (cfg->transform == VFFT_C2C ? "?" : "not C2C"));
+                   cfg->transform == VFFT_C2C ? "?" : "not C2C");
         return NULL;
     }
     /* Layout axis gates that are transform-global:
@@ -1517,12 +1131,6 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
         _vfft_warn("vfft_create: layout=INTERLEAVED is meaningless for the real->real %s "
                    "(real planes in, real planes out) — use VFFT_LAYOUT_SPLIT",
                    _vfft_tname(cfg->transform));
-        return NULL;
-    }
-    if (cfg->layout == VFI_LAYOUT_IL && ob)
-    {
-        _vfft_warn("vfft_create: a padded batch (VFFT_FLAG_OWN_PITCH) is split-plane by "
-                   "construction; keep VFFT_LAYOUT_SPLIT and read the stride from vfft_info()");
         return NULL;
     }
     /* THE THREAD COUNT'S BOUND: a worker beyond this machine's logical CPUs
@@ -1546,13 +1154,14 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
      * geometry is refused with its reason until the native interleaved batch engine exists; a 1D
      * interleaved real batch is served transform-contiguous, named. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims < 2 &&
-        cfg->layout == VFI_LAYOUT_IL && K > 1 && !ob &&
+        cfg->layout == VFI_LAYOUT_IL && K > 1 &&
         cfg->batch_geom != VFFT_BATCH_CONTIGUOUS && !vfft_policy_batch_lane_major(cfg))
     { /* the lane-major real batch serves r2c at an even N out of place (il/rank1/lm_batch_il.h, 2026-10-14);
        * the rest of the real lane-major space is refused with its reason until its piece */
         _vfft_warn("vfft_create: the lane-major interleaved %s batch (N=%d, howmany=%d, batch=%s) is not "
-                   "served: %s -- name batch=VFFT_BATCH_CONTIGUOUS (the %d transforms end to end, "
-                   "2*(N/2+1) doubles of CCE bins each) or use VFFT_LAYOUT_SPLIT for the lane-major geometry",
+                   "served: %s; no native interleaved engine serves the real lane-major geometry yet "
+                   "(the split real engines were retired 2026-11-06) -- name batch=VFFT_BATCH_CONTIGUOUS "
+                   "(the %d transforms end to end, 2*(N/2+1) doubles of CCE bins each)",
                    _vfft_tname(cfg->transform), N, (int)K,
                    cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR",
                    (N % 2) ? "an odd N has no real column engine" : "N below 4",
@@ -1569,7 +1178,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
         const int tc_real = (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
                             cfg->batch_geom == VFFT_BATCH_CONTIGUOUS;
         if ((tc_c2c || tc_real) && cfg->dims < 2 &&
-            cfg->layout == VFI_LAYOUT_IL && K > 1 && !ob)
+            cfg->layout == VFI_LAYOUT_IL && K > 1)
         {
             vfft_cfg_t c1 = *cfg;
             c1.howmany = 1;
@@ -1730,7 +1339,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
      * form). */
     if (cfg->batch_geom == VFFT_BATCH_CONTIGUOUS &&
         cfg->layout != VFI_LAYOUT_IL && K > 1 &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 1 && !ob))
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 1))
     {
         _vfft_warn("vfft_create: batch=VFFT_BATCH_CONTIGUOUS is not "
                    "supported for layout=SPLIT outside 1D C2C (split batches are lane-major: "
@@ -1777,27 +1386,27 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
         /* an odd cell with an IL real engine (the mono, the real flat DIT,
          * the real Bluestein: one pipeline in both placements) goes on to the
          * real door's odd race (il/real/odd_build.h) */
-        !(cfg->dims <= 1 && cfg->layout == VFI_LAYOUT_IL && cfg->howmany == 1 && !ob &&
+        !(cfg->dims <= 1 && cfg->layout == VFI_LAYOUT_IL && cfg->howmany == 1 &&
           _real_il_odd_admits(cfg->n[0], cfg->transform == VFFT_C2R)) &&
         /* 2D R2C in place (docs/roadmap/real_inplace_design.md, 2026-10-08): one plane,
          * every row padded to 2*(N2/2+1) doubles (FFTW's and MKL's in-place layout);
          * the law of admission is the policy's (both directions, every thread count) */
-        !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
+        !(cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) &&
         /* 3D R2C and C2R in place (the same layout per row; c2r destroys its input by nature) */
-        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))) &&
+        !(cfg->dims == 3 && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))) &&
         /* the contiguous batches in place (the plane queue and the volume queue, 2026-10-18): K padded
          * planes or volumes one after another, each the in-place K = 1 contract; their own laws, never a
          * widening of the two K = 1 tests above (door 2 reads the tier's handle through those) */
-        !(cfg->dims == 2 && !ob && vfft_policy_il2d_ip_batch_ok(cfg)) &&
-        !(cfg->dims == 3 && !ob && vfft_policy_ilndr_batch_ok(cfg, cfg->howmany)) &&
+        !(cfg->dims == 2 && vfft_policy_il2d_ip_batch_ok(cfg)) &&
+        !(cfg->dims == 3 && vfft_policy_ilndr_batch_ok(cfg, cfg->howmany)) &&
         /* the 1D lane-major real batch in place (il/rank1/lm_batch_il.h, step 5) */
-        !(cfg->dims < 2 && !ob && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
+        !(cfg->dims < 2 && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
           cfg->batch_geom != VFFT_BATCH_CONTIGUOUS && vfft_policy_batch_lane_major(cfg)) &&
         /* the 2D lane-major real batch in place (il/rank2/lm_batch2dr_il.h): N1 blocks of (N2 + 2) K doubles */
-        !(cfg->dims == 2 && !ob && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
+        !(cfg->dims == 2 && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
           cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && vfft_policy_batch_lane_major(cfg)) &&
         /* the 3D lane-major real batch in place (il/rank3/lm_batch3dr_il.h): N1 N2 rows of (N3 + 2) K doubles */
-        !(cfg->dims == 3 && !ob && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
+        !(cfg->dims == 3 && cfg->howmany > 1 && cfg->layout == VFI_LAYOUT_IL &&
           cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && vfft_policy_batch_lane_major(cfg)))
     {
         _vfft_warn("vfft_create: in-place %s is served INTERLEAVED only: 1D one transform "
@@ -1809,23 +1418,6 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
                    "last extent (rows of (N_last+2)*howmany doubles) — use VFFT_PLACEMENT_OUT "
                    "otherwise",
                    _vfft_tname(cfg->transform));
-        return NULL;
-    }
-    /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
-     * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
-     * Every other feature would build a tight (stride-K) plan and then stride a Kp-wide buffer
-     * at the wrong stride — silent wrong results. Reject the combination up front rather than
-     * silently ignore the handle: the padding design's contract is NO silent-corruption path.
-     * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
-     * padding lands in later phases. */
-    if (ob && !(cfg->dims < 2 &&
-                (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
-                 cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
-                 _VFFT_IS_TRIG(cfg->transform))))
-    {
-        _vfft_warn("vfft_create: a padded batch (VFFT_FLAG_OWN_PITCH) is served for 1D "
-                   "C2C/R2C/C2R/real-to-real plans only (got %s, rank %d) — drop the flag",
-                   _vfft_tname(cfg->transform), cfg->dims);
         return NULL;
     }
     if (cfg->nthreads > 0)
@@ -1848,24 +1440,26 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg, vfft_batch ob)
                    cfg->dims, _vfft_tname(cfg->transform));
         return NULL;
     }
-    /* 1D real: the one place the layouts still meet (bridge/real_bridge.h,
-     * owner decision D1 — temporary until the IL real engine lands). Every
-     * transform/rank below is served by ONE side, chosen here, once. */
-    if (cfg->dims == 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
+    /* 1D real: the interleaved doors (the bridge to the split real engines was
+     * deleted 2026-11-06; a split real request falls to the split create, which
+     * refuses it). Every transform/rank below is served by ONE side, chosen
+     * here, once. */
+    if (cfg->dims == 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm2dr_il(cfg, W, K); /* the LANE-MAJOR 2D real batch (lm_batch2dr_il.h): its own executors */
-    if (cfg->dims == 3 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
+    if (cfg->dims == 3 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm3dr_il(cfg, W, K); /* the LANE-MAJOR 3D real batch (lm_batch3dr_il.h): the same executors, before the fork so the lean door never rebinds them */
-    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 && !ob &&
+    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS)
         return _vfft_create_lmr_il(cfg, W, N, K); /* the LANE-MAJOR real batch, r2c or c2r (lm_batch_il.h): the policy admitted it above */
-    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R))
-        return _vfft_create_real(cfg, ob, W, reg, N, K);
+    if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        cfg->layout == VFI_LAYOUT_IL)
+        return _vfft_create_real_door(cfg, W, N, K); /* the K = 1 real door (il/real/real_create_il.h) */
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)
         return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
-    return _vfft_split_create(cfg, ob, W, N, K);
+    return _vfft_split_create(cfg, W, N, K);
 }
 
 /* The engagement COUNTER stays here, with its public accessor. It is mutable
@@ -1887,22 +1481,6 @@ long vfft_pq_mt_passes(void) { return _vfft_pq_mt_count; }
 long _vfft_pq_grp_count = 0;
 long vfft_pq_grp_passes(void) { return _vfft_pq_grp_count; }
 
-/* Cross-TU configuration hooks (see vfft.h). These exist so a caller outside
- * this translation unit writes THE LIBRARY's dispatch state rather than its
- * own copy of the header statics. Thin forwarders on purpose - the policy
- * lives in the dispatch headers, only the storage identity is fixed here. */
-void vfft_r2c_set_decouple_min_k(size_t k)
-{
-    vfft_r2c_dispatch_set_decouple_min_k(k);
-}
-size_t vfft_r2c_get_decouple_min_k(void)
-{
-    return vfft_r2c_dispatch_get_decouple_min_k();
-}
-int vfft_c2r_load_path(const char *path)
-{
-    return vfft_c2r_path_load(path);
-}
 
 #include "plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
 
@@ -1937,14 +1515,14 @@ static int _vfft_save_enabled(void)
 static vfft_plan _vfft_create_outer(const vfft_cfg_t *cfg)
 {
     if (!cfg->owned_buffers)
-        return _vfft_create_inner(cfg, NULL);
+        return _vfft_create_inner(cfg);
     if ((cfg->dims == 2 && vfft_policy_il2d_ip_ok(cfg, _vfft_plan_threads(cfg))) ||
         (cfg->dims == 3 && vfft_policy_ilndr_ip_ok(cfg, cfg->howmany, _vfft_plan_threads(cfg))))
     { /* THE PLAN'S OWN PLANE (docs/roadmap/real_inplace_design.md §1, door 2): the in-place 2D or
        * 3D real plan at the pitch the policy names; one padded plane (volume) allocated here,
        * zeroed, read back through vfft_plan_planes (both roles) and vfft_plan_stride (its row
        * pitch). A NESTED create (a rank-3 plan's plane child) takes the pitch and no plane. */
-        struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, NULL);
+        struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg);
         size_t rows, pitch;
         if (!h)
             return NULL;
@@ -1964,20 +1542,11 @@ static vfft_plan _vfft_create_outer(const vfft_cfg_t *cfg)
         (void)rows;
         return h;
     }
-
-    vfft_batch ob = _own_batch_for(cfg); /* warns + returns NULL on misuse */
-    if (!ob)
-        return NULL;
-    struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, ob);
-    if (!h)
-    {
-        _own_batch_free(ob);
-        return NULL;
-    }
-    h->own_batch = ob;
-    if (_vfft_create_depth <= 1)
-        _own_batch_drop_planes(ob); /* the caller's planes sit at the stride (vfft_info().stride) */
-    return h;
+    _vfft_warn("vfft_create: VFFT_FLAG_OWN_PITCH (owned buffers) is served for the in-place interleaved "
+               "2D and 3D real plan only (the plan's own padded plane); the split padded batch was retired "
+               "with the stride engine (2026-11-06) -- drop the flag (got %s, rank %d, layout=%s)",
+               _vfft_tname(cfg->transform), cfg->dims, cfg->layout == VFI_LAYOUT_IL ? "INTERLEAVED" : "SPLIT");
+    return NULL;
 }
 
 /* THE FRONT DOOR. The caller's create saves its winner: config.wisdom_write
@@ -2110,8 +1679,6 @@ static void _vfft_wisdom_free(vfft_wisdom *w)
 {
     if (!w)
         return;
-    vfft_proto_wisdom_free(&w->c2c); /* OOP table is fixed-size, no free */
-    vfft_proto_wisdom_free(&w->rfft);
     vw2_close(&w->vw2);
     free(w);
 }
@@ -2347,15 +1914,6 @@ static const char *_vfft_plan_route(vfft_plan p)
 /* presence, never the address: a pointer value is not reproducible */
 #define FP__P(f) ((h->f) ? 1 : 0)
 
-/* k1_jit exists only under VFFT_USE_JIT. Its bit is emitted UNCONDITIONALLY
- * anyway: the field set must not depend on build flags, or two artifacts from
- * differently-configured builds silently stop being comparable and the diff
- * reflows instead of pointing at what moved. Absent field -> 0, fixed width. */
-#ifdef VFFT_USE_JIT
-#define FP__JIT ((h->k1_jit) ? 1 : 0)
-#else
-#define FP__JIT 0
-#endif
 
 static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
                             char *out, size_t cap, size_t used);
@@ -2398,13 +1956,11 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_col.tpc); /* tpc = the turned prime column pass (2026-09-24); rw= and norowz= (ROWSPLIT) retired 2026-10-03 */
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d", /* oplan, k1sp, tplan retired 2026-11-05 */
-            FP__P(cplan),
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d", /* cplan, rplan, c2rdisp, own_batch and the JIT bit retired 2026-11-06 with the stride engine */
             FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd), FP__P(k1ztt),
             FP__P(k1fs), /* D5, 2026-09-18: route 10 had no bit and no line */
-            FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
-            FP__P(zr2c_kid), /* the odd-real bridge's bit retired 2026-10-03 */
-            FP__P(own_batch), FP__JIT);    /* cplan_il retired 2026-09-03 */
+            FP__P(tcb), FP__P(tcbw),
+            FP__P(zr2c_kid)); /* the odd-real bridge's bit retired 2026-10-03 */
     FP__ADD(" il2dhave=%d%d%d%d",          /* the OOP row child's slot deleted 2026-09-23; the rowsplit slot 2026-10-03 */
             FP__P(il2d_row), FP__P(il2d_roww),
             ((h->il2d_col.natperm) ? 1 : 0), FP__P(pq_inner)); /* natperm moved into il2d_col */
@@ -2530,7 +2086,6 @@ void vfft__fp_counters(long *out6)
     out6[5] = _vfft_create_race_count;
 }
 
-#undef FP__JIT
 #undef FP__P
 #undef FP__ADD
 #endif /* VFFT_FINGERPRINT */

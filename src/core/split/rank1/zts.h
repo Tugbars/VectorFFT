@@ -183,6 +183,7 @@ typedef struct vfft_zts_plan_s
     /* THE STAGED FORM (the odd band): no fused driver, the stage kernels
      * resolved at create (zts_stages.h), the executor _zts_staged_s / _v */
     int staged;
+    int jit;                          /* 1 = cell is a driver compiled at create (jit/zts_jit_runtime.h) */
     vfft_zts_s0_fn s0f, s0b;
     vfft_zts_sm_fn smf[VFFT_ZTS_MAX_NF], smb[VFFT_ZTS_MAX_NF];
     vfft_zts_sl_fn slf, slb;

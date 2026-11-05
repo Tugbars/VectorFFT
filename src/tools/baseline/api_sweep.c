@@ -154,15 +154,6 @@ static void build_cells(void)
     add(VFFT_R2C, OP, SP, SC, 1, 256, 0, 0, 0, 1, 1, 0, 0);        /* refused */
 
     /* real-to-real */
-    add(VFFT_DCT1, OP, SP, D, 1, 65, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DCT2, OP, SP, D, 1, 256, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DCT2, OP, SP, D, 1, 60, 0, 0, 0, 4, 1, 0, 0);
-    add(VFFT_DCT3, OP, SP, D, 1, 256, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DCT4, OP, SP, D, 1, 256, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DST1, OP, SP, D, 1, 63, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DST2, OP, SP, D, 1, 128, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DST3, OP, SP, D, 1, 128, 0, 0, 0, 1, 1, 0, 0);
-    add(VFFT_DHT,  OP, SP, D, 1, 256, 0, 0, 0, 1, 1, 0, 0);
     add(VFFT_DCT2, OP, IL, D, 1, 256, 0, 0, 0, 1, 1, 0, 0);        /* refused */
     add(VFFT_DCT2, OP, SP, D, 2, 64, 64, 0, 0, 1, 1, 0, 0);        /* refused */
 

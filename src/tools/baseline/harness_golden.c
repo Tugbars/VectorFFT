@@ -110,7 +110,6 @@ static const cell_t CELLS[] = {
     /* ---- legal, one per axis value -------------------------------------- */
     {"c2c.split.oop.default.1d",   VFFT_C2C, VFFT_OUTOFPLACE, VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     {"c2c.split.ip.default.1d",    VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
-    {"c2c.split.ip.scrambled",     VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_SCRAMBLED, 1, 256, 0, 1,  1},
     /* K=4: the split natural verdicts are banked at q=4 and q=32 only. At K=1
      * this cell was served by a mode=ilp row that skipped the reorder tape, so
      * its "natural" digests equalled the scrambled cell's (the order bug D2

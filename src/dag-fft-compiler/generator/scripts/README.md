@@ -429,8 +429,7 @@ generator/lib/coverage.ml — radix sets, the 18-family matrix, OOP
 n1/t1p/t1s/spec recipes (RV=R*8), strided sets, filenames, and the
 exact per-codelet argv. Consumers: bin/gen_set.ml (the in-process tree
 driver: one warm process, full 753-file tree in ~9 seconds, identity-
-verified against the fork-loop output) and bin/emit_registry_h.ml
-(registry coverage, byte-identity-verified through the switch).
+verified against the fork-loop output).
 regen_codelets.sh is now a thin invoker of gen_set and carries no
 lists; gen_radix.exe remains the per-codelet CLI, now a 1-line wrapper
 over lib/gen_main.ml. Coverage edits happen in exactly one file, and
@@ -440,48 +439,6 @@ REMAINING DUPLICATE (deliberate, low priority): generate_codelets.sh
 still carries its own lists for the SCRATCH tree that feeds the
 cost-model toolchain; convert it to invoke gen_set if scratch coverage
 ever needs to track production.
-
-AUTO-EMITTED HEADERS (section 38g) — generator/generated/ holds four
-headers consumed by core/:
-  plan_executors.h  wisdom-bound plan-shaped executor specializations:
-                    one static straight-line function per wisdom entry,
-                    replacing the generic per-stage dispatch when the
-                    runtime plan matches (measured 5-10 percent on high
-                    multi-stage factorizations). Emitted by
-                    bin/emit_executor_h.ml from generated/
-                    spike_wisdom.txt (now committed; reconstructed and
-                    symbol-set-verified in 38g after the original was
-                    found never committed). ONE run emits both ISAs
-                    (avx512 section guarded by __AVX512F__; --isa is
-                    vestigial):
-                      ./_build/default/bin/emit_executor_h.exe \
-                          --wisdom generated/spike_wisdom.txt \
-                          > generated/plan_executors.h
-                    To add a specialization: append a wisdom line, regen.
-  registry_avx2.h / registry_avx512.h
-                    codelet registries (externs, function-pointer slots
-                    by radix, per-ISA init, query helpers). Emitted by
-                    bin/emit_registry_h.ml:
-                      ./_build/default/bin/emit_registry_h.exe --isa avx2 \
-                          > generated/registry_avx2.h     (same for avx512)
-  registry.h        HAND-WRITTEN ISA dispatcher; bootstrap only checks
-                    it exists. Do not regenerate.
-WIRED INTO DUNE (section 38h): generator/generated/dune carries
-(mode promote) rules for the emitted headers, so building the @default
-alias regenerates and writes them into the source tree whenever the
-emitters or spike_wisdom.txt change. 🔴 M0/G5 caveat (generator_lib_
-architecture.md §14.1): @default PROMOTES EVEN WHEN THE BUILD FAILS
-(reproduced: rc=1 and plan_executors.h rewritten on the failure path) —
-so registry regeneration is a DELIBERATE, tree-clean act
-(`dune build @default` when you intend it), never a side effect of
-"just building"; day-to-day builds use scoped targets only. bootstrap.sh phase 2 still runs the same
-emissions (now redundant but harmless, and it prints the entry/extern
-counts). registry.h (hand-written dispatcher) has no rule and is never
-overwritten. Remaining drift risk: emit_registry_h.ml hardcodes the
-radix coverage that generate_codelets.sh also defines; if coverage
-changes, update both (the registry emitter is the one that would lag).
-emit_executor_h.ml was relocated from emit_tool/ to bin/ alongside its
-siblings (38g).
 
 BASELINE HYGIENE (section 35b): VFFT_NO_REGALLOC kills fences as well
 as the allocator, so it is NOT a clean restore of old behavior for

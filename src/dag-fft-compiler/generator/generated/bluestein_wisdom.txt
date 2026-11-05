@@ -1,3 +1,0 @@
-@bluestein_version 1
-# VectorFFT Bluestein wisdom -- 0 entries
-# N K M B best_ns

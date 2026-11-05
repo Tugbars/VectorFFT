@@ -1,7 +1,7 @@
 /* split_create.h — the SPLIT create: the split side of vfft_create's one fork.
  *
  * _vfft_create_inner validates the config, applies the layout-independent
- * refusals, routes 1D real to bridge/real_bridge.h, and then forks ONCE on
+ * refusals, routes 1D interleaved real to its door, and then forks ONCE on
  * config.layout: SPLIT requests come here, INTERLEAVED ones go to
  * il/il_create.h. From here on nothing tests the layout again; every tier
  * below is a split tier and includes only split/ and common/.
@@ -23,7 +23,6 @@
 #include "split/rankn/c2c_nd_create_split.h"
 
 static vfft_plan _vfft_split_create(const vfft_cfg_t *cfg,
-                                    vfft_batch ob,
                                     struct vfft_wisdom_s *W,
                                     int N,
                                     size_t K)
@@ -49,9 +48,9 @@ static vfft_plan _vfft_split_create(const vfft_cfg_t *cfg,
         _vfft_warn("vfft_create: %s N=%d K=%zu on the SPLIT layout: the split side serves "
                    "C2C only — use VFFT_LAYOUT_INTERLEAVED",
                    _vfft_tname(cfg->transform), N, K);
-        return NULL; /* unreachable today: 1D real goes to the bridge before the fork */
+        return NULL; /* a split R2C / C2R request lands here (the bridge to the split real engines deleted 2026-11-06) */
     }
-    return _vfft_create_c2c_split(cfg, ob, W, N, K);
+    return _vfft_create_c2c_split(cfg, W, N, K);
 }
 
 #endif /* VFFT_SPLIT_CREATE_H */

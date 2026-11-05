@@ -38,11 +38,11 @@ ROOT = HERE.parent  # repo root: highSpeedFFT/
 # that wires them.
 DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated)
 DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
-DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + the FROZEN wisdom bundle (spike_wisdom.txt)
+DAG_GEN      = DAG / 'generator' / 'generated'   # the generated registries and the fused drivers
 WISDOM       = ROOT / 'src' / 'wisdom'           # the wisdom2 store's ROOT: one folder per CPU, the library picks its own
 ALIGN_TOOL   = ROOT / 'src' / 'tools' / 'build' / 'align_kernel_stacks.py'   # the codelets' 64-byte frames (Windows, gcc)
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
-DAG_CODELETS = DAG / 'codelets' / 'split' / 'inplace' / DAG_ISA
+DAG_CODELETS = DAG / 'codelets' / 'split' / 'ztt' / DAG_ISA   # the split corpus: zturn-ts alone (2026-11-06)
 # The ISA flags of the codelet library and the drivers, placed after -march=native
 # as CMakeLists.txt places _isa_clamp: avx512 adds CMake's avx512 set (_arch:
 # -mavx512f -mavx512dq; -mfma is in both flag lists already), so an avx512 build
@@ -52,17 +52,11 @@ DAG_ISA_FLAGS = ['-mavx512f', '-mavx512dq'] if DAG_ISA == 'avx512' else ['-mno-a
 
 
 def dag_codelet_srcs() -> list[str]:
-    """All dag SIMD codelet .c files to compile+link (the registry references
-    them by symbol). ~300 c2c files + the real-FFT families. Compiled in one
-    invocation. The rfft (r2cf + hc2hc) and c2r (r2cb + hc2hc-bwd) codelets live
-    in sibling dirs; including them here lets r2c/c2r benches link the same lib."""
+    """All dag SIMD codelet .c files to compile+link (the registries reference
+    them by symbol): the split corpus (zturn-ts's stage kernels), the
+    interleaved tree and the fused drivers. Compiled in one invocation."""
     dirs = [
-        DAG_CODELETS,                          # c2c in-place
-        DAG / 'codelets' / 'split' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
-        DAG / 'codelets' / 'split' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
-        DAG / 'codelets' / 'split' / 'oop'  / DAG_ISA,   # the odd radices (5/10/20/25 n1 + t1_dif) the split real odd engine links; the classic OOP engine went 2026-11-05
-        DAG / 'codelets' / 'split' / 'ztt' / DAG_ISA,   # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels (avx2 only so far)
-        DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
+        DAG_CODELETS,                          # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels (avx2 only so far)
         # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per
         # engine, listed explicitly (globs are non-recursive; a dropped folder must be loud)
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared',
@@ -606,9 +600,7 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
              # the store's root and the frozen bundle's home: with no directory
              # named (NULL wisdom dir, VFFT_WISDOM_DIR unset) the library serves
              # from and saves into THIS CPU's folder under src/wisdom/;
-             # spike_wisdom.txt & co. are read from generated/ whatever the dir
              '-DVFFT_WISDOM_DIR_DEFAULT="%s"' % WISDOM.as_posix(),
-             '-DVFFT_FROZEN_WISDOM_DIR="%s"' % DAG_GEN.as_posix(),
              # the repository's own FFTW, the comparator's default (ref_fftw.h; Windows x64)
              *(['-DVFFT_FFTW_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3-3.dll').as_posix()]
                if tc['is_windows'] else []),
@@ -651,6 +643,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
     # adds two exported symbols, so the two keys must never be cross-diffed.
     if os.environ.get('VFFT_FINGERPRINT'):
         flags += ['-DVFFT_FINGERPRINT']
+    if os.environ.get('VFFT_JIT'):   # the JIT switch (src/dag-fft-compiler/jit): a deployed cell without a fused driver is compiled at create
+        flags += ['-DVFFT_USE_JIT']
 
     if os.environ.get('VFFT_WARN'):
         flags = [f for f in flags

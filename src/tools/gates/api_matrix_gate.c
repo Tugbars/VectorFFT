@@ -47,10 +47,10 @@ int main(int argc, char **argv) {
         { "1D c2c OOP IL K=4 CONTIGUOUS",         1, VFFT_C2C, OOP, IL, NAT, 1, 256, 0, 0, 0, 4, TC },
         { "1D c2c OOP IL K=4 LANE_MAJOR",         1, VFFT_C2C, OOP, IL, NAT, 1, 256, 0, 0, 0, 4, LM },
         { "1D c2c IP IL K=4 LANE_MAJOR",          1, VFFT_C2C, IP,  IL, NAT, 1, 256, 0, 0, 0, 4, LM },
-        /* ── 1D C2C: SPLIT — prime in place only, no contiguous geometry ── */
+        /* ── 1D C2C: SPLIT — zturn-ts, every N (Bluestein past its bands), both placements, both geometries ── */
         { "1D c2c IP SPLIT prime 127",            1, VFFT_C2C, IP,  SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
-        { "1D c2c OOP SPLIT prime 127",           0, VFFT_C2C, OOP, SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
-        { "1D c2c OOP SPLIT K=4 CONTIGUOUS",      0, VFFT_C2C, OOP, SP, NAT, 1, 256, 0, 0, 0, 4, TC },
+        { "1D c2c OOP SPLIT prime 127",           1, VFFT_C2C, OOP, SP, NAT, 1, 127, 0, 0, 0, 1, 0 },
+        { "1D c2c OOP SPLIT K=4 CONTIGUOUS",      1, VFFT_C2C, OOP, SP, NAT, 1, 256, 0, 0, 0, 4, TC },
         /* ── 1D real: INTERLEAVED any N in both placements; SPLIT even N; natural only ── */
         { "1D r2c OOP IL prime 101",              1, VFFT_R2C, OOP, IL, NAT, 1, 101, 0, 0, 0, 1, 0 },
         { "1D r2c OOP SPLIT prime 101",           0, VFFT_R2C, OOP, SP, NAT, 1, 101, 0, 0, 0, 1, 0 },
@@ -66,8 +66,8 @@ int main(int argc, char **argv) {
         { "1D r2c OOP IL 63 K=4 LANE_MAJOR",      0, VFFT_R2C, OOP, IL, NAT, 1, 63, 0, 0, 0, 4, LM },   /* odd N: no real column engine */
         { "1D r2c IP IL 64 K=4 LANE_MAJOR",       1, VFFT_R2C, IP,  IL, NAT, 1, 64, 0, 0, 0, 4, LM },   /* one (N + 2) K plane */
         { "1D c2r IP IL 64 K=4 LANE_MAJOR",       1, VFFT_C2R, IP,  IL, NAT, 1, 64, 0, 0, 0, 4, LM },
-        { "1D r2c OOP SPLIT even 64",             1, VFFT_R2C, OOP, SP, NAT, 1, 64, 0, 0, 0, 1, 0 },
-        { "1D c2r OOP SPLIT even 64",             1, VFFT_C2R, OOP, SP, NAT, 1, 64, 0, 0, 0, 1, 0 },
+        { "1D r2c OOP SPLIT even 64",             0, VFFT_R2C, OOP, SP, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* the split side is C2C only (2026-11-06) */
+        { "1D c2r OOP SPLIT even 64",             0, VFFT_C2R, OOP, SP, NAT, 1, 64, 0, 0, 0, 1, 0 },
         { "1D r2c IP SPLIT 64",                   0, VFFT_R2C, IP,  SP, NAT, 1, 64, 0, 0, 0, 1, 0 },
         { "1D r2c OOP IL 64 SCRAMBLED",           0, VFFT_R2C, OOP, IL, SCR, 1, 64, 0, 0, 0, 1, 0 },    /* a real spectrum is natural */
         /* ── 2D INTERLEAVED: the native tier, both transforms, both placements ── */
@@ -106,11 +106,11 @@ int main(int argc, char **argv) {
         { "3D c2c IP IL 16^3 howmany=2 CONTIG",   1, VFFT_C2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 2, TC },  /* the c2c volume queue, in place */
         /* ── 2D SPLIT: natural and scrambled ── */
         { "2D c2c OOP SPLIT 256x64",              1, VFFT_C2C, OOP, SP, NAT, 2, 256, 64, 0, 0, 1, 0 },
-        { "2D c2c OOP SPLIT 256x64 SCRAMBLED",    1, VFFT_C2C, OOP, SP, SCR, 2, 256, 64, 0, 0, 1, 0 },
-        { "2D c2c OOP SPLIT prime 127x64 SCR",    1, VFFT_C2C, OOP, SP, SCR, 2, 127, 64, 0, 0, 1, 0 },
-        { "2D c2c IP SPLIT 256x64 SCRAMBLED",     1, VFFT_C2C, IP,  SP, SCR, 2, 256, 64, 0, 0, 1, 0 },
+        { "2D c2c OOP SPLIT 256x64 SCRAMBLED",    0, VFFT_C2C, OOP, SP, SCR, 2, 256, 64, 0, 0, 1, 0 },    /* the split side refuses a scrambled order (owner 2026-11-05) */
+        { "2D c2c OOP SPLIT prime 127x64 SCR",    0, VFFT_C2C, OOP, SP, SCR, 2, 127, 64, 0, 0, 1, 0 },
+        { "2D c2c IP SPLIT 256x64 SCRAMBLED",     0, VFFT_C2C, IP,  SP, SCR, 2, 256, 64, 0, 0, 1, 0 },
         { "2D c2c OOP SPLIT 64x64 howmany=4 SCR", 0, VFFT_C2C, OOP, SP, SCR, 2, 64, 64, 0, 0, 4, 0 },
-        { "2D r2c OOP SPLIT 256x64",              1, VFFT_R2C, OOP, SP, NAT, 2, 256, 64, 0, 0, 1, 0 },
+        { "2D r2c OOP SPLIT 256x64",              0, VFFT_R2C, OOP, SP, NAT, 2, 256, 64, 0, 0, 1, 0 },
         { "2D r2c OOP SPLIT prime 127x100",       0, VFFT_R2C, OOP, SP, NAT, 2, 127, 100, 0, 0, 1, 0 },
         /* ── 3D / 4D: SPLIT serves the scrambled order only ── */
         { "3D c2c OOP IL 16^3",                   1, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
@@ -122,15 +122,15 @@ int main(int argc, char **argv) {
         { "3D c2c OOP IL 16^3 howmany=2",         1, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 2, 0 },  /* contiguous volumes through the volume queue (2026-10-18) */
         { "3D r2c OOP IL 16^3",                   1, VFFT_R2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
         { "3D r2c IP IL 16^3",                    1, VFFT_R2C, IP,  IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
-        { "3D c2c OOP SPLIT 16^3",                0, VFFT_C2C, OOP, SP, NAT, 3, 16, 16, 16, 0, 1, 0 },
-        { "3D c2c OOP SPLIT 16^3 SCRAMBLED",      1, VFFT_C2C, OOP, SP, SCR, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D c2c OOP SPLIT 16^3",                1, VFFT_C2C, OOP, SP, NAT, 3, 16, 16, 16, 0, 1, 0 },    /* zturn-ts at rank 3 (2026-11-05) */
+        { "3D c2c OOP SPLIT 16^3 SCRAMBLED",      0, VFFT_C2C, OOP, SP, SCR, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3 howmany=2 SCR",  0, VFFT_C2C, OOP, SP, SCR, 3, 16, 16, 16, 0, 2, 0 },
         { "4D c2c OOP IL 8^4",                    0, VFFT_C2C, OOP, IL, NAT, 4, 8, 8, 8, 8, 1, 0 },
         { "4D c2c OOP SPLIT 8^4",                 0, VFFT_C2C, OOP, SP, NAT, 4, 8, 8, 8, 8, 1, 0 },
-        { "4D c2c OOP SPLIT 8^4 SCRAMBLED",       1, VFFT_C2C, OOP, SP, SCR, 4, 8, 8, 8, 8, 1, 0 },
+        { "4D c2c OOP SPLIT 8^4 SCRAMBLED",       0, VFFT_C2C, OOP, SP, SCR, 4, 8, 8, 8, 8, 1, 0 },
         /* ── real-to-real: 1D; layout, order and batch geometry are ignored ── */
-        { "DCT-II OOP 64",                        1, VFFT_DCT2, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },
-        { "DCT-II OOP 64, SPLIT and SCRAMBLED",   1, VFFT_DCT2, OOP, SP, SCR, 1, 64, 0, 0, 0, 1, 0 },
+        { "DCT-II OOP 64",                        0, VFFT_DCT2, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* the real-to-real family went with the stride engine (2026-11-06) */
+        { "DCT-II OOP 64, SPLIT and SCRAMBLED",   0, VFFT_DCT2, OOP, SP, SCR, 1, 64, 0, 0, 0, 1, 0 },
         { "DCT-II 2D 64x64",                      0, VFFT_DCT2, OOP, IL, NAT, 2, 64, 64, 0, 0, 1, 0 },
     };
     const int n = (int)(sizeof C / sizeof C[0]);

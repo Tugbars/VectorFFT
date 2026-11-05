@@ -2,8 +2,8 @@
  *
  * One engine serves every split C2C plan: zturn-ts (split/rank1/zts.h), both
  * placements, natural order both directions, K = 1 / the contiguous batch
- * (serial, or in slabs over the pool) / the lane-major batch. 1D real plans
- * run in bridge/real_bridge_exec.h until their interleaved engine exists.
+ * (serial, or in slabs over the pool) / the lane-major batch. No real plan
+ * exists on this side: the split library is C2C only.
  *
  * Included by vfft_execute.h under VFFT_EXECUTE_IMPL.
  */

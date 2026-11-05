@@ -13,7 +13,6 @@ python src/tools/baseline/slice_ladder.py --parent <fn> --helper <fn> ...    # o
 python src/tools/baseline/obj_equiv.py before.o after.o                      # the object-code equivalence proof
 python src/tools/baseline/sym_census.py <obj> --defined|--undefined|--mutable
 python src/tools/baseline/race_census.py [src/core/vfft.c ...]
-python src/tools/baseline/trig_capture.py --out FILE [--repeat 3]
 ```
 
 ## Files
@@ -21,7 +20,7 @@ python src/tools/baseline/trig_capture.py --out FILE [--repeat 3]
 - `capture_baseline.py` -- `golden_bits.txt` (refusal decisions + output-bit digests) and
   `fp_replay.txt`, one process per cell, a fresh seeded store per cell in scratch, LF always,
   repeated so a nondeterministic cell is recorded as such instead of sampled once.
-- `harness_golden.c`, `fp_sweep.c`, `trig_digest_probe.c` -- the harness programs; built by
+- `harness_golden.c`, `fp_sweep.c` -- the harness programs (trig_digest_probe went with the real-to-real family, 2026-11-06); built by
   `gauntlet/build.py` (`--vfft --compile`), binaries land beside them (ignored).
 - `slice_ladder.py` -- drives `obj_equiv.py`, `sym_census.py`, `race_census.py` and the
   capture for one migration step.

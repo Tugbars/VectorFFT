@@ -47,7 +47,7 @@ static struct vfft_plan_s *_zts_axis(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     c1.placement = placement;
     c1.batch_geom = lane_major ? VFFT_BATCH_LANE_MAJOR : VFFT_BATCH_CONTIGUOUS;
     c1.order = VFI_ORDER_NATURAL;
-    return (struct vfft_plan_s *)_vfft_create_c2c_split(&c1, NULL, W, N, K);
+    return (struct vfft_plan_s *)_vfft_create_c2c_split(&c1, W, N, K);
 }
 
 /* ── the 3D plan's one threading verdict of its own: the middle axis's
