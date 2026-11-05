@@ -83,28 +83,83 @@ typedef struct
     double ns;
 } _zts_cand_t;
 
-/* the pool at N: the registry's cells, in registry order */
+static size_t _zts_chain_bytes(const int *chain, int nf)
+{
+    long L = chain[0];
+    size_t d = 0;
+    int s;
+    for (s = 1; s < nf; s++)
+    {
+        d += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)L;
+        L *= chain[s];
+    }
+    return d * sizeof(double);
+}
+/* the odd band's pool (zts.h vfft_zts_odd_band): the chain GRAMMAR — the
+ * odd part of N decomposed greedily largest-first over {15, 9, 7, 5, 3}, its
+ * mids at every interior position, the pow2 slots over ordered {4, 8}, the
+ * ends in {4, 8}, nf <= 7, (N / R0) % VW == 0 (the port of the interleaved
+ * planner's _il_dp_enumerate_ztt_odd) */
+static int _zts_pool_odd(int N, _zts_cand_t *out, int max)
+{
+    int mids[VFFT_ZTS_MAX_NF], nm = 0, m = N, i, nf, n = 0;
+    long pw;
+    if (!vfft_zts_odd_band(N)) return 0;
+    while ((m & 1) == 0) m >>= 1;
+    for (i = 0; i < VFFT_ZTS_ODD_MIDS_N; i++)
+        while (m % VFFT_ZTS_ODD_MIDS[i] == 0) { mids[nm++] = VFFT_ZTS_ODD_MIDS[i]; m /= VFFT_ZTS_ODD_MIDS[i]; }
+    pw = N;
+    for (i = 0; i < nm; i++) pw /= mids[i];
+    for (nf = nm + 2; nf <= VFFT_ZTS_MAX_NF && n < max; nf++)
+    {
+        const int np = nf - nm;                /* power-of-two slots */
+        long mask;
+        for (mask = 0; mask < (1L << np) && n < max; mask++)
+        {
+            int pchain[VFFT_ZTS_MAX_NF], pos[VFFT_ZTS_MAX_NF];
+            long prod = 1;
+            for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+            if (prod != pw) continue;
+            for (i = 0; i < nm; i++) pos[i] = i + 1;
+            for (;;)
+            {
+                int chain[VFFT_ZTS_MAX_NF], pi = 0, mi = 0, q, k;
+                for (i = 0; i < nf; i++)
+                    chain[i] = (mi < nm && pos[mi] == i) ? mids[mi++] : pchain[pi++];
+                if ((N / chain[0]) % VFFT_ZTS_VW == 0 && chain[0] % VFFT_ZTS_VW == 0 && n < max)
+                {
+                    memset(&out[n], 0, sizeof out[n]);
+                    for (q = 0; q < nf; q++) out[n].chain[q] = chain[q];
+                    out[n].nf = nf;
+                    out[n].bytes = _zts_chain_bytes(chain, nf);
+                    n++;
+                }
+                k = nm - 1;
+                while (k >= 0 && pos[k] == nf - 2 - (nm - 1 - k)) k--;
+                if (k < 0) break;
+                pos[k]++;
+                for (q = k + 1; q < nm; q++) pos[q] = pos[q - 1] + 1;
+            }
+        }
+    }
+    return n;
+}
+/* the pool at N: the registry's cells, in registry order; a cell without a
+ * fused driver draws its pool from the odd band's grammar */
 static int _zts_pool(int N, _zts_cand_t *out, int max)
 {
     int i, n = 0;
     for (i = 0; i < VFFT_ZTS_NCELLS && n < max; i++)
     {
         const vfft_zts_cell_t *c = &vfft_zts_cells[i];
-        long L = c->chain[0];
-        size_t d = 0;
-        int s;
         if (c->n != N) continue;
-        for (s = 1; s < c->nf; s++)
-        {
-            d += (size_t)2 * (size_t)(c->chain[s] - 1) * (size_t)L;
-            L *= c->chain[s];
-        }
         memset(&out[n], 0, sizeof out[n]);
         memcpy(out[n].chain, c->chain, sizeof out[n].chain);
         out[n].nf = c->nf;
-        out[n].bytes = d * sizeof(double);
+        out[n].bytes = _zts_chain_bytes(c->chain, c->nf);
         n++;
     }
+    if (n == 0) n = _zts_pool_odd(N, out, max);
     return n;
 }
 
@@ -213,7 +268,7 @@ static vfft_zts_plan_t *vfft_zts_race(int N, int lanes, int inplace,
                                       double *const *inc_bufs, int inc_nbufs,
                                       double *win_ns, double *inc_ns)
 {
-    static _zts_cand_t pool[VFFT_ZTS_NCELLS > 0 ? VFFT_ZTS_NCELLS : 1];
+    static _zts_cand_t pool[VFFT_ZTS_NCELLS > 256 ? VFFT_ZTS_NCELLS : 256];   /* the registry's cells, or the odd band's chains */
     _zts_cand_t finals[64];
     _zts_reseed_t rs;
     const size_t n = (size_t)N * (size_t)lanes;

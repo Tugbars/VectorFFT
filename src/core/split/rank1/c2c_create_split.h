@@ -289,9 +289,9 @@ static vfft_plan _vfft_create_c2c_split(const vfft_cfg_t *cfg,
     if (!vfft_zts_serves(N))
     {
         _vfft_warn("vfft_create: %s C2C N=%d K=%zu on the SPLIT layout: the split engine serves "
-                   "the powers of two from %d to %d only — use VFFT_LAYOUT_INTERLEAVED for "
-                   "this N",
-                   pname, N, K, VFFT_ZTS_MIN_N, VFFT_ZTS_MAX_N);
+                   "the powers of two from %d to %d and the lengths 2^a * m (a >= 4, m over 3, 5, 7, "
+                   "9, 15) up to %d — use VFFT_LAYOUT_INTERLEAVED for this N",
+                   pname, N, K, VFFT_ZTS_MIN_N, VFFT_ZTS_MAX_N, VFFT_ZTS_MAX_N);
         return NULL;
     }
     if (K > 1 && cfg->batch_geom == VFFT_BATCH_CONTIGUOUS)

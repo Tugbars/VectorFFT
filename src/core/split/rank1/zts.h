@@ -84,8 +84,39 @@ static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0,
  * ZTURN-T's 1024 / 2048 (16 KB / 32 KB of block plane) and, for the lane-major
  * engine whose planes are four times wider per column, 256 / 512. The tile
  * law filters each; the race decides. */
-static const int VFFT_ZTS_TILE_LADDER[] = { 256, 512, 1024, 2048 };
-#define VFFT_ZTS_TILE_LADDER_N 4
+static const int VFFT_ZTS_TILE_LADDER[] = { 256, 512, 1024, 2048, 3072 };   /* 3072 (48 KB): the odd cells' width */
+#define VFFT_ZTS_TILE_LADDER_N 5
+
+#include "split/rank1/zts_stages.h"   /* the stage kernels: the staged executor's vocabulary */
+
+/* THE ODD BAND on the split side (ztt_odd_design.md's grammar, 2026-11-06):
+ *   N = 2^a * m,  a >= 4,  m > 1 a product over {3, 5, 7, 9, 15} with at most
+ *   five odd mids (nf <= 7 with the two pow2 ends),  48 <= N <= the ceiling.
+ * A cell of the band has no fused driver: the STAGED executor walks its chain's
+ * stage kernels (zts_stages.h), one call per stage and block, in both families.
+ * No floor at 2048 as on the interleaved side: the split side is the low-N
+ * library. The chain grammar: the ends in {4, 8} (the ingest's turn lattice,
+ * the terminator's lane transposes), a mid in {4, 8, 3, 5, 7, 9, 15}, the
+ * product N, (N / R0) % VW == 0; the odd part decomposed greedily
+ * largest-first (9 is a radix-9 mid, never 3.3; 45 is 15.3), its mids at
+ * every interior position, the pow2 slots over ordered {4, 8}: the race's
+ * pool (zts_race.h _zts_pool_odd). */
+static const int VFFT_ZTS_ODD_MIDS[] = { 15, 9, 7, 5, 3 };
+#define VFFT_ZTS_ODD_MIDS_N 5
+static inline int vfft_zts_odd_band(int N)
+{
+    int m = N, a = 0, nm = 0, i;
+    if (N < 48 || N > VFFT_ZTS_MAX_N) return 0;
+    while ((m & 1) == 0) { m >>= 1; a++; }
+    if (m == 1 || a < 4) return 0;
+    for (i = 0; i < VFFT_ZTS_ODD_MIDS_N; i++)
+        while (m % VFFT_ZTS_ODD_MIDS[i] == 0) { m /= VFFT_ZTS_ODD_MIDS[i]; nm++; }
+    return m == 1 && nm <= VFFT_ZTS_MAX_NF - 2;
+}
+static inline int vfft_zts_mid_ok(int R)
+{
+    return R == 4 || R == 8 || R == 3 || R == 5 || R == 7 || R == 9 || R == 15;
+}
 
 typedef struct vfft_zts_plan_s
 {
@@ -124,6 +155,15 @@ typedef struct vfft_zts_plan_s
     int mt;
     int mt_n;
     double *mtplane[VFFT_ZTS_MT_MAX];
+    /* THE STAGED FORM (the odd band): no fused driver, the stage kernels
+     * resolved at create (zts_stages.h), the executor _zts_staged_s / _v */
+    int staged;
+    vfft_zts_s0_fn s0f, s0b;
+    vfft_zts_sm_fn smf[VFFT_ZTS_MAX_NF], smb[VFFT_ZTS_MAX_NF];
+    vfft_zts_sl_fn slf, slb;
+    vfft_zts_v0_fn v0f, v0b;
+    vfft_zts_vm_fn vmf[VFFT_ZTS_MAX_NF], vmb[VFFT_ZTS_MAX_NF];
+    vfft_zts_vl_fn vlf, vlb;
 } vfft_zts_plan_t;
 
 static inline const vfft_zts_cell_t *vfft_zts_lookup(int N, const int *chain, int nf)
@@ -140,13 +180,19 @@ static inline const vfft_zts_cell_t *vfft_zts_lookup(int N, const int *chain, in
     return NULL;
 }
 
-/* 1 = the registry has at least one cell at N (the race's admission) */
-static inline int vfft_zts_serves(int N)
+/* 1 = the registry has at least one fused cell at N */
+static inline int vfft_zts_fused_at(int N)
 {
     int i;
     for (i = 0; i < VFFT_ZTS_NCELLS; i++)
         if (vfft_zts_cells[i].n == N) return 1;
     return 0;
+}
+/* 1 = zturn-ts serves N: a fused cell, or the odd band's staged form (the
+ * race's admission) */
+static inline int vfft_zts_serves(int N)
+{
+    return vfft_zts_fused_at(N) || vfft_zts_odd_band(N);
 }
 
 static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
@@ -169,6 +215,8 @@ static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
 /* the worker planes of the threaded contiguous form (lanes = 1): n of them,
  * one per pool slot beyond the caller; returns the count built */
 static inline size_t vfft_zts_plane_bytes(int N, int lanes, int blk); /* below */
+static inline void _zts_staged_s(const vfft_zts_plan_t *p, int bwd, const double *ire, const double *iim, double *ore, double *oim, double *W); /* below */
+static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd, const double *ire, const double *iim, double *ore, double *oim, size_t g0, size_t g1, double *W0, double *Wi0); /* below */
 static inline int vfft_zts_mt_planes(vfft_zts_plan_t *p, int n)
 {
     int i;
@@ -294,24 +342,53 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
 {
     vfft_zts_plan_t *p;
     const vfft_zts_cell_t *cell;
+    vfft_zts_plan_t st;   /* the staged form's stage table, resolved before the plan exists */
     long prod = 1, j;
-    int s;
+    int s, staged = 0;
     size_t off;
     const char *why = NULL;
+    memset(&st, 0, sizeof st);
     if (nf < 2 || nf > VFFT_ZTS_MAX_NF) why = "nf outside 2..7";
     else if (N < 16 || N > VFFT_ZTS_MAX_N) why = "N outside 16..262144";
     else if (lanes != 1 && (lanes % VFFT_ZTS_VW || lanes > VFFT_ZTS_LANES_MAX))
         why = "lanes is neither 1 nor a multiple of the vector width up to 64";
     for (s = 0; !why && s < nf; s++)
     {
-        if (chain[s] != 4 && chain[s] != 8) why = "radix not in {4, 8}";
+        if (s == 0 || s == nf - 1)
+        {
+            if (chain[s] != 4 && chain[s] != 8) why = "an end radix not in {4, 8}";
+        }
+        else if (!vfft_zts_mid_ok(chain[s])) why = "a mid radix not in {4, 8, 3, 5, 7, 9, 15}";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
     if (!why && (N / chain[0]) % VFFT_ZTS_VW) why = "(N / R0) % VW != 0";
     if (!why && chain[0] % VFFT_ZTS_VW) why = "R0 % VW != 0 (the ingest writes whole blocks)";
     cell = why ? NULL : vfft_zts_lookup(N, chain, nf);
-    if (!why && !cell) why = "no fused driver for this cell (zts_registry)";
+    staged = !why && !cell;
+    if (!why && staged && (N & (N - 1)) == 0) why = "no fused driver for this pow2 cell (zts_registry)";
+    if (!why && staged && !vfft_zts_odd_band(N)) why = "N outside the odd band (2^a * {3,5,7,9,15}-smooth, a >= 4)";
+    if (!why && staged)
+    {   /* the stage table: every kernel resolved now, none looked up at run time */
+        int ok = 1;
+        for (s = 0; s < nf; s++)
+        {
+            const int R = chain[s];
+            if (lanes == 1)
+            {
+                if (s == 0)           { st.s0f = _zts_s0_fn(R, 0); st.s0b = _zts_s0_fn(R, 1); ok = ok && st.s0f && st.s0b; }
+                else if (s == nf - 1) { st.slf = _zts_sl_fn(R, 0); st.slb = _zts_sl_fn(R, 1); ok = ok && st.slf && st.slb; }
+                else                  { st.smf[s] = _zts_sm_fn(R, 0); st.smb[s] = _zts_sm_fn(R, 1); ok = ok && st.smf[s] && st.smb[s]; }
+            }
+            else
+            {
+                if (s == 0)           { st.v0f = _zts_v0_fn(R, 0); st.v0b = _zts_v0_fn(R, 1); ok = ok && st.v0f && st.v0b; }
+                else if (s == nf - 1) { st.vlf = _zts_vl_fn(R, 0); st.vlb = _zts_vl_fn(R, 1); ok = ok && st.vlf && st.vlb; }
+                else                  { st.vmf[s] = _zts_vm_fn(R, 0); st.vmb[s] = _zts_vm_fn(R, 1); ok = ok && st.vmf[s] && st.vmb[s]; }
+            }
+        }
+        if (!ok) why = "no stage kernel for a radix in this chain (zts_stages.h)";
+    }
     if (why)
     {
         if (getenv("VFFT_NAT_LOG"))
@@ -325,6 +402,17 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     p->lanes = lanes;
     p->blk = 1;
     p->gp = vfft_zts_group_pitch(N);
+    p->staged = staged;
+    if (staged)
+    {
+        p->s0f = st.s0f; p->s0b = st.s0b; p->slf = st.slf; p->slb = st.slb;
+        p->v0f = st.v0f; p->v0b = st.v0b; p->vlf = st.vlf; p->vlb = st.vlb;
+        for (s = 0; s < VFFT_ZTS_MAX_NF; s++)
+        {
+            p->smf[s] = st.smf[s]; p->smb[s] = st.smb[s];
+            p->vmf[s] = st.vmf[s]; p->vmb[s] = st.vmb[s];
+        }
+    }
     for (s = 0; s < nf; s++) p->chain[s] = chain[s];
     p->cell = cell;
     p->ncol = N / chain[0];
@@ -419,7 +507,14 @@ static inline void vfft_zts_run_slab(const vfft_zts_plan_t *p, int bwd,
     const double *ir = ire + off, *ii = iim + off;
     double *orr = ore + off, *oi = oim + off;
     double *W = _zts_plane_at(plane_alloc, ir, ii, orr, oi);
-    if (cnt == 1)
+    if (p->staged)
+    {
+        const size_t N = (size_t)p->N;
+        size_t t;
+        for (t = 0; t < cnt; t++)
+            _zts_staged_s(p, bwd, ir + t * N, ii + t * N, orr + t * N, oi + t * N, W);
+    }
+    else if (cnt == 1)
         (bwd ? p->cell->s_bwd : p->cell->s_fwd)(ir, ii, orr, oi, W, tw, p->rb, p->tile);
     else
         (bwd ? p->cell->s_bwd_batch : p->cell->s_fwd_batch)(ir, ii, orr, oi, W, tw, p->rb, p->tile, cnt);
@@ -430,6 +525,81 @@ static inline double *_zts_vplane(const double *alloc, unsigned want)
 {
     const uintptr_t base = (uintptr_t)alloc;
     return (double *)(base + (((want - (base & 4095u)) & 4095u) & ~(uintptr_t)63u));
+}
+
+/* ── THE STAGED EXECUTOR (the odd band): the fused driver's walk as calls ──
+ * S: the ingest (split planes -> the block plane W), the mids in place on W
+ * (the tiled prefix per tile, the rest whole-plane), the terminator (W -> the
+ * caller's planes). One transform. */
+static inline void _zts_staged_s(const vfft_zts_plan_t *p, int bwd,
+                                 const double *ire, const double *iim, double *ore, double *oim, double *W)
+{
+    const double *tw = bwd ? p->twb : p->tw;
+    const int nf = p->nf;
+    const size_t N = (size_t)p->N, tile = p->tile, L = (size_t)p->L[nf - 1];
+    int s;
+    size_t t;
+    (bwd ? p->s0b : p->s0f)(ire, iim, W, NULL, p->rb, (size_t)p->ncol, 0, 0, (size_t)p->ncol);
+    if (tile)
+        for (t = 0; t < N / tile; t++)
+        {
+            double *B = W + t * tile * 2;
+            for (s = 1; s < nf - 1; s++)
+            {
+                const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+                if (tile % RL == 0)
+                    (bwd ? p->smb[s] : p->smf[s])(B, B, tw + p->twoff[s], NULL, (size_t)p->L[s], tile / RL, 0, (size_t)p->L[s]);
+            }
+        }
+    for (s = 1; s < nf - 1; s++)
+    {
+        const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+        if (!tile || tile % RL)
+            (bwd ? p->smb[s] : p->smf[s])(W, W, tw + p->twoff[s], NULL, (size_t)p->L[s], (size_t)p->Gs[s], 0, (size_t)p->L[s]);
+    }
+    (bwd ? p->slb : p->slf)(W, ore, oim, tw + p->twoff[nf - 1], NULL, L, 1, L, L);
+}
+/* V: the blocked loop of the lane-major driver over the lane range [g0, g1):
+ * the ingest of nb groups, the mids per group on its plane, the terminator
+ * of the block */
+static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd,
+                                 const double *ire, const double *iim, double *ore, double *oim,
+                                 size_t g0, size_t g1, double *W0, double *Wi0)
+{
+    const double *tw = bwd ? p->twb : p->tw;
+    const int nf = p->nf;
+    const size_t N = (size_t)p->N, tile = p->tile, L = (size_t)p->L[nf - 1];
+    const size_t K = (size_t)p->lanes, blk = (size_t)p->blk, gp = p->gp, VW = (size_t)VFFT_ZTS_VW;
+    size_t gl;
+    for (gl = g0; gl < g1; gl += VW * blk)
+    {
+        const size_t nb = ((g1 - gl) / VW < blk) ? (g1 - gl) / VW : blk;
+        size_t gb, t;
+        int s;
+        (bwd ? p->v0b : p->v0f)(ire + gl, iim + gl, W0, Wi0, NULL, p->rb, (size_t)p->ncol, 0, 0, (size_t)p->ncol, K, nb, gp);
+        for (gb = 0; gb < nb; gb++)
+        {
+            double *W = W0 + gb * gp, *Wi = Wi0 + gb * gp;
+            if (tile)
+                for (t = 0; t < N / tile; t++)
+                {
+                    double *B = W + t * tile * VW, *Bi = Wi + t * tile * VW;
+                    for (s = 1; s < nf - 1; s++)
+                    {
+                        const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+                        if (tile % RL == 0)
+                            (bwd ? p->vmb[s] : p->vmf[s])(B, Bi, B, Bi, tw + p->twoff[s], NULL, (size_t)p->L[s], tile / RL, 0, (size_t)p->L[s]);
+                    }
+                }
+            for (s = 1; s < nf - 1; s++)
+            {
+                const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+                if (!tile || tile % RL)
+                    (bwd ? p->vmb[s] : p->vmf[s])(W, Wi, W, Wi, tw + p->twoff[s], NULL, (size_t)p->L[s], (size_t)p->Gs[s], 0, (size_t)p->L[s]);
+            }
+        }
+        (bwd ? p->vlb : p->vlf)(W0, Wi0, ore + gl, oim + gl, tw + p->twoff[nf - 1], NULL, L, 1, L, L, K, nb, gp);
+    }
 }
 
 /* execute. lanes = 1: K contiguous transforms (K >= 1), transform t at offset
@@ -443,7 +613,14 @@ static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
     if (p->lanes == 1)
     {
         double *W = _zts_plane_for(p, ire, iim, ore, oim);
-        if (K == 1)
+        if (p->staged)
+        {
+            const size_t N = (size_t)p->N;
+            size_t t;
+            for (t = 0; t < K; t++)
+                _zts_staged_s(p, bwd, ire + t * N, iim + t * N, ore + t * N, oim + t * N, W);
+        }
+        else if (K == 1)
             (bwd ? p->cell->s_bwd : p->cell->s_fwd)(ire, iim, ore, oim, W, tw, p->rb, p->tile);
         else
             (bwd ? p->cell->s_bwd_batch : p->cell->s_fwd_batch)(ire, iim, ore, oim, W, tw, p->rb, p->tile, K);
@@ -451,8 +628,11 @@ static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
     else
     {
         double *Wr = _zts_vplane(p->plane_re, 1024u), *Wi = _zts_vplane(p->plane_im, 3072u);
-        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
-                                                (size_t)p->blk, p->gp, 0, (size_t)p->lanes);
+        if (p->staged)
+            _zts_staged_v(p, bwd, ire, iim, ore, oim, 0, (size_t)p->lanes, Wr, Wi);
+        else
+            (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
+                                                    (size_t)p->blk, p->gp, 0, (size_t)p->lanes);
     }
 }
 
@@ -468,8 +648,11 @@ static inline void vfft_zts_run_lanes(const vfft_zts_plan_t *p, int bwd,
     if (!pim) pim = pre + vfft_zts_plane_bytes(p->N, p->lanes, p->blk) / sizeof(double);
     Wr = _zts_vplane(pre, 1024u);
     Wi = _zts_vplane(pim, 3072u);
-    (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
-                                            (size_t)p->blk, p->gp, g0, g1);
+    if (p->staged)
+        _zts_staged_v(p, bwd, ire, iim, ore, oim, g0, g1, Wr, Wi);
+    else
+        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
+                                                (size_t)p->blk, p->gp, g0, g1);
 }
 
 static inline void vfft_zts_execute_fwd(const vfft_zts_plan_t *p, const double *ire, const double *iim,

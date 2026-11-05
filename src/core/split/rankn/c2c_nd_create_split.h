@@ -196,7 +196,8 @@ static vfft_plan _vfft_create_c2c_nd_split(const vfft_cfg_t *cfg,
     if (!vfft_zts_serves(N1) || !vfft_zts_serves(N2) || (rank == 3 && !vfft_zts_serves(N3)))
     {
         _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be a power of two "
-                   "from %d to %d (the split engine's cells) — use VFFT_LAYOUT_INTERLEAVED for this shape",
+                   "from %d to %d or a length 2^a * m (a >= 4, m over 3, 5, 7, 9, 15) — use "
+                   "VFFT_LAYOUT_INTERLEAVED for this shape",
                    pname, rank, shape, VFFT_ZTS_MIN_N, VFFT_ZTS_MAX_N);
         return NULL;
     }
