@@ -58,16 +58,16 @@ cell returns no plan and names its reason in `vfft_error()`.
 | request | served | refused |
 |---|---|---|
 | 1D C2C, INTERLEAVED | any N, both placements, both orders; a batch contiguous (its default) or lane-major | |
-| 1D C2C, SPLIT | in place at any N | out of place at a prime N; a contiguous batch |
+| 1D C2C, SPLIT | any N up to 131072, both placements, the natural order; a batch contiguous (its default) or lane-major, any K (the lanes off the vector width run the tail, 2026-11-07) | the scrambled order; an N above 131072 |
 | 1D R2C / C2R, INTERLEAVED | any N, both placements; a batch contiguous, or lane-major (its default) at an even N in either placement | lane-major at an odd N; the scrambled order |
-| 1D R2C / C2R, SPLIT | out of place at an even N | an odd N; in place |
+| 1D R2C / C2R, SPLIT | | every request (the split side is C2C only in v1.0, 2026-11-06) |
 | 2D C2C, INTERLEAVED | any extents, both placements, both orders; howmany > 1 as contiguous planes, or lane-major (every axis a column pass) | |
 | 2D R2C / C2R, INTERLEAVED | any extents (a prime first or an odd last extent included), both placements; howmany > 1 as contiguous planes in either placement (in place: every row padded to 2(N2/2+1) doubles, the planes one after another), or lane-major at N1 >= 2 and an even N2 >= 4 (in place: N1 blocks of (N2 + 2) K doubles) | a lane-major batch at an odd last extent, or one below 4 |
-| 2D C2C, SPLIT | both placements, scrambled, or natural where its reorder tape builds; howmany 1 | a batch |
-| 2D R2C / C2R, SPLIT | out of place where the split engines cover both axes | a prime column extent |
+| 2D C2C, SPLIT | both placements, the natural order, howmany 1, any extents up to 131072 | the scrambled order; a batch |
+| 2D R2C / C2R, SPLIT | | every request (C2C only) |
 | 3D C2C, INTERLEAVED | both placements, both orders; howmany > 1 as contiguous volumes (its default: the volume queue over the one-volume plan), or lane-major (every axis a column pass) | a batch with an extent below 2 |
 | 3D R2C / C2R, INTERLEAVED | both placements, every extent >= 2; howmany > 1 as contiguous volumes (its default; in place every row padded to 2(N3/2+1) doubles, the volumes one after another), or lane-major at N1, N2 >= 2 and an even N3 >= 4 (in place: N1 N2 rows of (N3 + 2) K doubles) | a lane-major batch at an odd N3 or N3 < 4; an extent below 2 |
-| 3D and 4D C2C, SPLIT | the scrambled order, howmany 1 | the natural order; a batch |
+| 3D C2C, SPLIT | both placements, the natural order, howmany 1 | the scrambled order; a batch; rank 4 |
 | 4D, INTERLEAVED | | every request |
 | real-to-real (DCT, DST, DHT) | | every request (retired 2026-11-06 with the stride engine) |
 

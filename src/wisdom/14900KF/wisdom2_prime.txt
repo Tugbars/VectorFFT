@@ -3458,3 +3458,5 @@
 @cell t=c2c n=76443 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.4.4.4.15.5.8 in_tw=0 | ran=1 src=race date=2026-10-27 bld=0.1.0-01d99051-dirty
 @cell t=c2c n=94499 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=4.15.5.5.4.4.8 in_tw=512 | ran=1 src=race date=2026-10-27 bld=0.1.0-01d99051-dirty
 @cell t=c2c n=4106 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.15.9.8 in_tw=0 | ran=1 src=race date=2026-10-29 bld=0.1.0-cb744428-dirty
+@cell t=c2c n=65521 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.8.4.4.4.4 in_tw=1024 | ran=1 src=race date=2026-11-05 bld=0.1.0-5ad56fd4-dirty
+@cell t=c2c n=32758 q=1 ord=scr place=ip role=method lay=il | eng=bluestein in=ztt in_sh=8.8.4.8.8.4 in_tw=0 | ran=1 src=race date=2026-11-05 bld=0.1.0-5ad56fd4-dirty

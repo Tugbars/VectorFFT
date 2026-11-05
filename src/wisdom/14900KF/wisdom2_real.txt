@@ -6221,3 +6221,13 @@
 @cell t=c2r n=1024 q=4 ord=nat place=oop lay=split | eng=route route=natural | ran=4 ns=4696.72 metric=bwd1 units=ns arms=4696.72/6793.85 src=race date=2026-11-05 bld=0.1.0-f3bad033-dirty
 @cell t=r2c n=256 q=8 ord=nat place=oop lay=split | eng=route route=rfft | ran=8 ns=847.44 metric=fwd1 units=ns arms=847.44/1490.47 src=race date=2026-11-05 bld=0.1.0-f3bad033-dirty
 @cell t=c2r n=256 q=8 ord=nat place=oop lay=split | eng=route route=natural | ran=8 ns=1262.50 metric=bwd1 units=ns arms=1262.50/1705.23 src=race date=2026-11-05 bld=0.1.0-f3bad033-dirty
+@cell t=r2c n=51 q=1 ord=nat place=ip | eng=zrf chain=17.3 msz=1 tile=0 | ran=1 src=race ns=88.7 metric=fwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=c2r n=51 q=1 ord=nat place=ip | eng=zrf chain=17.3 msz=1 tile=0 | ran=1 src=race ns=51.9 metric=bwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=r2c n=55 q=1 ord=nat place=ip | eng=zrf chain=11.5 msz=1 tile=0 | ran=1 src=race ns=44.5 metric=fwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=c2r n=55 q=1 ord=nat place=ip | eng=zrf chain=11.5 msz=1 tile=0 | ran=1 src=race ns=39.0 metric=bwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=r2c n=1009 q=1 ord=nat place=ip | eng=zrb m=2048 in=ztt in_sh=8.8.4.8 in_tw=1024 | ran=1 src=race ns=4669.1 metric=fwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=c2r n=1009 q=1 ord=nat place=ip | eng=zrb m=2048 in=ztt in_sh=4.4.4.4.8 in_tw=1024 | ran=1 src=race ns=4759.4 metric=bwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=r2c n=27 q=1 ord=nat place=ip | eng=zrf chain=9.3 msz=1 tile=0 | ran=1 src=race ns=32.4 metric=fwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=c2r n=27 q=1 ord=nat place=ip | eng=zrf chain=9.3 msz=1 tile=0 | ran=1 src=race ns=33.5 metric=bwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=r2c n=1023 q=1 ord=nat place=ip | eng=zrf chain=3.11.31 msz=1 tile=2048 | ran=1 src=race ns=1143.5 metric=fwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty
+@cell t=c2r n=1023 q=1 ord=nat place=ip | eng=zrf chain=3.11.31 msz=1 tile=512 | ran=1 src=race ns=986.1 metric=bwd1 units=ns date=2026-11-05 bld=0.1.0-ba41849b-dirty

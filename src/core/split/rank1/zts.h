@@ -157,6 +157,9 @@ typedef struct vfft_zts_plan_s
     double *plane;                    /* lanes = 1: the block plane, 2N doubles + slack */
     double *plane_re, *plane_im;      /* lanes > 1: the two lane-group plane sets, blk
                                        * group planes each at pitch gp doubles           */
+    double *tail_re, *tail_im;        /* lanes % VW != 0: the TAIL's scratch group, N x VW doubles
+                                       * each at pitch VW (the tail lanes zero-padded to a group;
+                                       * the full groups run on the caller's planes as before) */
     int blk;                          /* lanes > 1: lane groups per BLOCK of the blocked
                                        * ingest/terminator (one row visit reads blk*VW
                                        * lanes); 1 = one group at a time. A raced axis
@@ -179,6 +182,9 @@ typedef struct vfft_zts_plan_s
     int mt_n;
     int mt_sect;                      /* 1 = mt names the SECTIONED walk (zts_mt.h), 0 = the
                                        * slab / lane-block form */
+    int mt_grp;                       /* lanes > 1, the lane-range form: 1 = ranges of one cache LINE of
+                                       * lanes (two groups on a 64-byte line), 0 = ranges of whole blocks */
+    size_t mt_unit;                   /* lanes per range unit (set with the verdict; 0 = a whole block) */
     double *mtplane[VFFT_ZTS_MT_MAX];
     /* THE STAGED FORM (the odd band): no fused driver, the stage kernels
      * resolved at create (zts_stages.h), the executor _zts_staged_s / _v */
@@ -241,6 +247,8 @@ static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
         vfft_aligned_free(p->plane_im);
     }
     for (i = 0; i < p->mt_n; i++) vfft_aligned_free(p->mtplane[i]);
+    vfft_aligned_free(p->tail_re);
+    vfft_aligned_free(p->tail_im);
     free(p);
 }
 
@@ -248,7 +256,7 @@ static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
  * one per pool slot beyond the caller; returns the count built */
 static inline size_t vfft_zts_plane_bytes(int N, int lanes, int blk); /* below */
 static inline void _zts_staged_s(const vfft_zts_plan_t *p, int bwd, const double *ire, const double *iim, double *ore, double *oim, double *W); /* below */
-static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd, const double *ire, const double *iim, double *ore, double *oim, size_t g0, size_t g1, double *W0, double *Wi0); /* below */
+static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd, const double *ire, const double *iim, double *ore, double *oim, size_t g0, size_t g1, double *W0, double *Wi0, size_t pitch); /* below */
 static inline int vfft_zts_mt_planes(vfft_zts_plan_t *p, int n)
 {
     int i;
@@ -382,8 +390,8 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     memset(&st, 0, sizeof st);
     if (nf < 2 || nf > VFFT_ZTS_MAX_NF) why = "nf outside 2..7";
     else if (N < (lanes > 1 ? 9 : 16) || N > VFFT_ZTS_MAX_N) why = "N outside 16..262144 (lane-major: 9..)";
-    else if (lanes != 1 && (lanes % VFFT_ZTS_VW || lanes > VFFT_ZTS_LANES_MAX))
-        why = "lanes is neither 1 nor a multiple of the vector width up to 64";
+    else if (lanes != 1 && (lanes < 2 || lanes > VFFT_ZTS_LANES_MAX))
+        why = "lanes is neither 1 nor 2..VFFT_ZTS_LANES_MAX";
     for (s = 0; !why && s < nf; s++)
     {
         if ((s == 0 || s == nf - 1) && lanes == 1)
@@ -467,7 +475,13 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
     }
     p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
     p->rb = (size_t *)vfft_aligned_alloc((size_t)p->ncol * sizeof(size_t));
-    if (!p->tw || !p->rb || (want_planes && !vfft_zts_own_planes(p)) ||
+    if (lanes > 1 && lanes % VFFT_ZTS_VW)
+    {   /* the tail's scratch group (every plan that executes, the race's candidates too) */
+        p->tail_re = (double *)vfft_aligned_alloc((size_t)N * VFFT_ZTS_VW * sizeof(double));
+        p->tail_im = (double *)vfft_aligned_alloc((size_t)N * VFFT_ZTS_VW * sizeof(double));
+    }
+    if (!p->tw || !p->rb || (lanes > 1 && lanes % VFFT_ZTS_VW && (!p->tail_re || !p->tail_im)) ||
+        (want_planes && !vfft_zts_own_planes(p)) ||
         (want_bwd && !vfft_zts_fill_bwd(p)))
     {
         vfft_zts_destroy(p);
@@ -603,13 +617,14 @@ static inline void _zts_staged_s(const vfft_zts_plan_t *p, int bwd,
  * of the block */
 static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd,
                                  const double *ire, const double *iim, double *ore, double *oim,
-                                 size_t g0, size_t g1, double *W0, double *Wi0)
+                                 size_t g0, size_t g1, double *W0, double *Wi0, size_t pitch)
 {
     const double *tw = bwd ? p->twb : p->tw;
     const int nf = p->nf;
     const size_t N = (size_t)p->N, tile = p->tile, L = (size_t)p->L[nf - 1];
-    const size_t K = (size_t)p->lanes, blk = (size_t)p->blk, gp = p->gp, VW = (size_t)VFFT_ZTS_VW;
+    const size_t K = pitch, blk = (size_t)p->blk, gp = p->gp, VW = (size_t)VFFT_ZTS_VW;
     size_t gl;
+    g1 -= (g1 - g0) % VW;   /* whole groups only: a lane count off the width ends at its full groups (the tail is run apart) */
     for (gl = g0; gl < g1; gl += VW * blk)
     {
         const size_t nb = ((g1 - gl) / VW < blk) ? (g1 - gl) / VW : blk;
@@ -641,6 +656,46 @@ static inline void _zts_staged_v(const vfft_zts_plan_t *p, int bwd,
     }
 }
 
+/* THE TAIL (2026-11-07): the r = lanes % VW lanes past the full groups, run
+ * as one zero-padded group of VW lanes on the plan's scratch (pitch VW) and
+ * copied back — internal padding, the caller's tight layout untouched. The
+ * V kernels compute each lane independently, so the tail's lanes come out
+ * bitwise what a caller-padded batch would give. On the plane set given
+ * (the caller's, or a slot's). No-op when the lane count is a multiple of VW. */
+static inline void _zts_run_tail(const vfft_zts_plan_t *p, int bwd,
+                                 const double *ire, const double *iim, double *ore, double *oim,
+                                 double *Wr, double *Wi)
+{
+    const size_t VW = (size_t)VFFT_ZTS_VW, K = (size_t)p->lanes, r = K % VW, g0 = K - r, N = (size_t)p->N;
+    const double *tw = bwd ? p->twb : p->tw;
+    size_t n, j;
+    if (r == 0) return;
+    for (n = 0; n < N; n++)
+    {
+        for (j = 0; j < r; j++)
+        {
+            p->tail_re[n * VW + j] = ire[n * K + g0 + j];
+            p->tail_im[n * VW + j] = iim[n * K + g0 + j];
+        }
+        for (j = r; j < VW; j++)
+        {
+            p->tail_re[n * VW + j] = 0.0;
+            p->tail_im[n * VW + j] = 0.0;
+        }
+    }
+    if (p->staged)
+        _zts_staged_v(p, bwd, p->tail_re, p->tail_im, p->tail_re, p->tail_im, 0, VW, Wr, Wi, VW);
+    else
+        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(p->tail_re, p->tail_im, p->tail_re, p->tail_im, Wr, Wi, tw, p->rb, p->tile,
+                                                VW, (size_t)p->blk, p->gp, 0, VW);
+    for (n = 0; n < N; n++)
+        for (j = 0; j < r; j++)
+        {
+            ore[n * K + g0 + j] = p->tail_re[n * VW + j];
+            oim[n * K + g0 + j] = p->tail_im[n * VW + j];
+        }
+}
+
 /* execute. lanes = 1: K contiguous transforms (K >= 1), transform t at offset
  * t*N in every plane; lanes = VW: one lane-major batch of VW transforms. In
  * place when in == out. The backward call needs the backward stream
@@ -667,11 +722,13 @@ static inline void _zts_run(const vfft_zts_plan_t *p, int bwd,
     else
     {
         double *Wr = _zts_vplane(p->plane_re, 1024u), *Wi = _zts_vplane(p->plane_im, 3072u);
+        const size_t full = (size_t)p->lanes - (size_t)p->lanes % VFFT_ZTS_VW;   /* the drivers take whole groups only */
         if (p->staged)
-            _zts_staged_v(p, bwd, ire, iim, ore, oim, 0, (size_t)p->lanes, Wr, Wi);
+            _zts_staged_v(p, bwd, ire, iim, ore, oim, 0, full, Wr, Wi, (size_t)p->lanes);
         else
             (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
-                                                    (size_t)p->blk, p->gp, 0, (size_t)p->lanes);
+                                                    (size_t)p->blk, p->gp, 0, full);
+        _zts_run_tail(p, bwd, ire, iim, ore, oim, Wr, Wi);   /* the lanes past the full groups */
     }
 }
 
@@ -685,13 +742,20 @@ static inline void vfft_zts_run_lanes(const vfft_zts_plan_t *p, int bwd,
     const double *tw = bwd ? p->twb : p->tw;
     double *Wr, *Wi;
     if (!pim) pim = pre + vfft_zts_plane_bytes(p->N, p->lanes, p->blk) / sizeof(double);
+    const size_t full = (size_t)p->lanes - (size_t)p->lanes % VFFT_ZTS_VW;   /* the drivers take whole groups only */
+    const size_t ge = g1 > full ? full : g1;
     Wr = _zts_vplane(pre, 1024u);
     Wi = _zts_vplane(pim, 3072u);
-    if (p->staged)
-        _zts_staged_v(p, bwd, ire, iim, ore, oim, g0, g1, Wr, Wi);
-    else
-        (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
-                                                (size_t)p->blk, p->gp, g0, g1);
+    if (g0 < ge)
+    {
+        if (p->staged)
+            _zts_staged_v(p, bwd, ire, iim, ore, oim, g0, ge, Wr, Wi, (size_t)p->lanes);
+        else
+            (bwd ? p->cell->v_bwd : p->cell->v_fwd)(ire, iim, ore, oim, Wr, Wi, tw, p->rb, p->tile, (size_t)p->lanes,
+                                                    (size_t)p->blk, p->gp, g0, ge);
+    }
+    if (g1 >= (size_t)p->lanes)
+        _zts_run_tail(p, bwd, ire, iim, ore, oim, Wr, Wi);   /* the range that reaches the end runs the tail */
 }
 
 static inline void vfft_zts_execute_fwd(const vfft_zts_plan_t *p, const double *ire, const double *iim,

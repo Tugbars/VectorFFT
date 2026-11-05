@@ -9,13 +9,13 @@ of the work it implies. The measurements behind it: docs/research/split_layout_s
 
 | request under the split layout | v1.0 |
 |---|---|
-| 1D C2C, power-of-two N in zturn-ts's registry, natural order, both placements | served: K = 1; a contiguous batch of any K (serial, or slabs over the pool at T > 1); a lane-major batch of any K that is a multiple of the vector width |
+| 1D C2C, power-of-two N in zturn-ts's registry, natural order, both placements | served: K = 1; a contiguous batch of any K (serial, or slabs over the pool at T > 1); a lane-major batch of any K (2026-11-07: the lanes past the last whole vector group run as one zero-padded group on the plan's own scratch and are copied back, the tail; internal padding, the caller's tight layout untouched) |
 | 1D C2C at N = 2^a·m, a >= 4, m over 3, 5, 7, 9, 15 (the odd band, 2026-11-06) | served in every form above, staged (one stage kernel call per stage and block; the chain grammar is the race's pool) |
 | a lane-major 1D C2C batch, or a column axis of a plane or volume, at any N that is a product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15 (the lane-major band, 2026-11-06) | served, staged: the lane-major family's kinds carry no lane lattice, so its ends take the odd radices (the split side's lane-major flat DIT) |
-| any other N up to 131072 (a prime, 2·odd, a pure-odd K = 1 or contiguous batch) | served by Bluestein over zturn-ts (`split/rank1/zts_bluestein.h`, 2026-11-06): the convolution on the fused cell at the next power of two, in the request's form (K = 1 / contiguous serial; lane-major with the chirp broadcast over the lanes); no row of its own, the M cell's verdicts inside; not threaded |
+| any other N up to 131072 (a prime, 2·odd, a pure-odd K = 1 or contiguous batch) | served by Bluestein over zturn-ts (`split/rank1/zts_bluestein.h`, 2026-11-06): the convolution on the fused cell at the next power of two, in the request's form (K = 1 / contiguous; lane-major TURNED, 2026-11-07: the modulate pass turns the lanes into rows, the convolution runs per row on the K = 1 cell, the demodulate pass turns them back, in blocks of a cache line of lanes; below the lane floor at T > 1 the lane-major cell with the chirp broadcast over the lanes); no row of its own, the M cell's verdicts inside; threaded (`split/rank1/zts_blu_mt.h`, 2026-11-06) by the three zturn-ts forms around the inner M cell — the passes cut around the inner's sectioned walk for one transform and the lane-major single group, slabs for the contiguous batch, lane blocks for the lane-major batch — chosen by RULE at create (owner 2026-11-06: the split side's threading lives in the split estimate, Bluestein first; no race, no threading row): the cut follows the plane's longer axis, with the line width and the thread count read from the machine and one constant of work per fork-join (`_zts_blu_tcmt_decide`) |
 | 2D C2C, both extents in the registry, natural order on both axes, both placements | served: the row pass as a contiguous batch of N1 rows, the column pass as a lane-major batch of N2 lanes (one vector per column, the column twiddles broadcast) |
 | 3D C2C, all extents in the registry, natural order, both placements | served: the plane passes as 2D, the third axis as a lane-major batch of N2 x N3 lanes |
-| an extent above 131072, or a shape whose column pass has a lane count (the product of the extents after the first) that is not a multiple of the vector width | refused at create; the message names the interleaved layout |
+| an extent above 131072 | refused at create; the message names the interleaved layout. (A column pass whose lane count is off the vector width was refused until 2026-11-07; it runs the tail now.) |
 | scrambled order | refused at create (beta on the interleaved side; the split engine is natural by construction) |
 | R2C, C2R, DCT, DST, DHT | refused at create: not a split transform in v1.0 |
 | rank 4, padded batches (VFFT_FLAG_OWN_PITCH), the estimate flag | refused at create |
@@ -25,17 +25,31 @@ its contiguous twin, the lane-major driver; the staged executor of both for the 
 driver; under VFFT_USE_JIT a deployed cell of that kind gets its fused driver compiled at create,
 `src/dag-fft-compiler/jit/zts_jit_runtime.h`, 2026-11-06: the build-time emitter's driver written for
 the plan's chain with the stage kernels' sources inlined, cached on disk, the staged walk kept on any
-failure) and its three threaded forms, each a verdict raced at the plan's thread count and banked on the
-cell's threading row (2026-11-06): slabs of whole transforms for a contiguous batch of K >= T; lane
-blocks over the pool's slots for a lane-major batch of two or more blocks; the SECTIONED walk
-(split/rank1/zts_mt.h, ZTURN-T's on the split layout) for one transform, a contiguous batch of K < T
-(every stage's dispatch covering all K transforms with T / K ranges each) and the single-group
-lane-major batch — every stage's units cut into ranges, one fork-join per stage, bitwise the serial
+failure) and its threaded forms, on a zturn-ts cell every one a verdict raced at the plan's thread count against serial
+and against each other and banked on the cell's threading row, on a Bluestein cell chosen by rule
+(2026-11-06; the row's value names the
+form: 0 serial, 1 slabs or lane block ranges, 3 and 4 the sectioned walk's BLOCKS and TILES, 5 lane
+group ranges): slabs of whole transforms for a contiguous batch of K >= T; lane BLOCK ranges over
+the pool's slots for a lane-major batch of two or more blocks and lane GROUP ranges for two or more
+groups (the same slots at group granularity, each thread's row visits holding fewer groups than the
+banked block); the SECTIONED walk (split/rank1/zts_mt.h, ZTURN-T's on the split layout) for one
+transform, a contiguous batch of K < T (every stage's dispatch covering all K transforms with T / K
+ranges each) and any lane-major batch, block by block — every stage's units cut into ranges, one fork-join per stage, bitwise the serial
 walk, with its BLOCKS and TILES arms. The row's value names the form with the arm (0 serial, 1 slabs or
 lane blocks, 3 sectioned blocks, 4 sectioned tiles), so a row banked under one form is never read under
 the other. One wisdom grammar: the split natural cell rows (eng=zts chain= tile= blk=, the lane-major
 cells at lay=slm, the threading rows eng=tcb tcmt=) and, for rank 2 and 3, the per-axis cells plus a
 rank-3 plan's own threading row (its middle axis's planes over the slots).
+
+## What the split side is for (owner, 2026-11-07)
+
+Batched pow2 and odd-band work at mid N is where the split side wins and what it is for (the
+owner, 2026-11-07: good for odd and pow2): at K = 4 on the 14900KF it is 1.1x to 1.8x ahead of the
+interleaved library at 256 to 4096 (lane-major 1.6x to 1.8x at 1024 to 4096) and 1.0x to 1.6x ahead
+across the odd band (docs/research/split_zts_jit_2026_11_06.md), and behind only where its method is Bluestein against a direct engine (the pure-odd contiguous
+batch, the primes where Rader wins). The owner's words: good enough; a prototype for those who want
+extreme pow2 mid-N performance. The remaining levers (odd ends for the S family, a split Rader) are
+reported, not pursued.
 
 ## What went (deleted 2026-11-06)
 

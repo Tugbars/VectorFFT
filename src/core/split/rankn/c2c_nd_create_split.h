@@ -84,8 +84,8 @@ static void _zts_pmt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg, struct
     const char *pin = getenv("VFFT_TCMT");
     const int n[3] = { h->N, h->N2, h->N3 };
     h->zts_pmt = 0;
-    if (T <= 1 || !h->zts_mid || getenv("VFFT_NO_TCMT"))
-        return;
+    if (T <= 1 || !h->zts_mid || !h->zts_mid->zts || getenv("VFFT_NO_TCMT"))
+        return;   /* a Bluestein middle axis (no zts handle) runs per plane */
     /* the middle axis's worker plane sets: its own threading verdict built
      * them when it raced; build them here when it did not (one plane of N3
      * lanes may hold a single block) */
@@ -197,19 +197,18 @@ static vfft_plan _vfft_create_c2c_nd_split(const vfft_cfg_t *cfg,
      * with a >= 4); every other extent runs lane-major (the V family: any
      * product of 2 to 7 radices over 3, 4, 5, 7, 8, 9, 15) */
     {   /* every axis a cell of its form: the bands, else Bluestein (any length
-         * up to 131072); the lane-major passes need their lane count (the
-         * product of the extents after the axis) a multiple of the vector width */
+         * up to 131072); the lane-major passes take any lane count (the
+         * product of the extents after the axis) up to the lane bound; a
+         * count off the vector width runs its tail (2026-11-07) */
         const int Nl = rank == 3 ? N3 : N2;
         const size_t lanes1 = rank == 3 ? (size_t)N2 * (size_t)N3 : (size_t)N2;
         const int ok_rows = vfft_zts_serves(Nl) || vfft_zts_blu_m(Nl);
-        const int ok_col = (vfft_zts_serves_v(N1) || vfft_zts_blu_m(N1)) && lanes1 % VFFT_ZTS_VW == 0;
-        const int ok_mid = rank < 3 || ((vfft_zts_serves_v(N2) || vfft_zts_blu_m(N2)) && (size_t)N3 % VFFT_ZTS_VW == 0);
+        const int ok_col = (vfft_zts_serves_v(N1) || vfft_zts_blu_m(N1)) && lanes1 <= (size_t)VFFT_ZTS_LANES_MAX;
+        const int ok_mid = rank < 3 || ((vfft_zts_serves_v(N2) || vfft_zts_blu_m(N2)) && (size_t)N3 <= (size_t)VFFT_ZTS_LANES_MAX);
         if (!ok_rows || !ok_col || !ok_mid)
-        {
-            _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be at most 131072, "
-                       "and the extents after the first (their product the lane count of the column pass) a "
-                       "multiple of %d — use VFFT_LAYOUT_INTERLEAVED for this shape",
-                       pname, rank, shape, VFFT_ZTS_VW);
+            _vfft_warn("vfft_create: %s %dD C2C %s on the SPLIT layout: every extent must be at most 131072 "
+                       "and the lane count of a column pass at most %d — use VFFT_LAYOUT_INTERLEAVED for this shape",
+                       pname, rank, shape, VFFT_ZTS_LANES_MAX);
             return NULL;
         }
     }

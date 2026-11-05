@@ -117,6 +117,7 @@ typedef struct {
                              * stamped into wisdom                           */
     long     l1d_seen;      /* what CPUID reported here, 0 if unavailable    */
     long     l1d_ways;
+    long     line_bytes;    /* the L1d line (CPUID), 64 when undiscovered     */
     long     l2_used;       /* the L2 sizing value (same contract as l1d)    */
     long     l2_seen;       /* CPUID level-2 unified/data size, 0 if none    */
     long     l3_seen;       /* CPUID level-3 unified size, 0 if none. SHARED
@@ -151,7 +152,7 @@ static inline void _vfft_cpu_walk_cache_leaf(vfft_cpu_cache_t *o, unsigned leaf)
         const long line  = (long)((r[1] & 0xFFF) + 1);
         const long sets  = (long)(r[2] + 1);
         const long size  = ways * parts * line * sets;
-        if (level == 1 && ctype == 1) { o->l1d_seen = size; o->l1d_ways = ways; }
+        if (level == 1 && ctype == 1) { o->l1d_seen = size; o->l1d_ways = ways; o->line_bytes = line; }
         if (level == 2 && (ctype == 1 || ctype == 3)) o->l2_seen = size;
         if (level == 3 && ctype == 3)                 o->l3_seen = size;
     }
@@ -395,7 +396,7 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
 static inline void _vfft_cpu_cache_read(vfft_cpu_cache_t *o)
 {
     unsigned r[4];
-    o->l1d_seen = 0; o->l1d_ways = 0; o->core_type = 0;
+    o->l1d_seen = 0; o->l1d_ways = 0; o->line_bytes = 0; o->core_type = 0;
     /* is_pcore starts at 1: a host with no CPUID has no hybrid information,
      * and the rule for "no core type" is "usable" (same as core_type == 0
      * below). The CPUID block always overwrites it on x86. */
@@ -500,7 +501,7 @@ static inline const vfft_cpu_cache_t *vfft_cpu_cache(void)
 {
     static vfft_cpu_cache_t c;
     static int done = 0;
-    if (!done) { _vfft_cpu_cache_fill(&c); done = 1; }
+    if (!done) { _vfft_cpu_cache_fill(&c); if (c.line_bytes <= 0) c.line_bytes = 64; done = 1; }
     return &c;
 }
 

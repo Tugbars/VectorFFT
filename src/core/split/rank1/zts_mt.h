@@ -19,8 +19,12 @@
  * At T > 1 a pow2 cell runs this walk, not its fused driver: the fusion is
  * worth 0-3 % above 2048, the threads are worth multiples. Both families:
  * S (K = 1; the contiguous batch of K < T transforms shares the dispatch,
- * every stage covering all K transforms with T / K ranges each), V (one lane
- * group, K = VW lanes: the lane-major batch too small for lane blocks).
+ * every stage covering all K transforms with T / K ranges each), V (the
+ * lane-major batch of any lane count, 2026-11-06: block by block as the
+ * blocked driver walks it, the ingest and the terminator cut by columns with
+ * the block's groups per call, the mids and the tiled prefix cut over the
+ * flattened (group, unit) index of the block — a form beside the lane
+ * ranges, raced against them).
  *
  * Column ranges are cut at multiples of VW (the S kinds run whole VW-column
  * iterations; every column count is a multiple of VW by the create's laws);
@@ -50,6 +54,9 @@ typedef struct
     size_t Ls, Gs, OLs, count, K;
     size_t t_lo, t_hi;         /* tile ranges */
     int s;                     /* the stage (mids) */
+    size_t nb, gp;             /* V: the block's group count and plane pitch */
+    size_t u0, u1, nu;         /* V mids / tiles: the flattened (group, unit) range, nu units per group */
+    size_t pitch;              /* V mids: the group pitch of the stage */
 } _zts_sect_arg;
 
 /* the tiled prefix of ONE tile, as the staged executors run it */
@@ -83,17 +90,37 @@ static void _zts_sect_tramp(void *v)
     const _zts_sect_arg *a = (const _zts_sect_arg *)v;
     const vfft_zts_plan_t *p = a->p;
     size_t t;
-    if (a->kind != 3 && a->kind != 7 && a->count == 0) return;
+    if ((a->kind == 0 || a->kind == 1 || a->kind == 2 || a->kind == 4 || a->kind == 6) && a->count == 0) return;   /* the range kinds (3, 5, 7) carry their own bounds */
     switch (a->kind)
     {
     case 0: (a->bwd ? p->s0b : p->s0f)(a->ire, a->iim, a->W, NULL, a->rb, a->Ls, 0, 0, a->count); break;
     case 1: (a->bwd ? p->smb[a->s] : p->smf[a->s])(a->W, a->W, a->tw, NULL, a->Ls, a->Gs, 0, a->count); break;
     case 2: (a->bwd ? p->slb : p->slf)(a->W, a->ore, a->oim, a->tw, NULL, a->Ls, 1, a->OLs, a->count); break;
     case 3: for (t = a->t_lo; t < a->t_hi; t++) _zts_sect_tile_s(p, a->bwd, a->tw, a->W, t); break;
-    case 4: (a->bwd ? p->v0b : p->v0f)(a->ire, a->iim, a->W, a->Wi, NULL, a->rb, a->Ls, 0, 0, a->count, a->K, 1, p->gp); break;
-    case 5: (a->bwd ? p->vmb[a->s] : p->vmf[a->s])(a->W, a->Wi, a->W, a->Wi, a->tw, NULL, a->Ls, a->Gs, 0, a->count); break;
-    case 6: (a->bwd ? p->vlb : p->vlf)(a->W, a->Wi, a->ore, a->oim, a->tw, NULL, a->Ls, 1, a->OLs, a->count, a->K, 1, p->gp); break;
-    default: for (t = a->t_lo; t < a->t_hi; t++) _zts_sect_tile_v(p, a->bwd, a->tw, a->W, a->Wi, t); break;
+    case 4: (a->bwd ? p->v0b : p->v0f)(a->ire, a->iim, a->W, a->Wi, NULL, a->rb, a->Ls, 0, 0, a->count, a->K, a->nb, a->gp); break;
+    case 5:
+    {   /* a mid over the flattened (group, unit) range: a run per group */
+        size_t u = a->u0;
+        while (u < a->u1)
+        {
+            const size_t gb = u / a->nu, g = u % a->nu;
+            size_t len = a->nu - g;
+            if (len > a->u1 - u) len = a->u1 - u;
+            (a->bwd ? p->vmb[a->s] : p->vmf[a->s])(a->W + gb * a->gp + g * a->pitch, a->Wi + gb * a->gp + g * a->pitch,
+                                                   a->W + gb * a->gp + g * a->pitch, a->Wi + gb * a->gp + g * a->pitch,
+                                                   a->tw, NULL, a->Ls, len, 0, a->Ls);
+            u += len;
+        }
+        break;
+    }
+    case 6: (a->bwd ? p->vlb : p->vlf)(a->W, a->Wi, a->ore, a->oim, a->tw, NULL, a->Ls, 1, a->OLs, a->count, a->K, a->nb, a->gp); break;
+    default:
+    {   /* the tiled prefix over the flattened (group, tile) range */
+        size_t u;
+        for (u = a->u0; u < a->u1; u++)
+            _zts_sect_tile_v(p, a->bwd, a->tw, a->W + (u / a->nu) * a->gp, a->Wi + (u / a->nu) * a->gp, u % a->nu);
+        break;
+    }
     }
 }
 
@@ -180,64 +207,76 @@ static inline void _zts_sect_s(const vfft_zts_plan_t *p, int T, int bwd, size_t 
     }
 }
 
-/* ── the V family: ONE lane group (K = VW lanes) over T threads ── */
+/* ── the V family: the lane-major batch over T threads, block by block as
+ * the blocked driver walks it (blk groups per block, the plan's planes hold
+ * one block): the ingest and the terminator cut by columns with the block's
+ * groups per call, the mids and the tiled prefix over the flattened (group,
+ * unit) index of the block. One group (K = VW) is the single block. ── */
 static inline void _zts_sect_v(const vfft_zts_plan_t *p, int T, int bwd,
-                               const double *ire, const double *iim, double *ore, double *oim, double *W, double *Wi)
+                               const double *ire, const double *iim, double *ore, double *oim, double *W0, double *Wi0)
 {
     const double *tw = bwd ? p->twb : p->tw;
     const size_t N = (size_t)p->N, tile = p->tile, VW = (size_t)VFFT_ZTS_VW, K = (size_t)p->lanes;
-    const size_t ncol = (size_t)p->ncol, L = (size_t)p->L[p->nf - 1];
+    const size_t ncol = (size_t)p->ncol, L = (size_t)p->L[p->nf - 1], blk = (size_t)p->blk, gp = p->gp;
+    const size_t full = K - K % VW;   /* the full groups; the tail runs apart, after the walk */
     _zts_sect_arg a[THREAD_POOL_MAX_DISPATCH];
+    size_t gl;
     int s, w;
-    for (w = 0; w < T; w++)
+    for (gl = 0; gl < full; gl += VW * blk)
     {
-        const size_t lo = ncol * (size_t)w / (size_t)T, hi = ncol * (size_t)(w + 1) / (size_t)T;
-        memset(&a[w], 0, sizeof a[w]);
-        a[w].kind = 4; a[w].p = p; a[w].bwd = bwd;
-        a[w].ire = ire + lo * K; a[w].iim = iim + lo * K; a[w].W = W; a[w].Wi = Wi;
-        a[w].rb = p->rb + lo; a[w].Ls = ncol; a[w].count = hi - lo; a[w].K = K;
-    }
-    thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
-    if (p->mt == 2 && tile && N / tile >= 2)
-    {
-        const size_t nt = N / tile;
+        const size_t nb = ((full - gl) / VW < blk) ? (full - gl) / VW : blk;
         for (w = 0; w < T; w++)
         {
+            const size_t lo = ncol * (size_t)w / (size_t)T, hi = ncol * (size_t)(w + 1) / (size_t)T;
             memset(&a[w], 0, sizeof a[w]);
-            a[w].kind = 7; a[w].p = p; a[w].bwd = bwd; a[w].tw = tw; a[w].W = W; a[w].Wi = Wi;
-            a[w].t_lo = nt * (size_t)w / (size_t)T; a[w].t_hi = nt * (size_t)(w + 1) / (size_t)T;
+            a[w].kind = 4; a[w].p = p; a[w].bwd = bwd;
+            a[w].ire = ire + gl + lo * K; a[w].iim = iim + gl + lo * K; a[w].W = W0; a[w].Wi = Wi0;
+            a[w].rb = p->rb + lo; a[w].Ls = ncol; a[w].count = hi - lo; a[w].K = K; a[w].nb = nb; a[w].gp = gp;
         }
         thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
-    }
-    for (s = 1; s < p->nf - 1; s++)
-    {
-        const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
-        const size_t Gs = (size_t)p->Gs[s], pitch = VW * RL;
-        if (p->mt == 2 && tile && N / tile >= 2 && tile % RL == 0) continue;
-        for (w = 0; w < T; w++)
+        if (p->mt == 2 && tile && N / tile >= 2)
         {
-            const size_t lo = Gs * (size_t)w / (size_t)T, hi = Gs * (size_t)(w + 1) / (size_t)T;
-            memset(&a[w], 0, sizeof a[w]);
-            a[w].kind = 5; a[w].p = p; a[w].bwd = bwd; a[w].s = s;
-            a[w].W = W + lo * pitch; a[w].Wi = Wi + lo * pitch;
-            a[w].tw = tw + p->twoff[s]; a[w].Ls = (size_t)p->L[s]; a[w].Gs = hi - lo; a[w].count = hi > lo ? (size_t)p->L[s] : 0;
+            const size_t nt = N / tile, U = nb * nt;
+            for (w = 0; w < T; w++)
+            {
+                memset(&a[w], 0, sizeof a[w]);
+                a[w].kind = 7; a[w].p = p; a[w].bwd = bwd; a[w].tw = tw; a[w].W = W0; a[w].Wi = Wi0;
+                a[w].nu = nt; a[w].gp = gp;
+                a[w].u0 = U * (size_t)w / (size_t)T; a[w].u1 = U * (size_t)(w + 1) / (size_t)T;
+            }
+            thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
         }
-        thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
-    }
-    {
-        const int Rl = p->chain[p->nf - 1];
-        for (w = 0; w < T; w++)
+        for (s = 1; s < p->nf - 1; s++)
         {
-            const size_t lo = L * (size_t)w / (size_t)T, hi = L * (size_t)(w + 1) / (size_t)T;
-            memset(&a[w], 0, sizeof a[w]);
-            a[w].kind = 6; a[w].p = p; a[w].bwd = bwd;
-            a[w].W = W + lo * VW; a[w].Wi = Wi + lo * VW;
-            a[w].ore = ore + lo * K; a[w].oim = oim + lo * K;
-            a[w].tw = tw + p->twoff[p->nf - 1] + lo * (size_t)(Rl - 1) * 2;   /* the pair records per column */
-            a[w].Ls = L; a[w].OLs = L; a[w].count = hi - lo; a[w].K = K;
+            const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
+            const size_t Gs = (size_t)p->Gs[s], pitch = VW * RL, U = nb * Gs;
+            if (p->mt == 2 && tile && N / tile >= 2 && tile % RL == 0) continue;
+            for (w = 0; w < T; w++)
+            {
+                memset(&a[w], 0, sizeof a[w]);
+                a[w].kind = 5; a[w].p = p; a[w].bwd = bwd; a[w].s = s;
+                a[w].W = W0; a[w].Wi = Wi0; a[w].gp = gp; a[w].pitch = pitch; a[w].nu = Gs;
+                a[w].tw = tw + p->twoff[s]; a[w].Ls = (size_t)p->L[s];
+                a[w].u0 = U * (size_t)w / (size_t)T; a[w].u1 = U * (size_t)(w + 1) / (size_t)T;
+            }
+            thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
         }
-        thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
+        {
+            const int Rl = p->chain[p->nf - 1];
+            for (w = 0; w < T; w++)
+            {
+                const size_t lo = L * (size_t)w / (size_t)T, hi = L * (size_t)(w + 1) / (size_t)T;
+                memset(&a[w], 0, sizeof a[w]);
+                a[w].kind = 6; a[w].p = p; a[w].bwd = bwd;
+                a[w].W = W0 + lo * VW; a[w].Wi = Wi0 + lo * VW;
+                a[w].ore = ore + gl + lo * K; a[w].oim = oim + gl + lo * K;
+                a[w].tw = tw + p->twoff[p->nf - 1] + lo * (size_t)(Rl - 1) * 2;   /* the pair records per column */
+                a[w].Ls = L; a[w].OLs = L; a[w].count = hi - lo; a[w].K = K; a[w].nb = nb; a[w].gp = gp;
+            }
+            thread_pool_run(T, _zts_sect_tramp, a, sizeof a[0]);
+        }
     }
+    _zts_run_tail(p, bwd, ire, iim, ore, oim, W0, Wi0);   /* the lanes past the full groups, on the caller */
 }
 
 /* the entry: 1 = ran sectioned, 0 = the caller runs serial (no arm, no
@@ -259,7 +298,7 @@ static inline int vfft_zts_execute_sect(const vfft_zts_plan_t *p, int T, int bwd
     else
     {
         double *Wr, *Wi;
-        if (p->lanes != VFFT_ZTS_VW || !p->v0f || !p->vlf) return 0;
+        if (p->lanes < VFFT_ZTS_VW || !p->v0f || !p->vlf || (bwd && (!p->v0b || !p->vlb))) return 0;
         Wr = _zts_vplane(p->plane_re, 1024u);
         Wi = _zts_vplane(p->plane_im, 3072u);
         _zts_sect_v(p, T, bwd, ire, iim, ore, oim, Wr, Wi);

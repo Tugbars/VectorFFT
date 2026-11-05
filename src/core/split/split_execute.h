@@ -80,7 +80,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
             const size_t plane = (size_t)h->N2 * (size_t)h->N3;
             size_t p;
             int done = 0;
-            if (h->zts_pmt && h->zts_mid->zts->mt_n > 0)
+            if (h->zts_pmt && h->zts_mid->zts && h->zts_mid->zts->mt_n > 0)
             { /* PLANES OVER SLOTS (the 3D plan's own verdict): one dispatch, slot t
                * running the middle axis serially on its range of planes, on its
                * own plane set — the per-plane pass's dispatch cost paid once */
@@ -123,10 +123,25 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->zts_blu && h->transform == VFFT_C2C)
     { /* Bluestein over zturn-ts (zts_bluestein.h): K = 1, the contiguous batch
-       * (serial), or the lane-major batch; in place when the plan is */
+       * or the lane-major batch; in place when the plan is. Its threaded forms
+       * (zts_blu_mt.h) under the cell's verdict: the passes cut around the
+       * inner's sectioned walk, slabs, lane blocks. */
         double *ore = h->placement == VFFT_INPLACE ? sre : dre;
         double *oim = h->placement == VFFT_INPLACE ? sim : dim;
-        vfft_zts_blu_execute(h->zts_blu, dir != VFFT_FORWARD, sre, sim, ore, oim, h->zts_blu->lanes > 1 ? 1 : h->K);
+        const vfft_zts_blu_t *b = h->zts_blu;
+        const size_t K = b->lanes > 1 ? 1 : h->K;
+        if (b->mt)
+        {
+            int T;
+            _vfft_pool_arm(h->nthreads);
+            T = thread_pool_workers_for(b->mt_sect ? h->nthreads : 1 + b->mt_n);
+            if (T > 1 && vfft_zts_blu_execute_mt(b, T, dir != VFFT_FORWARD, K, sre, sim, ore, oim))
+            {
+                _vfft_tc_mt_dispatch_count += T - 1;
+                return;
+            }
+        }
+        vfft_zts_blu_execute(b, dir != VFFT_FORWARD, sre, sim, ore, oim, K);
         return;
     }
     if (!h->zts || h->transform != VFFT_C2C)
@@ -159,8 +174,8 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
                 return;
             }
         }
-        if (h->zts->mt && h->zts->lanes == VFFT_ZTS_VW && h->zts->mt_sect)
-        { /* the lane-major single group, sectioned */
+        if (h->zts->mt && h->zts->lanes > 1 && h->zts->mt_sect)
+        { /* the lane-major batch, sectioned: block by block, every stage over the pool */
             int T;
             _vfft_pool_arm(h->nthreads);
             T = thread_pool_workers_for(h->nthreads);
@@ -223,9 +238,10 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
             T = thread_pool_workers_for(1 + h->zts->mt_n);
             if (T > 1)
             {
-                const size_t lanes = (size_t)h->zts->lanes;
-                const size_t unit = (size_t)h->zts->blk * (size_t)VFFT_ZTS_VW; /* lanes per block */
-                const size_t nb = (lanes + unit - 1) / unit;                  /* blocks */
+                const size_t all = (size_t)h->zts->lanes;
+                const size_t lanes = all - all % (size_t)VFFT_ZTS_VW;       /* the full groups; the tail runs with the last range */
+                const size_t unit = h->zts->mt_unit ? h->zts->mt_unit : (size_t)h->zts->blk * (size_t)VFFT_ZTS_VW; /* lanes per range unit: a block, or one cache line (the verdict's) */
+                const size_t nb = (lanes + unit - 1) / unit;                  /* units */
                 const size_t S = ((nb + (size_t)T - 1) / (size_t)T) * unit;   /* lanes per slot */
                 _zts_lm_arg a[THREAD_POOL_MAX_DISPATCH];
                 int n = 0, t;
@@ -235,8 +251,8 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir,
                     size_t g1 = g0 + S;
                     if (g0 >= lanes)
                         break;
-                    if (g1 > lanes)
-                        g1 = lanes;
+                    if (g1 >= lanes)
+                        g1 = all;   /* the last range reaches the end: vfft_zts_run_lanes runs the tail there */
                     a[n].p = h->zts;
                     a[n].bwd = bwd;
                     a[n].ire = sre;

@@ -49,6 +49,7 @@ static void _vfft_create_unlock(void);
 #include "split/rank1/zts_race.h"                 /* its create-time race on the shared race body */
 #include "split/rank1/zts_bluestein.h"            /* Bluestein over zturn-ts: the split lengths outside the bands (2026-11-06) */
 #include "split/rank1/zts_mt.h"                   /* the sectioned walk: one transform over the pool (2026-11-06) */
+#include "split/rank1/zts_blu_mt.h"             /* Bluestein over zturn-ts: its threaded forms (2026-11-06) */
 
 #include "zr2c.h"           /* §D2: interleaved-CCE real folds (zr2c route) */
 #include "fft2d_real_il.h"  /* native IL 2D real tier kernels */
