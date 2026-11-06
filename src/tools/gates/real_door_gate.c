@@ -123,7 +123,7 @@ int main(int argc, char **argv)
                     double re = 0, im = 0;
                     for (int n = 0; n < N; n++)
                     {
-                        const double a = -2.0 * 3.14159265358979323846 * (double)n * (double)k / (double)N;
+                        const double a = -2.0 * 3.14159265358979323846 * (double)(((size_t)n * k) % (size_t)N) / (double)N;
                         re += x[n] * cos(a); im += x[n] * sin(a);
                     }
                     X0[2 * k] = re; X0[2 * k + 1] = im;
