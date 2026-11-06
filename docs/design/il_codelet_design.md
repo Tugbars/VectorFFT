@@ -121,6 +121,17 @@ flowchart TD
   Turned kinds (n1t, t2t, t2tg), the `_ct` factored kinds and the bailey `b` kinds keep their
   forms. Same change fixed the odd DFT's CONSTANTS: the angle is `2*pi*((j*m) mod n)/n`; the
   unreduced `j*m` (up to 529 at n=47) had put ~1e-14 into every cosine and sine.
+* **odd n = 5 — *the ratio form*.** The output pair of the n = 5 leaf (radix 5, and radix 10,
+  15, 20, 25 through it) is built in the form every odd kernel shipped in until 2026-09-23:
+  the sine chain seeded on the term of the largest |sin|, the other term as the ratio
+  `sf_j / sf_jstar`, the pair closed by one FMA each (`X[m] = P + c* Q'`, `X[n-m] = P - c* Q'`;
+  `Cx_math.dft_cx_odd_pair_ratio`, `odd_ratio_h = 2`). One operation fewer per pair than the
+  plain form the accuracy fix emitted, same reduced-angle weights (at n = 5 no constant moves),
+  rounding at the 1e-15 level different. Restored 2026-11-06 after the 64 drifted AVX2 kernels
+  were timed: the plain form measured 3-9 % slower on every radix 5 and 10 kind and 2-12 %
+  slower on the factor-5 kinds emitted after the fix (docs/research/zil_codelet_drift_2026_11_06.md),
+  and 6-8 % FASTER at radix 3, so h = 1 stays plain; h >= 4 stays plain for the blocked passes
+  (above), whose monolithic tail must compute what the printed loops compute.
 * **batched (`n1ccs`) — *the per-transform door*.** The `n1c` leaf with the column-stride
   addressing the `t2cs` tails use: lane k is ONE WHOLE R-point transform at pitch `Gs`
   (`zin[2*(l*Ls + k*Gs)]`, `Ls = 1` for contiguous rows), two transforms per vector through

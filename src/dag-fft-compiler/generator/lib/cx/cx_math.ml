@@ -621,6 +621,43 @@ let dft_cx_odd_pair ~(n : int) ~(x0 : t) ~(s : t array) ~(r : t array) (m : int)
   | Some q -> cadd !p q, csub !p q
 ;;
 
+(* The RATIO form of the output pair ("move 2": the form every odd kernel
+   shipped in until 2026-09-23, kept for h = 2 since 2026-11-06): Q' seeded
+   on the term of the largest |sin|, the other terms as the ratios
+   sf_j / sf_jstar, the pair closed by one FMA each with that sine's
+   magnitude: X[m] = P + c* Q', X[n-m] = P - c* Q'. One operation fewer per
+   pair than the plain form (no bare multiply, no closing add and sub), and
+   at n = 5 the reduction changes no constant (every j*m < 5), so the radix-5
+   kernels and the radix-10 kinds that embed them regenerate as shipped.
+   Measured 2026-11-06 (docs/research/zil_codelet_drift_2026_11_06.md): the
+   plain form 3-9 % slower per kernel at radix 5 and 10, 6-8 % FASTER at
+   radix 3 (h = 1), so h = 1 stays plain; h >= 4 runs the blocked passes
+   whose printed loops carry the plain dataflow (c2c_il.ml), and the
+   monolithic tail of a blocked kernel must match them bit for bit, so they
+   stay plain too. Weights = odd_weights (reduced angles), as the plain form's. *)
+let odd_ratio_h = 2
+
+let dft_cx_odd_pair_ratio ~(n : int) ~(x0 : t) ~(s : t array) ~(r : t array) (m : int) : t * t =
+  let h = (n - 1) / 2 in
+  let cf, sf = odd_weights n m in
+  let p = cscale_chain ~seed:x0 (List.init h (fun i -> cf.(i), s.(i))) in
+  let jstar = ref 0 in
+  for i = 1 to h - 1 do
+    if abs_float sf.(i) > abs_float sf.(!jstar) then jstar := i
+  done;
+  let cstar = sf.(!jstar) in
+  if abs_float cstar < cx_eps
+  then failwith (Printf.sprintf "dft_cx_odd: degenerate sine row at n=%d m=%d" n m);
+  let qh =
+    cscale_chain
+      ~seed:r.(!jstar)
+      (List.filteri (fun i _ -> i <> !jstar) (List.init h (fun i -> sf.(i) /. cstar, r.(i))))
+  in
+  if cstar > 0.0
+  then cfma cstar qh p, cfnma cstar qh p
+  else cfnma (-.cstar) qh p, cfma (-.cstar) qh p
+;;
+
 let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n < 3 || n mod 2 = 0
   then failwith (Printf.sprintf "dft_cx_odd: needs an ODD n >= 3, got %d" n);
@@ -632,7 +669,11 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
     let out = Array.make n None in
     out.(0) <- Some (dft_cx_odd_dc x0 s);
     for m = 1 to h do
-      let a, b = dft_cx_odd_pair ~n ~x0 ~s ~r m in
+      let a, b =
+        if h = odd_ratio_h
+        then dft_cx_odd_pair_ratio ~n ~x0 ~s ~r m
+        else dft_cx_odd_pair ~n ~x0 ~s ~r m
+      in
       out.(m) <- Some a;
       out.(n - m) <- Some b
     done;

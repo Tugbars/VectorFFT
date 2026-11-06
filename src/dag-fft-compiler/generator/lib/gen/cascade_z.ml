@@ -1657,13 +1657,16 @@ let emit_codelet
     body_start := Buffer.length buf;
     (* zturn-ts pointer lists, derived from the edges: a true split plane is
        a pointer pair, the block plane one pointer (no __restrict__ anywhere:
-       the mids run in place) *)
-    let ts_in =
+       the mids run in place). Thunks: only the zturn-ts (ts) branches below
+       read them; the ZTURN-T kinds with interleaved or column-run edges
+       (tlf, tlfi, t0d, tld) share this group-looped path and have no such
+       list (2026-11-06: an eager binding here refused their regeneration). *)
+    let ts_in () =
       match k.in_edge with
       | E_splanes _ | E_vplanes _ | E_vplanes_ep _ -> "const double *in_re, const double *in_im"
       | E_planes _ -> "const double *zin"
       | _ -> failwith "codelet_zsplit: zturn-ts input edge"
-    and ts_out =
+    and ts_out () =
       match k.out_edge with
       | E_splanes _ | E_vplanes _ | E_vplanes_ep _ | E_sruns | E_vruns -> "double *out_re, double *out_im"
       | E_planes _ | E_bruns -> "double *zout"
@@ -1683,8 +1686,8 @@ let emit_codelet
            \    %s, size_t Ls, %s%ssize_t count)\n\
             {\n"
            body_name
-           ts_in
-           ts_out
+           (ts_in ())
+           (ts_out ())
            (if k.base = "t0tp" then "const size_t *rb" else "const double *tw_re")
            (if uses "OLs" then "size_t OLs, " else "")
            (if has_ep then "size_t ep, size_t nb, size_t gp, " else ""))
@@ -1801,8 +1804,8 @@ let emit_codelet
             {\n"
            isa.Isa.target_attr
            fname
-           ts_in
-           ts_out
+           (ts_in ())
+           (ts_out ())
            (if has_ep then ", size_t ep, size_t nb, size_t gp" else ""));
       if k.base = "t0tp"
       then

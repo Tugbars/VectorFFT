@@ -83,6 +83,9 @@ docs/design/design_contracts.md
 docs/design/pow2_race_pools.md
 docs/design/exact_trig_constants.md
 
+# owner 2026-11-06: the AVX-512 findings, kept local
+docs/performance/avx512_findings.md
+
 # The gauntlet's runs live in gauntlet/results/ (the standing runs are tracked: the
 # csv rows are the record; store/*.txt and *.log stay ignored by the rules above).
 

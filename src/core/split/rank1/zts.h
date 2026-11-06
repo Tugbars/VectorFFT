@@ -65,7 +65,7 @@
 /* zturn-ts is emitted at avx2 only so far (2026-11-04): no cells at avx512 */
 typedef void (*vfft_zts_fn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t);
 typedef void (*vfft_zts_bfn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t, size_t);
-typedef void (*vfft_ztv_fn)(const double *, const double *, double *, double *, double *, double *, const double *, const size_t *, size_t, size_t);
+typedef void (*vfft_ztv_fn)(const double *, const double *, double *, double *, double *, double *, const double *, const size_t *, size_t, size_t, size_t, size_t, size_t, size_t);   /* (…, tile, K, blk, gp, g0, g1): the registry's V driver ABI (blocked edges, 2026-11-05) */
 typedef struct { int n, nf; int chain[7]; vfft_zts_fn s_fwd, s_bwd; vfft_zts_bfn s_fwd_batch, s_bwd_batch; vfft_ztv_fn v_fwd, v_bwd; } vfft_zts_cell_t;
 #define VFFT_ZTS_NCELLS 0
 static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0, 0 } };

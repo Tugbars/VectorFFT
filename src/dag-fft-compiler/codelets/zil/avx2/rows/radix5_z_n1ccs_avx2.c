@@ -19,14 +19,6 @@
 
 static const __m256d _M_IM = { 0.0, -0.0, 0.0, -0.0 };  /* negate im lanes: x*(-i) */
 static const __m128d _M_IM_n = { 0.0, -0.0 };  /* tail twin */
-static const __m256d _ZW0_c = { 0.95105651629515353, 0.95105651629515353, 0.95105651629515353, 0.95105651629515353 };
-static const __m256d _ZW0_s = { -0, 0, -0, 0 };
-static const __m256d _ZW1_c = { 0.58778525229247325, 0.58778525229247325, 0.58778525229247325, 0.58778525229247325 };
-static const __m256d _ZW1_s = { -0, 0, -0, 0 };
-static const __m128d _ZW2_c = { 0.95105651629515353, 0.95105651629515353 };
-static const __m128d _ZW2_s = { -0, 0 };
-static const __m128d _ZW3_c = { 0.58778525229247325, 0.58778525229247325 };
-static const __m128d _ZW3_s = { -0, 0 };
 
 __attribute__((target("avx2,fma")))
 void radix5_z_n1ccs_fwd_avx2(
@@ -48,28 +40,26 @@ void radix5_z_n1ccs_fwd_avx2(
         const __m256d z9 = _mm256_sub_pd(z2, z3);
         const __m256d z6 = _mm256_add_pd(z2, z3);
         const __m256d z10 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_IM);
-        const __m256d z7 = _mm256_sub_pd(z1, z4);
         const __m256d z5 = _mm256_add_pd(z1, z4);
+        const __m256d z7 = _mm256_sub_pd(z1, z4);
         const __m256d z8 = _mm256_xor_pd(_mm256_permute_pd(z7, 0x5), _M_IM);
         const __m256d z13 = _mm256_fmadd_pd(_mm256_set1_pd(0.30901699437494745), z5, z0);
-        const __m256d z14 = _mm256_mul_pd(_ZW0_c, z8);
-        const __m256d z19 = _mm256_fnmadd_pd(_mm256_set1_pd(0.80901699437494734), z5, z0);
-        const __m256d z20 = _mm256_mul_pd(_ZW1_c, z8);
+        const __m256d z18 = _mm256_fnmadd_pd(_mm256_set1_pd(0.80901699437494734), z5, z0);
         const __m256d z11 = _mm256_add_pd(z0, z5);
         const __m256d z12 = _mm256_add_pd(z11, z6);
-        const __m256d z15 = _mm256_fnmadd_pd(_mm256_set1_pd(0.80901699437494734), z6, z13);
-        const __m256d z16 = _mm256_fmadd_pd(_mm256_set1_pd(0.58778525229247325), z10, z14);
-        const __m256d z17 = _mm256_sub_pd(z15, z16);
-        const __m256d z18 = _mm256_add_pd(z15, z16);
-        const __m256d z21 = _mm256_fmadd_pd(_mm256_set1_pd(0.30901699437494723), z6, z19);
-        const __m256d z22 = _mm256_fnmadd_pd(_mm256_set1_pd(0.95105651629515364), z10, z20);
-        const __m256d z23 = _mm256_sub_pd(z21, z22);
-        const __m256d z24 = _mm256_add_pd(z21, z22);
+        const __m256d z14 = _mm256_fnmadd_pd(_mm256_set1_pd(0.80901699437494734), z6, z13);
+        const __m256d z15 = _mm256_fmadd_pd(_mm256_set1_pd(0.61803398874989501), z10, z8);
+        const __m256d z16 = _mm256_fnmadd_pd(_mm256_set1_pd(0.95105651629515353), z15, z14);
+        const __m256d z17 = _mm256_fmadd_pd(_mm256_set1_pd(0.95105651629515353), z15, z14);
+        const __m256d z19 = _mm256_fmadd_pd(_mm256_set1_pd(0.30901699437494723), z6, z18);
+        const __m256d z20 = _mm256_fnmadd_pd(_mm256_set1_pd(0.6180339887498949), z8, z10);
+        const __m256d z21 = _mm256_fmadd_pd(_mm256_set1_pd(0.95105651629515364), z20, z19);
+        const __m256d z22 = _mm256_fnmadd_pd(_mm256_set1_pd(0.95105651629515364), z20, z19);
         _mm256_storeu2_m128d(&zout[2*((size_t)0*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)0*OLs + (size_t)k*OGs)], z12);
-        _mm256_storeu2_m128d(&zout[2*((size_t)1*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)1*OLs + (size_t)k*OGs)], z18);
-        _mm256_storeu2_m128d(&zout[2*((size_t)2*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)2*OLs + (size_t)k*OGs)], z24);
-        _mm256_storeu2_m128d(&zout[2*((size_t)3*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)3*OLs + (size_t)k*OGs)], z23);
-        _mm256_storeu2_m128d(&zout[2*((size_t)4*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)4*OLs + (size_t)k*OGs)], z17);
+        _mm256_storeu2_m128d(&zout[2*((size_t)1*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)1*OLs + (size_t)k*OGs)], z17);
+        _mm256_storeu2_m128d(&zout[2*((size_t)2*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)2*OLs + (size_t)k*OGs)], z22);
+        _mm256_storeu2_m128d(&zout[2*((size_t)3*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)3*OLs + (size_t)k*OGs)], z21);
+        _mm256_storeu2_m128d(&zout[2*((size_t)4*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)4*OLs + (size_t)k*OGs)], z16);
     }
     /* odd-count tail: same DAG at VEX-128, one complex per iteration */
     for (; k < count; ++k) {
@@ -81,27 +71,25 @@ void radix5_z_n1ccs_fwd_avx2(
         const __m128d z9 = _mm_sub_pd(z2, z3);
         const __m128d z6 = _mm_add_pd(z2, z3);
         const __m128d z10 = _mm_xor_pd(_mm_permute_pd(z9, 0x1), _M_IM_n);
-        const __m128d z7 = _mm_sub_pd(z1, z4);
         const __m128d z5 = _mm_add_pd(z1, z4);
+        const __m128d z7 = _mm_sub_pd(z1, z4);
         const __m128d z8 = _mm_xor_pd(_mm_permute_pd(z7, 0x1), _M_IM_n);
         const __m128d z13 = _mm_fmadd_pd(_mm_set1_pd(0.30901699437494745), z5, z0);
-        const __m128d z14 = _mm_mul_pd(_ZW2_c, z8);
-        const __m128d z19 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z5, z0);
-        const __m128d z20 = _mm_mul_pd(_ZW3_c, z8);
+        const __m128d z18 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z5, z0);
         const __m128d z11 = _mm_add_pd(z0, z5);
         const __m128d z12 = _mm_add_pd(z11, z6);
-        const __m128d z15 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z6, z13);
-        const __m128d z16 = _mm_fmadd_pd(_mm_set1_pd(0.58778525229247325), z10, z14);
-        const __m128d z17 = _mm_sub_pd(z15, z16);
-        const __m128d z18 = _mm_add_pd(z15, z16);
-        const __m128d z21 = _mm_fmadd_pd(_mm_set1_pd(0.30901699437494723), z6, z19);
-        const __m128d z22 = _mm_fnmadd_pd(_mm_set1_pd(0.95105651629515364), z10, z20);
-        const __m128d z23 = _mm_sub_pd(z21, z22);
-        const __m128d z24 = _mm_add_pd(z21, z22);
+        const __m128d z14 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z6, z13);
+        const __m128d z15 = _mm_fmadd_pd(_mm_set1_pd(0.61803398874989501), z10, z8);
+        const __m128d z16 = _mm_fnmadd_pd(_mm_set1_pd(0.95105651629515353), z15, z14);
+        const __m128d z17 = _mm_fmadd_pd(_mm_set1_pd(0.95105651629515353), z15, z14);
+        const __m128d z19 = _mm_fmadd_pd(_mm_set1_pd(0.30901699437494723), z6, z18);
+        const __m128d z20 = _mm_fnmadd_pd(_mm_set1_pd(0.6180339887498949), z8, z10);
+        const __m128d z21 = _mm_fmadd_pd(_mm_set1_pd(0.95105651629515364), z20, z19);
+        const __m128d z22 = _mm_fnmadd_pd(_mm_set1_pd(0.95105651629515364), z20, z19);
         _mm_storeu_pd(&zout[2*((size_t)0*OLs + (size_t)k*OGs)], z12);
-        _mm_storeu_pd(&zout[2*((size_t)1*OLs + (size_t)k*OGs)], z18);
-        _mm_storeu_pd(&zout[2*((size_t)2*OLs + (size_t)k*OGs)], z24);
-        _mm_storeu_pd(&zout[2*((size_t)3*OLs + (size_t)k*OGs)], z23);
-        _mm_storeu_pd(&zout[2*((size_t)4*OLs + (size_t)k*OGs)], z17);
+        _mm_storeu_pd(&zout[2*((size_t)1*OLs + (size_t)k*OGs)], z17);
+        _mm_storeu_pd(&zout[2*((size_t)2*OLs + (size_t)k*OGs)], z22);
+        _mm_storeu_pd(&zout[2*((size_t)3*OLs + (size_t)k*OGs)], z21);
+        _mm_storeu_pd(&zout[2*((size_t)4*OLs + (size_t)k*OGs)], z16);
     }
 }
