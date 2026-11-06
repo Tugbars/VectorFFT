@@ -117,6 +117,7 @@ let emit_top ~(untangle : bool) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uar
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent:false
+      ~rotfma:(rotfma_default ~isa_name:isa.Isa.name ~radix ~factored:false)
   in
   let tbl : consts = Hashtbl.create 16 in
   let sign = if dir = Fwd then `Fwd else `Bwd in
@@ -441,6 +442,7 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent:false
+      ~rotfma:(rotfma_default ~isa_name:isa.Isa.name ~radix ~factored:false)
   in
   let tbl : consts = Hashtbl.create 16 in
   let dname = if dir = Fwd then "fwd" else "bwd" in
@@ -677,6 +679,7 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent:false
+      ~rotfma:(rotfma_default ~isa_name:isa.Isa.name ~radix ~factored:false)
   in
   let tbl : consts = Hashtbl.create 16 in
   let emit_group ~(body : Buffer.t) ~(nisa : Isa.t) ~(label : string) : unit =
@@ -890,6 +893,7 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent:false
+      ~rotfma:(rotfma_default ~isa_name:isa.Isa.name ~radix ~factored:false)
   in
   let tbl : consts = Hashtbl.create 16 in
   let emit_group ~(body : Buffer.t) ~(nisa : Isa.t) ~(label : string) : unit =
@@ -1104,6 +1108,7 @@ let emit_rleaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : s
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent:false
+      ~rotfma:(rotfma_default ~isa_name:isa.Isa.name ~radix ~factored:false)
   in
   let tbl : consts = Hashtbl.create 16 in
   let dname = if dir = Fwd then "fwd" else "bwd" in

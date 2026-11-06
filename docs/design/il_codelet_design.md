@@ -121,17 +121,26 @@ flowchart TD
   Turned kinds (n1t, t2t, t2tg), the `_ct` factored kinds and the bailey `b` kinds keep their
   forms. Same change fixed the odd DFT's CONSTANTS: the angle is `2*pi*((j*m) mod n)/n`; the
   unreduced `j*m` (up to 529 at n=47) had put ~1e-14 into every cosine and sine.
-* **odd n = 5 — *the ratio form*.** The output pair of the n = 5 leaf (radix 5, and radix 10,
-  15, 20, 25 through it) is built in the form every odd kernel shipped in until 2026-09-23:
-  the sine chain seeded on the term of the largest |sin|, the other term as the ratio
+* **odd n = 5 and 7 — *the ratio form*.** The output pair of the n = 5 and n = 7 leaves (radix
+  5 and 7, radix 10, 14, 20 through them, and the `_ct` kinds at 15, 21, 25) is built in the
+  form every odd kernel shipped in until 2026-09-23:
+  the sine chain seeded on the term of the largest |sin|, the other terms as the ratios
   `sf_j / sf_jstar`, the pair closed by one FMA each (`X[m] = P + c* Q'`, `X[n-m] = P - c* Q'`;
-  `Cx_math.dft_cx_odd_pair_ratio`, `odd_ratio_h = 2`). One operation fewer per pair than the
+  `Cx_math.dft_cx_odd_pair_ratio`, `Cx_math.odd_ratio_form`). One operation fewer per pair than the
   plain form the accuracy fix emitted, same reduced-angle weights (at n = 5 no constant moves),
   rounding at the 1e-15 level different. Restored 2026-11-06 after the 64 drifted AVX2 kernels
   were timed: the plain form measured 2-9 % slower on the radix 5 and 10 kinds and parity to
   11 % slower on the factor-5 kinds emitted after the fix (docs/research/zil_codelet_drift_2026_11_06.md),
   and 6-8 % FASTER at radix 3, so h = 1 stays plain; h >= 4 stays plain for the blocked passes
-  (above), whose monolithic tail must compute what the printed loops compute.
+  (above), whose monolithic tail must compute what the printed loops compute. The n = 7 leaf
+  followed the same day: ratio against plain 0.955 at radix 7, 0.950 at 14, level at 21.
+* **AVX2 — *ROTFMA*.** A -i rotation folds into the butterfly that consumes it: the xor goes,
+  the add becomes an FMA with a sign-carrying constant (`Cx_ir.rotfma_default`). Bit-exact. On
+  every AVX2 kernel without a ratio-form leaf; off on the leaf kernels, where the adds are FMAs
+  already, so the fold removes no xor and only adds spills. Inside L1 the folded kernels run
+  0.92-0.96 of the unfolded at radix 4, 8, 16, 32, 64 and the large odd radices; past L1 they
+  are level. ZTURN-T has nothing to fold: its mids are block-split, without a permute or an
+  xor. AVX-512 stays unfolded until timed. `VFFT_CX_ROTFMA=1` or `0` overrides the rule.
 * **batched (`n1ccs`) — *the per-transform door*.** The `n1c` leaf with the column-stride
   addressing the `t2cs` tails use: lane k is ONE WHOLE R-point transform at pitch `Gs`
   (`zin[2*(l*Ls + k*Gs)]`, `Ls = 1` for contiguous rows), two transforms per vector through

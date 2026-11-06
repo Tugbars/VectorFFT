@@ -22,6 +22,10 @@
 
 static const __m256d _M_RE = { -0.0, 0.0, -0.0, 0.0 };  /* negate re lanes: x*(+i) */
 static const __m128d _M_RE_n = { -0.0, 0.0 };  /* tail twin */
+static const __m256d _ZW0_c = { 1, 1, 1, 1 };
+static const __m256d _ZW0_s = { -1, 1, -1, 1 };
+static const __m128d _ZW1_c = { 1, 1 };
+static const __m128d _ZW1_s = { -1, 1 };
 
 static __attribute__((always_inline)) inline void _t2csgn4_body(
     const double * __restrict__ zin,
@@ -64,8 +68,8 @@ static __attribute__((always_inline)) inline void _t2csgn4_body(
         const __m256d z11 = _mm256_sub_pd(z8, z10);
         const __m256d z12 = _mm256_add_pd(z8, z10);
         const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
-        const __m256d z14 = _mm256_sub_pd(z7, z13);
-        const __m256d z15 = _mm256_add_pd(z7, z13);
+        const __m256d z14 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
+        const __m256d z15 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         _mm256_storeu2_m128d(&zout[2*((size_t)0*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)0*OLs + (size_t)k*OGs)], z12);
         _mm256_storeu2_m128d(&zout[2*((size_t)1*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)1*OLs + (size_t)k*OGs)], z15);
         _mm256_storeu2_m128d(&zout[2*((size_t)2*OLs + ((size_t)k + 1)*OGs)], &zout[2*((size_t)2*OLs + (size_t)k*OGs)], z11);
@@ -103,8 +107,8 @@ static __attribute__((always_inline)) inline void _t2csgn4_body(
         const __m128d z11 = _mm_sub_pd(z8, z10);
         const __m128d z12 = _mm_add_pd(z8, z10);
         const __m128d z13 = _mm_xor_pd(_mm_permute_pd(z9, 0x1), _M_RE_n);
-        const __m128d z14 = _mm_sub_pd(z7, z13);
-        const __m128d z15 = _mm_add_pd(z7, z13);
+        const __m128d z14 = _mm_fnmadd_pd(_ZW1_s, _mm_permute_pd(z9, 0x1), z7);
+        const __m128d z15 = _mm_fmadd_pd(_ZW1_s, _mm_permute_pd(z9, 0x1), z7);
         _mm_storeu_pd(&zout[2*((size_t)0*OLs + (size_t)k*OGs)], z12);
         _mm_storeu_pd(&zout[2*((size_t)1*OLs + (size_t)k*OGs)], z15);
         _mm_storeu_pd(&zout[2*((size_t)2*OLs + (size_t)k*OGs)], z11);

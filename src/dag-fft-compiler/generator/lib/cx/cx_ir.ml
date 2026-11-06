@@ -165,9 +165,10 @@ and t =
    leg-strided turned store (T2TG, implies st_turn); mono_spill_slots =
    Belady S[] slots for the current MONO codelet (mutable — set mid-
    emission once the spill plan exists).  tangent / w32_combine /
-   wing_enabled / rotfma capture their VFFT_CX_* envs at ctx creation
-   (the kernel Knobs snapshot intent; tangent also ORs the --cil-tangent
-   CLI flag the driver passes). *)
+   wing_enabled capture their VFFT_CX_* envs at ctx creation (the kernel
+   Knobs snapshot intent; tangent also ORs the --cil-tangent CLI flag the
+   driver passes); rotfma is rotfma_default below, VFFT_CX_ROTFMA=1 or 0
+   overriding it. *)
 type ctx =
   { tw_log3 : bool
   ; tw_group : bool
@@ -205,7 +206,25 @@ type ctx =
   ; rotfma : bool
   }
 
-let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs ~tangent =
+(* Where the ROTFMA fold (cx_render.ml) is on: AVX2, on every kernel without a
+   ratio-form leaf. A leaf of n = 5 or 7 (Cx_math.odd_ratio_form) has already
+   turned the adds the fold targets into FMAs, so the fold removes no xor
+   there and its sign constants only add spills (radix 14 n1: stack moves 46
+   to 63). The leaf sits in radix 5 and 7, the even radices over them (10, 14,
+   20) and the factored odd composites (the _ct kinds at 15, 21, 25); the
+   direct odd forms of 15, 21, 25 carry none. Timed 2026-11-06, in L1: 0.92-0.96
+   per kernel at radix 4, 8, 16, 32, 64 and the large odd radices, 0.99-1.06 on
+   the leaf kernels. Bit-exact either way. AVX-512 stays off until timed there. *)
+let carries_ratio_leaf ~(radix : int) ~(factored : bool) =
+  (radix mod 5 = 0 || radix mod 7 = 0)
+  && (radix mod 2 = 0 || factored || radix = 5 || radix = 7)
+;;
+
+let rotfma_default ~(isa_name : string) ~(radix : int) ~(factored : bool) =
+  isa_name = "avx2" && not (carries_ratio_leaf ~radix ~factored)
+;;
+
+let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs ~tangent ~rotfma =
   { tw_log3
   ; tw_group
   ; tw_pre
@@ -221,7 +240,11 @@ let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs
   ; tangent = tangent || Sys.getenv_opt "VFFT_CX_TANGENT" = Some "1"
   ; w32_combine = Sys.getenv_opt "VFFT_CX_W32TG" = Some "1"
   ; wing_enabled = Sys.getenv_opt "VFFT_CX_WING" = Some "1"
-  ; rotfma = Sys.getenv_opt "VFFT_CX_ROTFMA" = Some "1"
+  ; rotfma =
+      (match Sys.getenv_opt "VFFT_CX_ROTFMA" with
+       | Some "1" -> true
+       | Some "0" -> false
+       | _ -> rotfma)
   }
 ;;
 

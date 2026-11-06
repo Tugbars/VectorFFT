@@ -403,6 +403,12 @@ let emit
       ~st_turn:(turnst || turnst_gs)
       ~st_turn_gs:turnst_gs
       ~tangent
+      ~rotfma:
+        (rotfma_default
+           ~isa_name:isa.Isa.name
+           ~radix
+           ~factored:
+             (!Cx_math.odd_ct_enabled && radix mod 2 = 1 && Cx_math.odd_spf radix <> radix))
   in
   let vw = isa.Isa.vec_width in
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
@@ -2378,6 +2384,11 @@ let emit_k1
       ~st_turn:false
       ~st_turn_gs:false
       ~tangent
+      ~rotfma:
+        (rotfma_default
+           ~isa_name:isa.Isa.name
+           ~radix:(List.fold_left ( * ) 1 (chain_a @ chain_b))
+           ~factored:false)
   in
   ignore ctx.mono_spill_slots;
   let vw = isa.Isa.vec_width in

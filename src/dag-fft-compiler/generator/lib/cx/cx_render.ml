@@ -84,13 +84,12 @@ let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
  * Width-independent: the strings are double-array indexing, identical for
  * the wide body and the SSE2 tail. These MUST reproduce the historical
  * hand-edge strings byte-for-byte — they are the byte-identity contract. *)
-(* ROTFMA (VFFT_CX_ROTFMA=1): render-level fold of a -i rotation into its
+(* ROTFMA (Cx_ir.rotfma_default): render-level fold of a -i rotation into its
    consuming butterfly — CAdd/CSub/CFmaC/CFnmaC over a CRotNI child emit
    fnmadd/fmadd(w_s, cflip y, acc) where w_s = [-c,+c,...] reuses the
    (1, c) constant-table pair. BIT-EXACT: the sign moves into an exact
    constant, one rounding either way (the √½-fold argument). This is the
-   hand w32tg pass-B idiom ([c,-c]·flip, zero xors). Default OFF ⇒ every
-   existing emission is byte-identical. Note: a folded CRotNI def with no
+   hand w32tg pass-B idiom ([c,-c]·flip, zero xors). Note: a folded CRotNI def with no
    other consumer remains as a dead SSA line — gcc DCEs it; asm is clean. *)
 (* M12a: rotfma lives in Cx_ir.ctx now. *)
 
