@@ -297,6 +297,7 @@ let emit_top ~(untangle : bool) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uar
         assigns
     in
     let sch = C2c_il.cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     List.iter
       (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
@@ -307,7 +308,7 @@ let emit_top ~(untangle : bool) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uar
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              line (Isa.const_decl nisa (name e) (render ~ctx ~tw_vw ~msuf nisa tbl e))))
@@ -572,6 +573,7 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
         assigns
     in
     let sch = C2c_il.cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     List.iter
       (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
@@ -582,7 +584,7 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
@@ -787,6 +789,7 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_r2zr_fwd_%d" radix lanes) ~uarch assigns
     in
     let sch = C2c_il.cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     List.iter
       (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
@@ -797,7 +800,7 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
@@ -988,6 +991,7 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_r2zr_bwd_%d" radix lanes) ~uarch assigns
     in
     let sch = C2c_il.cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     List.iter
       (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
@@ -998,7 +1002,7 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))
@@ -1204,6 +1208,7 @@ let emit_rleaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : s
         assigns
     in
     let sch = C2c_il.cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     List.iter
       (fun ((a : caddr), (e : t)) -> line (Isa.const_decl nisa (name e) (render_load nisa a)))
@@ -1214,7 +1219,7 @@ let emit_rleaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : s
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              line (Isa.const_decl nisa (name e) (render ~ctx nisa tbl e))))

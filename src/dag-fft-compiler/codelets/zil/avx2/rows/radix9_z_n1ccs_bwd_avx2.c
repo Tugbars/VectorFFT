@@ -164,13 +164,10 @@ void radix9_z_n1ccs_bwd_avx2(
         const __m128d z8 = _mm_loadu_pd(&zin[2*((size_t)8*Ls + (size_t)k*Gs)]);
         const __m128d z19 = _mm_sub_pd(z4, z5);
         const __m128d z12 = _mm_add_pd(z4, z5);
-        const __m128d z20 = _mm_xor_pd(_mm_permute_pd(z19, 0x1), _M_RE_n);
         const __m128d z17 = _mm_sub_pd(z3, z6);
         const __m128d z11 = _mm_add_pd(z3, z6);
-        const __m128d z18 = _mm_xor_pd(_mm_permute_pd(z17, 0x1), _M_RE_n);
         const __m128d z15 = _mm_sub_pd(z2, z7);
         const __m128d z10 = _mm_add_pd(z2, z7);
-        const __m128d z16 = _mm_xor_pd(_mm_permute_pd(z15, 0x1), _M_RE_n);
         const __m128d z13 = _mm_sub_pd(z1, z8);
         const __m128d z9 = _mm_add_pd(z1, z8);
         const __m128d z14 = _mm_xor_pd(_mm_permute_pd(z13, 0x1), _M_RE_n);

@@ -71,6 +71,7 @@ Thumbs.db
 /docs/research
 /src/dag-fft-compiler/jit/generated
 docs/roadmap/cascade_natural_inplace_plan.md
+docs/roadmap/renting_avx512_hardware.md
 
 # owner 2026-09-07: design comparison notes kept local
 docs/design/cascade_vs_mkl_method.md

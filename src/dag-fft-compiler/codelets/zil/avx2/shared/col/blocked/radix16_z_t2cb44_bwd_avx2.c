@@ -101,7 +101,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z10 = _mm256_add_pd(z4, z6);
         const __m256d z11 = _mm256_sub_pd(z8, z10);
         const __m256d z12 = _mm256_add_pd(z8, z10);
-        const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
         const __m256d z14 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         const __m256d z15 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         _mm256_storeu_pd(&S[0], z12);
@@ -124,7 +123,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z11 = _mm256_add_pd(z5, z7);
         const __m256d z12 = _mm256_sub_pd(z9, z11);
         const __m256d z13 = _mm256_add_pd(z9, z11);
-        const __m256d z14 = _mm256_xor_pd(_mm256_permute_pd(z10, 0x5), _M_RE);
         const __m256d z15 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         const __m256d z16 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         _mm256_storeu_pd(&S[16], z13);
@@ -147,7 +145,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z11 = _mm256_add_pd(z5, z7);
         const __m256d z12 = _mm256_sub_pd(z9, z11);
         const __m256d z13 = _mm256_add_pd(z9, z11);
-        const __m256d z14 = _mm256_xor_pd(_mm256_permute_pd(z10, 0x5), _M_RE);
         const __m256d z15 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         const __m256d z16 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         _mm256_storeu_pd(&S[32], z13);
@@ -170,7 +167,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z11 = _mm256_add_pd(z5, z7);
         const __m256d z12 = _mm256_sub_pd(z9, z11);
         const __m256d z13 = _mm256_add_pd(z9, z11);
-        const __m256d z14 = _mm256_xor_pd(_mm256_permute_pd(z10, 0x5), _M_RE);
         const __m256d z15 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         const __m256d z16 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z10, 0x5), z8);
         _mm256_storeu_pd(&S[48], z13);
@@ -189,7 +185,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z7 = _mm256_add_pd(z1, z3);
         const __m256d z8 = _mm256_sub_pd(z5, z7);
         const __m256d z9 = _mm256_add_pd(z5, z7);
-        const __m256d z10 = _mm256_xor_pd(_mm256_permute_pd(z6, 0x5), _M_RE);
         const __m256d z11 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z6, 0x5), z4);
         const __m256d z12 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z6, 0x5), z4);
         _mm256_storeu_pd(&zout[2*((size_t)0*OLs + k)], z9);
@@ -211,7 +206,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z10 = _mm256_add_pd(z4, z6);
         const __m256d z11 = _mm256_sub_pd(z8, z10);
         const __m256d z12 = _mm256_add_pd(z8, z10);
-        const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
         const __m256d z14 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         const __m256d z15 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], z12);
@@ -225,7 +219,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z2 = _mm256_loadu_pd(&S[40]);
         const __m256d z3 = _mm256_loadu_pd(&S[56]);
         const __m256d z4 = _mm256_fmadd_pd(_ZW2_c, z1, _mm256_mul_pd(_ZW2_s, _mm256_permute_pd(z1, 0x5)));
-        const __m256d z5 = _mm256_xor_pd(_mm256_permute_pd(z2, 0x5), _M_RE);
         const __m256d z7 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z2, 0x5), z0);
         const __m256d z8 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z2, 0x5), z0);
         const __m256d z6 = _mm256_fmadd_pd(_ZW4_c, z3, _mm256_mul_pd(_ZW4_s, _mm256_permute_pd(z3, 0x5)));
@@ -233,7 +226,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z10 = _mm256_add_pd(z4, z6);
         const __m256d z11 = _mm256_sub_pd(z8, z10);
         const __m256d z12 = _mm256_add_pd(z8, z10);
-        const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
         const __m256d z14 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         const __m256d z15 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], z12);
@@ -255,7 +247,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m256d z10 = _mm256_add_pd(z4, z6);
         const __m256d z11 = _mm256_sub_pd(z8, z10);
         const __m256d z12 = _mm256_add_pd(z8, z10);
-        const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
         const __m256d z14 = _mm256_fnmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         const __m256d z15 = _mm256_fmadd_pd(_ZW0_s, _mm256_permute_pd(z9, 0x5), z7);
         _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], z12);
@@ -334,7 +325,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m128d z24 = _mm_fmadd_pd(_wc12_n, z23, _mm_mul_pd(_ws12_n, _mm_permute_pd(z23, 0x1)));
         const __m128d z33 = _mm_sub_pd(z8, z24);
         const __m128d z34 = _mm_add_pd(z8, z24);
-        const __m128d z37 = _mm_xor_pd(_mm_permute_pd(z33, 0x1), _M_RE_n);
         const __m128d z35 = _mm_sub_pd(z32, z34);
         const __m128d z36 = _mm_add_pd(z32, z34);
         const __m128d z38 = _mm_fnmadd_pd(_ZW6_s, _mm_permute_pd(z33, 0x1), z31);
@@ -342,22 +332,18 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m128d z26 = _mm_fmadd_pd(_wc13_n, z25, _mm_mul_pd(_ws13_n, _mm_permute_pd(z25, 0x1)));
         const __m128d z64 = _mm_sub_pd(z10, z26);
         const __m128d z65 = _mm_add_pd(z10, z26);
-        const __m128d z68 = _mm_xor_pd(_mm_permute_pd(z64, 0x1), _M_RE_n);
         const __m128d z66 = _mm_sub_pd(z63, z65);
         const __m128d z67 = _mm_add_pd(z63, z65);
         const __m128d z69 = _mm_fnmadd_pd(_ZW6_s, _mm_permute_pd(z64, 0x1), z62);
         const __m128d z70 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z64, 0x1), z62);
         const __m128d z28 = _mm_fmadd_pd(_wc14_n, z27, _mm_mul_pd(_ws14_n, _mm_permute_pd(z27, 0x1)));
         const __m128d z42 = _mm_sub_pd(z12, z28);
-        const __m128d z46 = _mm_xor_pd(_mm_permute_pd(z42, 0x1), _M_RE_n);
         const __m128d z43 = _mm_add_pd(z12, z28);
         const __m128d z47 = _mm_fnmadd_pd(_ZW6_s, _mm_permute_pd(z42, 0x1), z40);
         const __m128d z48 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z42, 0x1), z40);
         const __m128d z44 = _mm_sub_pd(z41, z43);
-        const __m128d z51 = _mm_xor_pd(_mm_permute_pd(z48, 0x1), _M_RE_n);
         const __m128d z58 = _mm_xor_pd(_mm_permute_pd(z47, 0x1), _M_RE_n);
         const __m128d z45 = _mm_add_pd(z41, z43);
-        const __m128d z55 = _mm_xor_pd(_mm_permute_pd(z44, 0x1), _M_RE_n);
         const __m128d z52 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z48, 0x1), z48);
         const __m128d z59 = _mm_sub_pd(z58, z47);
         const __m128d z49 = _mm_sub_pd(z36, z45);
@@ -371,12 +357,9 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m128d z30 = _mm_fmadd_pd(_wc15_n, z29, _mm_mul_pd(_ws15_n, _mm_permute_pd(z29, 0x1)));
         const __m128d z73 = _mm_sub_pd(z14, z30);
         const __m128d z74 = _mm_add_pd(z14, z30);
-        const __m128d z77 = _mm_xor_pd(_mm_permute_pd(z73, 0x1), _M_RE_n);
         const __m128d z75 = _mm_sub_pd(z72, z74);
         const __m128d z78 = _mm_fnmadd_pd(_ZW6_s, _mm_permute_pd(z73, 0x1), z71);
         const __m128d z79 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z73, 0x1), z71);
-        const __m128d z82 = _mm_xor_pd(_mm_permute_pd(z79, 0x1), _M_RE_n);
-        const __m128d z86 = _mm_xor_pd(_mm_permute_pd(z75, 0x1), _M_RE_n);
         const __m128d z89 = _mm_xor_pd(_mm_permute_pd(z78, 0x1), _M_RE_n);
         const __m128d z76 = _mm_add_pd(z72, z74);
         const __m128d z83 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z79, 0x1), z79);
@@ -388,7 +371,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m128d z85 = _mm_fmadd_pd(_mm_set1_pd(0.70710678118654757), z83, z70);
         const __m128d z91 = _mm_fnmadd_pd(_mm_set1_pd(0.70710678118654757), z90, z69);
         const __m128d z92 = _mm_fmadd_pd(_mm_set1_pd(0.70710678118654757), z90, z69);
-        const __m128d z98 = _mm_xor_pd(_mm_permute_pd(z88, 0x1), _M_RE_n);
         const __m128d z111 = _mm_xor_pd(_mm_permute_pd(z87, 0x1), _M_RE_n);
         const __m128d z81 = _mm_add_pd(z67, z76);
         const __m128d z93 = _mm_sub_pd(z50, z81);
@@ -399,7 +381,6 @@ void radix16_z_t2cb44_bwd_avx2(
         const __m128d z102 = _mm_fmadd_pd(_ZW8_c, z92, _mm_mul_pd(_ZW8_s, _mm_permute_pd(z92, 0x1)));
         const __m128d z103 = _mm_sub_pd(z61, z102);
         const __m128d z104 = _mm_add_pd(z61, z102);
-        const __m128d z105 = _mm_xor_pd(_mm_permute_pd(z80, 0x1), _M_RE_n);
         const __m128d z106 = _mm_fnmadd_pd(_ZW6_s, _mm_permute_pd(z80, 0x1), z49);
         const __m128d z107 = _mm_fmadd_pd(_ZW6_s, _mm_permute_pd(z80, 0x1), z49);
         const __m128d z108 = _mm_fmadd_pd(_ZW9_c, z84, _mm_mul_pd(_ZW9_s, _mm_permute_pd(z84, 0x1)));

@@ -582,6 +582,7 @@ let emit
       assigns
   in
   let scheduled = cx_schedule uarch assigns in
+  let rot_dead_mono = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd scheduled) in
   (* LEG-LOAD TAGS FOR THE NARROW TAIL, captured HERE and not at the tail.
      The tail body renders `scheduled` at VEX-128 and must name the same zN
      variables it does. On the BLOCKED path emit_blocked runs first, and each
@@ -715,6 +716,7 @@ let emit
     in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     (* up-front loads only when NOT lazy *)
     if not ll
@@ -760,7 +762,7 @@ let emit
          (match e.node with
           | CIn _ | CLoad _ -> ()
           | _ ->
-            if not (Hashtbl.mem seen e.tag)
+            if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
             then (
               Hashtbl.replace seen e.tag ();
               Buffer.add_string
@@ -1514,7 +1516,7 @@ let emit
          (match e.node with
           | CIn _ | CLoad _ -> () (* materialized by the load edge *)
           | _ ->
-            if not (Hashtbl.mem seen e.tag)
+            if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead_mono e.tag)
             then (
               Hashtbl.replace seen e.tag ();
               Buffer.add_string
@@ -1646,7 +1648,7 @@ let emit
          match e.node with
          | CIn _ | CLoad _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen_n e.tag)
+           if not (Hashtbl.mem seen_n e.tag || Hashtbl.mem rot_dead_mono e.tag)
            then (
              Hashtbl.replace seen_n e.tag ();
              Buffer.add_string
@@ -2451,6 +2453,7 @@ let emit_k1
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = cx_schedule uarch assigns in
+    let rot_dead = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd sch) in
     Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
     pre ();
     (* Addr/Name ins print here (the load edge) and are pre-marked so the
@@ -2484,7 +2487,7 @@ let emit_k1
          match e.node with
          | CIn _ -> ()
          | _ ->
-           if not (Hashtbl.mem seen e.tag)
+           if not (Hashtbl.mem seen e.tag || Hashtbl.mem rot_dead e.tag)
            then (
              Hashtbl.replace seen e.tag ();
              Buffer.add_string

@@ -63,7 +63,6 @@ void radix4_z_t2h_fwd_avx2(
         const __m256d z17 = _mm256_add_pd(z11, z13);
         const __m256d z18 = _mm256_sub_pd(z15, z17);
         const __m256d z19 = _mm256_add_pd(z15, z17);
-        const __m256d z20 = _mm256_xor_pd(_mm256_permute_pd(z16, 0x5), _M_IM);
         const __m256d z21 = _mm256_fmadd_pd(_ZW1_s, _mm256_permute_pd(z16, 0x5), z14);
         const __m256d z22 = _mm256_fnmadd_pd(_ZW1_s, _mm256_permute_pd(z16, 0x5), z14);
         _mm256_storeu_pd(&zout[2*((size_t)0*OLs + k)], z19);
@@ -95,7 +94,6 @@ void radix4_z_t2h_fwd_avx2(
         const __m128d z17 = _mm_add_pd(z11, z13);
         const __m128d z18 = _mm_sub_pd(z15, z17);
         const __m128d z19 = _mm_add_pd(z15, z17);
-        const __m128d z20 = _mm_xor_pd(_mm_permute_pd(z16, 0x1), _M_IM_n);
         const __m128d z21 = _mm_fmadd_pd(_ZW3_s, _mm_permute_pd(z16, 0x1), z14);
         const __m128d z22 = _mm_fnmadd_pd(_ZW3_s, _mm_permute_pd(z16, 0x1), z14);
         _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z19);
@@ -127,7 +125,6 @@ void radix4_z_t2h_fwd_avx2(
         const __m256d z17 = _mm256_add_pd(z11, z13);
         const __m256d z18 = _mm256_sub_pd(z15, z17);
         const __m256d z19 = _mm256_add_pd(z15, z17);
-        const __m256d z20 = _mm256_xor_pd(_mm256_permute_pd(z16, 0x5), _M_IM);
         const __m256d z21 = _mm256_fmadd_pd(_ZW1_s, _mm256_permute_pd(z16, 0x5), z14);
         const __m256d z22 = _mm256_fnmadd_pd(_ZW1_s, _mm256_permute_pd(z16, 0x5), z14);
         _mm_storeu_pd(&zout[2*((size_t)0*OLs)], _mm256_castpd256_pd128(z19));

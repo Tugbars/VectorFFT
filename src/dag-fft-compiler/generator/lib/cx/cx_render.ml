@@ -89,8 +89,8 @@ let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
    fnmadd/fmadd(w_s, cflip y, acc) where w_s = [-c,+c,...] reuses the
    (1, c) constant-table pair. BIT-EXACT: the sign moves into an exact
    constant, one rounding either way (the √½-fold argument). This is the
-   hand w32tg pass-B idiom ([c,-c]·flip, zero xors). Note: a folded CRotNI def with no
-   other consumer remains as a dead SSA line — gcc DCEs it; asm is clean. *)
+   hand w32tg pass-B idiom ([c,-c]·flip, zero xors). A folded rotation that
+   nothing else reads is not declared at all (rotfma_dead, after render). *)
 (* M12a: rotfma lives in Cx_ir.ctx now. *)
 
 (* t2cs COLUMN-STRIDE mode (set by C2c_il.emit for the kind, reset for every
@@ -557,6 +557,62 @@ let render
         , Isa.loadu_pd ~mode isa (addr_str (ATw (off + twv))) ))
     in
     Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
+;;
+
+(* ROTFMA's dead rotations. Under the fold above, a CAdd/CSub/CFmaC/CFnmaC
+   whose second operand is a rotation reads that rotation's OPERAND through
+   cflip, never the rotation's own SSA name. A rotation every consumer of
+   which folds it, and which is no output, would be declared and never read.
+   rotfma_folded names the rotation a node folds (the same four arms as
+   render); rotfma_dead collects the rotations of [nodes] that nothing reads,
+   counting [roots] (the outputs) as readers. The emitters skip only the
+   DECLARATION of such a rotation: it keeps its place in the schedule, so
+   every other line, and the loads the lazy edge emits before it, stay where
+   they were. *)
+let rotfma_folded ~(ctx : ctx) (e : t) : t option =
+  if not ctx.rotfma
+  then None
+  else (
+    match e.node with
+    | CAdd (_, ({ node = CRotNI _ | CRotPI _; _ } as r))
+    | CSub (_, ({ node = CRotNI _ | CRotPI _; _ } as r))
+    | CFmaC (_, ({ node = CRotNI _ | CRotPI _; _ } as r), _)
+    | CFnmaC (_, ({ node = CRotNI _ | CRotPI _; _ } as r), _) -> Some r
+    | _ -> None)
+;;
+
+let rotfma_dead ~(ctx : ctx) ~(roots : t list) (nodes : t list) : (int, unit) Hashtbl.t =
+  let dead : (int, unit) Hashtbl.t = Hashtbl.create 16 in
+  if ctx.rotfma
+  then (
+    let reads : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    let read (x : t) =
+      Hashtbl.replace reads x.tag (1 + Option.value ~default:0 (Hashtbl.find_opt reads x.tag))
+    in
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun (e : t) ->
+         if not (Hashtbl.mem seen e.tag)
+         then (
+           Hashtbl.replace seen e.tag ();
+           (* the folded operand is skipped once; any other read of it counts *)
+           let folded = ref (rotfma_folded ~ctx e) in
+           List.iter
+             (fun (c : t) ->
+                match !folded with
+                | Some r when c == r -> folded := None
+                | _ -> read c)
+             (Cx_sched.Node.preds e)))
+      nodes;
+    List.iter read roots;
+    List.iter
+      (fun (e : t) ->
+         match e.node with
+         | (CRotNI _ | CRotPI _) when not (Hashtbl.mem reads e.tag) ->
+           Hashtbl.replace dead e.tag ()
+         | _ -> ())
+      nodes);
+  dead
 ;;
 
 (* ── LOG3 twiddle sourcing for the streamed VTW2 table ───────────────────
