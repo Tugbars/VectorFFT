@@ -1,0 +1,2 @@
+4096 row=store ztt=8.16.32/0 ztt=8.32.16/0 turn=16.8.32@rotw flat=16.16.16 flat=16.16.16@bc flat=16.16.16@bl turn=16.16.16@blw
+32768 row=store ztt=8.32.16.8/2048 ztt=8.16.16.16/2048 flat=32.32.32 flat=32.32.32@bc flat=32.32.32@bl turn=32.32.32@blw

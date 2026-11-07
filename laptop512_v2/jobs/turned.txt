@@ -1,0 +1,8 @@
+2048 row=store turn=4.8.64 turn=4.16.32 turn=4.32.16 turn=4.64.8 turn=8.4.64 turn=8.8.32 turn=8.16.16 turn=8.32.8 turn=16.4.32 turn=16.8.16 turn=16.16.8 turn=32.4.16 turn=32.8.8 turn=64.4.8
+4096 row=store turn=4.16.64 turn=4.32.32 turn=4.64.16 turn=8.8.64 turn=8.16.32 turn=8.32.16 turn=8.64.8 turn=16.4.64 turn=16.8.32 turn=16.16.16 turn=16.32.8 turn=32.4.32 turn=32.8.16 turn=32.16.8 turn=64.4.16 turn=64.8.8
+8192 row=store turn=4.32.64 turn=4.64.32 turn=8.16.64 turn=8.32.32 turn=8.64.16 turn=16.8.64 turn=16.16.32 turn=16.32.16 turn=16.64.8 turn=32.4.64 turn=32.8.32 turn=32.16.16 turn=32.32.8 turn=64.4.32 turn=64.8.16 turn=64.16.8
+16384 row=store turn=4.64.64 turn=8.32.64 turn=8.64.32 turn=16.16.64 turn=16.32.32 turn=16.64.16 turn=32.8.64 turn=32.16.32 turn=32.32.16 turn=32.64.8 turn=64.4.64 turn=64.8.32 turn=64.16.16 turn=64.32.8
+32768 row=store turn=8.64.64 turn=16.32.64 turn=16.64.32 turn=32.16.64 turn=32.32.32 turn=32.64.16 turn=64.8.64 turn=64.16.32 turn=64.32.16 turn=64.64.8
+65536 row=store turn=16.64.64 turn=32.32.64 turn=32.64.32 turn=64.16.64 turn=64.32.32 turn=64.64.16
+131072 row=store turn=32.64.64 turn=64.32.64 turn=64.64.32
+262144 row=store turn=64.64.64

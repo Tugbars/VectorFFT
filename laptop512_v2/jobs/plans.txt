@@ -1,0 +1,8 @@
+2048 row=store flat=32.64 flat=64.32 flat=4.8.64 flat=4.16.32 flat=4.32.16 flat=4.64.8 flat=8.4.64 flat=8.8.32 flat=8.16.16 flat=8.32.8 flat=8.64.4 flat=16.4.32 flat=16.8.16 flat=16.16.8 flat=16.32.4 flat=32.4.16 flat=32.8.8 flat=32.16.4 flat=64.4.8 flat=64.8.4 flat=8.8.8.4 pair=32.64 pair=64.32
+4096 row=store flat=64.64 flat=4.16.64 flat=4.32.32 flat=4.64.16 flat=8.8.64 flat=8.16.32 flat=8.32.16 flat=8.64.8 flat=16.4.64 flat=16.8.32 flat=16.16.16 flat=16.32.8 flat=16.64.4 flat=32.4.32 flat=32.8.16 flat=32.16.8 flat=32.32.4 flat=64.4.16 flat=64.8.8 flat=64.16.4 flat=8.8.8.8 chain=32.16.8 pair=64.64
+8192 row=store flat=4.32.64 flat=4.64.32 flat=8.16.64 flat=8.32.32 flat=8.64.16 flat=16.8.64 flat=16.16.32 flat=16.32.16 flat=16.64.8 flat=32.4.64 flat=32.8.32 flat=32.16.16 flat=32.32.8 flat=32.64.4 flat=64.4.32 flat=64.8.16 flat=64.16.8 flat=64.32.4 flat=8.8.8.4.4 flat=16.16.8.4 chain=32.16.16
+16384 row=store flat=4.64.64 flat=8.32.64 flat=8.64.32 flat=16.16.64 flat=16.32.32 flat=16.64.16 flat=32.8.64 flat=32.16.32 flat=32.32.16 flat=32.64.8 flat=64.4.64 flat=64.8.32 flat=64.16.16 flat=64.32.8 flat=64.64.4 flat=8.8.8.8.4 flat=16.16.16.4 chain=16.32.32
+32768 row=store flat=8.64.64 flat=16.32.64 flat=16.64.32 flat=32.16.64 flat=32.32.32 flat=32.64.16 flat=64.8.64 flat=64.16.32 flat=64.32.16 flat=64.64.8 flat=8.8.8.8.8 flat=16.16.16.8 chain=32.32.32
+65536 row=store flat=16.64.64 flat=32.32.64 flat=32.64.32 flat=64.16.64 flat=64.32.32 flat=64.64.16 flat=8.8.8.8.4.4 flat=16.16.16.16 chain=32.64.32
+131072 row=store flat=32.64.64 flat=64.32.64 flat=64.64.32 flat=8.8.8.8.8.4 flat=16.16.16.8.4 chain=32.64.64
+262144 row=store flat=64.64.64 flat=8.8.8.8.8.8 flat=16.16.16.16.4 chain=64.64.64
