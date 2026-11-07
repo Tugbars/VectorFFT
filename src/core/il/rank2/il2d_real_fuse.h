@@ -72,7 +72,7 @@ static void _il2d_tf_body(const void *v, const double *x, double *z)
         _il2d_rows_fwd_set(h, x, d, D0, (size_t)R0, stg, P);
         /* stage 0's digit d: the staging's R0 rows in (legs P apart), natscr rows
          * d + j D0 out (legs D0 rows apart), the digit's own twiddle records */
-        c->f[0](stg, NULL, scr + 2 * d * hp1, NULL, c->tf[0] + d * (size_t)(R0 - 1) * VFFT_IL_TWREC, NULL,
+        c->f[0](stg, NULL, scr + 2 * d * hp1, NULL, c->tf[0] + d * (size_t)(R0 - 1) * VFFT_IL_T2CREC, NULL,
                 P, P, D0 * hp1, 1, hp1);
     }
     for (t = 0; t < (size_t)R0; t++)
@@ -117,7 +117,7 @@ static void _il2d_tf_body_bwd(const void *v, const double *z, double *y)
     }
     for (d = 0; d < D0; d++)
     {
-        c->b[0](scr + 2 * d * hp1, NULL, stg, NULL, c->tb[0] + d * (size_t)(R0 - 1) * VFFT_IL_TWREC, NULL,
+        c->b[0](scr + 2 * d * hp1, NULL, stg, NULL, c->tb[0] + d * (size_t)(R0 - 1) * VFFT_IL_T2CREC, NULL,
                 D0 * hp1, D0 * hp1, P, 1, hp1);
         _il2d_rows_bwd_set(h, stg, P, d, D0, (size_t)R0, y, 0);
     }

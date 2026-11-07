@@ -34,8 +34,8 @@
  * ── THE TWO FACTS THE SIMULATOR EXISTS TO PIN ──
  * 1. The twiddle W_L^{d r} depends on (r, d) ONLY — never on the column j
  *    and never on the block base. This is the broadcast-record (z-T1S)
- *    admissibility fact the t2c kernels are built on: per (d, leg) records
- *    hoisted out of the column loop.
+ *    admissibility fact the t2c kernels are built on: one record per
+ *    (d, leg), the same for the whole column loop.
  * 2. The last stage has D = 1 ⇒ W_L^{d r} = 1: it is the twiddle-free
  *    n1 shape. A single-stage chain (N1 <= codelet radix) is served by the
  *    n1 kernels with Ls = N2 and no new emission.

@@ -19,6 +19,8 @@
  *     code that READS or steps through a table. The tables themselves are
  *     built per ISA: the AVX2 builders in place, the AVX-512 builders in
  *     avx512/vtw_avx512.h (included here at avx512);
+ *   - VFFT_IL_T2CREC and vfft_il_t2c_fill: the t2c kinds' record, the same
+ *     at both ISAs (below);
  *   - VFFT_ZTT_REGISTRY_H: the ZTT registry to include (ztt.h);
  *   - VFFT_IL_AVX2_ONLY(stem): a kernel of the avx2 tree only (stem##_avx2
  *     there, 0 at avx512, so its resolver reports it absent). UNUSED: the
@@ -48,6 +50,43 @@
 
 #define VFFT_IL_TWREC (2 * VFFT_IL_VW)   /* doubles per twiddle record */
 #define VFFT_IL_TWPER (VFFT_IL_VW / 2)   /* complex columns per pair record */
+
+/* THE t2c RECORD (t2c, t2cp, t2cb*, t2cbp* and their _bwd, both ISAs). Every
+ * lane of a t2c tile shares the twiddle of its (block, leg), so the record
+ * is that twiddle once: [Re w, Im w], 16 bytes; the kernel broadcasts each
+ * half at its use. A table holds (R-1) records per block, block-major:
+ * record (b, leg l) at (b*(R-1) + l-1) * VFFT_IL_T2CREC carries
+ * w = exp(-2*pi*i*(l*Q mod L)/L), Q = q(ctx, b) the block's natural index
+ * (b itself when q is NULL); conj = 1 gives the conjugate (the backward
+ * tables). The values are vfft_cs2pi_exact's of the same integers the wide
+ * records used, so a stage's output is bitwise what it was with them. */
+#include <stddef.h>
+#include "tw_exact.h"
+
+#define VFFT_IL_T2CREC 2                /* doubles per t2c record */
+
+typedef size_t (*vfft_il_t2c_q_fn)(const void *ctx, size_t b);
+
+static inline size_t vfft_il_t2c_doubles(size_t nb, int R)
+{
+    return nb * (size_t)(R - 1) * VFFT_IL_T2CREC;
+}
+static inline void vfft_il_t2c_fill(double *tw, size_t nb, int R, size_t L,
+                                    vfft_il_t2c_q_fn q, const void *ctx, int conj)
+{
+    size_t b;
+    int l;
+    for (b = 0; b < nb; b++) {
+        const size_t Q = q ? q(ctx, b) : b;
+        for (l = 1; l < R; l++) {
+            double *rec = tw + (b * (size_t)(R - 1) + (size_t)(l - 1)) * VFFT_IL_T2CREC;
+            double c, s;
+            vfft_cs2pi_exact((long long)((size_t)l * Q % L), (long long)L, &c, &s);
+            rec[0] = c;
+            rec[1] = conj ? s : -s;
+        }
+    }
+}
 
 #if VFFT_IL_VW == 8
 #include "avx512/vtw_avx512.h"   /* the AVX-512 twiddle-table builders */

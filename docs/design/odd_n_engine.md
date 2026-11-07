@@ -337,16 +337,17 @@ All angles are a = −2π·(e mod Mₛ)/Mₛ with e the exponent named below;
 c = cos a, s = sin a. Every table has a backward twin with the sign of
 s reversed (§6). Modulus L in the code is Mₛ = N/Dₛ.
 
-### 5.1 t2cp / t2c records (per block, sign-folded)
+### 5.1 t2cp / t2c records (per block, the twiddle itself)
 
-For block b and leg l ≥ 1, one record of 8 doubles at
-`tf[s] + (b·(Rₛ−1) + (l−1))·8`, exponent e = l·Q_b:
+For block b and leg l ≥ 1, one record of 2 doubles at
+`tf[s] + (b·(Rₛ−1) + (l−1))·2`, exponent e = l·Q_b:
 
-    [ c, c, c, c, −s, +s, −s, +s ]
+    [ c, s ]
 
-The sign folding matches the packed complex multiply
-(re·c − im·s, re·s + im·c) done with an add-sub on a lane-swapped copy.
-Backward: `[c,c,c,c, +s,−s,+s,−s]`.
+the twiddle c + i·s itself, the same at both ISAs (`vfft_il_t2c_fill`,
+il_isa.h). The kernel broadcasts each half at its use and forms the packed
+complex multiply (re·c − im·s, im·c + re·s) as one fmaddsub on a
+lane-swapped copy. Backward: `[c, −s]`.
 
 ### 5.2 msz records (per block, splat-pair)
 

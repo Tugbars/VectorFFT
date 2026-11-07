@@ -142,7 +142,8 @@ type cx_kind =
      cursor `twp` instead of file-scope VLIT constants. The int is the
      LEG index; the record offset is (leg-1)*2*VW because leg 0 is
      untwiddled and each record is [c×VW][s×VW] (cos-first, sign-folded
-     — one data-side shuffle, zero table-side work). *)
+     — one data-side shuffle, zero table-side work). The t2c kinds
+     (tw_group) read a 16-byte record instead, see tw_group. *)
 
 and t =
   { tag : int
@@ -172,10 +173,13 @@ and t =
 type ctx =
   { tw_log3 : bool
   ; tw_group : bool
-    (* t2c: CTwL sources from the _wc/_ws names a GROUP prologue binds
-       (per-(d,leg) records hoisted out of the column loop — the z-T1S
-       broadcast strategy, il_native_design.md §6c). Same naming as log3,
-       no derivation; the two are mutually exclusive by construction. *)
+    (* t2c: every lane of the tile shares the twiddle of its (d, leg), so
+       the table holds that twiddle once, as a 16-byte record [c, s] (the
+       complex w = c + i*s itself). CTwL broadcasts both halves at the use,
+       inside the column loop, and applies x*w as fmaddsub(x, c, s*cflip x):
+       the same products and roundings as the wide record's
+       fmadd(c, x, [-s,+s]*cflip x), so bit-identical. Timed 2026-11-07 on
+       Zen 4 AVX-512: 0.88 per kernel against the wide record. *)
   ; tw_pre : bool
   ; tw_gen2 : bool
     (* gen2 (2026-09-04): the twiddle stream is GENERATED — the W^1 pair
@@ -206,22 +210,23 @@ type ctx =
   ; rotfma : bool
   }
 
-(* Where the ROTFMA fold (cx_render.ml) is on: AVX2, on every kernel without a
-   ratio-form leaf. A leaf of n = 5 or 7 (Cx_math.odd_ratio_form) has already
+(* Where the ROTFMA fold (cx_render.ml) is on: AVX2 and AVX-512, on every
+   kernel without a ratio-form leaf. A leaf of n = 5 or 7 (Cx_math.odd_ratio_form) has already
    turned the adds the fold targets into FMAs, so the fold removes no xor
    there and its sign constants only add spills (radix 14 n1: stack moves 46
    to 63). The leaf sits in radix 5 and 7, the even radices over them (10, 14,
    20) and the factored odd composites (the _ct kinds at 15, 21, 25); the
    direct odd forms of 15, 21, 25 carry none. Timed 2026-11-06, in L1: 0.92-0.96
    per kernel at radix 4, 8, 16, 32, 64 and the large odd radices, 0.99-1.06 on
-   the leaf kernels. Bit-exact either way. AVX-512 stays off until timed there. *)
+   the leaf kernels. Bit-exact either way. AVX-512, timed 2026-11-07 on Zen 4:
+   0.96 per kernel at radix 16, 32, 64, 0.988 on 2D/3D rows. *)
 let carries_ratio_leaf ~(radix : int) ~(factored : bool) =
   (radix mod 5 = 0 || radix mod 7 = 0)
   && (radix mod 2 = 0 || factored || radix = 5 || radix = 7)
 ;;
 
 let rotfma_default ~(isa_name : string) ~(radix : int) ~(factored : bool) =
-  isa_name = "avx2" && not (carries_ratio_leaf ~radix ~factored)
+  (isa_name = "avx2" || isa_name = "avx512") && not (carries_ratio_leaf ~radix ~factored)
 ;;
 
 let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs ~tangent ~rotfma =

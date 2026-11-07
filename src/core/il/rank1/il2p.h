@@ -163,8 +163,8 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
 }
 
 /* t2cp — t2c with the PRE-twiddle placement at fwd: the flat
- * mixed-radix DIT chain's stage kind (il_flatdit.h). Per-DIGIT broadcast
- * records applied before the forward butterfly; one digit per call (the
+ * mixed-radix DIT chain's stage kind (il_flatdit.h). Per-DIGIT t2c records
+ * (il_isa.h) applied before the forward butterfly; one digit per call (the
  * block's slow-digit twiddle). fwd only: the bwd t2c is that stage's
  * Hermitian transpose already. */
 static inline vfft_il2p_fn vfft_il2p_t2cp_fn(int R)
@@ -423,8 +423,8 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
 }
 
 /* t2c — the 2D column-stage MID pair (fft2d_il_c2c_design.md): same-slot
- * in-place DIF stage, per-(d,leg) broadcast records hoisted in-kernel (the
- * z-T1S/6c sourcing). Ls = D*N2, Gs = N2 row pitch, OGs = D; the table is
+ * in-place DIF stage, one t2c record per (d,leg) (il_isa.h), broadcast at
+ * each use in-kernel. Ls = D*N2, Gs = N2 row pitch, OGs = D; the table is
  * DRIVER-built, d-major, bwd = conjugated table (same kernel shape). */
 static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
 {

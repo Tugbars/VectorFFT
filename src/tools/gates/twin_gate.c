@@ -41,7 +41,7 @@
  * library's builders, which are the same calls at both ISAs (il_isa.h):
  *   pair records (VTW2: t2, t2t, t2tg, the blocked and _ct forms, the rows'
  *       t2r/t2tr, t2cs)            _vfft_il3p_vtw2 (il2p.h; vtw_avx512.h at avx512)
- *   per-block broadcast records (t2cp, t2c, t2cb*), splat records (msz,
+ *   per-block t2c records (t2cp, t2c, t2cb*), splat records (msz,
  *       mszt) and the gen2 bases (t2csg, t2csgt, t2csgn, t2csgnt, and the
  *       Hermitian last stage's t2csgh, t2csght)
  *                                  vfft_ilfd_create_chain (il_flatdit.h): the
@@ -51,8 +51,8 @@
  *   lane records (tmg, tmgd, tlf, tlfi, t0d)       _ztt_fill_stage (ztt.h)
  *   the drivers' streams, run-base table and the plain class's output
  *       permutation, and tld's output positions     _ztt_create (ztt.h)
- * A broadcast record holds one twiddle in every slot, so a table is a pool
- * of records: radices 32 and 64 have no t2cp stage, and their t2c/t2cb*
+ * A t2c record holds one twiddle (il_isa.h), so a table is a pool of
+ * records: radices 32 and 64 have no t2cp stage, and their t2c/t2cb*
  * kernels read the records of the {8, 47, 5} plan's radix-47 stage — the
  * same twiddle in record i at both ISAs.
  *
@@ -493,7 +493,7 @@ static int _twin_flat(const int *R, int K, int s, twin_flat_t *t)
     } else if (p->tail[s] == 0 && p->tf[s]) {
         t->tf = p->tf[s];
         t->tfb = p->tfb[s];
-        t->ntf = (size_t)t->nb * (size_t)(R[s] - 1) * VFFT_IL_TWREC;
+        t->ntf = vfft_il_t2c_doubles((size_t)t->nb, R[s]);
     }
     return 1;
 }
@@ -931,7 +931,7 @@ enum {
     C_GEN2N,   /* the gen2 group loop: base table, group order (t2csgn, t2csgnt) */
     C_ROWS,    /* the row loop, rows at pitch Gs / OGs, legs at Ls = the lanes */
     C_ROWST,   /* the row loop with the corner turn */
-    C_DIGIT,   /* the digit loop: OGs digits at pitch Gs, broadcast records (t2c, t2cp) */
+    C_DIGIT,   /* the digit loop: OGs digits at pitch Gs, t2c records (t2c, t2cp) */
     C_SPLAT,   /* in place, Gs groups of R legs, splat records (msz, mszt) */
     C_MONO,    /* the whole R-point transform, natural in and out, one call (mono64_8x8_il) */
     C_RMONO,   /* the real mono: real legs l*Ls + k in, the CCE half's bins m*OLs + k out,

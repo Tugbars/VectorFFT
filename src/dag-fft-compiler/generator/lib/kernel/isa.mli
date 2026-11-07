@@ -33,6 +33,7 @@ val sub_pd : t -> string -> string -> string
 val addsub_pd : t -> string -> string -> string
 val xor_pd : t -> string -> string -> string
 val fmadd_pd : t -> string -> string -> string -> string
+val fmaddsub_pd : t -> string -> string -> string -> string
 val fnmadd_pd : t -> string -> string -> string -> string
 val fmsub_pd : t -> string -> string -> string -> string
 val fnmsub_pd : t -> string -> string -> string -> string

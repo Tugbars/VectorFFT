@@ -12,8 +12,9 @@
  *   PAIR   (VTW2: t2, t2t, t2tg, t2cs, t2csg T1, the pair and chain3 mids)
  *          4 complex columns per record, column j in slot j:
  *          [c0 c0 c1 c1 c2 c2 c3 c3][-t0 +t0 -t1 +t1 -t2 +t2 -t3 +t3]
- *   BCAST  (t2c, t2cp, t2csg T2: one digit per record) the same twiddle in
- *          all four slots.
+ *   BCAST  (t2csg T2: one digit per record) the same twiddle in all four
+ *          slots. The t2c kinds read no record of this file: their 16-byte
+ *          record is the same at both ISAs (il_isa.h, vfft_il_t2c_fill).
  *   SPLAT  (msz) [c x8][t x8].
  *   LANE   (ZTURN-T stage streams) 8 columns per record, column i in lane i:
  *          [c0 .. c7][t0 .. t7].
@@ -128,18 +129,15 @@ static inline void vfft_vtw512_il3p_fill(double *tw, int legs, int blocks, int c
             }
 }
 
-/* ── one twiddle per (block, leg): the per-digit tables ───────────────────
+/* ── one twiddle per (block, leg), SPLAT: the flat DIT's msz stages ───────
  * Block b's natural index Q = q(ctx, b) (identity when q is NULL); record
- * (b, leg l) at (b*(R-1) + l-1)*16 carries w = exp(-2*pi*i*(l*Q mod L)/L).
- * BCAST: the flat DIT's t2cp stages, the t2csg T2 base (R = 2, one record
- * per group) and the 2D column stages (d-major, Q = d).
- * SPLAT: the flat DIT's msz stages. */
+ * (b, leg l) at (b*(R-1) + l-1)*16 carries w = exp(-2*pi*i*(l*Q mod L)/L). */
 static inline size_t vfft_vtw512_blocks_doubles(size_t nb, int R)
 {
     return nb * (size_t)(R - 1) * VFFT_VTW512_REC;
 }
-static inline void _vtw512_blocks(double *tw, size_t nb, int R, size_t L,
-                                  vfft_vtw512_q_fn q, const void *ctx, int conj, int splat)
+static inline void vfft_vtw512_blocks_splat(double *tw, size_t nb, int R, size_t L,
+                                            vfft_vtw512_q_fn q, const void *ctx, int conj)
 {
     size_t b;
     int l;
@@ -149,20 +147,9 @@ static inline void _vtw512_blocks(double *tw, size_t nb, int R, size_t L,
             double *rec = tw + (b * (size_t)(R - 1) + (size_t)(l - 1)) * VFFT_VTW512_REC;
             double c, t;
             _vtw512_w((long long)((size_t)l * Q % L), (long long)L, conj, &c, &t);
-            if (splat) vfft_vtw512_splat(rec, c, t);
-            else vfft_vtw512_bcast(rec, c, t);
+            vfft_vtw512_splat(rec, c, t);
         }
     }
-}
-static inline void vfft_vtw512_blocks_bcast(double *tw, size_t nb, int R, size_t L,
-                                            vfft_vtw512_q_fn q, const void *ctx, int conj)
-{
-    _vtw512_blocks(tw, nb, R, L, q, ctx, conj, 0);
-}
-static inline void vfft_vtw512_blocks_splat(double *tw, size_t nb, int R, size_t L,
-                                            vfft_vtw512_q_fn q, const void *ctx, int conj)
-{
-    _vtw512_blocks(tw, nb, R, L, q, ctx, conj, 1);
 }
 
 /* ── the flat DIT's t2csg T1: one pair record per 4 blocks of a group ─────

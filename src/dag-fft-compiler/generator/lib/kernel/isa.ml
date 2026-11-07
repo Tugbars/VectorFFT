@@ -218,6 +218,14 @@ let fmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
   else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmadd_pd") a b c
 ;;
 
+(* fmaddsub_pd(a, b, c) = a*b -/+ c: even lanes subtract, odd lanes add. The
+   complex multiply against a broadcast twiddle (c, s): x*c -/+ s*cflip x. *)
+let fmaddsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  if isa.vec_width < 2
+  then failwith "Isa.fmaddsub_pd: needs a packed-complex width"
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmaddsub_pd") a b c
+;;
+
 (* fnmadd_pd(a, b, c) = -a*b + c  -- negated multiplicand, useful for cmul.re *)
 let fnmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width = 1

@@ -91,7 +91,8 @@ static inline void _ilfd_unit_rec(const vfft_ilfd_plan_t *p, int s, int leaf,
             *nunits = src->Gs; *cnt = 1;
             return;
         }
-        dst->in_tstep = dst->out_tstep = 2 * L; dst->tw_tstep = recs;   /* t2cp: blocks */
+        dst->in_tstep = dst->out_tstep = 2 * L;                         /* t2cp: blocks */
+        dst->tw_tstep = (size_t)(p->R[s] - 1) * VFFT_IL_T2CREC;
         *nunits = src->OGs; *cnt = 2;
         return;
     }

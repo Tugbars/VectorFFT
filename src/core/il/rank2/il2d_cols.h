@@ -51,8 +51,8 @@
  * chain is raced, never derived). A chain's stages 0..m-2 resolve t2c
  * pairs, the last resolves the n1c pair.
  * _il2d_build_tables: per t2c stage, the d-major record table — per digit
- * d in [0,D), per leg r in 1..R-1, [c x4][-s,+s,-s,+s] for
- * w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
+ * d in [0,D), per leg r in 1..R-1, the t2c record [Re w, Im w] (il_isa.h)
+ * for w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
  * kernels are shape-identical, conj is table-side, never text
  * derivation). Algebra simulator-proven: src/core/oop/il2d_proto.h. */
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
@@ -766,7 +766,7 @@ static void _il2d_col_pass_nat_range(const double *src, double *dst,
  * any row of it is written). The stage kernels advance input and output by
  * ONE pitch per digit, so the pitch change of stage 0 (rn -> w) is a caller
  * loop over the digits (OGs = 1, the table advanced one digit's records =
- * (R-1)*8 doubles, _il2d_build_tables' layout); the mids run in place on
+ * (R-1) t2c records, _il2d_build_tables' layout); the mids run in place on
  * scr at pitch w; the leaf scatters scr -> dst (fwd) / gathers src -> scr
  * (bwd) through its separate strides. Same kernels, tables and values as
  * _il2d_col_pass_nat: the output is bitwise. Requires nst >= 2. */
@@ -793,7 +793,7 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
                 fns[0](src + 2 * (row * rn + k), NULL, scr + 2 * row * w, NULL,
-                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_TWREC, NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_T2CREC, NULL,
                        (size_t)D0 * rn, rn, (size_t)D0 * w, 1, w);
             }
         for (s = 1; s < nst - 1; s++)
@@ -835,7 +835,7 @@ static void _il2d_col_pass_nat_strip(const double *src, double *dst, int N1,
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
                 fns[0](scr + 2 * row * w, NULL, dst + 2 * (row * rn + k), NULL,
-                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_TWREC, NULL,
+                       tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_T2CREC, NULL,
                        (size_t)D0 * w, w, (size_t)D0 * rn, 1, w);
             }
     }
@@ -1087,46 +1087,17 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
         }
         if (D > 1) /* the n1c leaf carries no table */
         {
-#if VFFT_IL_VW == 8
-            /* one broadcast record per (digit d, leg r): Q = d, L = this stage's span */
-            double *f = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
-            double *bt = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles((size_t)D, R) * sizeof(double));
+            /* one t2c record per (digit d, leg r) (il_isa.h): Q = d, L = this stage's span */
+            double *f = (double *)vfft_aligned_alloc(vfft_il_t2c_doubles((size_t)D, R) * sizeof(double));
+            double *bt = (double *)vfft_aligned_alloc(vfft_il_t2c_doubles((size_t)D, R) * sizeof(double));
             if (!f || !bt)
             {
                 vfft_aligned_free(f);
                 vfft_aligned_free(bt);
                 return -1;
             }
-            vfft_vtw512_blocks_bcast(f, (size_t)D, R, (size_t)L, NULL, NULL, 0);
-            vfft_vtw512_blocks_bcast(bt, (size_t)D, R, (size_t)L, NULL, NULL, 1);   /* conj */
-#else
-            const size_t nrec = (size_t)D * (R - 1);
-            double *f = (double *)vfft_aligned_alloc(nrec * 8 * sizeof(double));
-            double *bt = (double *)vfft_aligned_alloc(nrec * 8 * sizeof(double));
-            int d, r, lane;
-            if (!f || !bt)
-            {
-                vfft_aligned_free(f);
-                vfft_aligned_free(bt);
-                return -1;
-            }
-            for (d = 0; d < D; d++)
-                for (r = 1; r < R; r++)
-                {
-                    double c, si;   /* a = -2*pi*(d*r mod L)/L: sin(a) = -si (tw_exact.h) */
-                    vfft_cs2pi_exact((long long)((size_t)d * r % (size_t)L), (long long)L, &c, &si);
-                    si = -si;
-                    double *rf = f + ((size_t)d * (R - 1) + (r - 1)) * 8;
-                    double *rb = bt + ((size_t)d * (R - 1) + (r - 1)) * 8;
-                    for (lane = 0; lane < 4; lane++)
-                    {
-                        rf[lane] = c;
-                        rb[lane] = c;
-                        rf[4 + lane] = (lane & 1) ? si : -si;
-                        rb[4 + lane] = (lane & 1) ? -si : si; /* conj */
-                    }
-                }
-#endif
+            vfft_il_t2c_fill(f, (size_t)D, R, (size_t)L, NULL, NULL, 0);
+            vfft_il_t2c_fill(bt, (size_t)D, R, (size_t)L, NULL, NULL, 1);   /* conj */
             tf[s] = f;
             tb[s] = bt;
         }

@@ -108,7 +108,7 @@ typedef struct {
                                        * the kernel has odd-count arms) */
     int msz[VFFT_ILFD_MAX_K];         /* 1 = run the stage on msz (default where eligible;
                                        * VFFT_ILFD_NO_MSZ=1 at create turns it off; A/B flips it) */
-    double *tf[VFFT_ILFD_MAX_K];      /* t2cp: per block (R-1) broadcast records;
+    double *tf[VFFT_ILFD_MAX_K];      /* t2cp: per block (R-1) t2c records (il_isa.h);
                                        * t2cs: per GROUP, per block-pair, (R-1) VTW2 records */
     /* BACKWARD: the CONJUGATE pipeline — same stage order and
      * forms (msz / gl / gord are shared), backward kernels (n1c, t2c, msz,
@@ -193,16 +193,14 @@ static inline size_t _ilfd_block_Q(const vfft_ilfd_plan_t *p, int s, size_t b)
     for (j = 0; j < s; j++) { Q += dig[j] * W; W *= (size_t)p->R[j]; }
     return Q;
 }
-#if VFFT_IL_VW == 8
-/* the AVX-512 builders' view of a stage: set b -> the natural index of
+/* the table builders' view of a stage: set b -> the natural index of
  * block b*G (G = 1: per block; G = R[s-1]: per group base) */
-typedef struct { const vfft_ilfd_plan_t *p; int s; size_t G; } _ilfd_q512_t;
-static inline size_t _ilfd_q512(const void *ctx, size_t b)
+typedef struct { const vfft_ilfd_plan_t *p; int s; size_t G; } _ilfd_q_t;
+static inline size_t _ilfd_q(const void *ctx, size_t b)
 {
-    const _ilfd_q512_t *c = (const _ilfd_q512_t *)ctx;
+    const _ilfd_q_t *c = (const _ilfd_q_t *)ctx;
     return _ilfd_block_Q(c->p, c->s, b * c->G);
 }
-#endif
 
 static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int K)
 {
@@ -251,12 +249,12 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             if (s < K - 1 && vfft_il2p_msz_fn(R[s]) && vfft_il2p_msz_bwd_fn(R[s]) &&
                 vfft_il2p_mszt_bwd_fn(R[s])) {
 #if VFFT_IL_VW == 8
-                const _ilfd_q512_t q512 = { p, s, 1 };
+                const _ilfd_q_t q512 = { p, s, 1 };
                 double *tz = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
                 double *tzb = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
                 if (!tz || !tzb) { vfft_aligned_free(tz); vfft_aligned_free(tzb); vfft_ilfd_destroy(p); return 0; }
-                vfft_vtw512_blocks_splat(tz, nb, R[s], L, _ilfd_q512, &q512, 0);
-                vfft_vtw512_blocks_splat(tzb, nb, R[s], L, _ilfd_q512, &q512, 1);   /* bwd: conj */
+                vfft_vtw512_blocks_splat(tz, nb, R[s], L, _ilfd_q, &q512, 0);
+                vfft_vtw512_blocks_splat(tzb, nb, R[s], L, _ilfd_q, &q512, 1);   /* bwd: conj */
 #else
                 double *tz = (double *)vfft_aligned_alloc(nb * recs_blk * 8 * sizeof(double));
                 double *tzb = (double *)vfft_aligned_alloc(nb * recs_blk * 8 * sizeof(double));
@@ -323,7 +321,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 }
 #if VFFT_IL_VW == 8
                 {
-                    const _ilfd_q512_t q512 = { p, s, G };
+                    const _ilfd_q_t q512 = { p, s, G };
                     (void)npair; (void)pp;
                     tf = (double *)vfft_aligned_alloc(vfft_vtw512_step_bases_doubles(G, nbase) * sizeof(double));
                     p->tfb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_step_bases_doubles(G, nbase) * sizeof(double));
@@ -332,8 +330,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                     if (!tf || !p->tfb[s] || !p->t2g[s] || !p->t2gb[s]) { vfft_aligned_free(tf); vfft_ilfd_destroy(p); return 0; }
                     vfft_vtw512_step_fill_bases(tf, G, W, L, b, nbase, 0);
                     vfft_vtw512_step_fill_bases(p->tfb[s], G, W, L, b, nbase, 1);          /* bwd: conj */
-                    vfft_vtw512_group_bases_bcast(p->t2g[s], ngrp, L, _ilfd_q512, &q512, b, nbase, 0);
-                    vfft_vtw512_group_bases_bcast(p->t2gb[s], ngrp, L, _ilfd_q512, &q512, b, nbase, 1);
+                    vfft_vtw512_group_bases_bcast(p->t2g[s], ngrp, L, _ilfd_q, &q512, b, nbase, 0);
+                    vfft_vtw512_group_bases_bcast(p->t2gb[s], ngrp, L, _ilfd_q, &q512, b, nbase, 1);
                 }
 #else
                 tf = (double *)vfft_aligned_alloc(npair * (size_t)nbase * 8 * sizeof(double));
@@ -375,8 +373,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
 #endif
                 p->tf[s] = tf;
             } else if (!p->tail[s]) {
-                /* t2cp: ONE digit per call => (R-1) broadcast records per
-                 * block (the 2D per-digit record: [c x4][sign-folded s x4]) */
+                /* t2cp: ONE digit per call => (R-1) t2c records per block
+                 * (the 2D per-digit record, il_isa.h: [Re w, Im w]) */
                 p->f[s] = vfft_il2p_t2cp_fn(R[s]);
                 p->fb[s] = vfft_il2p_t2c_fn(R[s], 1);   /* t2c bwd = PRE-twiddle conj + IDFT */
                 p->fbt[s] = vfft_il2p_t2cp_bwd_fn(R[s]); /* t2cp's transpose: IDFT + POST conj */
@@ -387,36 +385,14 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                     continue;
                 }
                 if (!p->fbt[s]) p->scr_ok = 0;
-#if VFFT_IL_VW == 8
                 {
-                    const _ilfd_q512_t q512 = { p, s, 1 };
-                    tf = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
-                    p->tfb[s] = (double *)vfft_aligned_alloc(vfft_vtw512_blocks_doubles(nb, R[s]) * sizeof(double));
+                    const _ilfd_q_t qb = { p, s, 1 };
+                    tf = (double *)vfft_aligned_alloc(vfft_il_t2c_doubles(nb, R[s]) * sizeof(double));
+                    p->tfb[s] = (double *)vfft_aligned_alloc(vfft_il_t2c_doubles(nb, R[s]) * sizeof(double));
                     if (!tf || !p->tfb[s]) { vfft_aligned_free(tf); vfft_ilfd_destroy(p); return 0; }
-                    vfft_vtw512_blocks_bcast(tf, nb, R[s], L, _ilfd_q512, &q512, 0);
-                    vfft_vtw512_blocks_bcast(p->tfb[s], nb, R[s], L, _ilfd_q512, &q512, 1);   /* bwd: conj */
+                    vfft_il_t2c_fill(tf, nb, R[s], L, _ilfd_q, &qb, 0);
+                    vfft_il_t2c_fill(p->tfb[s], nb, R[s], L, _ilfd_q, &qb, 1);   /* bwd: conj */
                 }
-#else
-                tf = (double *)vfft_aligned_alloc(nb * recs_blk * 8 * sizeof(double));
-                p->tfb[s] = (double *)vfft_aligned_alloc(nb * recs_blk * 8 * sizeof(double));
-                if (!tf || !p->tfb[s]) { vfft_aligned_free(tf); vfft_ilfd_destroy(p); return 0; }
-                for (bi = 0; bi < nb; bi++) {
-                    const size_t Q = _ilfd_block_Q(p, s, bi);
-                    for (l = 1; l < R[s]; l++) {
-                        double c, sn;   /* a = -2*pi*p/L: sin(a) = -sn */
-                        vfft_cs2pi_exact((long long)((size_t)l * Q % L), (long long)L, &c, &sn);
-                        sn = -sn;
-                        double *rf = tf + (bi * recs_blk + (size_t)(l - 1)) * 8;
-                        double *rb = p->tfb[s] + (bi * recs_blk + (size_t)(l - 1)) * 8;
-                        for (lane = 0; lane < 4; lane++) {
-                            rf[lane] = c;
-                            rf[4 + lane] = (lane & 1) ? sn : -sn;
-                            rb[lane] = c;
-                            rb[4 + lane] = (lane & 1) ? -sn : sn;   /* bwd: conj */
-                        }
-                    }
-                }
-#endif
                 p->tf[s] = tf;
             } else {
                 p->bwd_ok = 0;   /* t2cs has no backward twin: forward-only plan */
@@ -433,11 +409,11 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->fcs[s] = vfft_il2p_t2cs_fn(R[s]);
 #if VFFT_IL_VW == 8
                 {
-                    const _ilfd_q512_t q512 = { p, s, 1 };
+                    const _ilfd_q_t q512 = { p, s, 1 };
                     (void)recs_grp; (void)pp; (void)j; (void)g;
                     tf = (double *)vfft_aligned_alloc(vfft_vtw512_groups_doubles(ngrp, G, R[s]) * sizeof(double));
                     if (!tf) { vfft_ilfd_destroy(p); return 0; }
-                    vfft_vtw512_groups_fill(tf, ngrp, G, nb, R[s], L, _ilfd_q512, &q512);
+                    vfft_vtw512_groups_fill(tf, ngrp, G, nb, R[s], L, _ilfd_q, &q512);
                 }
 #else
                 tf = (double *)vfft_aligned_alloc(ngrp * recs_grp * 8 * sizeof(double));
@@ -599,7 +575,7 @@ static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bw
          * block). The natural last stage: per block, redirected to natbase. */
         c->fn = f; c->tw = tf; c->Ls = D; c->count = D;
         if (!last || p->scr) { c->op = _ILFD_ONE; c->Gs = L; c->OLs = D; c->OGs = nb; return; }
-        c->op = _ILFD_BLK; c->tw_step = recs_blk * VFFT_IL_TWREC; c->obase = p->natbase;
+        c->op = _ILFD_BLK; c->tw_step = recs_blk * VFFT_IL_T2CREC; c->obase = p->natbase;
         c->OLs = nstride; c->OGs = 1;
     }
 }
@@ -714,7 +690,8 @@ static inline void _ilfd_tile_rec(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_ca
         } else if (c->in_sel == _ILFD_NUL) {            /* msz: Gs = blocks, in place */
             c->Gs = bpt; c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
         } else {                                        /* t2cp: OGs = blocks, Gs = the pitch */
-            c->OGs = bpt; c->in_tstep = c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
+            c->OGs = bpt; c->in_tstep = c->out_tstep = 2 * (size_t)p->tw;
+            c->tw_tstep = bpt * (size_t)(p->R[s] - 1) * VFFT_IL_T2CREC;
         }
     } else if (c->op == _ILFD_COL) {
         const size_t gpt = bpt / c->G;

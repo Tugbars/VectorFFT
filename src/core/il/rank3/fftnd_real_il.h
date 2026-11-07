@@ -350,7 +350,7 @@ static void _ilndr_axis0_stage_range(const vfft_ilndr_t *d, double *V, double *z
             if (D == 1)
                 fn(p, NULL, p, NULL, NULL, NULL, P, 0, P, 0, l1 - l0);
             else
-                fn(p, NULL, p, NULL, tab + dg * (size_t)(R - 1) * VFFT_IL_TWREC, NULL,
+                fn(p, NULL, p, NULL, tab + dg * (size_t)(R - 1) * VFFT_IL_T2CREC, NULL,
                    (size_t)D * P, P, (size_t)D * P, 1, l1 - l0);
         }
         else

@@ -144,9 +144,8 @@ type kind =
            Gs = N2 row pitch (the in-kernel d-advance); OGs = D digit
            count; one call = one stage over ONE block (driver loops
            blocks). Twiddle W_L^{d*r} applied POST-butterfly BOTH
-           directions (DIF; bwd = conjugated driver-built table), records
-           per (d, leg) HOISTED out of the k loop — the z-T1S broadcast
-           sourcing (6c). *)
+           directions (DIF; bwd = conjugated driver-built table), one
+           16-byte record [c, s] per (d, leg), broadcast at each use. *)
   | RN1 (* the REAL MONO (2026-09-30): the n1 body on REAL input with the
            CCE half output (fwd: outputs 0..R/2 of the DFT of (x, 0)), and on
            the Hermitian half input with REAL output (bwd: bins 0..R/2 loaded,
@@ -1601,8 +1600,7 @@ let emit
     if kind = T2 && ctx.tw_log3
     then emit_log3_prologue ~mode ~tw_vw:vw ~msuf body_n nisa radix;
     if kind = T2 && ctx.tw_gen2
-    then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf ~pol:g2pol body_n nisa radix;
-    if kind = T2C && msuf <> "" then emit_group_prologue ~tw_vw:vw ~msuf body_n nisa radix
+    then emit_gen2_prologue ~mode ~tw_vw:vw ~msuf ~pol:g2pol body_n nisa radix
   in
   (* the BLOCKED remainder pass: the bulk loop's own blocked construction
      re-emitted at the tail's width (odd-blocked kernels only; the monolithic
@@ -1830,8 +1828,8 @@ let emit
         | N1T -> "bailey2 stage-1 leaf n1t (four-step TRANSPOSE fused into the stores)"
         | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)"
         | T2C ->
-          "2D column-stage mid t2c (same-slot DIF stage; per-(d,leg) broadcast \
-           records hoisted out of the column loop — z-T1S/6c)"
+          "2D column-stage mid t2c (same-slot DIF stage; one 16-byte twiddle \
+           record per (d,leg), broadcast at each use)"
         | RN1 ->
           "the REAL MONO rn1: the whole small real transform as one n1 body -- fwd: \
            real input lanes (x, 0), the CCE bins 0..R/2 stored; bwd: bins 0..R/2 \
@@ -1843,7 +1841,7 @@ let emit
         | N1 | N1C | RN1 -> "tw_re/tw_im unused."
         | T2C ->
           "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
-           1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built. fwd \
+           1..R-1 one 16-byte record [c, s], the twiddle c + i*s, DRIVER-built. fwd \
            applies it POST-butterfly (DIF); bwd is the HERMITIAN-TRANSPOSE \
            stage — conjugated table applied PRE-butterfly, stages run in \
            REVERSE order by the driver (bwd consumes fwd's comb: matched \
@@ -2003,11 +2001,10 @@ let emit
          (vw * ctx.mono_spill_slots));
   if kind = T2C
   then (
+    (* per-(d,leg) 16-byte records, one per leg, shared by the whole column
+       tile; each use broadcasts its own (Cx_ir.ctx.tw_group) *)
     Buffer.add_string buf "    const double *twp = tw_re;\n";
-    Buffer.add_string buf "    for (size_t d = 0; d < OGs; d++) {\n";
-    (* per-(d,leg) records, hoisted: loop-invariant across the whole column
-       tile — the broadcast sourcing the kind exists for. *)
-    emit_group_prologue buf isa radix);
+    Buffer.add_string buf "    for (size_t d = 0; d < OGs; d++) {\n");
   if rowloop
   then
     Buffer.add_string
@@ -2227,7 +2224,7 @@ let emit
   then (
     Buffer.add_string
       buf
-      (Printf.sprintf "    twp += %d;\n" ((radix - 1) * 2 * vw));
+      (Printf.sprintf "    twp += %d;\n" ((radix - 1) * 2));
     Buffer.add_string buf "    zin += 2 * Gs;\n";
     Buffer.add_string buf "    zout += 2 * Gs;\n";
     Buffer.add_string buf "    }\n");

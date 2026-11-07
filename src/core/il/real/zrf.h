@@ -189,7 +189,7 @@ static inline int _zrf_range_rec(const vfft_ilfd_plan_t *p, int s, size_t h, con
             }
         }
         else if (c->in_sel == _ILFD_NUL) { c->Gs = h * bpt; c->out_tstep = w; c->tw_tstep = bpt * recs; }     /* msz */
-        else { c->OGs = h * bpt; c->in_tstep = c->out_tstep = w; c->tw_tstep = bpt * recs; }                  /* t2cp */
+        else { c->OGs = h * bpt; c->in_tstep = c->out_tstep = w; c->tw_tstep = bpt * (size_t)(p->R[s] - 1) * VFFT_IL_T2CREC; } /* t2cp */
         return 1;
     }
     if (c->op == _ILFD_COL)
