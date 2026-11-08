@@ -649,26 +649,12 @@ VFFT_IL_DECL(radix32_z_rowb44_bwd_avx2)
 #define VFFT_IL_ROWB44_BWD_RADICES(X) X(32)
 #define VFFT_IL_ROWB44_PAIR_RADICES(X) X(32)
 
-/* ── rowb44t ── fwd 1 · bwd 1 · pair 1 */
-VFFT_IL_DECL(radix32_z_rowb44t_fwd_avx2)
-VFFT_IL_DECL(radix32_z_rowb44t_bwd_avx2)
-#define VFFT_IL_ROWB44T_FWD_RADICES(X) X(32)
-#define VFFT_IL_ROWB44T_BWD_RADICES(X) X(32)
-#define VFFT_IL_ROWB44T_PAIR_RADICES(X) X(32)
-
 /* ── rowb48 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix64_z_rowb48_fwd_avx2)
 VFFT_IL_DECL(radix64_z_rowb48_bwd_avx2)
 #define VFFT_IL_ROWB48_FWD_RADICES(X) X(64)
 #define VFFT_IL_ROWB48_BWD_RADICES(X) X(64)
 #define VFFT_IL_ROWB48_PAIR_RADICES(X) X(64)
-
-/* ── rowb48t ── fwd 1 · bwd 1 · pair 1 */
-VFFT_IL_DECL(radix64_z_rowb48t_fwd_avx2)
-VFFT_IL_DECL(radix64_z_rowb48t_bwd_avx2)
-#define VFFT_IL_ROWB48T_FWD_RADICES(X) X(64)
-#define VFFT_IL_ROWB48T_BWD_RADICES(X) X(64)
-#define VFFT_IL_ROWB48T_PAIR_RADICES(X) X(64)
 
 /* ── rowswap ── fwd 6 · bwd 6 · pair 6 */
 VFFT_IL_DECL(radix3_z_rowswap_fwd_avx2)
@@ -686,33 +672,6 @@ VFFT_IL_DECL(radix22_z_rowswap_bwd_avx2)
 #define VFFT_IL_ROWSWAP_FWD_RADICES(X) X(3) X(9) X(11) X(13) X(15) X(22)
 #define VFFT_IL_ROWSWAP_BWD_RADICES(X) X(3) X(9) X(11) X(13) X(15) X(22)
 #define VFFT_IL_ROWSWAP_PAIR_RADICES(X) X(3) X(9) X(11) X(13) X(15) X(22)
-
-/* ── rowswapt ── fwd 11 · bwd 11 · pair 11 */
-VFFT_IL_DECL(radix2_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix3_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix5_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix7_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix8_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix9_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix10_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix11_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix13_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix14_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix15_z_rowswapt_fwd_avx2)
-VFFT_IL_DECL(radix2_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix3_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix5_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix7_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix8_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix9_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix10_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix11_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix13_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix14_z_rowswapt_bwd_avx2)
-VFFT_IL_DECL(radix15_z_rowswapt_bwd_avx2)
-#define VFFT_IL_ROWSWAPT_FWD_RADICES(X) X(2) X(3) X(5) X(7) X(8) X(9) X(10) X(11) X(13) X(14) X(15)
-#define VFFT_IL_ROWSWAPT_BWD_RADICES(X) X(2) X(3) X(5) X(7) X(8) X(9) X(10) X(11) X(13) X(14) X(15)
-#define VFFT_IL_ROWSWAPT_PAIR_RADICES(X) X(2) X(3) X(5) X(7) X(8) X(9) X(10) X(11) X(13) X(14) X(15)
 
 /* ── t0d ── fwd 2 · bwd 0 · pair 0 */
 VFFT_IL_DECL(radix4_z_t0d_fwd_avx2)
@@ -1368,8 +1327,8 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx2)
 /* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes, and the
  * turned-store twin for the 2D turn route ── */
 #define VFFT_IL_ROW_CHOICE(X) X(2, n1ccs) X(3, rowswap) X(4, row) X(5, n1ccs) X(6, n1ccs) X(7, n1ccs) X(8, n1ccs) X(9, rowswap) X(10, n1ccs) X(11, rowswap) X(12, row) X(13, rowswap) X(14, n1ccs) X(15, rowswap) X(16, row) X(17, n1ccs) X(19, n1ccs) X(21, n1ccs) X(22, rowswap) X(23, n1ccs) X(25, n1ccs) X(26, n1ccs) X(27, n1ccs) X(29, n1ccs) X(31, n1ccs) X(32, rowb44) X(37, n1ccs) X(41, n1ccs) X(43, n1ccs) X(47, n1ccs) X(64, rowb48)
-#define VFFT_IL_ROWT_CHOICE(X) X(2, rowswapt) X(3, rowswapt) X(4, n1ccs) X(5, rowswapt) X(6, n1ccs) X(7, rowswapt) X(8, rowswapt) X(9, rowswapt) X(10, rowswapt) X(11, rowswapt) X(12, n1ccs) X(13, rowswapt) X(14, rowswapt) X(15, rowswapt) X(16, n1ccs) X(17, n1ccs) X(19, n1ccs) X(21, n1ccs) X(22, n1ccs) X(23, n1ccs) X(25, n1ccs) X(26, n1ccs) X(27, n1ccs) X(29, n1ccs) X(31, n1ccs) X(32, rowb44t) X(37, n1ccs) X(41, n1ccs) X(43, n1ccs) X(47, n1ccs) X(64, rowb48t)
+#define VFFT_IL_ROWT_CHOICE(X) X(2, n1ccs) X(3, n1ccs) X(4, n1ccs) X(5, n1ccs) X(6, n1ccs) X(7, n1ccs) X(8, n1ccs) X(9, n1ccs) X(10, n1ccs) X(11, n1ccs) X(12, n1ccs) X(13, n1ccs) X(14, n1ccs) X(15, n1ccs) X(16, n1ccs) X(17, n1ccs) X(19, n1ccs) X(21, n1ccs) X(22, n1ccs) X(23, n1ccs) X(25, n1ccs) X(26, n1ccs) X(27, n1ccs) X(29, n1ccs) X(31, n1ccs) X(32, n1ccs) X(37, n1ccs) X(41, n1ccs) X(43, n1ccs) X(47, n1ccs) X(64, n1ccs)
 
-/* 1021 declarations over 77 kinds */
+/* 995 declarations over 74 kinds */
 
 #endif

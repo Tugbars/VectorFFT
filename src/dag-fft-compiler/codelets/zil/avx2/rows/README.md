@@ -26,6 +26,16 @@ instruction counts (within 5 % of MKL's row kernels) and SDE correctness;
 Emitted with `--cil-row [--cil-split m1.p1]`, `--cil-rowswap`, `--cil-n1ccs`
 and `--cil-rowloop` (`generator/lib/gen/c2c_il.ml`: `emit_row` and `emit`).
 
+**The turned twins** (`--cil-turnst` on the row kinds: `rowswapt`, `rowb44t`,
+`rowb48t`) store point-major for the 2D turn route, which otherwise runs
+`n1ccs`. They can be generated but are not shipped: per row they beat `n1ccs`
+in that role (up to 1.6x at the short lengths, 2x at 32 and 64), yet no plane
+got faster, because the planner takes the turn route only for planes 2..16
+points wide, where the row pass is a small share of the time (measured
+2026-11-08). The generated `VFFT_IL_ROWT_CHOICE` names the turn route's kernel
+per length and is `n1ccs` throughout; a shipped twin would appear there. To be
+raced again on AVX-512 and on the odd-sized planes.
+
 Regeneration: through `gen_set` to a temporary root (`--root`), never in place;
 the folder a file lands in follows its kind (`Corpus.dir_of_file`), and the law
 is byte identity against the shipped file. The map of the whole tree, the two
