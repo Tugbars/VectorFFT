@@ -82,6 +82,12 @@ type caddr =
   | AZinTurn of int * int (* (l, r): zin[2*(((size_t)k + r)*Ls + l)] *)
   | AZinTurnH of int * int (* (l, r): rows k+r (low half) and k+r+2 (high), slot l *)
   | AXoutRow of int * int (* (r, off): zout[((size_t)k + r)*OLs + off] *)
+  (* ── the c2c ROW kind (c2c_il.ml emit_row, 2026-11-08): iteration k holds
+     the rows k+r at the pitches Gs (in) / OGs (out), both in complex; c = the
+     complex offset inside the row (v*per for whole vector v; any point for
+     the split form's 128-bit scatter). ── *)
+  | AZinRow of int * int (* (r, c): zin [2*(((size_t)k + r)*Gs  + c)] *)
+  | AZoutRow of int * int (* (r, c): zout[2*(((size_t)k + r)*OGs + c)] *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)

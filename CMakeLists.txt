@@ -309,6 +309,15 @@ else()
         -Wno-overflow -Wno-implicit-function-declaration -Wno-unused-function
         -Wno-unknown-argument -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
     set(VFFT_CODE_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive -w)
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        # GCC's address optimizer (ivopts) considers at most 250 address uses per loop
+        # by default. A kernel loop with more (the batched row kernels at 32 and 64, the
+        # blocked radix-128 columns: 256 and 512 vector accesses) is then addressed with
+        # a shift and an lea per access: 14-30 % more instructions (measured 2026-11-08).
+        # GCC only: clang and icx have no such parameter.
+        list(APPEND VFFT_C_FLAGS    --param=iv-max-considered-uses=1000)
+        list(APPEND VFFT_CODE_FLAGS --param=iv-max-considered-uses=1000)
+    endif()
 endif()
 # the CPU the build is for and its instruction-set flags, in words: the summary at the
 # end of the configure and the line each library prints when it is built

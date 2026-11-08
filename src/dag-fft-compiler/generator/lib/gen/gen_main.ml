@@ -86,6 +86,7 @@ let run (argv : string array) : unit =
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
      from zp_kind so the two emitters stay A/B-able. *)
   let cil_kind = ref "" in
+  let cil_rows = ref 1 in
   (* --cil-split m.p : the blocked (2-pass) CT factorization. REQUIRED for a
      non-pow2 blocked emission — the emitter validates it but never invents
      one (a factorization is a plan input, not an emitter decision). *)
@@ -238,6 +239,13 @@ let run (argv : string array) : unit =
     then (
       cil_split := arr.(!i + 1);
       incr i)
+    else if arg = "--cil-rows"
+    then (
+      (* the row kind: rows per iteration (2026-11-08) *)
+      (cil_rows :=
+         try int_of_string arr.(!i + 1) with
+         | _ -> failwith "gen_main: --cil-rows takes an integer");
+      incr i)
     else if arg = "--cil-n1"
     then cil_kind := "n1"
     else if arg = "--cil-n1c"
@@ -249,6 +257,11 @@ let run (argv : string array) : unit =
          codelet.ml's flag (the corpus round-trips through both) *)
       cil_kind := "n1c";
       cil_colstride := true)
+    else if arg = "--cil-row"
+    then
+      (* the batched ROW kernel (2026-11-08, C2c_il.emit_row): one row per
+         iteration, a lane is a point; the successor of --cil-n1ccs *)
+      cil_kind := "row"
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
     else if arg = "--cil-t2csg"
@@ -639,6 +652,24 @@ let run (argv : string array) : unit =
            ~chain_b
            ~isa
            ~uarch))
+    else if !cil_kind = "row"
+    then
+      print_string
+        (C2c_il.emit_row
+           ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
+           ~radix:n
+           ~rows:!cil_rows
+           ~split:
+             (if !cil_split = ""
+              then None
+              else (
+                match String.split_on_char '.' !cil_split with
+                | [ a; b ] ->
+                  (try Some (int_of_string a, int_of_string b) with
+                   | _ -> failwith "gen_main: --cil-split m.p: expected two integers")
+                | _ -> failwith "gen_main: --cil-split m.p: expected exactly m.p"))
+           ~isa
+           ~uarch)
     else if !cil_kind = "t2h" || !cil_kind = "t2m" || !cil_kind = "r2z" || !cil_kind = "r1c" || !cil_kind = "r2zr"
     then
       print_string

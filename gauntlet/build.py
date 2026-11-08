@@ -49,6 +49,12 @@ DAG_CODELETS = DAG / 'codelets' / 'split' / 'ztt' / DAG_ISA   # the split corpus
 # is AVX-512 code on any host and runs on an AVX-512 CPU only; avx2 masks AVX-512
 # out (the ISA CLAMP, build_cmd). Native tuning is kept at both.
 DAG_ISA_FLAGS = ['-mavx512f', '-mavx512dq'] if DAG_ISA == 'avx512' else ['-mno-avx512f']
+# GCC's address optimizer (ivopts) considers at most 250 address uses per loop by default
+# (--param iv-max-considered-uses). A kernel loop with more -- the batched row kernels at
+# 32 and 64, the blocked radix-128 columns: 256 and 512 vector accesses -- is then addressed
+# with a shift and an lea per access: 14-30 % more instructions (measured 2026-11-08).
+# GCC only (CMakeLists.txt adds the same): clang and icx have no such parameter.
+GCC_IV_PARAM = '--param=iv-max-considered-uses=1000'
 
 
 def dag_codelet_srcs() -> list[str]:
@@ -255,6 +261,8 @@ def dag_codelet_lib(tc) -> str | None:
     cflags = ['-O3', '-mavx2', '-mfma', '-march=native',
               *DAG_ISA_FLAGS,
               '-fpermissive', '-w']
+    if not (tc['is_icx'] or tc['is_clang']):
+        cflags += [GCC_IV_PARAM]
     if os.environ.get('VFFT_ASAN'):
         cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     # NO -I: a codelet includes only <immintrin.h> and <stddef.h>. Passing the
@@ -622,6 +630,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
              '-Wno-deprecated-declarations']
+    if not (tc['is_icx'] or tc['is_clang']):
+        flags.append(GCC_IV_PARAM)
     # VFFT_WARN=1 -> the REFACTOR-SAFETY build key. The default set above turns
     # OFF the two diagnostics that catch a botched code move, so the harness
     # ladder rung 'zero new warnings' cannot fail without this:
