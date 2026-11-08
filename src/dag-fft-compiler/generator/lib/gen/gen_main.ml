@@ -87,6 +87,8 @@ let run (argv : string array) : unit =
      from zp_kind so the two emitters stay A/B-able. *)
   let cil_kind = ref "" in
   let cil_rows = ref 1 in
+  let cil_rowname = ref false in   (* --cil-rowl: the n1ccs construction under the row name *)
+  let cil_rowswap = ref false in      (* --cil-rowswap: the row kind with whole-vector loads and swaps *)
   (* --cil-split m.p : the blocked (2-pass) CT factorization. REQUIRED for a
      non-pow2 blocked emission — the emitter validates it but never invents
      one (a factorization is a plan input, not an emitter decision). *)
@@ -262,6 +264,18 @@ let run (argv : string array) : unit =
       (* the batched ROW kernel (2026-11-08, C2c_il.emit_row): one row per
          iteration, a lane is a point; the successor of --cil-n1ccs *)
       cil_kind := "row"
+    else if arg = "--cil-rowswap"
+    then (
+      (* the row kind, WHOLE-VECTOR LOADS AND SWAPS: lanes = rows, per rows
+         per iteration (2026-11-08) *)
+      cil_kind := "row";
+      cil_rowswap := true)
+    else if arg = "--cil-rowl"
+    then (
+      (* the n1ccs construction (LANE LOADS) under the row family's name *)
+      cil_kind := "n1c";
+      cil_colstride := true;
+      cil_rowname := true)
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
     else if arg = "--cil-t2csg"
@@ -659,6 +673,7 @@ let run (argv : string array) : unit =
            ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~radix:n
            ~rows:!cil_rows
+           ~whole:!cil_rowswap
            ~split:
              (if !cil_split = ""
               then None
@@ -690,6 +705,7 @@ let run (argv : string array) : unit =
            ~form_tag:!cil_form_tag
            ~log3:!cil_log3
            ~pretw:!cil_pretw
+           ~rowname:!cil_rowname
            ~colstride:!cil_colstride
            ~gen2:!cil_gen2
            ~grouploop:!cil_grouploop

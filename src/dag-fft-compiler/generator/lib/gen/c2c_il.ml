@@ -242,6 +242,7 @@ let emit
       ~(form_tag : bool)
       ~(turnst : bool)
       ~(turnst_gs : bool)
+      ~(rowname : bool)
       ~(kind : kind)
       ~(dir : dir)
       ~(blocked : bool)
@@ -317,6 +318,11 @@ let emit
       "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing and \
        --cil-n1ccs the n1c leaf with it (lanes = whole transforms at pitch Gs); \
        no log3/blocked/turn on either (they would be new forms, not these kinds)";
+  (* --cil-rowl (2026-11-08): the n1ccs construction emitted under the ROW
+     family's name (symbol rowl, "lane loads": each lane of a vector is loaded
+     from its own row) -- the body is byte-identical to n1ccs's. *)
+  if rowname && not (kind = N1C && colstride)
+  then failwith "codelet_cil: --cil-rowl is the n1ccs construction (n1c + column stride) under the row name";
   (* gen2 rides the column-stride tail kind only (t2csg): its two-table
      stream replaces the per-pair records that kind would otherwise read. *)
   if gen2 && not colstride
@@ -1817,7 +1823,13 @@ let emit
        (match kind with
         | N1 -> "solo n1 (natural order in/out, twiddle-free)"
         | N1C ->
-          if ctx.colstride
+          if ctx.colstride && rowname
+          then
+            "BATCHED ROW kernel rowl, LANE LOADS (the n1ccs construction under the row \
+             family's name): lane k of a vector = ONE WHOLE row at pitch Gs, zin[2*(l*Ls + \
+             k*Gs)], Ls = 1 (the points of a row are contiguous); each lane loaded from \
+             its own row through the loadu2/storeu2 pairs; in-place same-slot"
+          else if ctx.colstride
           then
             "BATCHED leaf n1ccs (n1 math; lane k = ONE WHOLE transform at pitch Gs: \
              zin[2*(l*Ls + k*Gs)], Ls = 1 for contiguous rows; two transforms per \
@@ -1940,10 +1952,10 @@ let emit
             Printf.sprintf
             "radix%d_z_%s_%s_%s"
             radix
-            (kind_name kind
+            ((if rowname then "rowl" else kind_name kind)
              ^ (if blocked then "b" else "")
              ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) && not ctx.colstride then "p" else "")
-             ^ (if ctx.colstride then "cs" else "")
+             ^ (if ctx.colstride && not rowname then "cs" else "")
              ^ (if ctx.tw_gen2 then "g" else "")
              ^ (if transposed then "t" else "")
              ^ (if ctx.tw_gen2 && ctx.tw_gen2_pol <> "" then "_" ^ ctx.tw_gen2_pol else "")
@@ -2700,24 +2712,40 @@ let emit_k1
    apart, so each lane leaves through its own 128-bit store (the TURN128
    idiom: store-form extracts, no shuffle port). m1 must be a multiple of
    per. One S[] round trip of p vectors per row; the live set is
-   max(p1, m1) plus temporaries. *)
+   max(p1, m1) plus temporaries.
+
+   ~whole (--cil-rowswap, 2026-11-08): WHOLE-VECTOR LOADS AND SWAPS, for the
+   radixes the form above does not fit (R not a multiple of per^2): lanes =
+   rows, per rows per iteration, like n1ccs, but row r's vector g (points
+   per*g .. per*g+per-1) is ONE whole load and the per such loads (one per
+   row) are transposed in registers (turn_transpose: log2(per) rounds of
+   the 128-bit-lane exchange) into the legs per*g .. per*g+per-1 with lane
+   r = row k+r; the radix-R n1 math runs lane-parallel; the outputs are
+   transposed back and stored as whole row vectors. The R mod per leftover
+   points of a row are one leg each, loaded and stored the n1ccs way (the
+   lane gather over the per rows: the column-stride AZinLeg / AZoutLeg, so
+   Ls = OLs = 1 is required there as for n1ccs). The leftover rows (count
+   mod per) run the same body one row at a time: lane 0 valid, the gather
+   legs as 128-bit loads and stores. Monolithic n1 math only (no odd blocked
+   passes here): a first race form. *)
 let emit_row
       ~(dir : dir)
       ~(radix : int)
       ~(rows : int)
+      ~(whole : bool)
       ~(split : (int * int) option)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
   =
-  Cx_render.colstride := false;
+  Cx_render.colstride := whole;
   Cx_render.herm := 0;
   let ctx =
     make_ctx
       ~tw_group:false
       ~tw_log3:false
       ~tw_gen2:false
-      ~colstride:false
+      ~colstride:whole
       ~tw_pre:false
       ~st_turn:false
       ~st_turn_gs:false
@@ -2727,12 +2755,13 @@ let emit_row
   let vw = isa.Isa.vec_width in
   let per = vw / 2 in
   if per < 2 then failwith "codelet_cil: the row kind needs at least 2 complex per vector";
-  if radix mod (per * per) <> 0
+  if radix < 2 then failwith "codelet_cil: the row kind needs radix >= 2";
+  if (not whole) && radix mod (per * per) <> 0
   then
     failwith
       (Printf.sprintf
          "codelet_cil: the row kind needs radix = p * %d with p a multiple of %d (radix a \
-          multiple of %d); radix %d is not"
+          multiple of %d); radix %d is not -- --cil-rowswap is the form for it"
          per
          per
          (per * per)
@@ -2740,6 +2769,8 @@ let emit_row
   if rows < 1 then failwith "codelet_cil: --cil-rows needs at least 1";
   if rows > 1 && split <> None
   then failwith "codelet_cil: the row kind takes --cil-rows or --cil-split, not both (not built)";
+  if whole && (rows > 1 || split <> None)
+  then failwith "codelet_cil: --cil-rowswap takes neither --cil-rows nor --cil-split";
   let p = radix / per in
   let nb = p / per in
   let m1, p1 =
@@ -2786,12 +2817,14 @@ let emit_row
     let tw = Array.mapi (fun j x -> if j = 0 then x else ctwv (twv ~k1_of j) x) cols in
     dft_small ~sign ~ctx per tw
   in
-  (* one scheduled pass into `buf`: the CLoad inputs are declared first (the
-     in-place guarantee), then the scheduled defs, then the store edge *)
+  (* one scheduled pass into `buf`: the inputs are declared first -- a CLoad
+     through render_load, a CIn through the caller's C expression (the
+     in-place guarantee: every load precedes every store) -- then the
+     scheduled defs, then the store edge *)
   let pass
         ~(buf : Buffer.t)
         ~(label : string)
-        ~(ins : t array)
+        ~(ins : (t * string option) array)
         ~(outs : t array)
         ~(store : Buffer.t -> int -> t -> unit)
     : unit
@@ -2803,16 +2836,23 @@ let emit_row
     let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     Buffer.add_string buf (Printf.sprintf "        { /* %s */\n" label);
     Array.iter
-      (fun (e : t) ->
-         match e.node with
-         | CLoad a when not (Hashtbl.mem seen e.tag) ->
-           Hashtbl.replace seen e.tag ();
-           Buffer.add_string
-             buf
-             (Printf.sprintf
-                "        %s\n"
-                (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render_load isa a)))
-         | _ -> ())
+      (fun ((e : t), (hand : string option)) ->
+         if not (Hashtbl.mem seen e.tag)
+         then (
+           match e.node, hand with
+           | CLoad a, None ->
+             Hashtbl.replace seen e.tag ();
+             Buffer.add_string
+               buf
+               (Printf.sprintf
+                  "        %s\n"
+                  (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render_load isa a)))
+           | CIn _, Some s ->
+             Hashtbl.replace seen e.tag ();
+             Buffer.add_string
+               buf
+               (Printf.sprintf "        %s\n" (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) s))
+           | _ -> failwith "codelet_cil: emit_row: an input is neither a load nor a named value"))
       ins;
     List.iter
       (fun ((_ : Expr.elem_ref option), (e : t)) ->
@@ -2837,6 +2877,13 @@ let emit_row
       buf
       (Printf.sprintf "        %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag)))
   in
+  let store128 (buf : Buffer.t) (ad : caddr) (e : t) : unit =
+    let part = cpart e 0 in
+    let (_ : t) = cstore ad part in
+    Buffer.add_string
+      buf
+      (Printf.sprintf "        _mm_storeu_pd(&%s, %s);\n" (addr_str ad) (render ~ctx isa tbl part))
+  in
   (* ── the clean form: nr rows in one DAG ── *)
   let clean_body (buf : Buffer.t) (nr : int) : unit =
     reset ();
@@ -2857,7 +2904,7 @@ let emit_row
     pass
       ~buf
       ~label:(if nr = 1 then "one row" else Printf.sprintf "%d rows" nr)
-      ~ins
+      ~ins:(Array.map (fun x -> x, None) ins)
       ~outs
       ~store:(fun buf u e ->
         let r = u / p
@@ -2880,7 +2927,7 @@ let emit_row
              i
              (i * p1)
              ((i * p1) + p1 - 1))
-        ~ins
+        ~ins:(Array.map (fun x -> x, None) ins)
         ~outs
         ~store:(fun buf t e -> vstore buf (AS (vw * ((i * p1) + t))) e)
     done;
@@ -2921,7 +2968,7 @@ let emit_row
              p1
              p
              p1)
-        ~ins
+        ~ins:(Array.map (fun x -> x, None) ins)
         ~outs
         ~store:(fun buf u e ->
           let q = u / per
@@ -2939,12 +2986,78 @@ let emit_row
           done)
     done
   in
+  (* ── whole-vector loads and swaps: nr rows (per, or 1 for the leftover) ── *)
+  let whole_body (buf : Buffer.t) (nr : int) : unit =
+    reset ();
+    let ng = radix / per in
+    let cast128 = Isa.intr isa (if vw = 8 then "castpd128_pd512" else "castpd128_pd256") in
+    let ins = ref [] in
+    let legs = Array.make radix (cin 0) in
+    for g = 0 to ng - 1 do
+      let srcs = Array.init nr (fun r -> cload (AZinRow (r, per * g))) in
+      Array.iter (fun x -> ins := (x, None) :: !ins) srcs;
+      let cols, _ = Cx_math.turn_transpose ~per srcs in
+      Array.iteri (fun c col -> legs.((per * g) + c) <- col) cols
+    done;
+    for l = per * ng to radix - 1 do
+      if nr = per
+      then (
+        (* the leftover point of every row: the lane gather over rows k .. k+per-1 *)
+        let x = cload (AZinLeg l) in
+        ins := (x, None) :: !ins;
+        legs.(l) <- x)
+      else (
+        (* one row: its leftover point as a 128-bit load in lane 0 *)
+        let x = cin l in
+        ins :=
+          (x, Some (Printf.sprintf "%s(_mm_loadu_pd(&%s))" cast128 (addr_str (AZinRow (0, l)))))
+          :: !ins;
+        legs.(l) <- x)
+    done;
+    let outs = dft_small ~sign ~ctx radix legs in
+    let sinks = ref [] in
+    for g = 0 to ng - 1 do
+      let cols, _ = Cx_math.turn_transpose ~per (Array.sub outs (per * g) per) in
+      for r = 0 to nr - 1 do
+        sinks := (cols.(r), fun buf e -> vstore buf (AZoutRow (r, per * g)) e) :: !sinks
+      done
+    done;
+    for l = per * ng to radix - 1 do
+      if nr = per
+      then sinks := (outs.(l), fun buf e -> vstore buf (AZoutLeg l) e) :: !sinks
+      else sinks := (outs.(l), fun buf e -> store128 buf (AZoutRow (0, l)) e) :: !sinks
+    done;
+    let sinks = Array.of_list (List.rev !sinks) in
+    pass
+      ~buf
+      ~label:
+        (if nr = 1
+         then "one leftover row: lane 0"
+         else Printf.sprintf "%d rows: whole-vector loads, %dx%d turns" nr per per)
+      ~ins:(Array.of_list (List.rev !ins))
+      ~outs:(Array.map fst sinks)
+      ~store:(fun buf u e -> (snd sinks.(u)) buf e)
+  in
   let body = Buffer.create 16384 in
   let body_t = Buffer.create 4096 in
-  if split = None then clean_body body rows else split_body body;
-  if rows > 1 then clean_body body_t 1;
+  let step =
+    if whole
+    then (
+      whole_body body per;
+      whole_body body_t 1;
+      per)
+    else if split <> None
+    then (
+      split_body body;
+      1)
+    else (
+      clean_body body rows;
+      if rows > 1 then clean_body body_t 1;
+      rows)
+  in
   let tag =
-    (if rows > 1 then string_of_int rows else "")
+    (if whole then "swap" else "")
+    ^ (if rows > 1 then string_of_int rows else "")
     ^
     match split with
     | Some (a, b) -> Printf.sprintf "b%d%d" a b
@@ -2963,49 +3076,82 @@ let emit_row
              | Bwd -> "bwd"))
        [ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
        ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
-       ; Printf.sprintf
-           "Form: row %d x %d (stage 1 across %d registers, one turn per %d, stage 2 across %d)%s%s"
-           p
-           per
-           p
-           per
-           per
-           (if rows > 1 then Printf.sprintf " rows=%d" rows else "")
-           (match split with
-            | Some (a, b) -> Printf.sprintf " split=%d.%d (stage 1 through S[], 128-bit scatter)" a b
-            | None -> "")
+       ; (if whole
+          then
+            Printf.sprintf
+              "Form: row, whole-vector loads and swaps (lanes = rows, %d rows per iteration, %d leftover point(s) per row the lane-gather way)"
+              per
+              (radix mod per)
+          else
+            Printf.sprintf
+              "Form: row %d x %d (stage 1 across %d registers, one turn per %d, stage 2 across %d)%s%s"
+              p
+              per
+              p
+              per
+              per
+              (if rows > 1 then Printf.sprintf " rows=%d" rows else "")
+              (match split with
+               | Some (a, b) -> Printf.sprintf " split=%d.%d (stage 1 through S[], 128-bit scatter)" a b
+               | None -> ""))
        ]);
   Buffer.add_string
     buf
-    (Printf.sprintf
-       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
-       \ * PIPELINE-HOSTED (codelet_cil.ml emit_row).\n\
-       \ * radix-%d BATCHED ROW kernel: iteration k = %s of %d complex at\n\
-       \ * zin + 2*k*Gs, stored at zout + 2*k*OGs (the pitches in complex; count = rows;\n\
-       \ * Ls / OLs ignored). A lane is a POINT: the row is %d contiguous\n\
-       \ * vectors, stage 1 is DFT_%d lane-parallel across them%s, one %dx%d complex\n\
-       \ * transpose per block of %d, the twiddles W_%d^(j*k1) are lane-varying\n\
-       \ * constants, stage 2 is DFT_%d across each block; natural order in and out.\n\
-       \ * %d complex per %d-bit vector. Body scheduled by the SHARED SR scheduler\n\
-       \ * (Schedule.Make over the complex IR) and rendered through the ISA layer.\n\
-       \ * tw_re/tw_im unused. In place (zin == zout) is legal. */\n\
-        #include <immintrin.h>\n\
-        #include <stddef.h>\n\n"
-       radix
-       (if rows > 1 then Printf.sprintf "%d whole rows (one-row loop for the leftover)" rows else "ONE whole row")
-       radix
-       p
-       p
-       (match split with
-        | Some (a, b) -> Printf.sprintf " (as %d sub-DFTs of %d through S[])" a b
-        | None -> "")
-       per
-       per
-       per
-       radix
-       per
-       per
-       (vw * 64));
+    (if whole
+     then
+       Printf.sprintf
+         "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row, --cil-rowswap).\n\
+         \ * radix-%d BATCHED ROW kernel, WHOLE-VECTOR LOADS AND SWAPS: iteration k = the rows\n\
+         \ * k .. k+%d at zin + 2*k*Gs, stored at zout + 2*k*OGs (the pitches in complex; count =\n\
+         \ * rows; Ls = OLs = 1: the points of a row are contiguous). A lane is a ROW, as in n1ccs,\n\
+         \ * but a row's vectors are loaded whole and the %d loads of one vector position are\n\
+         \ * transposed in registers into %d legs (one 128-bit-lane exchange per vector); the\n\
+         \ * radix-%d n1 math runs lane-parallel; the outputs are transposed back and stored as\n\
+         \ * whole row vectors. The %d leftover point(s) of a row load and store the n1ccs way.\n\
+         \ * The leftover rows (count %% %d) run one at a time. %d complex per %d-bit vector.\n\
+         \ * tw_re/tw_im unused. In place (zin == zout) is legal. */\n\
+          #include <immintrin.h>\n\
+          #include <stddef.h>\n\n"
+         radix
+         (per - 1)
+         per
+         per
+         radix
+         (radix mod per)
+         per
+         per
+         (vw * 64)
+     else
+       Printf.sprintf
+         "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row).\n\
+         \ * radix-%d BATCHED ROW kernel: iteration k = %s of %d complex at\n\
+         \ * zin + 2*k*Gs, stored at zout + 2*k*OGs (the pitches in complex; count = rows;\n\
+         \ * Ls / OLs ignored). A lane is a POINT: the row is %d contiguous\n\
+         \ * vectors, stage 1 is DFT_%d lane-parallel across them%s, one %dx%d complex\n\
+         \ * transpose per block of %d, the twiddles W_%d^(j*k1) are lane-varying\n\
+         \ * constants, stage 2 is DFT_%d across each block; natural order in and out.\n\
+         \ * %d complex per %d-bit vector. Body scheduled by the SHARED SR scheduler\n\
+         \ * (Schedule.Make over the complex IR) and rendered through the ISA layer.\n\
+         \ * tw_re/tw_im unused. In place (zin == zout) is legal. */\n\
+          #include <immintrin.h>\n\
+          #include <stddef.h>\n\n"
+         radix
+         (if rows > 1 then Printf.sprintf "%d whole rows (one-row loop for the leftover)" rows else "ONE whole row")
+         radix
+         p
+         p
+         (match split with
+          | Some (a, b) -> Printf.sprintf " (as %d sub-DFTs of %d through S[])" a b
+          | None -> "")
+         per
+         per
+         per
+         radix
+         per
+         per
+         (vw * 64));
   Buffer.add_string
     buf
     (if dir = Fwd
@@ -3028,7 +3174,9 @@ let emit_row
        ());
   Buffer.add_string
     buf
-    "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n";
+    (if whole
+     then "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n"
+     else "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n");
   if split <> None
   then
     Buffer.add_string
@@ -3039,12 +3187,12 @@ let emit_row
   Buffer.add_string buf "    size_t k = 0;\n";
   Buffer.add_string
     buf
-    (if rows > 1
-     then Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" rows rows
+    (if step > 1
+     then Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" step step
      else "    for (; k < count; ++k) {\n");
   Buffer.add_buffer buf body;
   Buffer.add_string buf "    }\n";
-  if rows > 1
+  if step > 1
   then (
     Buffer.add_string buf "    for (; k < count; ++k) {  /* the leftover rows, one at a time */\n";
     Buffer.add_buffer buf body_t;
