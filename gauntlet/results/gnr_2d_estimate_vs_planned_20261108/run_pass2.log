@@ -1,0 +1,16 @@
+# 4x2        E route csk+rb     create     818.8 us | B route csk+rb     create     536.0 us | E vs B fwd 0.0e+00 | E roundtrip 1.2e-16
+4x2         E         15.9  B         15.9 ns (best of 6) | E/B median 1.000, best/best 1.004
+# 2x256      E route csk        create     627.9 us | B route csk        create     435.1 us | E vs B fwd 0.0e+00 | E roundtrip 5.6e-16
+2x256       E        371.2  B        369.4 ns (best of 6) | E/B median 1.006, best/best 1.005
+# 64x64      E route chain+rb2  create     598.0 us | B route chain+rb2  create     456.1 us | E vs B fwd 4.2e-16 | E roundtrip 7.8e-16
+64x64       E       6662.9  B       5755.6 ns (best of 6) | E/B median 1.148, best/best 1.158
+# 2x4096     E route csk        create     728.5 us | B route csk        create     492.8 us | E vs B fwd 0.0e+00 | E roundtrip 8.9e-16
+2x4096      E      12452.9  B      12228.6 ns (best of 6) | E/B median 1.004, best/best 1.018
+# 256x256    E route chain      create     466.5 us | B route chain+rb2  create     388.4 us | E vs B fwd 4.9e-16 | E roundtrip 1.1e-15
+256x256     E     181035.2  B     206136.9 ns (best of 6) | E/B median 0.872, best/best 0.878
+# 512x512    E route chain      create     562.1 us | B route chain      create     522.2 us | E vs B fwd 3.8e-16 | E roundtrip 1.6e-15
+512x512     E    1281387.9  B    1182055.8 ns (best of 6) | E/B median 1.088, best/best 1.084
+# 1024x256   E route chain      create     609.6 us | B route chain      create     578.2 us | E vs B fwd 3.1e-16 | E roundtrip 1.3e-15
+1024x256    E    1453756.2  B    1967800.2 ns (best of 6) | E/B median 0.735, best/best 0.739
+# 1024x1024  E route chain      create     548.5 us | B route chain      create     500.0 us | E vs B fwd 3.9e-16 | E roundtrip 1.3e-15
+1024x1024   E    4732127.4  B    6038883.4 ns (best of 6) | E/B median 0.739, best/best 0.784

@@ -1,0 +1,8 @@
+2x256      banked         2ms replayed  2p
+2x4096     banked         2ms replayed  ztt
+4x2        banked         2ms replayed  mono
+64x64      banked         2ms replayed  2p
+256x256    banked         2ms replayed  2p
+512x512    banked         1ms replayed  2p
+1024x256   banked         2ms replayed  2p
+1024x1024  banked         2ms replayed  ztt

@@ -1,0 +1,6 @@
+128        banked      4399ms raced     2p
+256        banked      4940ms raced     2p
+512        banked      5175ms raced     2p
+1024       banked      6291ms raced     ztt
+2048       banked      4775ms raced     ztt
+4096       banked      8664ms raced     ztt

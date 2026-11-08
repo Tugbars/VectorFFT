@@ -1,0 +1,12 @@
+# N=128   E route 2p     create    643.3 us | B route 2p     create    310.7 us | MKL commit     22.3 us | fwd err vs MKL: E 1.6e-16 B 1.6e-16 | E roundtrip 5.6e-16
+N=128    E     81.5  B     76.1  M    101.5 ns (best of 6 orders) | MKL/E median 1.27 (min 1.25) | E/B median 0.995
+# N=256   E route 2p     create    234.0 us | B route 2p     create    289.3 us | MKL commit     21.8 us | fwd err vs MKL: E 2.5e-16 B 2.5e-16 | E roundtrip 4.5e-16
+N=256    E    156.9  B    151.5  M    210.7 ns (best of 6 orders) | MKL/E median 1.33 (min 1.34) | E/B median 1.005
+# N=512   E route 2p     create    335.4 us | B route 2p     create    230.3 us | MKL commit     21.3 us | fwd err vs MKL: E 3.5e-16 B 3.5e-16 | E roundtrip 7.8e-16
+N=512    E    370.3  B    366.3  M    462.8 ns (best of 6 orders) | MKL/E median 1.24 (min 1.25) | E/B median 1.025
+# N=1024  E route ztt    create    249.5 us | B route ztt    create    220.5 us | MKL commit     28.2 us | fwd err vs MKL: E 3.0e-16 B 2.2e-16 | E roundtrip 6.7e-16
+N=1024   E    890.1  B    909.7  M   1180.2 ns (best of 6 orders) | MKL/E median 1.36 (min 1.33) | E/B median 0.935
+# N=2048  E route ztt    create    265.1 us | B route ztt    create    218.1 us | MKL commit     39.7 us | fwd err vs MKL: E 3.2e-16 B 3.2e-16 | E roundtrip 7.8e-16
+N=2048   E   1907.3  B   1859.4  M   2811.4 ns (best of 6 orders) | MKL/E median 1.49 (min 1.47) | E/B median 1.028
+# N=4096  E route ztt    create    424.4 us | B route ztt    create    228.9 us | MKL commit     80.3 us | fwd err vs MKL: E 3.5e-16 B 3.5e-16 | E roundtrip 6.7e-16
+N=4096   E   5068.9  B   5037.7  M   6397.4 ns (best of 6 orders) | MKL/E median 1.26 (min 1.26) | E/B median 1.001

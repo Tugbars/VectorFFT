@@ -1,0 +1,7 @@
+2026-11-08 00:01:08 store: fresh copy of this CPU's shipped wisdom (/home/claude/VectorFFT/src/wisdom/GraniteRapids_avx512)
+2026-11-08 00:01:08 run: 6 cells, contract out of place, bin /home/claude/VectorFFT/gauntlet
+2026-11-08 00:01:08 calibrate: 6 cells (0 already done)
+2026-11-08 00:01:08   calibrated 6/6 (4096), 0 s elapsed
+2026-11-08 00:01:08 bench: 6 cells (0 already benched, 0 not banked -> not benched)
+2026-11-08 00:01:15   benched 6/6 (4096), 6 s elapsed
+2026-11-08 00:01:16 report: /home/claude/VectorFFT/gauntlet/results/gnr_pow2_retime1_20261108/report.md

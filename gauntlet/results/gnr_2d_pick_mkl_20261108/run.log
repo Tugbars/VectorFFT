@@ -1,0 +1,8 @@
+2026-11-08 00:14:54 store: fresh copy of this CPU's shipped wisdom (/home/claude/VectorFFT/src/wisdom/GraniteRapids_avx512)
+2026-11-08 00:14:54 run: 8 cells, contract 2D out of place, bin /home/claude/VectorFFT/gauntlet
+2026-11-08 00:14:54 calibrate: 8 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-11-08 00:16:07   calibrated 8/8 (1024x1024), 74 s elapsed
+2026-11-08 00:16:07 bench: 8 cells (0 already benched, 0 not banked -> not benched)
+2026-11-08 00:16:22   benched 8/8 (1024x1024), 13 s elapsed
+2026-11-08 00:16:23 report: /home/claude/VectorFFT/gauntlet/results/gnr_2d_pick_mkl_20261108/report_2d.md
+2026-11-08 00:16:23 merged into /home/claude/VectorFFT/src/wisdom/GraniteRapids_avx512
