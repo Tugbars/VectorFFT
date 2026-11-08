@@ -2049,6 +2049,32 @@ let zil_pure_cells : (string * string list) list =
     , [ "27"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix27_z_n1ccs_bwd_avx2.c"
     , [ "27"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* THE ROW FAMILY (2026-11-08, rows/row and rows/rowswap): the batched row kernels that beat n1ccs in the
+       pinned race of 2026-11-08 at 256 bits, one winner per radix; n1ccs stays where it won (2 5 6 7 8 10 14
+       26 and the odd lengths 17..47) and everywhere for the turn route's turned stores. row at 4 12 16; the
+       stage-1 split forms rowb44 at 32 and rowb48 at 64; rowswap at 3 9 11 13 15 22. *)
+  ; ( "radix4_z_row_avx2.c", [ "4"; "--cil-row"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_row_bwd_avx2.c", [ "4"; "--cil-row"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_row_avx2.c", [ "12"; "--cil-row"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_row_bwd_avx2.c", [ "12"; "--cil-row"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_row_avx2.c", [ "16"; "--cil-row"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_row_bwd_avx2.c", [ "16"; "--cil-row"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_rowb44_avx2.c", [ "32"; "--cil-row"; "--cil-split"; "4.4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_rowb44_bwd_avx2.c", [ "32"; "--cil-row"; "--cil-split"; "4.4"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rowb48_avx2.c", [ "64"; "--cil-row"; "--cil-split"; "4.8"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rowb48_bwd_avx2.c", [ "64"; "--cil-row"; "--cil-split"; "4.8"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_rowswap_avx2.c", [ "3"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_rowswap_bwd_avx2.c", [ "3"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_rowswap_avx2.c", [ "9"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_rowswap_bwd_avx2.c", [ "9"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_rowswap_avx2.c", [ "11"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_rowswap_bwd_avx2.c", [ "11"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_rowswap_avx2.c", [ "13"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_rowswap_bwd_avx2.c", [ "13"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswap_avx2.c", [ "15"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswap_bwd_avx2.c", [ "15"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix22_z_rowswap_avx2.c", [ "22"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix22_z_rowswap_bwd_avx2.c", [ "22"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_n1tr_avx2.c"
     , [ "4"; "--cil-n1t"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_t2r_avx2.c"
@@ -2591,7 +2617,37 @@ let zil_isa_gap ~(isa : string) (c : Codelet.t) : string option =
     pending "real_il emits the real pair and real rows kinds for the 256-bit ISA only"
   | Codelet.Cil { st128 = true; _ } when vw <> 4 ->
     pending "codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair; split stores at 512 bits wait on a Zen 4 measurement (gauntlet/half_store_bench.sh)"
+  (* the ROW family (2026-11-08): rowswap was raced at 256 bits only -- at 512 bits n1ccs serves until it is
+     raced there; the row form needs the radix a multiple of per^2 and its stage-1 split to factor p = R/per
+     with m1 a multiple of per (c2c_il.ml emit_row), so the 256-bit cells 4, 12 and the splits 4.4 / 4.8 have
+     no 512-bit twin (zil_pure_cells_avx512_only carries that ISA's own row cells) *)
+  | Codelet.Cil { form = Codelet.Cil_rowswap; _ } when vw <> 4 ->
+    Some "the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there"
+  | Codelet.Cil { form = Codelet.Cil_row; split; _ } ->
+    let per = vw / 2 in
+    let r = c.Codelet.radix in
+    if r mod (per * per) <> 0
+    then Some (Printf.sprintf "codelet_cil: the row kind needs radix %d to be a multiple of %d (per^2) at %d bits" r (per * per) (64 * vw))
+    else (
+      match split with
+      | Some (m1, p1) when m1 * p1 <> r / per || m1 mod per <> 0 ->
+        Some (Printf.sprintf "codelet_cil: --cil-split %d.%d does not factor the row kind's stage 1 at %d bits (p = %d, m1 a multiple of %d)" m1 p1 (64 * vw) (r / per) per)
+      | _ -> None)
   | _ -> None
+;;
+
+(* the 512-bit row cells of their own (2026-11-08): the row form at 32 and 64 (the stage-1 splits that won at
+   256 bits do not factor p = 8 / 16, and at 512 bits stage 1 holds 8 / 16 registers: no split needed) and the
+   split form at 128 (owner: AVX-512 has a 128 row kernel; 4.8 counted 5.4 instructions per point). Not raced:
+   this machine has no AVX-512. *)
+let zil_pure_cells_avx512_only : (string * string list) list =
+  [ ( "radix32_z_row_avx512.c", [ "32"; "--cil-row"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix32_z_row_bwd_avx512.c", [ "32"; "--cil-row"; "--cil-bwd"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix64_z_row_avx512.c", [ "64"; "--cil-row"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix64_z_row_bwd_avx512.c", [ "64"; "--cil-row"; "--cil-bwd"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix128_z_rowb48_avx512.c", [ "128"; "--cil-row"; "--cil-split"; "4.8"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix128_z_rowb48_bwd_avx512.c", [ "128"; "--cil-row"; "--cil-split"; "4.8"; "--cil-bwd"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ]
 ;;
 
 let chop_isa_suffix (name : string) : string =
@@ -2649,7 +2705,9 @@ let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
   | q when zil_quadrant_isa q <> None ->
     (match zil_quadrant_isa q with
-     | Some (base, isa) -> fst (zil_retarget ~isa (zil_base_cells base))
+     | Some (base, isa) ->
+       fst (zil_retarget ~isa (zil_base_cells base))
+       @ (if base = "zil-pure" && isa = "avx512" then zil_pure_cells_avx512_only else [])
      | None -> assert false)
   | "oop-edges-avx2" -> oop_edges_avx2_cells
   | "oop-edges-avx512" -> oop_edges_avx512_cells
@@ -2741,7 +2799,13 @@ let zil_folder (name : string) : string option =
                      && is_digits (String.sub base 4 (String.length base - 5)))
          then "shared/col/half"
          else if blocked "n1cb" || blocked "t2cb" then "shared/col/blocked"
-         else if List.mem base [ "n1ccs"; "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
+         (* the 2D tier's batched ROW kernels (2026-11-08): one folder per construction under rows/ --
+            n1ccs (lane loads), rowswap (whole-vector loads and swaps), row (one row per iteration, with its
+            split forms rowb<m1><p1>) *)
+         else if base = "n1ccs" then "rows/n1ccs"
+         else if base = "rowswap" then "rows/rowswap"
+         else if starts_with base "row" then "rows/row"
+         else if List.mem base [ "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
          then "rows"
          else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "pair2p"
          else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "pair2p/blocked"

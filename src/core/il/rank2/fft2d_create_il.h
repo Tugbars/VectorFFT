@@ -360,7 +360,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
     int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
     int il2d_rowb = 0;         /* row route 2: the BATCHED rows */
-    vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its n1ccs pair at N2, when the radix has one */
+    vfft_il2p_fn il2d_rowb_f = NULL, il2d_rowb_b = NULL; /* its row kernel pair at N2 (vfft_il_row_fn), when the radix has one */
+    vfft_il2p_fn il2d_rowt_f = NULL, il2d_rowt_b = NULL; /* the turn route's n1ccs pair at N2 (turned stores) */
     int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows */
     vfft_il2p_fn il2d_rowb2_leaf_f = NULL, il2d_rowb2_mid_f = NULL, il2d_rowb2_t2t_b = NULL, il2d_rowb2_n1_b = NULL;
     double *il2d_rowb2_scr = NULL;
@@ -487,10 +488,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
              * banked verdict, or the env pin VFFT_IL2D_ROWOOP=2) decides
              * whether it serves. A banked ro=2 this build has no kernel
              * for is re-raced, never served by another route. */
-            il2d_rowb_f = vfft_il_n1ccs_fn(N2, 0);
-            il2d_rowb_b = vfft_il_n1ccs_fn(N2, 1);
+            il2d_rowb_f = vfft_il_row_fn(N2, 0);   /* the plain row passes: the row family's winner at N2 */
+            il2d_rowb_b = vfft_il_row_fn(N2, 1);
             if (!il2d_rowb_f || !il2d_rowb_b)
                 il2d_rowb_f = il2d_rowb_b = NULL;
+            il2d_rowt_f = vfft_il_n1ccs_fn(N2, 0);  /* the turn route: the lane-load kernel honours the turned store */
+            il2d_rowt_b = vfft_il_n1ccs_fn(N2, 1);
+            if (!il2d_rowt_f || !il2d_rowt_b)
+                il2d_rowt_f = il2d_rowt_b = NULL;
             if (il2d_row && il2d_bro == 2)
             {
                 if (il2d_rowb_f && !getenv("VFFT_IL2D_ROWOOP"))
@@ -541,7 +546,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
              * plan (the door creates that cell here: replayed or raced and
              * banked like any 1D cell). The axis race decides (one arm);
              * banked turn=1; VFFT_IL2D_ROWOOP=4 pins it. */
-            if (il2d_row && !il2d_blu && il2d_rowb_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
+            if (il2d_row && !il2d_blu && il2d_rowt_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
             {
                 vfft_cfg_t tc;
                 memset(&tc, 0, sizeof tc);
@@ -1040,6 +1045,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     h->il2d_rowb = il2d_rowb;
     h->il2d_rowb_f = il2d_rowb_f;
     h->il2d_rowb_b = il2d_rowb_b;
+    h->il2d_rowt_f = il2d_rowt_f;
+    h->il2d_rowt_b = il2d_rowt_b;
     h->il2d_rowb2 = il2d_rowb2;
     h->il2d_rowb2_leaf_f = il2d_rowb2_leaf_f;
     h->il2d_rowb2_mid_f = il2d_rowb2_mid_f;

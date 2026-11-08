@@ -360,7 +360,7 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # reason): 94 are the whole of shared/col/half, real/pair and real/rows, which
 # therefore have no avx512 folder, and 4 are the radix-4 t0tp/tld kernels of ztt.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/pair zil/real/rows)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04)
+set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/pair zil/real/rows zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
 
 set(VFFT_CODELET_SRCS)
 
@@ -429,7 +429,7 @@ endforeach()
 # simply ABSENT -- THE 598-vs-863 gap, exactly 265 files. Globs are
 # non-recursive, so pure_il and pure_il/tangent are listed separately
 # (build.py does the same).
-foreach(_zdir shared shared/col shared/col/blocked shared/col/half mono pair2p pair2p/blocked pair2p/tangent rows chain3 flat flat/odd_mid ztt real/pair real/mono real/flat real/flat/herm real/rows)
+foreach(_zdir shared shared/col shared/col/blocked shared/col/half mono pair2p pair2p/blocked pair2p/tangent rows rows/n1ccs rows/rowswap rows/row chain3 flat flat/odd_mid ztt real/pair real/mono real/flat real/flat/herm real/rows)
     vfft_add_codelet_dir("zil/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}")
 endforeach()
 # ZTURN-T's FUSED CODELETS (2026-09-09): one whole-transform driver per pow2 cell,

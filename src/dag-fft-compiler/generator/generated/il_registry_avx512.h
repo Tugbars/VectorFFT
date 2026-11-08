@@ -569,6 +569,34 @@ VFFT_IL_DECL(radix32_z_rn1b48_bwd_avx512)
 #define VFFT_IL_RN1B48_BWD_RADICES(X) X(32)
 #define VFFT_IL_RN1B48_PAIR_RADICES(X) X(32)
 
+/* ── row ── fwd 3 · bwd 3 · pair 3 */
+VFFT_IL_DECL(radix16_z_row_fwd_avx512)
+VFFT_IL_DECL(radix32_z_row_fwd_avx512)
+VFFT_IL_DECL(radix64_z_row_fwd_avx512)
+VFFT_IL_DECL(radix16_z_row_bwd_avx512)
+VFFT_IL_DECL(radix32_z_row_bwd_avx512)
+VFFT_IL_DECL(radix64_z_row_bwd_avx512)
+#define VFFT_IL_ROW_FWD_RADICES(X) X(16) X(32) X(64)
+#define VFFT_IL_ROW_BWD_RADICES(X) X(16) X(32) X(64)
+#define VFFT_IL_ROW_PAIR_RADICES(X) X(16) X(32) X(64)
+
+/* ── rowb44 ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_ROWB44_FWD_RADICES(X)
+#define VFFT_IL_ROWB44_BWD_RADICES(X)
+#define VFFT_IL_ROWB44_PAIR_RADICES(X)
+
+/* ── rowb48 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix128_z_rowb48_fwd_avx512)
+VFFT_IL_DECL(radix128_z_rowb48_bwd_avx512)
+#define VFFT_IL_ROWB48_FWD_RADICES(X) X(128)
+#define VFFT_IL_ROWB48_BWD_RADICES(X) X(128)
+#define VFFT_IL_ROWB48_PAIR_RADICES(X) X(128)
+
+/* ── rowswap ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_ROWSWAP_FWD_RADICES(X)
+#define VFFT_IL_ROWSWAP_BWD_RADICES(X)
+#define VFFT_IL_ROWSWAP_PAIR_RADICES(X)
+
 /* ── t0d ── fwd 2 · bwd 0 · pair 0 */
 VFFT_IL_DECL(radix4_z_t0d_fwd_avx512)
 VFFT_IL_DECL(radix8_z_t0d_fwd_avx512)
@@ -1184,13 +1212,21 @@ VFFT_IL_DECL(radix9_z_tmgd_fwd_avx512)
 VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
 #define VFFT_IL_TMGD_FWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(15)
 
+/* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes ── */
+#define VFFT_IL_ROW_CHOICE(X) X(2, n1ccs) X(3, n1ccs) X(4, n1ccs) X(5, n1ccs) X(6, n1ccs) X(7, n1ccs) X(8, n1ccs) X(9, n1ccs) X(10, n1ccs) X(11, n1ccs) X(12, n1ccs) X(13, n1ccs) X(14, n1ccs) X(15, n1ccs) X(16, row) X(17, n1ccs) X(19, n1ccs) X(21, n1ccs) X(22, n1ccs) X(23, n1ccs) X(25, n1ccs) X(26, n1ccs) X(27, n1ccs) X(29, n1ccs) X(31, n1ccs) X(32, row) X(37, n1ccs) X(41, n1ccs) X(43, n1ccs) X(47, n1ccs) X(64, row) X(128, rowb48)
+
 /* zil-boundary-avx512: 4 cells DECLARED ABSENT at avx512:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* zil-pure-avx512: 94 cells DECLARED ABSENT at avx512:
+/* zil-pure-avx512: 114 cells DECLARED ABSENT at avx512:
+ *   2  codelet_cil: --cil-split 4.4 does not factor the row kind's stage 1 at 512 bits (p = 8, m1 a multiple of 4)
+ *   2  codelet_cil: --cil-split 4.8 does not factor the row kind's stage 1 at 512 bits (p = 16, m1 a multiple of 4)
+ *   2  codelet_cil: the row kind needs radix 12 to be a multiple of 16 (per^2) at 512 bits
+ *   2  codelet_cil: the row kind needs radix 4 to be a multiple of 16 (per^2) at 512 bits
  *   32  no 512-bit edge yet: codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair; split stores at 512 bits wait on a Zen 4 measurement (gauntlet/half_store_bench.sh)
  *   62  no 512-bit edge yet: real_il emits the real pair and real rows kinds for the 256-bit ISA only
+ *   12  the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there
  */
-/* 875 declarations over 70 kinds */
+/* 883 declarations over 74 kinds */
 
 #endif

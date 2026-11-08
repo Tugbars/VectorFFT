@@ -242,7 +242,6 @@ let emit
       ~(form_tag : bool)
       ~(turnst : bool)
       ~(turnst_gs : bool)
-      ~(rowname : bool)
       ~(kind : kind)
       ~(dir : dir)
       ~(blocked : bool)
@@ -318,11 +317,6 @@ let emit
       "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing and \
        --cil-n1ccs the n1c leaf with it (lanes = whole transforms at pitch Gs); \
        no log3/blocked/turn on either (they would be new forms, not these kinds)";
-  (* --cil-rowl (2026-11-08): the n1ccs construction emitted under the ROW
-     family's name (symbol rowl, "lane loads": each lane of a vector is loaded
-     from its own row) -- the body is byte-identical to n1ccs's. *)
-  if rowname && not (kind = N1C && colstride)
-  then failwith "codelet_cil: --cil-rowl is the n1ccs construction (n1c + column stride) under the row name";
   (* gen2 rides the column-stride tail kind only (t2csg): its two-table
      stream replaces the per-pair records that kind would otherwise read. *)
   if gen2 && not colstride
@@ -1823,13 +1817,7 @@ let emit
        (match kind with
         | N1 -> "solo n1 (natural order in/out, twiddle-free)"
         | N1C ->
-          if ctx.colstride && rowname
-          then
-            "BATCHED ROW kernel rowl, LANE LOADS (the n1ccs construction under the row \
-             family's name): lane k of a vector = ONE WHOLE row at pitch Gs, zin[2*(l*Ls + \
-             k*Gs)], Ls = 1 (the points of a row are contiguous); each lane loaded from \
-             its own row through the loadu2/storeu2 pairs; in-place same-slot"
-          else if ctx.colstride
+          if ctx.colstride
           then
             "BATCHED leaf n1ccs (n1 math; lane k = ONE WHOLE transform at pitch Gs: \
              zin[2*(l*Ls + k*Gs)], Ls = 1 for contiguous rows; two transforms per \
@@ -1952,10 +1940,10 @@ let emit
             Printf.sprintf
             "radix%d_z_%s_%s_%s"
             radix
-            ((if rowname then "rowl" else kind_name kind)
+            (kind_name kind
              ^ (if blocked then "b" else "")
              ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) && not ctx.colstride then "p" else "")
-             ^ (if ctx.colstride && not rowname then "cs" else "")
+             ^ (if ctx.colstride then "cs" else "")
              ^ (if ctx.tw_gen2 then "g" else "")
              ^ (if transposed then "t" else "")
              ^ (if ctx.tw_gen2 && ctx.tw_gen2_pol <> "" then "_" ^ ctx.tw_gen2_pol else "")

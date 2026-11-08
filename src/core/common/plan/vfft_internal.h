@@ -363,10 +363,10 @@ struct vfft_plan_s
      * PASS per band (the terminator analog). F0 law: banding changes only
      * loop order + base pointers — output memcmp-identical to unbanded. */
     /* row route (2026-09-23): 0 = the in-place NATURAL child, one door walk per
-     * row; 2 = the BATCHED rows: ONE call of the n1ccs kernel at radix N2 over a
-     * run of rows -- lane k = row k at pitch Gs, two rows per vector, no
-     * per-row door, no per-row prologue -- bound whenever the radix has the
-     * pair (vfft_il_n1ccs_fn); 3 = the batched TWO-PASS rows (below). The axis
+     * row; 2 = the BATCHED rows: ONE call of the row kernel at radix N2 over a
+     * run of rows (vfft_il_row_fn: row / rowswap / n1ccs, the winner of the
+     * 2026-11-08 race per radix; no per-row door, no per-row prologue) -- bound
+     * whenever the radix has the pair; 3 = the batched TWO-PASS rows (below). The axis
      * race decides which route serves, the verdict banks as ro=0|2|3 on the
      * cell's row (_il2d_ro_of); VFFT_IL2D_ROWOOP=2|3 pins one for a probe. The
      * out-of-place row child + row scratch + copy-back (the old route 1) is
@@ -374,7 +374,11 @@ struct vfft_plan_s
      * tier serves every N2 (its last candidate is the prime engine), so no
      * forced path remains. Stateless kernels: every MT worker shares them. */
     int il2d_rowb;                 /* route 2 serving */
-    vfft_il2p_fn il2d_rowb_f, il2d_rowb_b; /* the n1ccs pair at radix N2, or NULL */
+    vfft_il2p_fn il2d_rowb_f, il2d_rowb_b; /* the ROW kernel pair at radix N2 (vfft_il_row_fn: row / rowswap /
+                                            * n1ccs, the 2026-11-08 race's winner), or NULL -- the plain row
+                                            * passes (route 2, the skewed pass's rows) */
+    vfft_il2p_fn il2d_rowt_f, il2d_rowt_b; /* the TURN route's row kernel: the n1ccs pair (its turned stores,
+                                            * OLs = the scratch pitch, OGs = 1), or NULL */
     /* 3 = the BATCHED TWO-PASS rows (2026-09-23): the row child's own two-pass
      * factorization (R1 x R2, its bound kernel forms) through the ROW-LOOP twins
      * of its four stage kernels (n1t leaf, t2 mid; t2t + n1 backward) -- per

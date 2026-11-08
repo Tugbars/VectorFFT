@@ -76,6 +76,13 @@ type cil_form =
   | Cil_rn1 (* --cil-rn1: the real MONO, the whole small real transform as one n1 body (c2c_il.ml RN1) *)
   | Cil_r1c (* --cil-r1c: the real FLAT leaf, real legs -> the digit runs (real_il.ml R1c) *)
   | Cil_r2zr (* --cil-r2zr: the real ROWS, the real leaf over row-major rows (real_il.ml R2zr) *)
+  | Cil_row
+    (* --cil-row: the batched ROW kernel of the 2D tier (c2c_il.ml emit_row, 2026-11-08): one row per
+       iteration, a lane is a point, stage 1 across the registers, one turn per block, stage 2 across the
+       block; --cil-split m1.p1 runs stage 1 through S[] (the tag rowb<m1><p1>). Radix a multiple of per^2. *)
+  | Cil_rowswap
+    (* --cil-rowswap: the row kernel with WHOLE-VECTOR LOADS AND SWAPS (lanes = rows, per rows per
+       iteration) for the radixes the row form does not fit; raced at 256 bits on 2026-11-08 *)
 
 type cil_turn =
   | Turnst
@@ -569,7 +576,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
              ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
-    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c"; "--cil-t2h"; "--cil-t2m"; "--cil-r2z"; "--cil-rn1"; "--cil-r1c"; "--cil-r2zr" ] ->
+    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c"; "--cil-t2h"; "--cil-t2m"; "--cil-r2z"; "--cil-rn1"; "--cil-r1c"; "--cil-r2zr"; "--cil-row"; "--cil-rowswap" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
     | "--cil-t2cs" :: tl ->
@@ -742,7 +749,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
          | "dst3" -> Dst3
          | "dst4" -> Dst4
          | _ -> Dht)
-    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c"; "cil-t2h"; "cil-t2m"; "cil-r2z"; "cil-rn1"; "cil-r1c"; "cil-r2zr" ] ->
+    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2"; "cil-t2c"; "cil-t2h"; "cil-t2m"; "cil-r2z"; "cil-rn1"; "cil-r1c"; "cil-r2zr"; "cil-row"; "cil-rowswap" ] ->
       Cil
         { form =
             (if t = "cil-n1"
@@ -765,6 +772,10 @@ let of_argv ?(strict = true) (argv : string list) : t =
              then Cil_r1c
              else if t = "cil-r2zr"
              then Cil_r2zr
+             else if t = "cil-row"
+             then Cil_row
+             else if t = "cil-rowswap"
+             then Cil_rowswap
              else Cil_t2)
         ; tangent = !cil_tangent
         ; blocked = !blocked
@@ -938,6 +949,8 @@ let to_argv (c : t) : string list =
          | Cil_rn1 -> "--cil-rn1"
          | Cil_r1c -> "--cil-r1c"
          | Cil_r2zr -> "--cil-r2zr"
+         | Cil_row -> "--cil-row"
+         | Cil_rowswap -> "--cil-rowswap"
          | Cil_t2 ->
            if grouploop && herm
            then (if transposed then "--cil-t2csght" else "--cil-t2csgh")

@@ -71,6 +71,8 @@ type cil_form =
   | Cil_rn1 (* --cil-rn1: the real MONO, the whole small real transform as one n1 body (c2c_il.ml RN1) *)
   | Cil_r1c (* --cil-r1c: the real FLAT leaf, real legs -> the digit runs (real_il.ml R1c) *)
   | Cil_r2zr (* --cil-r2zr: the real ROWS, the real leaf over row-major rows (real_il.ml R2zr) *)
+  | Cil_row (* --cil-row: the 2D tier's batched ROW kernel, one row per iteration (c2c_il.ml emit_row, 2026-11-08) *)
+  | Cil_rowswap (* --cil-rowswap: the row kernel with whole-vector loads and swaps, lanes = rows *)
 
 type cil_turn =
   | Turnst

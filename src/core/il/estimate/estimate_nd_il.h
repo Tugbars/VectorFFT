@@ -914,11 +914,11 @@ static inline int est__machine_ok(const est_machine_t *m, char *why, size_t whyl
 /* the row route of a plane without the turn (sketch §8): p's N2, column and row plan set */
 static inline int est__ro_2d(const est_plan2d_t *p)
 {
-    const int N2 = p->N2, n1ccs = vfft_il_n1ccs_fn(N2, 0) && vfft_il_n1ccs_fn(N2, 1);
+    const int N2 = p->N2, rowk = vfft_il_row_fn(N2, 0) && vfft_il_row_fn(N2, 1); /* the plain rows' kernel */
     if (p->col.blu > 0)
         return 0;
     if (N2 <= EST_ND_ROWB_MAX)
-        return n1ccs ? 2 : 0;
+        return rowk ? 2 : 0;
     if (N2 <= EST_ND_ROWB2_MAX && !est_is_pow2(N2) && (N2 > 32 || est__spills_single(N2)))
         return 0;   /* a row of 25, 27 or a non-power of two above 32 (up to 64): the per-row child
                      * (2026-10-26). The batched rows run each row as one kernel of N2, and those kernels
@@ -929,7 +929,7 @@ static inline int est__ro_2d(const est_plan2d_t *p)
                      * estimate's batched rows cost 25x25 and 27x27 1.22-1.69 x the planner; the per-row child
                      * at 21^3 and 31^3 cost 1.34 and 1.07 */
     if (N2 <= EST_ND_ROWB2_MAX)
-        return est__rowb2_form(&p->rp) ? 3 : n1ccs ? 2 : 0;
+        return est__rowb2_form(&p->rp) ? 3 : rowk ? 2 : 0;
     return 0;
 }
 

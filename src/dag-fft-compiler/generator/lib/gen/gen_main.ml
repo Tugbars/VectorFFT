@@ -87,7 +87,6 @@ let run (argv : string array) : unit =
      from zp_kind so the two emitters stay A/B-able. *)
   let cil_kind = ref "" in
   let cil_rows = ref 1 in
-  let cil_rowname = ref false in   (* --cil-rowl: the n1ccs construction under the row name *)
   let cil_rowswap = ref false in      (* --cil-rowswap: the row kind with whole-vector loads and swaps *)
   (* --cil-split m.p : the blocked (2-pass) CT factorization. REQUIRED for a
      non-pow2 blocked emission — the emitter validates it but never invents
@@ -270,12 +269,6 @@ let run (argv : string array) : unit =
          per iteration (2026-11-08) *)
       cil_kind := "row";
       cil_rowswap := true)
-    else if arg = "--cil-rowl"
-    then (
-      (* the n1ccs construction (LANE LOADS) under the row family's name *)
-      cil_kind := "n1c";
-      cil_colstride := true;
-      cil_rowname := true)
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
     else if arg = "--cil-t2csg"
@@ -705,7 +698,6 @@ let run (argv : string array) : unit =
            ~form_tag:!cil_form_tag
            ~log3:!cil_log3
            ~pretw:!cil_pretw
-           ~rowname:!cil_rowname
            ~colstride:!cil_colstride
            ~gen2:!cil_gen2
            ~grouploop:!cil_grouploop

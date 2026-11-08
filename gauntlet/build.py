@@ -74,6 +74,9 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p' / 'blocked',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'pair2p' / 'tangent',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'rows',
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'rows' / 'n1ccs',    # the 2D tier's batched ROW kernels, one folder per construction (2026-11-08):
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'rows' / 'rowswap',  # n1ccs = lane loads, rowswap = whole-vector loads and swaps,
+        DAG / 'codelets' / 'zil'  / DAG_ISA / 'rows' / 'row',      # row = one row per iteration (and its stage-1 split forms rowb*)
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'chain3',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat',
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'flat' / 'odd_mid',

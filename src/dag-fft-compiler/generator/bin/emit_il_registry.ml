@@ -177,6 +177,28 @@ let () =
        emit_list "PAIR" pair;
        Printf.printf "\n")
     tags;
+  (* THE ROW FAMILY'S KERNEL PER RADIX (2026-11-08): the batched row kernel the 2D tier's plain row
+     passes call (vfft_il_row_fn). The corpus holds ONE winner of the 2026-11-08 race per radix besides
+     n1ccs -- row / rowb<m1><p1> / rowswap -- and that pair is the choice; a radix with none keeps the
+     n1ccs pair (the lane-load construction, which also serves the turn route's turned stores). Two
+     winners at one radix is a corpus error, not a tie-break. *)
+  let row_tags = List.filter (fun t -> t = "n1ccs" || starts_with "row" t) tags in
+  let pair_of t = List.filter (fun r -> List.mem r (radices (t, `Bwd))) (radices (t, `Fwd)) in
+  let row_radices = List.sort_uniq compare (List.concat_map pair_of row_tags) in
+  Printf.printf "/* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes ── */\n";
+  Printf.printf "#define VFFT_IL_ROW_CHOICE(X)";
+  List.iter
+    (fun r ->
+       match List.filter (fun t -> t <> "n1ccs" && List.mem r (pair_of t)) row_tags with
+       | [ t ] -> Printf.printf " X(%d, %s)" r t
+       | [] -> if List.mem r (pair_of "n1ccs") then Printf.printf " X(%d, n1ccs)" r
+       | l ->
+         failwith
+           (Printf.sprintf
+              "emit_il_registry: radix %d has %d row kernels besides n1ccs (%s) at %s: the corpus holds one winner per radix"
+              r (List.length l) (String.concat ", " l) isa))
+    row_radices;
+  Printf.printf "\n\n";
   List.iter
     (fun q ->
        match Corpus.zil_absent q with

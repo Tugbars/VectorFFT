@@ -1099,7 +1099,7 @@ static void _il2d_turn_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double 
     const size_t N1 = (size_t)h->N, rn = (size_t)h->N2, P = VFFT_IL2D_TURN_PITCH(N1);
     double *T = h->il2d_turn_scr;
     size_t c;
-    (dir == VFFT_FORWARD ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, P, 1, N1);
+    (dir == VFFT_FORWARD ? h->il2d_rowt_f : h->il2d_rowt_b)(sre, NULL, T, NULL, NULL, NULL, 1, rn, P, 1, N1);
     for (c = 0; c < rn; c++)
         _vfft_exec6((vfft_plan)h->il2d_turn_plan, dir, T + 2 * c * P, NULL, T + 2 * c * P, NULL);
     _il2d_turn_back(T, P, dre, N1, rn);
@@ -1332,7 +1332,7 @@ static void _il2d_c2c_mt_tramp(void *v)
         break;
     case 8: /* the threaded TURN, phase 1: rows [4 lo, 4 hi) through
              * the batched mono kernel with turned stores into the N2 x P scratch */
-        (a->fwd ? h->il2d_rowb_f : h->il2d_rowb_b)(a->src + 2 * 4 * a->lo * rn, NULL,
+        (a->fwd ? h->il2d_rowt_f : h->il2d_rowt_b)(a->src + 2 * 4 * a->lo * rn, NULL,
                                                     h->il2d_turn_scr + 2 * 4 * a->lo, NULL, NULL, NULL,
                                                     1, rn, VFFT_IL2D_TURN_PITCH((size_t)h->N), 1, 4 * (a->hi - a->lo));
         break;
@@ -1465,7 +1465,7 @@ static int _il2d_turn_exec_mt(struct vfft_plan_s *h, const double *sre, double *
     if (Tr >= 2)
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 8, N1 / 4, Tr);
     else
-        (fwd ? h->il2d_rowb_f : h->il2d_rowb_b)(sre, NULL, h->il2d_turn_scr, NULL, NULL, NULL, 1, rn, P, 1, N1);
+        (fwd ? h->il2d_rowt_f : h->il2d_rowt_b)(sre, NULL, h->il2d_turn_scr, NULL, NULL, NULL, 1, rn, P, 1, N1);
     if (Tc >= 2)
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 9, rn, Tc);
     else

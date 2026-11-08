@@ -157,7 +157,8 @@ static inline int est__rowb2_twins(const est_recipe_t *rp, int N2)
 static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t whylen)
 {
     const int mono = vfft_k1_mono_ilc_fn(p->N1, 0) && vfft_k1_mono_ilc_fn(p->N1, 1);
-    const int n1ccs = vfft_il_n1ccs_fn(p->N2, 0) && vfft_il_n1ccs_fn(p->N2, 1);
+    const int n1ccs = vfft_il_n1ccs_fn(p->N2, 0) && vfft_il_n1ccs_fn(p->N2, 1); /* the turn's kernel */
+    const int rowk = vfft_il_row_fn(p->N2, 0) && vfft_il_row_fn(p->N2, 1);     /* the plain rows' kernel (ro=2) */
     char w2[400];
     if (p->N1 < 2 || p->N2 < 2 || vfft_policy_c2c_row_refused(p->N2))
         return est_refuse(why, whylen, "%dx%d is not a 2D cell the door serves", p->N1, p->N2);
@@ -173,7 +174,7 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
         (p->has_csk && est__preflight_child(&p->cskp, p->N2, VFFT_PLACEMENT_OUT, "the skewed pass's row plan", why, whylen)) ||
         (p->col.tpc == 1 && est__preflight_child(&p->tpcp, p->N1, VFFT_PLACEMENT_IN, "the turned prime pass", why, whylen)))
         return -1;
-    if ((p->ro == 2 && !n1ccs) || (p->ro == 3 && !est__rowb2_twins(&p->rp, p->N2)) || (p->ro != 0 && p->ro != 2 && p->ro != 3))
+    if ((p->ro == 2 && !rowk) || (p->ro == 3 && !est__rowb2_twins(&p->rp, p->N2)) || (p->ro != 0 && p->ro != 2 && p->ro != 3))
         return est_refuse(why, whylen, "%dx%d: the row route ro=%d has no kernels for the row plan", p->N1, p->N2, p->ro);
     if ((p->turn && (!p->has_turn || p->csk || p->ro)) || (p->csk && !p->has_csk) || ((p->turn || p->csk) && p->col.wl))
         return est_refuse(why, whylen, "%dx%d: turn=%d csk=%d ro=%d wl=%d is no configuration the door serves", p->N1,

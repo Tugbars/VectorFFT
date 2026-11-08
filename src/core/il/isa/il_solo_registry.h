@@ -94,4 +94,30 @@ static inline vfft_oop11_fn vfft_il_n1ccs_fn(int R, int bwd)
     }
 }
 
+/* ── THE ROW FAMILY (2026-11-08): the batched row kernel of the 2D tier's PLAIN
+ * row passes (the batched rows route and the skewed pass's rows). Per radix the
+ * corpus holds the winner of the 2026-11-08 pinned race at 256 bits:
+ *   row       one row per iteration, a lane is a POINT of the row (stage 1 across
+ *             the registers, one register transpose per block, stage 2 across the
+ *             block; MKL's row form), rowb<m1><p1> = stage 1 split through S[];
+ *   rowswap   lanes = rows like n1ccs, but whole-vector loads and 128-bit-lane
+ *             swaps instead of the lane gather;
+ *   n1ccs     the lane-load construction, where it won.
+ * The folders rows/row, rows/rowswap, rows/n1ccs; the generated
+ * VFFT_IL_ROW_CHOICE lists the pair per radix. Same call as n1ccs:
+ *   fn(z, NULL, z, NULL, NULL, NULL, 1, pitch, 1, pitch, rows)
+ * with PLAIN row stores: row and rowswap take OLs = 1 (rowswap: Ls = OLs = 1),
+ * so the TURN route keeps vfft_il_n1ccs_fn for its turned stores (OLs = the
+ * scratch pitch, OGs = 1). NULL where the radix has no row kernel. */
+static inline vfft_oop11_fn vfft_il_row_fn(int R, int bwd)
+{
+    switch (R)
+    {
+#define C(r, tag) case r: return bwd ? VFFT_IL_SYM(radix##r##_z_##tag##_bwd) : VFFT_IL_SYM(radix##r##_z_##tag##_fwd);
+    VFFT_IL_ROW_CHOICE(C)
+#undef C
+    default: return 0;
+    }
+}
+
 #endif /* VFFT_IL_SOLO_REGISTRY_H */
