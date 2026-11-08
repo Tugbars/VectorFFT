@@ -598,6 +598,26 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
     return w >= 8 && vfft_policy_il2d_wl_cut(N, nst, L, w) >= 0;
 }
 
+/* -- rank 2, c2c: the row engine FIXED by admission (2026-11-08) -----------
+ * The one-pass row kernel at N2 is THE row engine of the plane -- the per-row
+ * 1D plan and the two-pass rows are not raced against it -- when it exists
+ * and does not spill by construction: a whole-row form up to radix 16 (the
+ * register budget: no monolithic kernel above 16), or a split form up to 64
+ * (vfft_il_row_split; 64 = the longest split form raced, at 256 bits). Evidence,
+ * 2026-11-08: over the 159 power-of-two
+ * planes the planner never banked the per-row plan where a one-pass kernel
+ * exists, and the two-pass rows tied the kernel at rows of 32 and 64 (within
+ * the control's spread) at all 14 planes that had banked them; the odd rows of
+ * 25, 27, 35, 45, 49, 60, 63 (whole-row forms above 16) keep their race, as the
+ * 2026-10-26 record banks the per-row plan there. A split form above 64 (the
+ * 512-bit corpus's radix 128) keeps its race until it is raced on its ISA.
+ * Pure arithmetic over the facts the caller holds (the kernel's existence and
+ * form). The 2D estimate asks the same predicate (est__ro_2d). */
+static inline int vfft_policy_il2d_row_fixed(int N2, int has_kernel, int split)
+{
+    return has_kernel && (N2 <= 16 || (split && N2 <= 64));
+}
+
 /* -- rank 2, real: the DESTROYING c2r -------------------------------------
  * A c2r request may permit the plan to overwrite its input
  * (vfft_config_t.destroy_input). The permission is used in ONE structure: the

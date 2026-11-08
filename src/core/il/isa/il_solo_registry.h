@@ -120,6 +120,23 @@ static inline vfft_oop11_fn vfft_il_row_fn(int R, int bwd)
     }
 }
 
+/* 1 = the radix's row kernel is a SPLIT form (the tag rowb<m1><p1>: stage 1
+ * through S[], the kernel holding a fraction of the row at a time), 0 = a
+ * whole-row form (row, rowswap, n1ccs) or no kernel. The 2D tier's row-engine
+ * admission (vfft_policy_il2d_row_fixed) reads it: a whole-row form above
+ * radix 16 spills by construction and keeps its race. The tag grammar is the
+ * generator's (c2c_il.ml emit_row: "swap"? ^ "row" ^ "b<m1><p1>"? ^ "t"?). */
+static inline int vfft_il_row_split(int R)
+{
+    switch (R)
+    {
+#define C(r, tag) case r: return (#tag)[0] == 'r' && (#tag)[3] == 'b';
+    VFFT_IL_ROW_CHOICE(C)
+#undef C
+    default: return 0;
+    }
+}
+
 /* The TURN route's row kernel (2026-11-08): the same families with TURNED
  * stores -- point l of row k at zout[2*(l*OLs + k*OGs)], OLs = the point pitch
  * of the turn's scratch, OGs = 1 (the symbols end in t: rowswapt, rowb44t,

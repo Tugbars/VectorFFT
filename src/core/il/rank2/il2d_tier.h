@@ -3972,10 +3972,16 @@ static void _il2d_arm_axis(void *v)
 /* the axis race: time the FULL execute (column chain + rows) over the wl
  * candidates x the row routes (x the two-pass rows' tile), set the winner on
  * the plan, bank chain+wl+tf+ro(+rbk) as one lay=il verdict. wl wins +15-21%
- * at some cells and LOSES at others; the batched rows win at N2 <= 16 (mono)
- * and 32/64 (two-pass) and the per-row child elsewhere -- per-cell only,
- * never defaults. There is no out-of-place child route (ro=1): beside the
- * batched routes it never won, and the in-place K=1 tier serves every N2
+ * at some cells and LOSES at others -- per-cell only, never defaults. The ROW
+ * ENGINE is raced only where its admission leaves a question
+ * (vfft_policy_il2d_row_fixed, 2026-11-08): a one-pass row kernel that does
+ * not spill by construction (a whole-row form up to 16, a split form at any
+ * radix) IS the row engine, and the per-row child and the two-pass rows are
+ * not arms beside it; above those lengths the child and the two-pass rows
+ * race as before. The TURN arm runs only where the skewed pass has no arm:
+ * when both axes are one kernel, the column goes first (two walks, not three;
+ * 21 of 21 banked planes). There is no out-of-place child route (ro=1): beside
+ * the batched routes it never won, and the in-place K=1 tier serves every N2
  * (its last candidate is the prime engine).
  *
  * ORDER CELLS: every bank below keys the order by the CELL's order
@@ -4080,6 +4086,9 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         double ns[VFFT_RACE_MAX_ARMS];
         int na = 0, a;
+        /* the row engine's admission: the one-pass kernel is THE row engine
+         * (no child, no two-pass arm) where it does not spill by construction */
+        const int rofix = vfft_policy_il2d_row_fixed(N2, h->il2d_rowb_f != NULL, vfft_il_row_split(N2));
         for (csk = 0; csk <= (h->il2d_csk_scr ? 1 : 0); csk++)
         for (ro = 0; ro <= 4; ro++)
             for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
@@ -4093,13 +4102,15 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 if (csk && (w != 0 || ro == 4 || (ro == 0 && !h->il2d_csk_row)))
                     continue;
                 /* the row routes: 0 = the in-place child; 2 = the BATCHED rows,
-                 * when the radix has the n1ccs pair; 3 = the batched TWO-PASS
+                 * when the radix has a row kernel; 3 = the batched TWO-PASS
                  * rows, when the child's stage kernels have row-loop twins
-                 * (there is no route 1). 4 = the
+                 * (there is no route 1); 0 and 3 only where the kernel's
+                 * admission leaves the question open (rofix). 4 = the
                  * TURN route (the whole plane through the 1D engine): one arm,
-                 * no band, no tile, when its N1 plan built. */
-                if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && !h->il2d_rowb2_leaf_f) ||
-                    (ro == 4 && (!h->il2d_turn_plan || w != 0)))
+                 * no band, no tile, when its N1 plan built and the skewed pass
+                 * has no arm (a one-kernel column goes first). */
+                if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && (!h->il2d_rowb2_leaf_f || rofix)) ||
+                    (ro == 0 && rofix) || (ro == 4 && (!h->il2d_turn_plan || w != 0 || h->il2d_csk_scr)))
                     continue;
                 if (prune && w != 0)
                     continue;   /* the threaded natural walk has no bands */

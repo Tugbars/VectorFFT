@@ -124,7 +124,9 @@ typedef struct est_plan3d_s
 #define EST_ND_3D_PLANE_DIV 2
 /* the 2D row route (sketch §8): the skewed pass up to N1 = 16, and at the odd N1 up to 31 on rows of at
  * least 128 but at the kernels that spill (est__spills_single); the turn from N1 = 128 at N2 <= 8; the
- * batched rows up to N2 = 16, the batched two-pass rows up to N2 = 64; the two-pass tile 8 KB. The odd
+ * batched rows wherever the planner's own admission fixes the one-pass row kernel as the row engine
+ * (vfft_policy_il2d_row_fixed, 2026-11-08: every N2 <= 16 with a kernel, and the split forms at 32 and 64
+ * at 256 bits), the batched two-pass rows elsewhere up to N2 = 64; the two-pass tile 8 KB. The odd
  * band is of 2026-10-26: the planner banks the skewed pass at the columns 17, 19, 21, 23, 29, 31 on rows of
  * 128-2048 (the estimate without it 1.18-1.51 x the planner in 13 of 13 cells) and not on narrow rows
  * (29x64, 21x21, the 21x64 and 21x21 planes of 21x21x64 and 21x21x21); over the 226 rows of the store
@@ -135,7 +137,6 @@ typedef struct est_plan3d_s
 #define EST_ND_CSK_ODD_N2 128
 #define EST_ND_TURN_N1 128
 #define EST_ND_TURN_N2 8
-#define EST_ND_ROWB_MAX 16
 #define EST_ND_ROWB2_MAX 64
 #define EST_ND_RBK 8
 /* the Rader stage (est__rader, 2026-10-26): the window EST_ND_RD_W columns; the inner chain the engine's
@@ -917,8 +918,8 @@ static inline int est__ro_2d(const est_plan2d_t *p)
     const int N2 = p->N2, rowk = vfft_il_row_fn(N2, 0) && vfft_il_row_fn(N2, 1); /* the plain rows' kernel */
     if (p->col.blu > 0)
         return 0;
-    if (N2 <= EST_ND_ROWB_MAX)
-        return rowk ? 2 : 0;
+    if (vfft_policy_il2d_row_fixed(N2, rowk, vfft_il_row_split(N2)))
+        return 2;   /* the planner's admission (policy_il.h): the one-pass kernel IS the row engine, unraced */
     if (N2 <= EST_ND_ROWB2_MAX && !est_is_pow2(N2) && (N2 > 32 || est__spills_single(N2)))
         return 0;   /* a row of 25, 27 or a non-power of two above 32 (up to 64): the per-row child
                      * (2026-10-26). The batched rows run each row as one kernel of N2, and those kernels
