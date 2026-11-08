@@ -2075,6 +2075,36 @@ let zil_pure_cells : (string * string list) list =
   ; ( "radix15_z_rowswap_bwd_avx2.c", [ "15"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix22_z_rowswap_avx2.c", [ "22"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix22_z_rowswap_bwd_avx2.c", [ "22"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* THE TURNED TWINS (--cil-turnst, 2026-11-08): the 2D turn route's row kernels, stores point-major into its
+       scratch. Raced in the turn role against n1ccs the same day: rowswapt wins at 2 3 5 7 8 9 10 11 13 14 15
+       (1.07x..1.59x), rowb44t at 32 (2.2x), rowb48t at 64 (2.0x); n1ccs keeps 4 6 12 16 22 26 and 17..47
+       (the row form's twin rowt lost at 4, 12, 16: its extra output transpose). *)
+  ; ( "radix32_z_rowb44t_avx2.c", [ "32"; "--cil-row"; "--cil-split"; "4.4"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_rowb44t_bwd_avx2.c", [ "32"; "--cil-row"; "--cil-split"; "4.4"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rowb48t_avx2.c", [ "64"; "--cil-row"; "--cil-split"; "4.8"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_rowb48t_bwd_avx2.c", [ "64"; "--cil-row"; "--cil-split"; "4.8"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_rowswapt_avx2.c", [ "2"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_rowswapt_bwd_avx2.c", [ "2"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_rowswapt_avx2.c", [ "3"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_rowswapt_bwd_avx2.c", [ "3"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_rowswapt_avx2.c", [ "5"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_rowswapt_bwd_avx2.c", [ "5"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_rowswapt_avx2.c", [ "7"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_rowswapt_bwd_avx2.c", [ "7"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_rowswapt_avx2.c", [ "8"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_rowswapt_bwd_avx2.c", [ "8"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_rowswapt_avx2.c", [ "9"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_rowswapt_bwd_avx2.c", [ "9"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_rowswapt_avx2.c", [ "10"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_rowswapt_bwd_avx2.c", [ "10"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_rowswapt_avx2.c", [ "11"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_rowswapt_bwd_avx2.c", [ "11"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_rowswapt_avx2.c", [ "13"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_rowswapt_bwd_avx2.c", [ "13"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_rowswapt_avx2.c", [ "14"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix14_z_rowswapt_bwd_avx2.c", [ "14"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswapt_avx2.c", [ "15"; "--cil-rowswap"; "--cil-turnst"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswapt_bwd_avx2.c", [ "15"; "--cil-rowswap"; "--cil-turnst"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_n1tr_avx2.c"
     , [ "4"; "--cil-n1t"; "--cil-rowloop"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_t2r_avx2.c"
@@ -2803,8 +2833,8 @@ let zil_folder (name : string) : string option =
             n1ccs (lane loads), rowswap (whole-vector loads and swaps), row (one row per iteration, with its
             split forms rowb<m1><p1>) *)
          else if base = "n1ccs" then "rows/n1ccs"
-         else if base = "rowswap" then "rows/rowswap"
-         else if starts_with base "row" then "rows/row"
+         else if starts_with base "rowswap" then "rows/rowswap"   (* rowswap, rowswapt (turned stores) *)
+         else if starts_with base "row" then "rows/row"           (* row, rowb<m1><p1>, and their turned twins ...t *)
          else if List.mem base [ "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]
          then "rows"
          else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "pair2p"

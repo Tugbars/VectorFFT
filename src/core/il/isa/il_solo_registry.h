@@ -120,4 +120,21 @@ static inline vfft_oop11_fn vfft_il_row_fn(int R, int bwd)
     }
 }
 
+/* The TURN route's row kernel (2026-11-08): the same families with TURNED
+ * stores -- point l of row k at zout[2*(l*OLs + k*OGs)], OLs = the point pitch
+ * of the turn's scratch, OGs = 1 (the symbols end in t: rowswapt, rowb44t,
+ * rowb48t). Per radix the corpus holds the winner of the turn-role race, else
+ * n1ccs, whose store honours those pitches as it is. Call:
+ *   fn(z, NULL, scratch, NULL, NULL, NULL, 1, pitch, P, 1, rows) */
+static inline vfft_oop11_fn vfft_il_rowt_fn(int R, int bwd)
+{
+    switch (R)
+    {
+#define C(r, tag) case r: return bwd ? VFFT_IL_SYM(radix##r##_z_##tag##_bwd) : VFFT_IL_SYM(radix##r##_z_##tag##_fwd);
+    VFFT_IL_ROWT_CHOICE(C)
+#undef C
+    default: return 0;
+    }
+}
+
 #endif /* VFFT_IL_SOLO_REGISTRY_H */

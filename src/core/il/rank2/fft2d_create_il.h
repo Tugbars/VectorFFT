@@ -492,8 +492,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             il2d_rowb_b = vfft_il_row_fn(N2, 1);
             if (!il2d_rowb_f || !il2d_rowb_b)
                 il2d_rowb_f = il2d_rowb_b = NULL;
-            il2d_rowt_f = vfft_il_n1ccs_fn(N2, 0);  /* the turn route: the lane-load kernel honours the turned store */
-            il2d_rowt_b = vfft_il_n1ccs_fn(N2, 1);
+            il2d_rowt_f = vfft_il_rowt_fn(N2, 0);   /* the turn route: the turned-store twin at N2, else n1ccs */
+            il2d_rowt_b = vfft_il_rowt_fn(N2, 1);
             if (!il2d_rowt_f || !il2d_rowt_b)
                 il2d_rowt_f = il2d_rowt_b = NULL;
             if (il2d_row && il2d_bro == 2)

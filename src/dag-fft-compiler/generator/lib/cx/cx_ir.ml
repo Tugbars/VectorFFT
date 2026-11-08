@@ -88,6 +88,10 @@ type caddr =
      the split form's 128-bit scatter). ── *)
   | AZinRow of int * int (* (r, c): zin [2*(((size_t)k + r)*Gs  + c)] *)
   | AZoutRow of int * int (* (r, c): zout[2*(((size_t)k + r)*OGs + c)] *)
+  | AZoutRowT of int * int
+    (* (r, l): the TURNED store of the row kinds (the 2D turn route, 2026-11-08): point l of row k+r at
+       zout[2*((size_t)l*OLs + ((size_t)k + r)*OGs)] -- OLs = the point pitch of the turned scratch, OGs = 1,
+       so the per rows' values of a point are adjacent and a lanes = rows vector stores whole *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)

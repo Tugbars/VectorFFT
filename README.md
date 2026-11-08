@@ -74,15 +74,15 @@ equal vertical gaps).
 Every route is raced per plane by the planner and banked in
 wisdom; the design is in
 [`docs/design/il2d_c2c_strategy.md`](docs/design/il2d_c2c_strategy.md). The record is
-[`gauntlet_2d-pow2grid5`](gauntlet/results/gauntlet_2d-pow2grid5/).
+[`gauntlet_2d-pow2grid6_rowkernels_20261108b`](gauntlet/results/gauntlet_2d-pow2grid6_rowkernels_20261108b/).
 
 | Plane size | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
-| up to 256 points | 28 | 4.57x | 89% | 10.28x (4x2) |
-| 257..4,096 | 38 | 1.55x | 84% | 4.72x (2x256) |
-| 4,097..65,536 | 48 | 1.23x | 100% | 2.33x (2x4096) |
-| 65,537..4M | 45 | 1.29x | 98% | 1.96x (1024x256) |
-| **all, 159 planes** | **159** | **1.34x** | **94%** | 10.28x (4x2) |
+| up to 256 points | 28 | 5.17x | 100% | 18.31x (2x4) |
+| 257..4,096 | 38 | 1.66x | 95% | 4.79x (2x256) |
+| 4,097..65,536 | 48 | 1.38x | 100% | 2.56x (2x4096) |
+| 65,537..4M | 45 | 1.50x | 100% | 2.23x (8192x512) |
+| **all, 159 planes** | **159** | **1.52x** | **99%** | 18.31x (2x4) |
 
 The same 159 planes at eight threads, MKL at eight threads too. The threaded design is in
 [`docs/design/il2d_c2c_mt.md`](docs/design/il2d_c2c_mt.md).

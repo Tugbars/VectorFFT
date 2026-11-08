@@ -182,23 +182,33 @@ let () =
      n1ccs -- row / rowb<m1><p1> / rowswap -- and that pair is the choice; a radix with none keeps the
      n1ccs pair (the lane-load construction, which also serves the turn route's turned stores). Two
      winners at one radix is a corpus error, not a tie-break. *)
-  let row_tags = List.filter (fun t -> t = "n1ccs" || starts_with "row" t) tags in
   let pair_of t = List.filter (fun r -> List.mem r (radices (t, `Bwd))) (radices (t, `Fwd)) in
-  let row_radices = List.sort_uniq compare (List.concat_map pair_of row_tags) in
-  Printf.printf "/* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes ── */\n";
-  Printf.printf "#define VFFT_IL_ROW_CHOICE(X)";
-  List.iter
-    (fun r ->
-       match List.filter (fun t -> t <> "n1ccs" && List.mem r (pair_of t)) row_tags with
-       | [ t ] -> Printf.printf " X(%d, %s)" r t
-       | [] -> if List.mem r (pair_of "n1ccs") then Printf.printf " X(%d, n1ccs)" r
-       | l ->
-         failwith
-           (Printf.sprintf
-              "emit_il_registry: radix %d has %d row kernels besides n1ccs (%s) at %s: the corpus holds one winner per radix"
-              r (List.length l) (String.concat ", " l) isa))
-    row_radices;
-  Printf.printf "\n\n";
+  (* two choices: the PLAIN row kernels (row, rowb<m1><p1>, rowswap; stores row-major) and their TURNED twins
+     (the tag ends in t: rowt, rowb44t, rowswapt; stores point-major for the 2D turn route). n1ccs serves both
+     roles where no twin exists (its store honours the turned pitches). *)
+  let turned t = t <> "n1ccs" && starts_with "row" t && t.[String.length t - 1] = 't' in
+  let choice name keep =
+    let row_tags = List.filter (fun t -> t = "n1ccs" || (starts_with "row" t && keep t)) tags in
+    let row_radices = List.sort_uniq compare (List.concat_map pair_of row_tags) in
+    Printf.printf "#define %s(X)" name;
+    List.iter
+      (fun r ->
+         match List.filter (fun t -> t <> "n1ccs" && List.mem r (pair_of t)) row_tags with
+         | [ t ] -> Printf.printf " X(%d, %s)" r t
+         | [] -> if List.mem r (pair_of "n1ccs") then Printf.printf " X(%d, n1ccs)" r
+         | l ->
+           failwith
+             (Printf.sprintf
+                "emit_il_registry: radix %d has %d row kernels besides n1ccs for %s (%s) at %s: the corpus holds one winner per radix"
+                r (List.length l) name (String.concat ", " l) isa))
+      row_radices;
+    Printf.printf "\n"
+  in
+  Printf.printf "/* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes, and the\n";
+  Printf.printf " * turned-store twin for the 2D turn route ── */\n";
+  choice "VFFT_IL_ROW_CHOICE" (fun t -> not (turned t));
+  choice "VFFT_IL_ROWT_CHOICE" turned;
+  Printf.printf "\n";
   List.iter
     (fun q ->
        match Corpus.zil_absent q with

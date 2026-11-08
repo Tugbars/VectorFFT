@@ -100,12 +100,25 @@ ax.text(-0.95, 3.5, "$N_1$", ha="right", va="center", fontsize=13)
 
 # predominant-route brackets, from the data (the exact regions are the heavy rules): across the
 # top, runs of N2 columns whose planes mostly use one route; down the left, the same for N1 rows
-def hbracket(j0, j1, y, label):
+def hbracket(j0, j1, y, label, tier=0):
     ax.plot([j0 - .42, j0 - .42, j1 + .42, j1 + .42], [y + .12, y, y, y + .12], color="black", lw=0.7, clip_on=False)
-    ax.text((j0 + j1) / 2, y - .1, label, ha="center", va="bottom", fontsize=9.5, fontstyle="italic")
-def vbracket(i0, i1, x, label):
+    ax.text((j0 + j1) / 2, y - .1 - .42 * tier, label, ha="center", va="bottom", fontsize=9.5, fontstyle="italic")
+def vbracket(i0, i1, x, label, tier=0):
     ax.plot([x + .12, x, x, x + .12], [i0 - .42, i0 - .42, i1 + .42, i1 + .42], color="black", lw=0.7, clip_on=False)
-    ax.text(x - .18, (i0 + i1) / 2, label, ha="center", va="center", rotation=90, fontsize=9.5, fontstyle="italic")
+    ax.text(x - .18 - .42 * tier, (i0 + i1) / 2, label, ha="center", va="center", rotation=90, fontsize=9.5, fontstyle="italic")
+def tiers(groups):
+    """A label wider than its bracket collides with its neighbours when routes alternate over single
+    columns (2026-11-08: chain + rb / chain + rb2 / chain + rb over 16 / 32 / 64). Place each label on
+    the first of two tiers whose previous label it clears; the bracket itself stays on the rule."""
+    last = [-9.0, -9.0]
+    out = []
+    for g0, g1, label in groups:
+        half = (0.085 * len(label) + 0.12) / 2          # the label's half width in cells (9.5 pt italic)
+        lo, hi = (g0 + g1) / 2 - half, (g0 + g1) / 2 + half
+        t = 0 if lo > last[0] else 1 if lo > last[1] else 0
+        last[t] = hi
+        out.append(t)
+    return out
 def route_runs(axis):                  # axis 1: by column (N2), 0: by row (N1)
     out = []
     for k in K:
@@ -116,10 +129,12 @@ def route_runs(axis):                  # axis 1: by column (N2), 0: by row (N1)
         else:
             out.append([k, k, top])
     return [g for g in out if g[2]]
-for j0, j1, r in route_runs(1):
-    hbracket(j0, j1, -0.95, r.replace("+", " + "))
-for i0, i1, r in route_runs(0):
-    vbracket(i0, i1, -1.67, r.replace("+", " + "))
+hruns = [(j0, j1, r.replace("+", " + ")) for j0, j1, r in route_runs(1)]
+for (j0, j1, label), t in zip(hruns, tiers(hruns)):
+    hbracket(j0, j1, -0.95, label, t)
+vruns = [(i0, i1, r.replace("+", " + ")) for i0, i1, r in route_runs(0)]
+for (i0, i1, label), t in zip(vruns, tiers(vruns)):
+    vbracket(i0, i1, -1.67, label, t)
 
 # legend: one symmetric strip, red arm left, blue arm right, edges labelled in the printed ratio
 lg = fig.add_axes([0.13, 0.095, 0.80, 0.03]); lg.axis("off"); lg.set_xlim(0, 100); lg.set_ylim(0, 1)

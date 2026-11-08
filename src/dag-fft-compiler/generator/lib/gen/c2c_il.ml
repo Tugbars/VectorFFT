@@ -2715,12 +2715,25 @@ let emit_k1
    Ls = OLs = 1 is required there as for n1ccs). The leftover rows (count
    mod per) run the same body one row at a time: lane 0 valid, the gather
    legs as 128-bit loads and stores. Monolithic n1 math only (no odd blocked
-   passes here): a first race form. *)
+   passes here): a first race form.
+
+   ~turnst (--cil-turnst on the row kinds, 2026-11-08): the TURNED-STORE
+   twins for the 2D tier's turn route, which stores point l of rows k.. at
+   zout[2*(l*OLs + k*OGs)] with OLs = the point pitch of its scratch and
+   OGs = 1, so the per rows' values of a point are adjacent (AZoutRowT).
+   The whole-load form already holds that vector (lanes = rows): its twin
+   stores every leg whole and skips the swap back. The row form runs per
+   rows per iteration and transposes the rows' output vectors once per
+   vector position before storing. The split form keeps its per-lane
+   128-bit stores at the turned addresses, one row per iteration. The
+   leftover rows store lane 0 per point. Symbols end in t: rowt, rowb44t,
+   rowswapt. *)
 let emit_row
       ~(dir : dir)
       ~(radix : int)
       ~(rows : int)
       ~(whole : bool)
+      ~(turnst : bool)
       ~(split : (int * int) option)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
@@ -2759,6 +2772,8 @@ let emit_row
   then failwith "codelet_cil: the row kind takes --cil-rows or --cil-split, not both (not built)";
   if whole && (rows > 1 || split <> None)
   then failwith "codelet_cil: --cil-rowswap takes neither --cil-rows nor --cil-split";
+  if turnst && rows > 1
+  then failwith "codelet_cil: the turned row twin sets its own rows per iteration; no --cil-rows";
   let p = radix / per in
   let nb = p / per in
   let m1, p1 =
@@ -2872,6 +2887,11 @@ let emit_row
       buf
       (Printf.sprintf "        _mm_storeu_pd(&%s, %s);\n" (addr_str ad) (render ~ctx isa tbl part))
   in
+  (* the turned store of a lanes = rows vector for point l: whole when the
+     iteration holds per rows, lane 0 alone for a leftover row *)
+  let tstore (buf : Buffer.t) (nr : int) (l : int) (e : t) : unit =
+    if nr = per then vstore buf (AZoutRowT (0, l)) e else store128 buf (AZoutRowT (0, l)) e
+  in
   (* ── the clean form: nr rows in one DAG ── *)
   let clean_body (buf : Buffer.t) (nr : int) : unit =
     reset ();
@@ -2889,17 +2909,37 @@ let emit_row
         Array.iteri (fun k2 e -> outs.((r * p) + (k2 * nb) + b) <- e) z
       done
     done;
-    pass
-      ~buf
-      ~label:(if nr = 1 then "one row" else Printf.sprintf "%d rows" nr)
-      ~ins:(Array.map (fun x -> x, None) ins)
-      ~outs
-      ~store:(fun buf u e ->
-        let r = u / p
-        and v = u mod p in
-        vstore buf (AZoutRow (r, v * per)) e)
+    if not turnst
+    then
+      pass
+        ~buf
+        ~label:(if nr = 1 then "one row" else Printf.sprintf "%d rows" nr)
+        ~ins:(Array.map (fun x -> x, None) ins)
+        ~outs
+        ~store:(fun buf u e ->
+          let r = u / p
+          and v = u mod p in
+          vstore buf (AZoutRow (r, v * per)) e)
+    else (
+      (* the turned twin: per vector position v, the nr rows' output vectors
+         transposed into the per points' lanes = rows vectors *)
+      let sinks = ref [] in
+      for v = 0 to p - 1 do
+        let cols, _ = Cx_math.turn_transpose ~per (Array.init nr (fun r -> outs.((r * p) + v))) in
+        Array.iteri (fun c col -> sinks := (col, (per * v) + c) :: !sinks) cols
+      done;
+      let sinks = Array.of_list (List.rev !sinks) in
+      pass
+        ~buf
+        ~label:
+          (if nr = 1
+           then "one leftover row, turned stores: lane 0"
+           else Printf.sprintf "%d rows, turned stores: one %dx%d turn per vector position" nr per per)
+        ~ins:(Array.map (fun x -> x, None) ins)
+        ~outs:(Array.map fst sinks)
+        ~store:(fun buf u e -> tstore buf nr (snd sinks.(u)) e))
   in
-  (* ── the split form: stage 1 through S[] ── *)
+  (* ── the split form: stage 1 through S[]; one row per iteration ── *)
   let split_body (buf : Buffer.t) : unit =
     for i = 0 to m1 - 1 do
       reset ();
@@ -2948,14 +2988,15 @@ let emit_row
         ~buf
         ~label:
           (Printf.sprintf
-             "PASS 1b.%d + stage 2: S[i*%d+%d] -> X[%d + %d*k' + %d*k2], lanes %d apart"
+             "PASS 1b.%d + stage 2: S[i*%d+%d] -> X[%d + %d*k' + %d*k2], lanes %d apart%s"
              t
              p1
              t
              t
              p1
              p
-             p1)
+             p1
+             (if turnst then ", turned stores" else ""))
         ~ins:(Array.map (fun x -> x, None) ins)
         ~outs
         ~store:(fun buf u e ->
@@ -2963,7 +3004,8 @@ let emit_row
           and k2 = u mod per in
           for i = 0 to per - 1 do
             let part = cpart e i in
-            let ad = AZoutRow (0, k1_of ~q i + (p * k2)) in
+            let c = k1_of ~q i + (p * k2) in
+            let ad = if turnst then AZoutRowT (0, c) else AZoutRow (0, c) in
             let (_ : t) = cstore ad part in
             Buffer.add_string
               buf
@@ -3004,24 +3046,37 @@ let emit_row
     done;
     let outs = dft_small ~sign ~ctx radix legs in
     let sinks = ref [] in
-    for g = 0 to ng - 1 do
-      let cols, _ = Cx_math.turn_transpose ~per (Array.sub outs (per * g) per) in
-      for r = 0 to nr - 1 do
-        sinks := (cols.(r), fun buf e -> vstore buf (AZoutRow (r, per * g)) e) :: !sinks
+    if turnst
+    then
+      (* the turned twin: every leg is already the point's lanes = rows vector *)
+      for l = 0 to radix - 1 do
+        sinks := (outs.(l), fun buf e -> tstore buf nr l e) :: !sinks
       done
-    done;
-    for l = per * ng to radix - 1 do
-      if nr = per
-      then sinks := (outs.(l), fun buf e -> vstore buf (AZoutLeg l) e) :: !sinks
-      else sinks := (outs.(l), fun buf e -> store128 buf (AZoutRow (0, l)) e) :: !sinks
-    done;
+    else (
+      for g = 0 to ng - 1 do
+        let cols, _ = Cx_math.turn_transpose ~per (Array.sub outs (per * g) per) in
+        for r = 0 to nr - 1 do
+          sinks := (cols.(r), fun buf e -> vstore buf (AZoutRow (r, per * g)) e) :: !sinks
+        done
+      done;
+      for l = per * ng to radix - 1 do
+        if nr = per
+        then sinks := (outs.(l), fun buf e -> vstore buf (AZoutLeg l) e) :: !sinks
+        else sinks := (outs.(l), fun buf e -> store128 buf (AZoutRow (0, l)) e) :: !sinks
+      done);
     let sinks = Array.of_list (List.rev !sinks) in
     pass
       ~buf
       ~label:
         (if nr = 1
          then "one leftover row: lane 0"
-         else Printf.sprintf "%d rows: whole-vector loads, %dx%d turns" nr per per)
+         else
+           Printf.sprintf
+             "%d rows: whole-vector loads, %dx%d turns%s"
+             nr
+             per
+             per
+             (if turnst then ", turned stores" else ""))
       ~ins:(Array.of_list (List.rev !ins))
       ~outs:(Array.map fst sinks)
       ~store:(fun buf u e -> (snd sinks.(u)) buf e)
@@ -3038,6 +3093,11 @@ let emit_row
     then (
       split_body body;
       1)
+    else if turnst
+    then (
+      clean_body body per;
+      clean_body body_t 1;
+      per)
     else (
       clean_body body rows;
       if rows > 1 then clean_body body_t 1;
@@ -3046,10 +3106,16 @@ let emit_row
   let tag =
     (if whole then "swap" else "")
     ^ (if rows > 1 then string_of_int rows else "")
-    ^
-    match split with
-    | Some (a, b) -> Printf.sprintf "b%d%d" a b
-    | None -> ""
+    ^ (match split with
+       | Some (a, b) -> Printf.sprintf "b%d%d" a b
+       | None -> "")
+    ^ if turnst then "t" else ""
+  in
+  let turned_note =
+    if turnst
+    then
+      " turned stores (the 2D turn route: point l of row k at zout[2*(l*OLs + k*OGs)], OLs = the point pitch, OGs = 1)"
+    else ""
   in
   let buf = Buffer.create 32768 in
   Buffer.add_string
@@ -3067,12 +3133,13 @@ let emit_row
        ; (if whole
           then
             Printf.sprintf
-              "Form: row, whole-vector loads and swaps (lanes = rows, %d rows per iteration, %d leftover point(s) per row the lane-gather way)"
+              "Form: row, whole-vector loads and swaps (lanes = rows, %d rows per iteration, %d leftover point(s) per row the lane-gather way)%s"
               per
               (radix mod per)
+              turned_note
           else
             Printf.sprintf
-              "Form: row %d x %d (stage 1 across %d registers, one turn per %d, stage 2 across %d)%s%s"
+              "Form: row %d x %d (stage 1 across %d registers, one turn per %d, stage 2 across %d)%s%s%s"
               p
               per
               p
@@ -3081,7 +3148,8 @@ let emit_row
               (if rows > 1 then Printf.sprintf " rows=%d" rows else "")
               (match split with
                | Some (a, b) -> Printf.sprintf " split=%d.%d (stage 1 through S[], 128-bit scatter)" a b
-               | None -> ""))
+               | None -> "")
+              turned_note)
        ]);
   Buffer.add_string
     buf
@@ -3089,45 +3157,65 @@ let emit_row
      then
        Printf.sprintf
          "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
-         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row, --cil-rowswap).\n\
+         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row, --cil-rowswap%s).\n\
          \ * radix-%d BATCHED ROW kernel, WHOLE-VECTOR LOADS AND SWAPS: iteration k = the rows\n\
-         \ * k .. k+%d at zin + 2*k*Gs, stored at zout + 2*k*OGs (the pitches in complex; count =\n\
+         \ * k .. k+%d at zin + 2*k*Gs, %s (the pitches in complex; count =\n\
          \ * rows; Ls = OLs = 1: the points of a row are contiguous). A lane is a ROW, as in n1ccs,\n\
          \ * but a row's vectors are loaded whole and the %d loads of one vector position are\n\
          \ * transposed in registers into %d legs (one 128-bit-lane exchange per vector); the\n\
-         \ * radix-%d n1 math runs lane-parallel; the outputs are transposed back and stored as\n\
-         \ * whole row vectors. The %d leftover point(s) of a row load and store the n1ccs way.\n\
+         \ * radix-%d n1 math runs lane-parallel; %s\n\
          \ * The leftover rows (count %% %d) run one at a time. %d complex per %d-bit vector.\n\
          \ * tw_re/tw_im unused. In place (zin == zout) is legal. */\n\
           #include <immintrin.h>\n\
           #include <stddef.h>\n\n"
+         (if turnst then " --cil-turnst" else "")
          radix
          (per - 1)
+         (if turnst
+          then "stored TURNED: point l of row k at zout + 2*(l*OLs + k*OGs), OGs = 1"
+          else "stored at zout + 2*k*OGs")
          per
          per
          radix
-         (radix mod per)
+         (if turnst
+          then
+            Printf.sprintf
+              "every leg is already the point's lanes = rows vector and stores whole.\n * The %d leftover point(s) of a row load the n1ccs way."
+              (radix mod per)
+          else
+            Printf.sprintf
+              "the outputs are transposed back and stored as\n * whole row vectors. The %d leftover point(s) of a row load and store the n1ccs way."
+              (radix mod per))
          per
          per
          (vw * 64)
      else
        Printf.sprintf
          "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
-         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row).\n\
+         \ * PIPELINE-HOSTED (codelet_cil.ml emit_row%s).\n\
          \ * radix-%d BATCHED ROW kernel: iteration k = %s of %d complex at\n\
-         \ * zin + 2*k*Gs, stored at zout + 2*k*OGs (the pitches in complex; count = rows;\n\
-         \ * Ls / OLs ignored). A lane is a POINT: the row is %d contiguous\n\
+         \ * zin + 2*k*Gs, %s (the pitches in complex; count = rows;\n\
+         \ * %s ignored). A lane is a POINT: the row is %d contiguous\n\
          \ * vectors, stage 1 is DFT_%d lane-parallel across them%s, one %dx%d complex\n\
          \ * transpose per block of %d, the twiddles W_%d^(j*k1) are lane-varying\n\
-         \ * constants, stage 2 is DFT_%d across each block; natural order in and out.\n\
+         \ * constants, stage 2 is DFT_%d across each block; natural order in%s.\n\
          \ * %d complex per %d-bit vector. Body scheduled by the SHARED SR scheduler\n\
          \ * (Schedule.Make over the complex IR) and rendered through the ISA layer.\n\
          \ * tw_re/tw_im unused. In place (zin == zout) is legal. */\n\
           #include <immintrin.h>\n\
           #include <stddef.h>\n\n"
+         (if turnst then ", --cil-turnst" else "")
          radix
-         (if rows > 1 then Printf.sprintf "%d whole rows (one-row loop for the leftover)" rows else "ONE whole row")
+         (if turnst && split = None
+          then Printf.sprintf "%d whole rows (one-row loop for the leftover)" per
+          else if rows > 1
+          then Printf.sprintf "%d whole rows (one-row loop for the leftover)" rows
+          else "ONE whole row")
          radix
+         (if turnst
+          then "stored TURNED: point l of row k at zout + 2*(l*OLs + k*OGs), OGs = 1"
+          else "stored at zout + 2*k*OGs")
+         (if turnst then "Ls" else "Ls / OLs")
          p
          p
          (match split with
@@ -3138,6 +3226,7 @@ let emit_row
          per
          radix
          per
+         (if turnst then ", point-major out (one turn per vector position across the rows)" else " and out")
          per
          (vw * 64));
   Buffer.add_string
@@ -3162,9 +3251,7 @@ let emit_row
        ());
   Buffer.add_string
     buf
-    (if whole
-     then "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n"
-     else "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n");
+    "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im; (void)Ls; (void)OLs;\n";
   if split <> None
   then
     Buffer.add_string

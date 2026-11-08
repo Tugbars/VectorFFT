@@ -159,6 +159,8 @@ let addr_str (a : caddr) : string =
   | AZinRow (r, c) -> Printf.sprintf "zin[2*(((size_t)k + %d)*Gs + %d)]" r c
   | AZoutRow (0, c) -> Printf.sprintf "zout[2*((size_t)k*OGs + %d)]" c
   | AZoutRow (r, c) -> Printf.sprintf "zout[2*(((size_t)k + %d)*OGs + %d)]" r c
+  | AZoutRowT (0, l) -> Printf.sprintf "zout[2*((size_t)%d*OLs + (size_t)k*OGs)]" l
+  | AZoutRowT (r, l) -> Printf.sprintf "zout[2*((size_t)%d*OLs + ((size_t)k + %d)*OGs)]" l r
   | AZinTurnH _ -> failwith "cx_render.addr_str: the half-row pair renders through render_load"
   | AZeroV -> failwith "cx_render.addr_str: the zero vector has no address (render_load)"
   | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->

@@ -667,6 +667,7 @@ let run (argv : string array) : unit =
            ~radix:n
            ~rows:!cil_rows
            ~whole:!cil_rowswap
+           ~turnst:!cil_turnst
            ~split:
              (if !cil_split = ""
               then None

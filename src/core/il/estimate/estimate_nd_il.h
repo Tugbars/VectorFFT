@@ -958,7 +958,7 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     if (vfft_policy_prime_cell(N2))   /* the rows are the 1D prime cell (est__child_1d below, in place) */
         est__col_single_under_prime_rows(&out->col);
     mono = vfft_k1_mono_ilc_fn(N1, 0) && vfft_k1_mono_ilc_fn(N1, 1);
-    n1ccs = vfft_il_n1ccs_fn(N2, 0) && vfft_il_n1ccs_fn(N2, 1);
+    n1ccs = vfft_il_rowt_fn(N2, 0) && vfft_il_rowt_fn(N2, 1);   /* the turn's kernel: the turned twin, else n1ccs */
     out->has_turn = out->col.blu <= 0 && n1ccs;
     out->has_csk = out->col.blu <= 0 && mono;
     if (est__child_1d(m, N2, VFFT_PLACEMENT_IN, &out->rp, "the row plan", why, whylen))

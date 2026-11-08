@@ -157,7 +157,7 @@ static inline int est__rowb2_twins(const est_recipe_t *rp, int N2)
 static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t whylen)
 {
     const int mono = vfft_k1_mono_ilc_fn(p->N1, 0) && vfft_k1_mono_ilc_fn(p->N1, 1);
-    const int n1ccs = vfft_il_n1ccs_fn(p->N2, 0) && vfft_il_n1ccs_fn(p->N2, 1); /* the turn's kernel */
+    const int n1ccs = vfft_il_rowt_fn(p->N2, 0) && vfft_il_rowt_fn(p->N2, 1);  /* the turn's kernel (the turned twin, else n1ccs) */
     const int rowk = vfft_il_row_fn(p->N2, 0) && vfft_il_row_fn(p->N2, 1);     /* the plain rows' kernel (ro=2) */
     char w2[400];
     if (p->N1 < 2 || p->N2 < 2 || vfft_policy_c2c_row_refused(p->N2))
