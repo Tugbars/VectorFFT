@@ -112,3 +112,4 @@ docs/roadmap/zil_avx512_prototypes/*
 docs/roadmap/zil_avx512_prototypes/harness/*
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/**
+/gauntlet/results/2d_estimate_night_20261109
