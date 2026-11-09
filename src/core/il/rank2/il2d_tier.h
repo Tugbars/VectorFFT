@@ -3975,7 +3975,8 @@ static void _il2d_arm_axis(void *v)
  * at some cells and LOSES at others -- per-cell only, never defaults. The ROW
  * ENGINE is raced only where its admission leaves a question
  * (vfft_policy_il2d_row_fixed, 2026-11-08): a one-pass row kernel that does
- * not spill by construction (a whole-row form up to 16, a split form at any
+ * holds its row in the registers (a whole-row form up to half the register
+ * file -- 16 on AVX2, 64 on AVX-512 -- but 25 and 27, a split form at any
  * radix) IS the row engine, and the per-row child and the two-pass rows are
  * not arms beside it; above those lengths the child and the two-pass rows
  * race as before. The TURN arm runs only where the skewed pass has no arm:

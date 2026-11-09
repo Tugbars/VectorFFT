@@ -125,8 +125,9 @@ typedef struct est_plan3d_s
 /* the 2D row route (sketch §8): the skewed pass up to N1 = 16, and at the odd N1 up to 31 on rows of at
  * least 128 but at the kernels that spill (est__spills_single); the turn from N1 = 128 at N2 <= 8; the
  * batched rows wherever the planner's own admission fixes the one-pass row kernel as the row engine
- * (vfft_policy_il2d_row_fixed, 2026-11-08: every N2 <= 16 with a kernel, and the split forms at 32 and 64
- * at 256 bits), the batched two-pass rows elsewhere up to N2 = 64; the two-pass tile 8 KB. The odd
+ * (vfft_policy_il2d_row_fixed, 2026-11-08: every N2 up to half the register file with a kernel -- 16 on AVX2, 64 on
+ * AVX-512 -- but 25 and 27, and every split form), the batched two-pass rows elsewhere up to N2 = 64; the
+ * two-pass tile 8 KB. The odd
  * band is of 2026-10-26: the planner banks the skewed pass at the columns 17, 19, 21, 23, 29, 31 on rows of
  * 128-2048 (the estimate without it 1.18-1.51 x the planner in 13 of 13 cells) and not on narrow rows
  * (29x64, 21x21, the 21x64 and 21x21 planes of 21x21x64 and 21x21x21); over the 226 rows of the store
@@ -456,10 +457,19 @@ static inline int est__col_sets(const est_machine_t *m, int N, const int *R, int
     }
     return k;
 }
-/* the last radices whose plain one-piece kernel holds more live vectors than the 16 registers while their twiddled
- * kernel fits them (the generator's kernels, AVX2: the plain 21-31 move 1.5-11.5 vectors per point through the
- * stack): a last stage of one of them runs the spilling form */
-static inline int est__leaf_spills(int R) { return R == 21 || R == 23 || R == 25 || R == 27 || R == 29 || R == 31; }
+/* the last radices whose plain one-piece kernel holds more live vectors than the vector registers while their
+ * twiddled kernel fits them: a last stage of one of them runs the spilling form. AVX2 (16 registers): 21-31 (the
+ * plain 21-31 move 1.5-11.5 vectors per point through the stack). AVX-512 (32 registers): none -- the same count
+ * over its own kernels finds the plain and the twiddled 23-31 both past 32 and both 21s within it */
+static inline int est__leaf_spills(int R)
+{
+#if VFFT_IL_VW == 8
+    (void)R;
+    return 0;
+#else
+    return R == 21 || R == 23 || R == 25 || R == 27 || R == 29 || R == 31;
+#endif
+}
 /* THE RADIX ORDER WHERE N IS NOT A POWER OF TWO (2026-11-09; the chains of one stage count and one balance): first no
  * stage that crowds an L1d set (est__col_sets); then the first stage's legs spread over sets (its stride not a
  * multiple of one way); then no last stage that spills (est__leaf_spills); then the smaller last radix where three

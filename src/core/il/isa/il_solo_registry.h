@@ -123,8 +123,8 @@ static inline vfft_oop11_fn vfft_il_row_fn(int R, int bwd)
 /* 1 = the radix's row kernel is a SPLIT form (the tag rowb<m1><p1>: stage 1
  * through S[], the kernel holding a fraction of the row at a time), 0 = a
  * whole-row form (row, rowswap, n1ccs) or no kernel. The 2D tier's row-engine
- * admission (vfft_policy_il2d_row_fixed) reads it: a whole-row form above
- * radix 16 spills by construction and keeps its race. The tag grammar is the
+ * admission (vfft_policy_il2d_row_fixed) reads it: a whole-row form past half
+ * the register file (16 on AVX2, 64 on AVX-512) keeps its race. The tag grammar is the
  * generator's (c2c_il.ml emit_row: "swap"? ^ "row" ^ "b<m1><p1>"? ^ "t"?). */
 static inline int vfft_il_row_split(int R)
 {
