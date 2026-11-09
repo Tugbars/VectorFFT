@@ -484,6 +484,7 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
                 est_mt_2d(m, 1, q);
             }
             est_mt_2d(m, cfg->nthreads, p);
+            est_mt_2d_serial_1t(m, cfg->nthreads, p);   /* serial at T: the one-thread request's plan */
             if (q)
                 p->pq = est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1], cfg->howmany, cfg->nthreads);
             h = est_build_nd(p, NULL, q, NULL, cfg, NULL, why, sizeof why);

@@ -234,7 +234,7 @@ typedef struct est_plan3d_s
 #define EST_ND_FLAT_HI_L3_PCT 75
 /* THE 2D PLAN AT T > 1 (est_mt_2d, 2026-10-29): the one-thread plan, then how it threads, from the data's
  * size against the caches and the count of columns only -- how a thread count scales is the machine's, so
- * no rule is fitted to it. Serial while the plane fits L1d / EST_ND_MT_SERIAL_L1_DIV, or on two rows; the
+ * no rule is fitted to it. Serial while the plane fits L1d / EST_ND_MT_SERIAL_2D_L1_DIV, or on two rows; the
  * turn (where the door builds one) on at most EST_ND_MT_TURN_PER_T x T columns, too few to share; the
  * skewed pass and the turn their one threaded walk; the chain walk as strips (est__msw_2d), which the door
  * runs unbanded (il2d_tier.h:1643), so with the unbanded walk's chain: no band, est__pick's radix-8 regime
@@ -293,7 +293,17 @@ typedef struct est_plan3d_s
  * 9 -> 8 0.77, a first radix of 8 kept (the rest only) 0.98. Left: on 8-led planes of N1 not a power of two
  * the planner leads with 16 or 32 (1120x90 32.5.7 against 8.4.5.7: 1.20 over 17 such planes); 8 -> 32
  * there lost on the powers of two (1.19) and below 512 rows (1.35). */
-#define EST_ND_MT_SERIAL_L1_DIV 2
+#define EST_ND_MT_SERIAL_L1_DIV 2   /* the lane-major batches' serial bound (c2c_estimate_lm_il.h, real_estimate_lm_il.h) */
+/* THE 2D SERIAL BOUND (2026-11-09): a plane within the L1d runs serial. One core does such a plane at L1 speed;
+ * split, each worker pulls its share from another core's caches and the pass pays the fork and the join. Past the
+ * L1d one core streams from its L2, so more cores add work and cache. The 78 power-of-two planes of 16 KiB - 1 MiB
+ * at 1, 2, 4 and 8 threads, one process, 21 rounds: from 64 KiB 8 threads the fastest count at 61 of 67 (0.53-0.88
+ * of serial at 64 KiB), 2 or 4 never needed; at 32 KiB serial at 7 of 10 (the 8-thread plan to 1.30 x serial:
+ * 1024x2, 4x512 1.16, 64x32 1.14). Against the best count: the bound at L1d / 2 1.021 (worst 1.30), at the L1d
+ * 1.003 (worst 1.14, 32x64). A per-thread share instead (a quarter, a half or a whole L1d a thread) 1.08-1.23.
+ * A serial verdict at T > 1 runs the one-thread request's plan (est_mt_2d_serial_1t): at 16 KiB the plan of
+ * the rules before 2026-11-09 ran 1.05-1.27 x it (4x256 1.27, 8x128 1.15). */
+#define EST_ND_MT_SERIAL_2D_L1_DIV 1
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
 #define EST_ND_MT_SW_L1_DIV 2
@@ -1261,7 +1271,7 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
     p->nls = -1;
     if (T < 2)
         return;
-    if (16LL * p->N1 * p->N2 > m->l1d / EST_ND_MT_SERIAL_L1_DIV && p->N1 != 2 && p->col.tpc != 1)
+    if (16LL * p->N1 * p->N2 > m->l1d / EST_ND_MT_SERIAL_2D_L1_DIV && p->N1 != 2 && p->col.tpc != 1)
     {
         const int tall = p->N1 >= (long long)EST_ND_MT_TILE_N1_PER_N2 * p->N2;
         int tile = 0;
@@ -1313,6 +1323,18 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
     }
     if (nat && p->col.nst > 1)
         p->nls = (p->cmt && p->mtarm == 1) ? 0 : 1;   /* the strips strided; else the door's staged default */
+}
+/* p threaded at T by est_mt_2d: where its verdict is serial at T > 1, the one-thread request's plan instead (the
+ * 2D rules, EST_ND_2D_RULES), threaded at T to its own serial verdict (EST_ND_MT_SERIAL_2D_L1_DIV, 2026-11-09).
+ * p is kept where that plan is refused or would thread. */
+static inline void est_mt_2d_serial_1t(const est_machine_t *m, int T, est_plan2d_t *p)
+{
+    est_plan2d_t r;
+    if (T < 2 || p->cmt || est_plan_2d_r(m, p->N1, p->N2, EST_ND_2D_RULES, &r, NULL, 0))
+        return;
+    est_mt_2d(m, T, &r);
+    if (!r.cmt)
+        *p = r;
 }
 /* the 3D structure: the flat tier (s=2) on a plane of at most EST_ND_FLAT_HI_PCT percent of the L2
  * (EST_ND_FLAT_HI_L3_PCT when the cube passes the L3) whose column pass is a plain chain (no Bluestein, no

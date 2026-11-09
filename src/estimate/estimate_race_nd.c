@@ -123,6 +123,7 @@ static int est_tokens(const est_machine_t *m, const int *n, int rank, int T, cha
         est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p);
         if (!p || est_plan_2d_r(m, n[0], n[1], T > 1 ? 0u : EST_ND_2D_RULES, p, why, whylen)) { free(p); return -1; }
         est_mt_2d(m, T, p);
+        est_mt_2d_serial_1t(m, T, p);
         chain_s(c0, sizeof c0, p->col.R, p->col.nst);
         l = (size_t)snprintf(out, cap, "chain=%s%s%s blu=%d tpc=%d wl=%d ro=%d sw=%d rbk=%d turn=%d csk=%d rp=%s", c0,
                              p->col.forms[0] ? " forms=" : "", p->col.forms, p->col.blu, p->col.tpc, p->col.wl, p->ro, p->sw,
