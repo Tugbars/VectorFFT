@@ -436,6 +436,14 @@ static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, i
     }
     return 0;
 }
+/* THE SET FILTER AND THE LINE (2026-11-09): the column chain's set filter (est__col_chain_r) avoids a stage whose
+ * loads put more lines into one L1d set than it has ways. That costs where a cache line holds two vector loads (AVX2:
+ * 64 bytes = two ymm of 2 complex): a line thrown out between its two loads is fetched again. Where one load fills the
+ * whole line (AVX-512: one zmm of 4 complex = 64 bytes) no line is fetched twice, and the filter's radix-4 start only
+ * adds work: on Emerald Rapids (AVX-512, one thread) the chain the pick gives without the filter ran the column pass
+ * 10-24 % faster at 64x64, 128x32, 256x32, 128x128 (4.16 -> 8.8, 4.32 -> 8.16, 4.64 -> 16.16, 4.4.8 -> 8.16), the
+ * planes whose chain is the same unchanged. So the filter applies only where a vector load is less than a line. */
+#define EST_ND_VEC_FILLS_LINE (VFFT_IL_VW * 8 >= 64)
 /* THE SET COUNT (2026-11-09): how many stages of R put more lines into one L1d set than it has ways, the first and
  * the last stage counted twice while two planes fit the L2 (the first reads one buffer and writes another at one
  * pitch, the last reads the scratch and writes the staging block; past 2P = L2 the refills hide behind the L3
@@ -682,7 +690,7 @@ static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, i
         R[0] = N;
         return 1;
     }
-    if (sets && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d)
+    if (sets && !EST_ND_VEC_FILLS_LINE && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d)
     {   /* a row within one way: the chains that crowd no set, where one exists; a power of two from 2^s1 led by the
          * largest first radix among them (4 on both machines), the rest picked as N / R0's own column, so that the
          * radix-16 regime's few stages do not end on a radix of 32 or 64 (2048 x 120 4.8.64, 4096 x 62 4.32.32
