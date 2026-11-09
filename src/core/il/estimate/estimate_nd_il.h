@@ -139,6 +139,60 @@ typedef struct est_plan3d_s
 #define EST_ND_TURN_N2 8
 #define EST_ND_ROWB2_MAX 64
 #define EST_ND_RBK 8
+/* THE 2D RULES OF 2026-11-09 (one thread). Each reads the machine's cache sizes and ways or a build fact, never a
+ * plane list. Evidence: the 14900KF's 481 2D planes re-raced with every arm logged, the estimate timed against
+ * each banked plan (geomean 1.033, 68 planes past 1.10), then 83 planes no rule was built from, raced after the
+ * rules' predictions were frozen (today's rules 1.098 there, 24 past 1.10; with these, the estimate's route is the
+ * planner's at 72 of 83 planes against 53). Each switches off at build time (-DEST_ND_2D_RULE_x=0); the 3D plane
+ * child and threaded requests keep the rules before them (est_plan_2d_r's rules = 0): nothing was raced there.
+ *   ORDER  2.1  the order of the column radices where N1 is not a power of two (est__pick_r)
+ *   CSK    2.2  csk at every column with one column kernel, but the working-set exceptions (est__csk_2d)
+ *   ROWS   2.3  the two-pass rows beside csk once the route's three planes pass the L1d
+ *   TURN   2.4  the turn wherever the column has no one column kernel, on rows of at most EST_ND_TURN_N2_R points
+ *   BAND   2.6  the band only past three planes in the L2, on even rows, with last-stage blocks of EST_ND_BAND_BLK
+ *   CSK32  2.7  csk at 32 rows where the one-stage chain crowds an L1d set and csk's loads fit the L2's sets
+ *   CSK21  2.8  csk at 21, 25, 27 on planes of EST_ND_CSK_TINY bytes or less; at 21 also past two planes in L1d */
+#ifndef EST_ND_2D_RULE_ORDER
+#define EST_ND_2D_RULE_ORDER 1
+#endif
+#ifndef EST_ND_2D_RULE_CSK
+#define EST_ND_2D_RULE_CSK 1
+#endif
+#ifndef EST_ND_2D_RULE_ROWS
+#define EST_ND_2D_RULE_ROWS 1
+#endif
+#ifndef EST_ND_2D_RULE_TURN
+#define EST_ND_2D_RULE_TURN 1
+#endif
+#ifndef EST_ND_2D_RULE_BAND
+#define EST_ND_2D_RULE_BAND 1
+#endif
+#ifndef EST_ND_2D_RULE_CSK32
+#define EST_ND_2D_RULE_CSK32 1
+#endif
+#ifndef EST_ND_2D_RULE_CSK21
+#define EST_ND_2D_RULE_CSK21 1
+#endif
+#define EST_ND_2D_R_ORDER 0x01u
+#define EST_ND_2D_R_CSK 0x02u
+#define EST_ND_2D_R_ROWS 0x04u
+#define EST_ND_2D_R_TURN 0x08u
+#define EST_ND_2D_R_BAND 0x10u
+#define EST_ND_2D_R_CSK32 0x20u
+#define EST_ND_2D_R_CSK21 0x40u
+#define EST_ND_2D_RULES ((EST_ND_2D_RULE_ORDER ? EST_ND_2D_R_ORDER : 0u) | (EST_ND_2D_RULE_CSK ? EST_ND_2D_R_CSK : 0u) | \
+                         (EST_ND_2D_RULE_ROWS ? EST_ND_2D_R_ROWS : 0u) | (EST_ND_2D_RULE_TURN ? EST_ND_2D_R_TURN : 0u) | \
+                         (EST_ND_2D_RULE_BAND ? EST_ND_2D_R_BAND : 0u) | (EST_ND_2D_RULE_CSK32 ? EST_ND_2D_R_CSK32 : 0u) | \
+                         (EST_ND_2D_RULE_CSK21 ? EST_ND_2D_R_CSK21 : 0u))
+/* TURN: the turn's row bound in points (the planner turns rows of 4 and 9 at every column without one column kernel
+ * the night raced; at rows of 10 it turns at 4096 rows and ties the chain below) */
+#define EST_ND_TURN_N2_R 10
+/* BAND: the least block the last column stage writes per band step, in points: a store fence and a row call per
+ * block are fixed costs a block of a few hundred points keeps small on any core */
+#define EST_ND_BAND_BLK 256
+/* CSK21: a plane this small runs csk's one call faster than a split chain's two passes and their calls, whatever
+ * the kernel's spills (21x4 - 27x4, 21x6, 25x5 skew; 21x8, 27x8 at 2.7-3.5 KB chain) */
+#define EST_ND_CSK_TINY 2048
 /* the Rader stage (est__rader, 2026-10-26): the window EST_ND_RD_W columns; the inner chain the engine's
  * pick unless a radix passes EST_ND_RD_MAX_RADIX, an odd radix passes EST_ND_RD_ODD_MAX, or the first
  * radix is EST_ND_RD_MAX_RADIX or more. Every inner chain x the windows 8-256 timed on 26 2D cells (primes
@@ -371,6 +425,49 @@ static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, i
     }
     return 0;
 }
+/* THE SET COUNT (2026-11-09): how many stages of R put more lines into one L1d set than it has ways, the first and
+ * the last stage counted twice while two planes fit the L2 (the first reads one buffer and writes another at one
+ * pitch, the last reads the scratch and writes the staging block; past 2P = L2 the refills hide behind the L3
+ * stream). Read by the radix order (est__odd_key), csk's L2 exception and csk at 32 rows (est__csk_2d). */
+static inline int est__col_sets(const est_machine_t *m, int N, const int *R, int nst, long long w)
+{
+    const long long way = est__l1_way(m), ways = est__l1_ways(m);
+    const int dbl = 2LL * 16 * N * w < (long long)m->l2;
+    long long L = N;
+    int s, k = 0;
+    for (s = 0; s < nst; s++)
+    {
+        L /= R[s];
+        {
+            const long long st = 16 * L * w, low = st & -st;
+            if ((long long)R[s] * (low < way ? low : way) * (dbl && (s == 0 || s == nst - 1) ? 2 : 1) > ways * way)
+                k++;
+        }
+    }
+    return k;
+}
+/* the last radices whose plain one-piece kernel holds more live vectors than the 16 registers while their twiddled
+ * kernel fits them (the generator's kernels, AVX2: the plain 21-31 move 1.5-11.5 vectors per point through the
+ * stack): a last stage of one of them runs the spilling form */
+static inline int est__leaf_spills(int R) { return R == 21 || R == 23 || R == 25 || R == 27 || R == 29 || R == 31; }
+/* THE RADIX ORDER WHERE N IS NOT A POWER OF TWO (2026-11-09; the chains of one stage count and one balance): first no
+ * stage that crowds an L1d set (est__col_sets); then the first stage's legs spread over sets (its stride not a
+ * multiple of one way); then no last stage that spills (est__leaf_spills); then the smaller last radix where three
+ * last-stage blocks, 3 x 16 R N2 bytes, pass the L1d; then the largest last radix on rows of 16 points or fewer
+ * (fewer, longer last-stage calls); then the order key of before (est__inversions). On the 14900KF they change 11
+ * chains of the 481 planes, all
+ * faster (1.03-1.12: 261x16 9.29 -> 29.9, 33x128 3.11 -> 11.3), and 1 of the 83 new planes, faster (75x96 1.09). */
+typedef struct { int k1, k2, k3, k4, k5; } est__odd_key_t;
+static inline void est__odd_key(const est_machine_t *m, int N, const int *R, int n, long long w, est__odd_key_t *k)
+{
+    const int leaf = R[n - 1];
+    const long long st0 = 16 * w * (long long)(N / R[0]);
+    k->k1 = est__col_sets(m, N, R, n, w) > 0;
+    k->k2 = (st0 & -st0) >= est__l1_way(m);
+    k->k3 = est__leaf_spills(leaf);
+    k->k4 = 3LL * 16 * leaf * w > (long long)m->l1d ? leaf : 0;
+    k->k5 = w <= 16 ? -leaf : 0;
+}
 /* a narrow row: a radix-16 butterfly across the row fits the L1d */
 static inline int est__narrow(const est_machine_t *m, long long w)
 {
@@ -419,12 +516,17 @@ static inline int est__inversions(const int *R, int n, int asc)
 }
 /* one candidate's rank in the pick below, the smaller first: the distance of its stage count from
  * the target, its stage count, its balance, its stages out of the order, its place in the pool */
-typedef struct { int d, k; double s; int inv, i; } est__rank_t;
+typedef struct { int d, k; double s; est__odd_key_t o; int inv, i; } est__rank_t;
 static inline int est__rank_lt(const est__rank_t *a, const est__rank_t *b)
 {
     if (a->d != b->d) return a->d < b->d;
     if (a->k != b->k) return a->k < b->k;
     if (a->s < b->s - 1e-9 || a->s > b->s + 1e-9) return a->s < b->s;
+    if (a->o.k1 != b->o.k1) return a->o.k1 < b->o.k1;   /* the radix order's keys: all 0 unless it applies */
+    if (a->o.k2 != b->o.k2) return a->o.k2 < b->o.k2;
+    if (a->o.k3 != b->o.k3) return a->o.k3 < b->o.k3;
+    if (a->o.k4 != b->o.k4) return a->o.k4 < b->o.k4;
+    if (a->o.k5 != b->o.k5) return a->o.k5 < b->o.k5;
     if (a->inv != b->inv) return a->inv < b->inv;
     return a->i < b->i;
 }
@@ -451,15 +553,19 @@ static inline int est__has15(const int *R, int n)
             return 1;
     return 0;
 }
-static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nrest, const est_machine_t *m,
-                            long long w, int nat, int wide, int single, int *R)
+static inline int est__pick_r(const est_pool_t *P, const int *pre, int np, int Nrest, const est_machine_t *m,
+                              long long w, int nat, int wide, int single, unsigned rules, int *R)
 {
     const int narrow = !wide && est__narrow(m, w);
     const int bits = est__ceil_lg(Nrest), asc = !(nat && !narrow);
     int kt = narrow ? (bits + 3) / 4 : (bits + 2) / 3, no15 = 0;
-    int i, best = -1, one = -1;
+    int i, best = -1, one = -1, N = Nrest, odd;
     est__rank_t b, r;
     memset(&b, 0, sizeof b);
+    memset(&r, 0, sizeof r);
+    for (i = 0; i < np; i++)
+        N *= pre[i];
+    odd = (rules & EST_ND_2D_R_ORDER) && !est_is_pow2(N);
     if (Nrest & 1)   /* an odd rest: the fewest stages a chain without a 15 reaches */
         for (i = 0; i < P->n; i++)
         {
@@ -485,6 +591,8 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
         r.d = k > kt ? k - kt : kt - k;
         r.k = k;
         r.s = est__sumsq(P->c[i] + np, k);
+        if (odd)
+            est__odd_key(m, N, P->c[i], P->len[i], w, &r.o);
         r.inv = est__inversions(P->c[i] + np, k, asc);
         r.i = i;
         if (best < 0 || est__rank_lt(&r, &b))
@@ -499,6 +607,11 @@ static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nre
         return 0;
     memcpy(R, P->c[best], sizeof(int) * (size_t)P->len[best]);
     return P->len[best];
+}
+static inline int est__pick(const est_pool_t *P, const int *pre, int np, int Nrest, const est_machine_t *m,
+                            long long w, int nat, int wide, int single, int *R)
+{
+    return est__pick_r(P, pre, np, Nrest, m, w, nat, wide, single, 0u, R);
 }
 /* THE COLUMN CHAIN AND THE L1d's SETS (sketch §4 step 3; docs/roadmap/estimate_microarch_plan.md §7-§8). On a row
  * shorter than one way (16 w < L1d / ways) the pick takes only the chains no stage of which crowds an L1d set
@@ -524,7 +637,7 @@ static inline int est_col_lead(const est_machine_t *m)
  * its sets, and the lane-major batches' are); a power of two from 2^s1 on wider rows led by est_col_lead; else the
  * pick above. sets = 0: the pick's own regime chain (the real 3D axis-0 rule asks for the narrow and the wide
  * regime's by their row widths). 0 = the pool holds no chain at N (the door's column Bluestein). */
-static inline int est__col_chain_x(const est_machine_t *m, int N, long long w, int nat, int sets, int *R)
+static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, int nat, int sets, unsigned rules, int *R)
 {
     est_pool_t P, Q;
     int k, i, pre[1] = { 0 }, one = 0;
@@ -539,7 +652,7 @@ static inline int est__col_chain_x(const est_machine_t *m, int N, long long w, i
             R[0] = N;
             return 1;
         }
-        return est__pick(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, R);
+        return est__pick_r(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, rules, R);
     }
     for (i = 0; i < P.n; i++)
         if (P.len[i] == 1)
@@ -566,20 +679,24 @@ static inline int est__col_chain_x(const est_machine_t *m, int N, long long w, i
             for (i = 0; i < Q.n; i++)
                 if (Q.len[i] > 1 && Q.c[i][0] > pre[0])
                     pre[0] = Q.c[i][0];
-            if (pre[0] && (k = est__pick(&Q, pre, 1, N / pre[0], m, w, nat, 0, 1, R)) > 0)
+            if (pre[0] && (k = est__pick_r(&Q, pre, 1, N / pre[0], m, w, nat, 0, 1, rules, R)) > 0)
                 return k;
             pre[0] = 0;
         }
-        if (Q.n && (k = est__pick(&Q, pre, 0, N, m, w, nat, 0, 1, R)) > 0)
+        if (Q.n && (k = est__pick_r(&Q, pre, 0, N, m, w, nat, 0, 1, rules, R)) > 0)
             return k;
     }
     else if (est_is_pow2(N) && N >= (1 << est_s1(m)))
     {
         pre[0] = est_col_lead(m);
-        if ((k = est__pick(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, R)) > 0)
+        if ((k = est__pick_r(&P, pre, 1, N / pre[0], m, w, nat, 0, 1, rules, R)) > 0)
             return k;
     }
-    return est__pick(&P, pre, 0, N, m, w, nat, 0, 1, R);
+    return est__pick_r(&P, pre, 0, N, m, w, nat, 0, 1, rules, R);
+}
+static inline int est__col_chain_x(const est_machine_t *m, int N, long long w, int nat, int sets, int *R)
+{
+    return est__col_chain_r(m, N, w, nat, sets, 0u, R);
 }
 static inline int est_col_chain(const est_machine_t *m, int N, long long w, int nat, int *R)
 {
@@ -755,8 +872,8 @@ static inline int est__col_blu(const est_machine_t *m, est_col_t *c, char *why, 
     est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
     return 0;
 }
-static inline int est_col_plan(const est_machine_t *m, int N, long long w, int nat, est_col_t *c, char *why,
-                               size_t whylen)
+static inline int est_col_plan_r(const est_machine_t *m, int N, long long w, int nat, unsigned rules, est_col_t *c,
+                                 char *why, size_t whylen)
 {
     memset(c, 0, sizeof *c);
     c->N = N;
@@ -766,7 +883,7 @@ static inline int est_col_plan(const est_machine_t *m, int N, long long w, int n
     c->tpc = -1;
     if (N < 2 || w < 1)
         return est_refuse(why, whylen, "a column of %d rows over %lld lanes", N, w);
-    c->nst = est_col_chain(m, N, w, nat, c->R);
+    c->nst = est__col_chain_r(m, N, w, nat, 1, rules, c->R);
     if (c->nst < 1)
         return est__col_blu(m, c, why, whylen);
     c->blu = est_is_pow2(N) ? -1 : 0;
@@ -774,6 +891,11 @@ static inline int est_col_plan(const est_machine_t *m, int N, long long w, int n
         return est_refuse(why, whylen, "N = %d: the Rader stage at %d has no inner chain of %d", N, c->R[0], c->R[0] - 1);
     est__col_forms(c->R, c->nst, c->forms, sizeof c->forms);
     return 0;
+}
+static inline int est_col_plan(const est_machine_t *m, int N, long long w, int nat, est_col_t *c, char *why,
+                               size_t whylen)
+{
+    return est_col_plan_r(m, N, w, nat, 0u, c, why, whylen);
 }
 /* the unbanded walk's chain for the column c (est__unbanded_chain_2d's pick, est__pick wide, no single stage); a
  * Rader stage or a Bluestein column keeps its own. 1 = c's chain replaced, 0 = kept */
@@ -818,6 +940,22 @@ static inline int est__wl_one_sweep(const est_col_t *c)
 static inline int est_wl_2d(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn, int plane_div)
 {
     if (csk || turn || c->blu > 0 || c->nst < 2 || 16LL * c->N * N2 <= (long long)m->l2 / plane_div)
+        return 0;
+    return est__wl_one_sweep(c);
+}
+/* THE BAND, RULE BAND (2026-11-09; the 2D plan at one thread): none while the unbanded walk's three planes (in,
+ * scratch, out) fit the L2 -- there the band trades L2 hits for a plane streamed past every cache; none on odd rows,
+ * whose rows are not whole 32-byte vectors and leave through the cache on lines shared with streamed rows
+ * (il2d_cols.h:312); none where a block the last column stage writes, R_last N2 points, is under EST_ND_BAND_BLK;
+ * else one wide stage. Against the race's arms: 12 of 13 changed planes faster (1.07-1.50), 1 the same; on the new
+ * planes 6 faster, 4 the same. */
+static inline int est_wl_2d_r(const est_machine_t *m, const est_col_t *c, int N2, int csk, int turn, int plane_div,
+                              unsigned rules)
+{
+    if (!(rules & EST_ND_2D_R_BAND))
+        return est_wl_2d(m, c, N2, csk, turn, plane_div);
+    if (csk || turn || c->blu > 0 || c->nst < 2 || 3LL * 16 * c->N * N2 <= (long long)m->l2 || (N2 & 1) ||
+        (long long)c->R[c->nst - 1] * N2 < EST_ND_BAND_BLK)
         return 0;
     return est__wl_one_sweep(c);
 }
@@ -934,9 +1072,52 @@ static inline int est__ro_2d(const est_plan2d_t *p)
     return 0;
 }
 
-/* est_plan_2d: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10). Returns 0 with
- * *out filled, or -1 with the reason. Pure. */
-static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d_t *out, char *why, size_t whylen)
+/* csk at p's plane (its column, has_csk set). Without the rules: up to 16 rows, and the odd columns up to 31 on rows of
+ * 128 or more (EST_ND_CSK_*). The rules (2026-11-09; P = 16 N1 N2 bytes, the scratch T = 16 N1 (N2 + 8)):
+ *   CSK32  at 32 rows where the one-stage chain's legs, at the row pitch, crowd an L1d set (est__col_sets) while csk's
+ *          own loads, 32 legs at max(64, lowbit(16 N2)) bytes, fit the L2: at 32 x 64-2048 the race banks csk
+ *          (1.08-1.29 faster than the chain), at 32x96 and 32x48, whose chain crowds no set, the chain.
+ *   CSK21  at 21, 25, 27 on planes of EST_ND_CSK_TINY bytes or less, and at 21 where two planes pass the L1d (the one
+ *          piece 21 spills lightly, 25 and 27 heavily: those split otherwise).
+ *   CSK    at every other column with one column kernel (22, 26 and 37-47 too; 32 and 64 aside): one walk fewer
+ *          than a split chain, its stores at the pitch N2 + 8 off its loads' sets. Except where the chain's two
+ *          planes fit a cache that csk's three overflow: the L1d (2P <= L1d < 2P + T), and below 16 rows the L2 (2P <=
+ *          L2 < 2P + T) for a one-stage chain that crowds no L1d set; and the primes 17-31 below rows of 128 keep the
+ *          old choice. Against the race's arms 24 of 35 changed planes faster (22 and 26 x 128-512 1.19-1.33), 5
+ *          slower by 1-6 %. */
+static inline int est__csk_2d(const est_machine_t *m, const est_plan2d_t *p, unsigned rules)
+{
+    const int N1 = p->N1, N2 = p->N2;
+    const long long P = 16LL * N1 * N2, T = 16LL * N1 * (N2 + 8), L1 = m->l1d, L2 = m->l2;
+    if (!p->has_csk)
+        return 0;
+    if (N1 == 32 && (rules & EST_ND_2D_R_CSK32))
+    {
+        const int one[1] = { 32 };
+        const long long S = 16LL * N2, low = S & -S;
+        return est__col_sets(m, 32, one, 1, N2) > 0 && 32LL * (low > 64 ? low : 64) <= L2;
+    }
+    if ((N1 == 21 || N1 == 25 || N1 == 27) && (rules & EST_ND_2D_R_CSK21))
+        return P <= EST_ND_CSK_TINY || (N1 == 21 && 2 * P > L1);
+    if ((rules & EST_ND_2D_R_CSK) && N1 != 21 && N1 != 25 && N1 != 27 && N1 != 32 && N1 != 64)
+    {
+        if (2 * P <= L1 && L1 < 2 * P + T)
+            return 0;
+        if (N1 < 16 && 2 * P <= L2 && L2 < 2 * P + T && p->col.nst == 1 && !est__col_sets(m, N1, p->col.R, 1, N2))
+            return 0;
+        if ((N1 == 17 || N1 == 19 || N1 == 23 || N1 == 29 || N1 == 31) && N2 < EST_ND_CSK_ODD_N2)
+            return 0;
+        return 1;
+    }
+    return N1 <= EST_ND_CSK_MAX ||
+           ((N1 & 1) && N1 <= EST_ND_CSK_ODD_MAX && N2 >= EST_ND_CSK_ODD_N2 && !est__spills_single(N1));
+}
+
+/* est_plan_2d_r: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10), under the rules (EST_ND_2D_R_*;
+ * 0 = the rules before 2026-11-09). Returns 0 with *out filled, or -1 with the reason. Pure. est_plan_2d: the
+ * one-thread 2D request's plan, under EST_ND_2D_RULES. */
+static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned rules, est_plan2d_t *out, char *why,
+                                size_t whylen)
 {
     const char *rowno;
     int mono, n1ccs;
@@ -954,7 +1135,7 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
         return est_refuse(why, whylen, "%dx%d: its rows at the last axis N = %d have no 1D engine: %s", N1, N2, N2, rowno);
     out->N1 = N1;
     out->N2 = N2;
-    if (est_col_plan(m, N1, N2, 1, &out->col, why, whylen))
+    if (est_col_plan_r(m, N1, N2, 1, rules, &out->col, why, whylen))
         return -1;
     if (vfft_policy_prime_cell(N2))   /* the rows are the 1D prime cell (est__child_1d below, in place) */
         est__col_single_under_prime_rows(&out->col);
@@ -971,14 +1152,29 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
     /* the row route (sketch §8); a Bluestein cell has no axis race and serves the per-row child */
-    out->csk = out->has_csk && (N1 <= EST_ND_CSK_MAX || ((N1 & 1) && N1 <= EST_ND_CSK_ODD_MAX && N2 >= EST_ND_CSK_ODD_N2 &&
-                                                            !est__spills_single(N1)));
-    out->turn = out->has_turn && !out->csk && N1 >= EST_ND_TURN_N1 && N2 <= EST_ND_TURN_N2;
+    out->csk = est__csk_2d(m, out, rules);
+    if (rules & EST_ND_2D_R_TURN)
+        /* TURN: where the column has one column kernel csk walks the plane twice and the turn three times; where it
+         * has none the chain walks it three times or more too, so the turn's contiguous 1D plans of N1 pay on short
+         * rows at any N1 (the night: 45-125 x 4 and 128-8192 x 9 turn, 1.13-1.86 faster; the new planes 18-99 x 4,
+         * 75x8, 4096x10) */
+        out->turn = out->has_turn && !out->csk && !out->has_csk && N2 <= EST_ND_TURN_N2_R;
+    else
+        out->turn = out->has_turn && !out->csk && N1 >= EST_ND_TURN_N1 && N2 <= EST_ND_TURN_N2;
     out->ro = out->turn ? 0 : est__ro_2d(out);
+    if ((rules & EST_ND_2D_R_ROWS) && out->csk && N2 > EST_ND_ROWB2_MAX && est__rowb2_form(&out->rp) &&
+        16LL * N1 * (3LL * N2 + 8) > (long long)m->l1d)
+        out->ro = 3;   /* ROWS: past the L1d the per-row plan writes its first pass into cold lines, the two-pass rows
+                        * into an L1-resident chunk, two independent rows per call (16 of 19 changed planes faster,
+                        * 1.01-1.11) */
     out->rbk = EST_ND_RBK;
     out->sw = 0;
-    out->col.wl = est_wl_2d(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV);
+    out->col.wl = est_wl_2d_r(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV, rules);
     return 0;
+}
+static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d_t *out, char *why, size_t whylen)
+{
+    return est_plan_2d_r(m, N1, N2, EST_ND_2D_RULES, out, why, whylen);
 }
 /* the strips' width at T (EST_ND_MT_*): a rung of the door's ladder (_il2d_sw_ladder: w at most a worker's
  * column block N2 / T, the last sub-strip narrower where w does not divide it, the strip N1 w 16 B within
@@ -1159,7 +1355,7 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
     out->N1 = N1;
     out->N2 = N2;
     out->N3 = N3;
-    if (est_plan_2d(m, N2, N3, &out->plane, why, whylen))
+    if (est_plan_2d_r(m, N2, N3, 0u, &out->plane, why, whylen))   /* the plane child: the 2D rules before 2026-11-09 */
         return -1;
     out->plane.col.wl = est_wl_2d(m, &out->plane.col, N3, out->plane.csk, out->plane.turn, EST_ND_3D_PLANE_DIV);
     if (est_col_plan(m, N1, (long long)N2 * N3, 0, &out->col, why, whylen))

@@ -476,7 +476,7 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p), *q = batch ? (est_plan2d_t *)malloc(sizeof *q) : NULL;
         if (!p || (batch && !q))
             snprintf(why, sizeof why, "out of memory");
-        else if (!est_plan_2d(m, cfg->n[0], cfg->n[1], p, why, sizeof why))
+        else if (!est_plan_2d_r(m, cfg->n[0], cfg->n[1], cfg->nthreads > 1 ? 0u : EST_ND_2D_RULES, p, why, sizeof why))
         {
             if (q)
             {
