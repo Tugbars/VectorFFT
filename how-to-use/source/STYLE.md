@@ -21,7 +21,7 @@ A chapter file never states its own number. Each file name starts with the file'
 | ch07 | `ch07_real.md` | Real transforms | II |
 | ch08 | `ch08_batches.md` | Batches | II |
 | ch09 | `ch09_threads.md` | Threads | II |
-| ch10 | `ch10_wisdom.md` | Planning and wisdom | II |
+| ch10 | `ch10_wisdom.md` | Planning: measuring or estimating | II |
 | ch11 | `ch11_errors.md` | Errors and messages | II |
 | ch12 | `ch12_poisson.md` | Solving a periodic Poisson equation | III Worked examples |
 | ch13 | `ch13_convolution.md` | Linear convolution of 3D data | III |
@@ -71,11 +71,16 @@ another chapter's files; report what you need instead.
   to `VFFT_DHT`, rank 4, `VFFT_FLAG_EXHAUSTIVE`, `vfft_diagnostics.h`. Chapter 18 lists them
   once, as not part of this release; Table 1.2 also names the installed `vfft_diagnostics.h`,
   as not part of this release.
-- **Planning.** Every create plans PATIENT: `VFFT_FLAG_PATIENT` names the default,
-  `VFFT_FLAG_EXHAUSTIVE` is refused, `VFFT_FLAG_RECALIBRATE` measures again. A create that
-  misses wisdom measures for seconds, up to about a minute for some configurations, and saves
-  the winner; later creates are served at once. `VFFT_FLAG_ESTIMATE` is the one other way: it
-  plans a `VFFT_C2C` transform by formulas and measures nothing (`ch10-sec-estimate`).
+- **Planning.** A create plans one of two ways. Measuring is the default, and
+  `VFFT_FLAG_PATIENT` names it: a create that misses wisdom measures for seconds, up to minutes
+  for the largest configurations, and saves the winner; later creates are served at once.
+  `VFFT_FLAG_RECALIBRATE` measures again; `VFFT_FLAG_EXHAUSTIVE` is refused. The estimate,
+  `VFFT_FLAG_ESTIMATE`, is the other way: it plans `VFFT_C2C`, `VFFT_R2C` and `VFFT_C2R` at
+  ranks 1 to 3 by formulas, measures nothing, reads and saves no wisdom, and refuses what it
+  cannot plan (`ch10-sec-estimate`). Present it as the other method, for programs that must not
+  measure or must not touch a wisdom store; never give a reason why measuring is the default,
+  never recommend the estimate first, and say nothing about how long an estimate create takes.
+  Every DFTI commit plans with the estimate (`ch16-sec-run`).
 - **Wisdom folder.** The library comes with its own wisdom folder, one folder per CPU
   (`src/wisdom/`; `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it
   picks the folder of this CPU by itself, serves from it and saves into it. A program is run
@@ -373,8 +378,9 @@ The terms, in the header's words; use each with this meaning only:
 
 | Term | Meaning |
 | --- | --- |
-| plan | what `vfft_create()` returns (`vfft_plan`): one configuration committed to one measured plan, execute-ready; it owns what it allocated until `vfft_destroy()` |
-| create | the call `vfft_create()`: it checks the configuration, serves it from wisdom or measures it on a miss and saves the winner, then builds the plan |
+| plan | what `vfft_create()` returns (`vfft_plan`): one configuration committed to one plan, measured or chosen by the estimate, execute-ready; it owns what it allocated until `vfft_destroy()` |
+| create | the call `vfft_create()`: it checks the configuration, plans it, then builds the plan; by default it serves the configuration from wisdom or measures it on a miss and saves the winner, and with `VFFT_FLAG_ESTIMATE` it chooses the plan by formulas |
+| estimate | `VFFT_FLAG_ESTIMATE`: planning by formulas from the lengths and this machine's caches and vector width, with nothing measured and no wisdom read or saved |
 | execute | the call `vfft_execute()`: it runs a plan on your buffers, and allocates, measures and decides nothing |
 | wisdom | the record of the plan that won when a configuration was measured |
 | wisdom folder | the folder of wisdom that comes with the library, with one folder in it for each CPU: `src/wisdom/` in the sources, `<prefix>/share/vectorfft/wisdom/` once installed |

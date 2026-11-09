@@ -22,7 +22,7 @@ has five parts:
 | Part | Chapters | What you do there |
 | --- | --- | --- |
 | I Getting started | 1 and 2 | build and install the library, and run a first transform |
-| II Using the API | 3 to 11 | describe a transform, run plans, size buffers, transform real data and batches, use threads, keep wisdom, read errors |
+| II Using the API | 3 to 11 | describe a transform, run plans, size buffers, transform real data and batches, use threads, plan by measuring or by the estimate, read errors |
 | III Worked examples | 12 to 15 | follow the four programs of `examples/`, one chapter each |
 | IV Moving a DFTI program | 16 and 17 | build a DFTI program against VectorFFT, and see what the interface serves |
 | V Reference | 18, 19, A and B | look up `vfft.h`, the environment variables, notes for Windows and MinGW, and troubleshooting |
@@ -52,7 +52,7 @@ In PowerShell, run `.\poisson3d.exe`. Each example checks its own result, and it
 in `PASS`. The library keeps the wisdom it measures in its wisdom folder,
 `<prefix>/share/vectorfft/wisdom/`, which holds one folder for each CPU, and it picks the folder
 of your CPU by itself. On a CPU without shipped wisdom, the first run of an example measures
-each configuration it creates, for seconds, up to about a minute for some configurations, and
+each configuration it creates, for seconds, up to minutes for the largest configurations, and
 saves the winners there; later runs are served at once. Saving needs a `<prefix>` you can
 write: under a prefix only an administrator can write, nothing is saved and every run measures
 again (Chapter 10 of the guide). On Windows, a program built with MinGW-w64 needs
