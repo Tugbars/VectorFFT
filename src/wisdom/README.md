@@ -1,11 +1,13 @@
 # src/wisdom/ — the wisdom store
 
-This folder is what the library plans from. Every plan VectorFFT executes was
-chosen by a race on a real machine, and the winner is kept here as a record:
-the engine, the chain of radices, the tile, the row route, the thread split.
-A `vfft_create` that finds its cell here builds the banked plan and never
-measures; a create that misses races the candidates (every create plans
-PATIENT), banks the winner, saves it here, and serves it.
+This folder is what the library's default planning reads. Every plan it serves
+from here was chosen by a race on a real machine, and the winner is kept here as
+a record: the engine, the chain of radices, the tile, the row route, the thread
+split. A `vfft_create` that finds its cell here builds the banked plan and never
+measures; a create that misses races the candidates (PATIENT, the default),
+banks the winner, saves it here, and serves it. A create with
+`VFFT_FLAG_ESTIMATE` plans by formulas instead and neither reads nor writes
+this folder.
 
 These files are **measured, not generated**. Nothing in the build produces
 them, nothing can rebuild them, and a deleted row costs the race that made it.

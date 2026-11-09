@@ -11,7 +11,8 @@ transform-contiguous unless it names lane-major, a real batch is lane-major unle
 transform-contiguous. Strides are not offered (2026-10-14).
 
 The model stays what it is: a configuration names the data contract, create commits it to
-one measured plan, execute runs it purely, destroy frees it. What changes is the surface
+one plan (measured, or planned by formulas under `VFFT_FLAG_ESTIMATE`), execute runs it purely,
+destroy frees it. What changes is the surface
 around that model: every process-wide setting the per-plan configuration already covers is
 removed, every plan fact comes back through one query, the planner's policy is one flags
 word, and every default has one fixed meaning but the batch geometry's, which follows the
@@ -85,16 +86,18 @@ The flags:
 
 | flag | replaces | meaning |
 |---|---|---|
-| `VFFT_FLAG_PATIENT` | `rigor = VFFT_PATIENT` | the default, flagged or not: every create plans PATIENT (the wide sweep on a miss) |
+| `VFFT_FLAG_PATIENT` | `rigor = VFFT_PATIENT` | names the default: a create without `VFFT_FLAG_ESTIMATE` plans PATIENT (wisdom, and the wide sweep on a miss) |
 | `VFFT_FLAG_EXHAUSTIVE` | `rigor = VFFT_EXHAUSTIVE` | not served: the create is refused |
 | `VFFT_FLAG_RECALIBRATE` | `recalibrate = 1` | race this cell again, even on a hit or after this process raced it |
 | `VFFT_FLAG_DESTROY_INPUT` | `destroy_input = 1` | the plan may overwrite an out-of-place input |
 | `VFFT_FLAG_OWN_PITCH` | `owned_buffers = 1` | the plan may choose its row pitch or lane stride; the caller reads it from `vfft_info` and lays the data at it |
 | `VFFT_FLAG_VERBOSE` | the printed refusal | print the refusal as well as recording it |
+| `VFFT_FLAG_ESTIMATE` | (none) | plan by formulas from the lengths, the thread and batch counts, and this machine's caches and vector width: nothing is measured, no wisdom is read or written, `wisdom_dir` is not opened; refused with `VFFT_FLAG_PATIENT` or `VFFT_FLAG_RECALIBRATE` and on a request it does not plan (`include/vfft.h` lists what it plans) |
 
 The enums are typed and prefixed: the placement values become `VFFT_PLACEMENT_OUT` and
 `VFFT_PLACEMENT_IN`, the rigor enum leaves the public surface (which also ends the
-`VFFT_MEASURE` / `VFFT_MEASURE_PIN_*` collision; every create plans PATIENT), and `order`
+`VFFT_MEASURE` / `VFFT_MEASURE_PIN_*` collision; a create without `VFFT_FLAG_ESTIMATE` plans
+PATIENT), and `order`
 and `batch` become typed fields instead of ints.
 
 ## 3. The plan's facts
@@ -127,7 +130,7 @@ buffer is owned by a plan and no second free function exists.
 | `vfft_measure_configure` and its config | the diagnostics header (a tool's surface) |
 | `vfft_plan_planes`, `vfft_plan_stride`, `vfft_plan_alloc`, `vfft_buffers_free`, `config.owned_buffers` | `vfft_info` and `VFFT_FLAG_OWN_PITCH` |
 | `vfft_plan_route`, `vfft_version`, `vfft_alignment` | fields of `vfft_info` |
-| `config.rigor` | every create plans PATIENT; `VFFT_FLAG_EXHAUSTIVE` is refused |
+| `config.rigor` | a create plans PATIENT, or by formulas under `VFFT_FLAG_ESTIMATE`; `VFFT_FLAG_EXHAUSTIVE` is refused |
 | `config.recalibrate`, `config.destroy_input` | flags |
 | `config.wisdom_write` (retired) | gone |
 | `config.dims` | `config.rank` |
@@ -147,8 +150,9 @@ report, the ISA); it is not part of what a user learns.
 - The process-wide thread setting is gone: a plan that does not set `nthreads` runs on one
   thread.
 - Refusals are no longer printed unless asked.
-- A zeroed configuration planned MEASURE; every create plans PATIENT, the wider sweep, so a
-  create that misses wisdom measures longer. `VFFT_FLAG_PATIENT` names that default; the
+- A zeroed configuration planned MEASURE; a create now plans PATIENT, the wider sweep, unless
+  it sets `VFFT_FLAG_ESTIMATE`, so a create that misses wisdom measures longer.
+  `VFFT_FLAG_PATIENT` names that default; the
   exhaustive sweep is not served and `VFFT_FLAG_EXHAUSTIVE` is refused.
 
 ## 6. The build

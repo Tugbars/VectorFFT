@@ -6,9 +6,11 @@ A program written for Intel MKL's DFTI interface (`DftiCreateDescriptor`, `DftiS
 `DftiCommitDescriptor`, `DftiComputeForward`, ...) runs on VectorFFT by building against this
 interface instead of MKL's. The interface is thin. It translates a committed descriptor into
 `vfft.h` plans, delegates every transform to them, and never selects an engine, converts a
-layout or reorders a spectrum itself. Whatever `vfft_create` serves through the front door is
-served through DFTI in the geometries of section 3; whatever it refuses, the commit refuses
-with the library's reason.
+layout or reorders a spectrum itself. Every commit plans with VectorFFT's estimate
+(`VFFT_FLAG_ESTIMATE`), as MKL's commit plans by formulas: nothing is measured, no wisdom is read
+or written, and no store is opened. Whatever `vfft_create` plans under that flag is served
+through DFTI in the geometries of section 3; whatever it refuses, the commit refuses with the
+library's reason.
 
 Scope: double precision, the interleaved layout, the C interface. The research behind it is
 `docs/research/fftw_mkl_shim/REPORT.md` section 4 and `sources/dfti-surface.md`.
@@ -64,7 +66,8 @@ The lifecycle is MKL's:
   the next commit or the free.
 - A compute on an uncommitted descriptor returns 2 and computes nothing.
 - A committed descriptor's copy is committed, with its own plans built from the same
-  configuration (a wisdom replay). An uncommitted descriptor's copy is uncommitted.
+  configuration (the estimate plans them again). An uncommitted descriptor's copy is
+  uncommitted.
 - `DftiFreeDescriptor` frees the plans and sets the handle to NULL.
 - A NULL handle returns 5 everywhere, except the `VERSION` query.
 - The defaults are MKL's measured ones, including the real-domain pitch on the output strides
@@ -126,10 +129,16 @@ not a served form: 6, with a line naming the packed strides.
 **A recommit keeps the plans** when the translated configurations equal the committed ones. A
 program that sets a value and recommits per call pays nothing more.
 
-**Cost.** A commit that misses wisdom measures the cell's candidates (seconds at a small cell,
-minutes at the largest) and saves the winner. Every later commit of the cell on the
-machine replays it. Like `vfft_create`, the commit leaves flush-to-zero and
-denormals-are-zero on in the committing thread's floating-point mode.
+**Planning.** Every configuration the commit builds carries `VFFT_FLAG_ESTIMATE` (beside
+`VFFT_FLAG_DESTROY_INPUT` when `DESTROY_INPUT` is `ALLOW`) and a NULL `wisdom_dir`. The plan is
+chosen by formulas from the lengths and this machine's caches and vector width, and the thread
+and batch count; nothing is measured, no wisdom is read or saved, and no store is opened. A
+configuration the estimate refuses fails the commit with the estimate's reason: 6, with the
+reason printed. A rank of 4 or more is refused before any plan, with 6 and a line naming the
+rank, such as
+`DftiCommitDescriptor: rank 4 is not served (VectorFFT's DFTI interface plans ranks 1 to 3)`.
+Like `vfft_create`, the commit leaves flush-to-zero and denormals-are-zero on in the committing
+thread's floating-point mode.
 
 ## 4. Threads
 
@@ -143,8 +152,8 @@ denormals-are-zero on in the committing thread's floating-point mode.
   actual count.
 - **One descriptor, many threads.** DFTI allows one committed descriptor to be computed from
   several threads at once; a `vfft.h` plan runs one execute at a time. The commit therefore
-  builds `NUMBER_OF_USER_THREADS` plans: the first may measure, the rest replay its wisdom. A
-  compute borrows a free plan (one atomic compare-and-swap when uncontended) and returns it.
+  builds `NUMBER_OF_USER_THREADS` plans, each planned by the estimate. A compute borrows a free
+  plan (one atomic compare-and-swap when uncontended) and returns it.
   When every plan is busy the compute waits for one, and the first wait on a descriptor prints
   one line naming `DFTI_NUMBER_OF_USER_THREADS`. Results are always correct, and throughput
   scales with the declared count.
@@ -183,8 +192,6 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
 
 - A compute in a direction the committed strides do not fit returns 3. MKL returns 0 with
   wrong output.
-- A first commit of a cell on a machine measures, from seconds to minutes. MKL's commit
-  is analytic.
 - A scale other than 1 costs one pass over the output.
 - `BACKWARD_SCRAMBLED` prints that natural order is served. MKL serves natural order silently.
 - The commit leaves flush-to-zero and denormals-are-zero on in the committing thread.
@@ -193,7 +200,7 @@ gains fused scaling, scaled final writers bound at plan time, after the release.
 ## 8. Not served
 
 - Single precision.
-- Ranks 5 to 7.
+- Ranks 4 to 7: the estimate plans ranks 1 to 3.
 - Split storage: `COMPLEX_STORAGE` or `CONJUGATE_EVEN_STORAGE` set to `REAL_REAL`. `vfft.h`
   serves split data directly.
 - The packed real formats CCS, PACK and PERM.

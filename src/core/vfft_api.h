@@ -16,7 +16,7 @@
  *   - the batch values are the library's own (DEFAULT: contiguous for INTERLEAVED C2C, lane-major
  *     for real and for SPLIT);
  *   - nthreads 0 or 1 is one thread (no process-wide setting);
- *   - every create plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
+ *   - a create without VFFT_FLAG_ESTIMATE plans PATIENT (ruled 2026-10-17): VFFT_FLAG_PATIENT names that default and
  *     VFFT_FLAG_EXHAUSTIVE is refused;
  *   - VFFT_FLAG_ESTIMATE plans an INTERLEAVED C2C transform by formulas, measuring nothing
  *     (il/estimate/c2c_estimate_il.h): 1D in any order on any thread count, rank 2 and 3 in natural
@@ -145,7 +145,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     }
     if (p->flags & VFFT_FLAG_EXHAUSTIVE)
     {
-        _vfft_warn("vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (every create plans PATIENT; drop the flag)");
+        _vfft_warn("vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (a create plans PATIENT, or by formulas with VFFT_FLAG_ESTIMATE; drop the flag)");
         return 0;
     }
     if (p->rank < 0 || p->rank > 4)
@@ -219,7 +219,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         c->order = VFI_ORDER_DEFAULT;          /* natural is the layout's own */
     c->batch_geom = trig ? VFFT_BATCH_DEFAULT : (int)p->batch;
     c->nthreads = p->nthreads > 1 ? p->nthreads : 1;
-    c->rigor = VFFT_PATIENT;               /* every create, VFFT_FLAG_PATIENT or not */
+    c->rigor = VFFT_PATIENT;               /* every create without VFFT_FLAG_ESTIMATE, VFFT_FLAG_PATIENT or not */
     c->recalibrate = (p->flags & VFFT_FLAG_RECALIBRATE) != 0;
     c->destroy_input = (p->flags & VFFT_FLAG_DESTROY_INPUT) != 0;
     c->owned_buffers = (p->flags & VFFT_FLAG_OWN_PITCH) != 0;

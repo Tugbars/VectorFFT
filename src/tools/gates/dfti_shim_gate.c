@@ -14,7 +14,8 @@
  *      unserved layout 6, a copy, BACKWARD_SCRAMBLED served in natural order, the readbacks;
  *   M  one descriptor computed from eight threads at once (NUMBER_OF_USER_THREADS 8, then 1), every
  *      result bitwise the one-thread result; THREAD_LIMIT 0 reads back vfft_info().cores.
- * Cold scratch store (VFFT_WISDOM_DIR): every cell races. Usage: dfti_shim_gate --wisdir <dir> */
+ * The interface plans every cell with the estimate (VFFT_FLAG_ESTIMATE): nothing races and the store named by
+ * VFFT_WISDOM_DIR is not opened. Usage: dfti_shim_gate --wisdir <dir> */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

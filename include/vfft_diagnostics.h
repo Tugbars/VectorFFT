@@ -106,7 +106,9 @@ extern "C"
 
   /* ── THE MEASUREMENT SCOPE'S SETTINGS (moved here from vfft.h with API v2, 2026-10-15) ──
    * vfft_create() measures (races) a cell's candidates whenever wisdom does not serve it and
-   * saves the winner. It runs every race inside one scope and undoes it before it returns: a
+   * saves the winner; a create with VFFT_FLAG_ESTIMATE races nothing and enters no scope (the
+   * verdicts this header calls raced at create are then set by formulas). It runs every race
+   * inside one scope and undoes it before it returns: a
    * machine-wide lock (bounded wait; past it the race runs anyway), the measuring thread pinned
    * to one P-core (the core the pool leaves to its caller once the pool exists, the second
    * P-core before that), a guard thread holding that core's hyperthread sibling with the

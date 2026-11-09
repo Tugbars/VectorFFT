@@ -43,6 +43,9 @@ figure.portrait .frame img{min-width:480px;max-width:780px}
 
 hr{border:0;border-top:1px solid var(--rule);margin:0}
 
+p.note{max-width:780px;margin:1.3rem auto 0;text-align:center;font-size:1rem;line-height:1.55}
+p.note code{font-family:'CMU Typewriter',ui-monospace,Menlo,monospace;font-size:.94em}
+
 footer{
   margin-top:4.5rem;padding-top:1.1rem;border-top:1px solid var(--rule);
   text-align:center;color:var(--muted);font-size:.86rem;
@@ -121,6 +124,7 @@ footer a:hover{border-bottom-color:var(--ink)}
 </svg>
   </div>
 </figure>
+<p class="note">The planner above is the default method: a create looks its configuration up in wisdom and, on a miss, measures the candidate plans and saves the winner. With <code>VFFT_FLAG_ESTIMATE</code> the library plans by formulas instead, from the lengths and this machine&rsquo;s caches and vector width: nothing is measured and no wisdom is read or written.</p>
 
 <h2>Performance</h2>
 

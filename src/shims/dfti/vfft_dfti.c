@@ -6,7 +6,9 @@
  * committed strides serve, and creates the plans, one per declared user thread. A compute
  * borrows a plan and runs it, then applies the direction's scale. Nothing here selects an
  * engine, converts a layout or reorders a spectrum: a recognised layout goes to vfft_create,
- * whose refusal is the commit's. Includes vfft.h and nothing from src/core.
+ * whose refusal is the commit's. Every plan is planned by VectorFFT's estimate (VFFT_FLAG_ESTIMATE):
+ * nothing is measured and no wisdom is read or written. Includes vfft.h
+ * and nothing from src/core.
  */
 #include <limits.h>
 #include <stdarg.h>
@@ -25,7 +27,7 @@
 #include "mkl_dfti.h"
 
 #define VD_MAGIC 0x56444654 /* "VDFT": a live descriptor */
-#define VD_MAXRANK 7        /* DFTI's ranks; the commit serves vfft.h's 1 to 4 */
+#define VD_MAXRANK 7        /* DFTI's ranks; the commit serves 1 to 3, the ranks the estimate plans */
 #define VD_MAXPLANS 64      /* plans per direction: the width of the busy mask */
 
 struct DFTI_DESCRIPTOR
@@ -661,8 +663,8 @@ static void vd_config(const struct DFTI_DESCRIPTOR *d, vfft_transform_t tr, vfft
     c->order = VFFT_ORDER_NATURAL;
     c->batch = batch;
     c->nthreads = threads;
-    c->flags = d->destroy_input == DFTI_ALLOW ? (unsigned)VFFT_FLAG_DESTROY_INPUT : 0u;
-    c->wisdom_dir = NULL;
+    c->flags = (unsigned)VFFT_FLAG_ESTIMATE | (d->destroy_input == DFTI_ALLOW ? (unsigned)VFFT_FLAG_DESTROY_INPUT : 0u);
+    c->wisdom_dir = NULL;   /* the estimate opens no store */
 }
 
 MKL_LONG vfft_dfti_commit(DFTI_DESCRIPTOR_HANDLE desc)
@@ -679,9 +681,9 @@ MKL_LONG vfft_dfti_commit(DFTI_DESCRIPTOR_HANDLE desc)
     real = d->domain == DFTI_REAL;
     ip = d->placement == DFTI_INPLACE;
     r = d->rank;
-    if (r > 4)
+    if (r > 3)
     {
-        vd_say("DftiCommitDescriptor: rank %d is not served (VectorFFT serves ranks 1 to 4)", r);
+        vd_say("DftiCommitDescriptor: rank %d is not served (VectorFFT's DFTI interface plans ranks 1 to 3)", r);
         return DFTI_UNIMPLEMENTED;
     }
     for (k = 0; k < r; k++)
@@ -797,7 +799,7 @@ MKL_LONG vfft_dfti_commit(DFTI_DESCRIPTOR_HANDLE desc)
             return DFTI_MEMORY_ERROR;
         }
         for (s = 0; s < nplans; s++)
-        {   /* the first may measure; the rest replay its wisdom */
+        {   /* each one planned by the estimate, nothing measured */
             d->plan[k][s] = vfft_create(&cfg[k]);
             if (!d->plan[k][s])
             {

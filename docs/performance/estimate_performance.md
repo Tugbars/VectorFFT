@@ -1,8 +1,9 @@
 # Estimate planning: performance
 
-`VFFT_FLAG_ESTIMATE` ([`include/vfft.h`](../../include/vfft.h)) plans a complex transform in one,
-two or three dimensions from formulas: the lengths, the vector width, and this machine's cache
-sizes and core count. It measures nothing at create and reads or writes no wisdom. This page
+`VFFT_FLAG_ESTIMATE` ([`include/vfft.h`](../../include/vfft.h)) plans an interleaved complex or
+real transform (`VFFT_C2C`, `VFFT_R2C`, `VFFT_C2R`) in one, two or three dimensions, one transform
+or a batch, on any thread count, from formulas: the lengths, the thread and batch counts, the vector
+width, and this machine's cache sizes. It measures nothing at create and reads or writes no wisdom. This page
 answers two questions. How far are its plans from the plans the default planner measures? And how
 do they compare with MKL? Over
 314 configurations in one, two and three dimensions, measured on 2026-10-26 and 2026-10-27, an

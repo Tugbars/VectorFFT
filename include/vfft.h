@@ -134,8 +134,9 @@ extern "C"
   /** @brief vfft_config_t.flags: the planner's policy and the plan's permissions. */
   enum
   {
-    VFFT_FLAG_PATIENT = 1u << 0,       /**< names the default: every create plans PATIENT
-                                            (the wide sweep on a wisdom miss) */
+    VFFT_FLAG_PATIENT = 1u << 0,       /**< names the default: a create without
+                                            VFFT_FLAG_ESTIMATE plans PATIENT (wisdom, and the
+                                            wide sweep on a wisdom miss) */
     VFFT_FLAG_EXHAUSTIVE = 1u << 1,    /**< not served: vfft_create() refuses it */
     VFFT_FLAG_RECALIBRATE = 1u << 2,   /**< measure this cell again, even on a wisdom hit or
                                             after this process measured it, and save the winner */
@@ -144,18 +145,17 @@ extern "C"
                                             INTERLEAVED 2D or 3D real plan);
                                             the caller reads it with vfft_info() */
     VFFT_FLAG_VERBOSE = 1u << 5,       /**< print refusals and warnings to stderr as well */
-    VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths and this
-                                            machine's caches: nothing is measured at create,
+    VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths, the thread
+                                            and batch count, and this machine's caches and
+                                            vector width: nothing is measured at create,
                                             no wisdom is read or written, and wisdom_dir is
-                                            not opened. A VFFT_C2C transform, INTERLEAVED:
-                                            1D in any order, placement and nthreads; rank 2
-                                            and 3 in natural order at any nthreads, either
-                                            placement; and a batch of them (howmany > 1),
-                                            contiguous or lane-major. One VFFT_R2C or
-                                            VFFT_C2R transform at rank 1, 2 or 3 in
-                                            natural order, either placement, any
-                                            nthreads (at rank 2 and 3 not with
-                                            VFFT_FLAG_OWN_PITCH).
+                                            not opened. INTERLEAVED, any nthreads, either
+                                            placement. VFFT_C2C: 1D in any order, rank 2
+                                            and 3 in natural order. VFFT_R2C and VFFT_C2R:
+                                            rank 1, 2 or 3 in natural order (at rank 2 and
+                                            3 not with VFFT_FLAG_OWN_PITCH). One transform
+                                            or a batch of them (howmany > 1), contiguous or
+                                            lane-major.
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment
@@ -183,8 +183,9 @@ extern "C"
     vfft_order_t order;
     vfft_batch_t batch;
     int nthreads;               /**< the threads the plan runs on, the caller's included;
-                                     0 or 1 = one. Every threaded decision is measured
-                                     at this count. */
+                                     0 or 1 = one. Every threaded decision is made at
+                                     this count (measured, or by formulas under
+                                     VFFT_FLAG_ESTIMATE). */
     unsigned flags;             /**< VFFT_FLAG_* */
     const char *wisdom_dir;     /**< a wisdom store directory; NULL = the library's own */
   } vfft_config_t;
