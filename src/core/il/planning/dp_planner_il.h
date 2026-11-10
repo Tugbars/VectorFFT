@@ -690,7 +690,24 @@ static void _il_dp_ref_dft_mixed(vfft_real *z, long N)
     free(buf);
 }
 
+#ifdef VFFT_FLOAT
+/* FP32: the radix-2 reference runs in double on a copy of the float input and is rounded once at
+ * the end (a float-stored tree would round at every stage) */
+static void _il_dp_ref_dft_d(double *z, long N);
 static void _il_dp_ref_dft(vfft_real *z, long N)
+{
+    double *d = (double *)malloc((size_t)N * 2u * sizeof(double));
+    long i;
+    if (!d) return;                     /* the caller's scale check catches it */
+    for (i = 0; i < 2 * N; i++) d[i] = z[i];
+    _il_dp_ref_dft_d(d, N);
+    for (i = 0; i < 2 * N; i++) z[i] = (vfft_real)d[i];
+    free(d);
+}
+static void _il_dp_ref_dft_d(double *z, long N)
+#else
+static void _il_dp_ref_dft(vfft_real *z, long N)
+#endif
 {
     for (long i = 1, j = 0; i < N; i++)              /* bit reversal */
     {
