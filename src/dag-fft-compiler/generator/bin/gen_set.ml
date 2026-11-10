@@ -22,12 +22,14 @@
  * Usage:
  *   gen_set.exe [--root DIR] [--port P] [quadrant ...]      (default: all)
  * --root: the codelets/ directory (default "codelets" under cwd).
- * "all" is the FP64 tree (Corpus.quadrants); "f32" the FP32 cil quadrants
- * (Corpus.quadrants_f32: zil-f32-avx2, zil-f32-avx512), never part of "all".
- * --port P (FP32 only, 2026-11-10): every cell re-emitted with --cil-port P (the
+ * "all" is the FP64 tree (Corpus.quadrants); "f32" the FP32 quadrants (cil kernels and
+ * ZTURN-T stage kernels; Corpus.quadrants_f32: zil-f32-avx2, zil-f32-avx512), never part
+ * of "all".
+ * --port P (FP32 only, 2026-11-10): every cil cell re-emitted with --cil-port P (the
  * FMA-port setting) under its own file and symbol name -- the A/B variants of a
- * corpus, written to their own --root; an FP64 cell refuses it (the first refusal
- * stops the run, as always). *)
+ * corpus, written to their own --root; the FP32 ZTURN-T stage kernels, which have no
+ * port setting, are re-emitted unchanged so the root holds the whole FP32 corpus; an
+ * FP64 cell refuses it (the first refusal stops the run, as always). *)
 
 let rec mkdir_p (dir : string) : unit =
   if dir = "" || dir = "." || dir = "/" || Sys.file_exists dir
@@ -79,6 +81,8 @@ let with_port (port : int) (tail : string list) : string list =
     match c.kind with
     | Cil r ->
       List.filter (fun a -> a <> "--emit-c") (to_argv { c with kind = Cil { r with port } })
+    | Zsplit _ when (match c.isa with Some i -> List.mem i Corpus.zil_f32_isas | None -> false) ->
+      tail   (* the FP32 ZTURN-T stage kernels: no port setting, emitted unchanged *)
     | _ -> failwith "gen_set: --port applies to the cil kinds only")
 ;;
 
