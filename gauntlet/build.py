@@ -10,12 +10,14 @@ Usage:
     python gauntlet/build.py --compile --mkl --vfft                            # the bench
     python gauntlet/build.py --compile --vfft --src gauntlet/recal_1d_probe.c   # a tool
     python gauntlet/build.py --compile --vfft --src src/tools/gates/<gate>.c    # a gate (run_gates.py calls this)
+    python gauntlet/build.py --compile --mkl --vfft --float                    # the bench with its FP32 arm (--f32)
 Without --compile the binary runs after the build.
 
 Environment:
     CC                the compiler (default gcc; the known mingw locations are searched)
     VFFT_BUILD_JOBS   compile parallelism (default: CPU count; 1 = serial)
     VFFT_ISA          avx2 | avx512      VFFT_ASAN   build with AddressSanitizer
+    VFFT_FLOAT        1 = --float (so a caller that runs this script, run_gates.py, passes it on)
 """
 from __future__ import annotations
 import argparse
@@ -55,6 +57,10 @@ DAG_ISA_FLAGS = ['-mavx512f', '-mavx512dq'] if DAG_ISA == 'avx512' else ['-mno-a
 # with a shift and an lea per access: 14-30 % more instructions (measured 2026-11-08).
 # GCC only (CMakeLists.txt adds the same): clang and icx have no such parameter.
 GCC_IV_PARAM = '--param=iv-max-considered-uses=1000'
+# FP32 (2026-11-10): --float, or VFFT_FLOAT=1 in the environment, defines VFFT_HAS_FLOAT for the DRIVER
+# TUs (the tools' and gates' FP32 parts compile only under it). The library TU's flags (lib_cflags) and
+# the codelet library's never carry it, so the FP64 objects keep their flags key.
+VFFT_FLOAT = os.environ.get('VFFT_FLOAT', '') not in ('', '0')
 
 
 def dag_codelet_srcs() -> list[str]:
@@ -542,11 +548,12 @@ def find_kfr():
 
 
 def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
-              split=False, kfr=False, lib_cflags=None):
+              split=False, kfr=False, lib_cflags=None, flt=False):
     """The compile flags, sources and link input of one driver build. A list passed as
     lib_cflags is filled with the LIBRARY TU's flags (gcc-style path): cflags without
-    the comparator switches (--mkl/--fftw/--kfr's defines and include dirs), which only
-    the drivers read, so every tool built from one tree shares one library object."""
+    the comparator switches (--mkl/--fftw/--kfr's defines and include dirs) and without
+    flt's VFFT_HAS_FLOAT, which only the drivers read, so every tool built from one tree
+    shares one library object."""
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     kfr_inc, kfr_lib = (None, None)
@@ -596,6 +603,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
         if mkl:
             flags += ['/DVFFT_HAS_MKL', '/DMKL_ILP64']
             inc += [f'/I{mkl_inc}']
+        if flt:
+            flags += ['/DVFFT_HAS_FLOAT']
         all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])] + dag_codelet_srcs()
         cmd = [tc['cc']] + flags + inc + all_srcs + [f'/Fe:{out_bin}']
         if mkl:
@@ -676,6 +685,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
         # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
         # strides array -> "Inconsistent configuration parameters" at DftiCommit.
         flags += ['-DVFFT_HAS_MKL', f'-I{mkl_inc}']
+    if flt:
+        flags += ['-DVFFT_HAS_FLOAT']   # the drivers' FP32 parts (after lib_cflags: never the library TU's)
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
     if kfr:
@@ -871,7 +882,11 @@ def main():
                     help='Compile src/core/vfft.c alongside the source. Use this '
                          'when the source file uses the public vfft.h API '
                          '(opaque-handle entry points).')
+    ap.add_argument('--float', action='store_true',
+                    help='Define VFFT_HAS_FLOAT for the driver: the FP32 parts of the tools '
+                         'and gates (vfftf.h). Also on with VFFT_FLOAT=1 in the environment.')
     args = ap.parse_args()
+    use_float = args.float or VFFT_FLOAT
 
     tc = detect_toolchain()
     print('-' * 60)
@@ -880,6 +895,8 @@ def main():
     print(f' Compiler:  {tc["cc"]} ({"MSVC-style" if tc["is_msvc_style"] else "GCC-style"})')
     print(f' Source:    {args.src}')
     print(f' Includes:  {len(build_includes())} dirs')
+    if use_float:
+        print(' FP32:      VFFT_HAS_FLOAT (the driver)')
     print('-' * 60)
 
     src = Path(args.src).resolve()
@@ -899,7 +916,7 @@ def main():
         # MSVC compiles the whole corpus in one cl invocation (no cached lib on
         # that path), so it stays a single command.
         cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
-                        extra_srcs=extra_srcs)
+                        extra_srcs=extra_srcs, flt=use_float)
         result = subprocess.run(cmd, capture_output=True,
                                 text=True, encoding='utf-8', errors='replace',
                                 env=build_env(tc))
@@ -917,7 +934,7 @@ def main():
         lib_cflags = []
         cflags, base_srcs, link_args = build_cmd(
             tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, kfr=args.kfr,
-            extra_srcs=extra_srcs, split=True, lib_cflags=lib_cflags)
+            extra_srcs=extra_srcs, split=True, lib_cflags=lib_cflags, flt=use_float)
         # src/core/vfft.c (--vfft) compiles under the library's own key: one object for every tool
         if not build_gcc(tc, out_bin, cflags, base_srcs, link_args,
                          lib_srcs=extra_srcs, lib_cflags=lib_cflags):
