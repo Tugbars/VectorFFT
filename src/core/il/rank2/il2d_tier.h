@@ -84,17 +84,17 @@ extern long _vfft_il2d_row_mt_count;   /* the 2D real ROW plan's threaded passes
 /* the K=1 FOUR-STEP's inter-pass twiddle on one row (oop/k1_fourstep.h):
  * the row at plane position p times W_N^(k1(p) * n2), n2 = a*B + b, from
  * the per-position two-level record [coarse C[a] (N2/B)][fine F[b] (B)];
- * conj = the backward's conjugate. */
+ * conj = the backward's conjugate.
+ * By hand at both precisions, as (x F[b]) C[a]: the fine entry does not
+ * change with a, so its two duplicated forms (fr, fr) and (fi, fi) are laid
+ * out once per call, VFFT_IL2D_FS_HB entries at a time, and each of the two
+ * multiplies is one swap, one product and one fused multiply-add/subtract.
+ * The backward's conjugate is the sign of fi and of ci. Whole vectors
+ * first, then point by point where a run is not a whole number of them. */
 #ifdef VFFT_FLOAT
-/* FP32: float arithmetic by hand, 4 points per ymm (8 per zmm on an AVX-512
- * build), then point by point where a run is not a whole number of vectors.
- * (The plain C form below computes in double: at FP32 that converts every
- * sample to double and back, and costs more than the row transform.)
- * (x F[b]) C[a]: the fine entry does not change with a, so its two
- * duplicated forms (fr, fr) and (fi, fi) are laid out once per call,
- * VFFT_IL2D_FS_HB entries at a time, and each of the two multiplies is one
- * swap, one product and one fused multiply-add/subtract. The backward's
- * conjugate is the sign of fi and of ci. */
+/* FP32: 4 points per ymm, 8 per zmm on an AVX-512 build. The arithmetic is
+ * float throughout: written in double, the multiply converts every sample
+ * to double and back and costs more than the row transform. */
 #define VFFT_IL2D_FS_HB 128   /* fine entries laid out at a time: 2 KB of stack */
 static void _il2d_fs_twiddle(vfft_real *row, const vfft_real *rec, int B, size_t n2, int conj)
 {
@@ -160,25 +160,68 @@ static void _il2d_fs_twiddle(vfft_real *row, const vfft_real *rec, int B, size_t
     }
 }
 #else
-/* FP64: straight C: the row is L2-hot and the multiply is small against the
- * row transform. */
+/* FP64: 2 points per ymm, 4 per zmm on an AVX-512 build. */
+#define VFFT_IL2D_FS_HB 64   /* fine entries laid out at a time: 2 KB of stack */
 static void _il2d_fs_twiddle(vfft_real *row, const vfft_real *rec, int B, size_t n2, int conj)
 {
     const size_t na = (n2 + (size_t)B - 1) / (size_t)B;   /* ceil: a non-pow2 row's last coarse entry is partial */
     const vfft_real *C = rec, *F = rec + 2 * na;
-    size_t a, b;
-    for (a = 0; a < na; a++)
+    const double sg = conj ? -1.0 : 1.0;
+    const __m256d sgv = _mm256_set1_pd(conj ? -0.0 : 0.0);
+    __attribute__((aligned(64))) double frd[2 * VFFT_IL2D_FS_HB], fid[2 * VFFT_IL2D_FS_HB];
+    size_t a, b, b0;
+    for (b0 = 0; b0 < (size_t)B; b0 += VFFT_IL2D_FS_HB)
     {
-        const double cr = C[2 * a], ci = conj ? -C[2 * a + 1] : C[2 * a + 1];
-        vfft_real *r = row + 2 * a * (size_t)B;
-        const size_t bl = (n2 - a * (size_t)B < (size_t)B) ? n2 - a * (size_t)B : (size_t)B;
-        for (b = 0; b < bl; b++)
+        const size_t hl = ((size_t)B - b0 < (size_t)VFFT_IL2D_FS_HB) ? (size_t)B - b0 : (size_t)VFFT_IL2D_FS_HB;
+        const vfft_real *Fb = F + 2 * b0;
+        for (b = 0; b + 2 <= hl; b += 2)
         {
-            const double fr = F[2 * b], fi = conj ? -F[2 * b + 1] : F[2 * b + 1];
-            const double wr = cr * fr - ci * fi, wi = cr * fi + ci * fr;
-            const double xr = r[2 * b], xi = r[2 * b + 1];
-            r[2 * b] = xr * wr - xi * wi;
-            r[2 * b + 1] = xr * wi + xi * wr;
+            const __m256d f = _mm256_loadu_pd(Fb + 2 * b);
+            _mm256_store_pd(frd + 2 * b, _mm256_movedup_pd(f));
+            _mm256_store_pd(fid + 2 * b, _mm256_xor_pd(_mm256_permute_pd(f, 0xF), sgv));
+        }
+        for (; b < hl; b++)
+        {
+            frd[2 * b] = frd[2 * b + 1] = Fb[2 * b];
+            fid[2 * b] = fid[2 * b + 1] = sg * Fb[2 * b + 1];
+        }
+        for (a = 0; a < na; a++)
+        {
+            const double cr = C[2 * a], ci = sg * C[2 * a + 1];
+            vfft_real *r = row + 2 * (a * (size_t)B + b0);
+            const size_t run = n2 - a * (size_t)B;   /* this coarse entry's points: B, fewer in a partial last one */
+            const size_t bl = run <= b0 ? 0 : (run - b0 < hl ? run - b0 : hl);
+            b = 0;
+#if defined(VFFT_BUILD_ISA_AVX512)
+            {
+                const __m512d vcr = _mm512_set1_pd(cr), vci = _mm512_set1_pd(ci);
+                for (; b + 4 <= bl; b += 4)
+                {
+                    const __m512d x = _mm512_loadu_pd(r + 2 * b);
+                    const __m512d z = _mm512_fmaddsub_pd(x, _mm512_load_pd(frd + 2 * b),   /* x f: xr fr - xi fi, xi fr + xr fi */
+                                                         _mm512_mul_pd(_mm512_permute_pd(x, 0x55), _mm512_load_pd(fid + 2 * b)));
+                    _mm512_storeu_pd(r + 2 * b, _mm512_fmaddsub_pd(z, vcr, _mm512_mul_pd(_mm512_permute_pd(z, 0x55), vci)));
+                }
+            }
+#endif
+            {
+                const __m256d vcr = _mm256_set1_pd(cr), vci = _mm256_set1_pd(ci);
+                for (; b + 2 <= bl; b += 2)
+                {
+                    const __m256d x = _mm256_loadu_pd(r + 2 * b);
+                    const __m256d z = _mm256_fmaddsub_pd(x, _mm256_load_pd(frd + 2 * b),   /* x f: xr fr - xi fi, xi fr + xr fi */
+                                                         _mm256_mul_pd(_mm256_permute_pd(x, 0x5), _mm256_load_pd(fid + 2 * b)));
+                    _mm256_storeu_pd(r + 2 * b, _mm256_fmaddsub_pd(z, vcr, _mm256_mul_pd(_mm256_permute_pd(z, 0x5), vci)));
+                }
+            }
+            for (; b < bl; b++)
+            {
+                const double fr = frd[2 * b], fi = fid[2 * b];
+                const double xr = r[2 * b], xi = r[2 * b + 1];
+                const double zr = xr * fr - xi * fi, zi = xi * fr + xr * fi;
+                r[2 * b] = zr * cr - zi * ci;
+                r[2 * b + 1] = zi * cr + zr * ci;
+            }
         }
     }
 }
