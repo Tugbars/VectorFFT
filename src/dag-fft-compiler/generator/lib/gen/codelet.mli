@@ -158,6 +158,9 @@ type kind =
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
+      ; port : int
+        (* --cil-port P (FP32 only, 2026-11-10): about P percent of the plain data
+           add/sub rendered as fmadd(b, 1, a) / fnmadd(b, 1, a); 0 = absent from the argv *)
       }
   | Zsplit of { k : zs_kind }
   | K1_mono of

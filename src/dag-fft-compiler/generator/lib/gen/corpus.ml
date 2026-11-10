@@ -2597,6 +2597,12 @@ let oop_edges_avx512_cells : (string * string list) list =
 let zil_isa_uarch = [ "avx2", "raptor_lake_avx2"; "avx512", "sapphire_rapids_avx512" ]
 let zil_isas = List.map fst zil_isa_uarch
 
+(* the FP32 targets (2026-11-10): same hardware, same uarch records; their own quadrants
+   (zil-f32-avx2 / zil-f32-avx512, below), never in [quadrants], so `gen_set all` and every
+   FP64 law and registry stay exactly what they were *)
+let zil_f32_isa_uarch = [ "avx2_f32", "raptor_lake_avx2"; "avx512_f32", "sapphire_rapids_avx512" ]
+let zil_f32_isas = List.map fst zil_f32_isa_uarch
+
 let isa_vw (isa : string) : int =
   match isa with
   | "avx2" -> 4
@@ -2686,6 +2692,114 @@ let zil_retarget ~(isa : string) (cells : (string * string list) list)
     ([], [])
 ;;
 
+(* ── THE FP32 cil CORPUS (2026-11-10) ──
+   The FP32 scope is 1D complex-to-complex, interleaved, power-of-two N. Its kernels are the
+   FP64 pure-IL cells of the power-of-two c2c cil kinds -- n1 (shared), n1c / t2c (shared/col)
+   and their blocked forms (shared/col/blocked), n1t / t2 / t2t (pair2p) and the blocked pair
+   forms (pair2p/blocked), t2tg (chain3) -- DERIVED from the avx2 list above by kind, so the
+   two corpora cannot drift, plus the six blocked forward pair variants the FP64 tree builds
+   outside its corpus (gates/recipes.tsv, the replay arm: plain argv), which at FP32 are
+   ordinary cells. Not FP32: odd radixes, flat (t2cp and the t2cs family), rows, real, the half stores,
+   the tangent bodies, the ZTURN-T stage kernels, the mono. *)
+let zil_f32_extra_cells : (string * string list) list =
+  let row r flags = r :: flags @ [ "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] in
+  [ "radix16_z_n1tb44_avx2.c", row "16" [ "--cil-n1t"; "--cil-blocked"; "--cil-split"; "4.4"; "--cil-form-tag" ]
+  ; "radix16_z_t2b_avx2.c", row "16" [ "--cil-t2"; "--cil-blocked" ]
+  ; "radix32_z_n1tb_avx2.c", row "32" [ "--cil-n1t"; "--cil-blocked" ]
+  ; "radix32_z_n1tb48_avx2.c", row "32" [ "--cil-n1t"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag" ]
+  ; "radix32_z_t2b_avx2.c", row "32" [ "--cil-t2"; "--cil-blocked" ]
+  ; "radix32_z_t2b48_avx2.c", row "32" [ "--cil-t2"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag" ]
+  ]
+;;
+
+let zil_f32_in_scope (c : Codelet.t) : bool =
+  let pow2 r = r >= 2 && r land (r - 1) = 0 in
+  match c.Codelet.kind with
+  | Codelet.Cil
+      { form; tangent; oddct; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; port; _ } ->
+    pow2 c.Codelet.radix
+    && List.mem form Codelet.[ Cil_n1; Cil_n1c; Cil_t2c; Cil_n1t; Cil_t2 ]
+    && (not (tangent || oddct || pre_tw || colstride || gen2 || grouploop || transposed || herm || st128 || rowloop))
+    && port = 0
+    && c.Codelet.mods.Codelet.table = Codelet.Flat
+    && (match turn with
+        | None -> true
+        | Some _ -> form = Codelet.Cil_t2 && c.Codelet.mods.Codelet.dir = Codelet.Bwd)
+  | _ -> false
+;;
+
+let zil_f32_base_cells : (string * string list) list Lazy.t =
+  lazy
+    (List.filter
+       (fun (_, tail) -> zil_f32_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
+       zil_pure_cells
+     @ zil_f32_extra_cells)
+;;
+
+(* every FP32 cell the generator refuses at that width, with the refusal it restates. ONE
+   law: the blocked corner-turned forms (the n1tb and t2bt kinds) store per adjacent pass-2
+   groups, so their split's p must be a multiple of the complex per vector, or (FP32: one
+   tuple of all the groups) divide it with the radix a multiple of it (c2c_il.ml
+   emit_blocked). Every FP32 cell of the corpus satisfies it at both widths (the 4.4 split
+   of radix16_z_n1tb44 at 512 bits takes the all-groups tuple); the law stays declared. *)
+let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
+  let per = if isa = "avx2_f32" then 4 else 8 in
+  match c.Codelet.kind with
+  | Codelet.Cil { form; blocked = true; split; turn; _ }
+    when form = Codelet.Cil_n1t || turn = Some Codelet.Turnst ->
+    let r = c.Codelet.radix in
+    let p =
+      match split with
+      | Some (_, p) -> p
+      | None -> r / if r >= 64 then 8 else 2
+    in
+    if p mod per <> 0 && not (per mod p = 0 && r mod per = 0)
+    then
+      Some
+        (Printf.sprintf
+           "codelet_cil: the blocked turned store groups %d adjacent pass-2 groups (%d complex per \
+            %d-bit vector), which needs p %% %d = 0; this split has p = %d"
+           per
+           per
+           (64 * per)
+           per
+           p)
+    else None
+  | _ -> None
+;;
+
+(* (cells emitted, cells declared absent with the reason) at an FP32 isa *)
+let zil_f32_retarget ~(isa : string) (cells : (string * string list) list)
+  : (string * string list) list * (string * string) list
+  =
+  let uarch = List.assoc isa zil_f32_isa_uarch in
+  List.fold_right
+    (fun (file, tail) (ok, gap) ->
+       let c = Codelet.of_argv (tail @ [ "--emit-c" ]) in
+       let c = { c with Codelet.isa = Some isa; uarch = Some uarch } in
+       let sfx = "_avx2.c" in
+       let ln = String.length file and ls = String.length sfx in
+       if not (ln >= ls && String.sub file (ln - ls) ls = sfx)
+       then failwith ("Corpus: FP32 cell not named *_avx2.c: " ^ file);
+       let file' = String.sub file 0 (ln - ls) ^ "_" ^ isa ^ ".c" in
+       match zil_f32_gap ~isa c with
+       | Some why -> ok, (file', why) :: gap
+       | None ->
+         let tail' = List.filter (fun a -> a <> "--emit-c") (Codelet.to_argv c) in
+         (file', tail') :: ok, gap)
+    cells
+    ([], [])
+;;
+
+let quadrants_f32 = [ "zil-f32-avx2"; "zil-f32-avx512" ]
+
+let zil_f32_quadrant_isa (q : string) : string option =
+  match q with
+  | "zil-f32-avx2" -> Some "avx2_f32"
+  | "zil-f32-avx512" -> Some "avx512_f32"
+  | _ -> None
+;;
+
 let zil_quadrant_isa (q : string) : (string * string) option =
   (* "zil-pure-avx512" -> Some ("zil-pure", "avx512"); the bare names are avx2 *)
   List.find_map
@@ -2704,6 +2818,9 @@ let zil_base_cells (base : string) =
 ;;
 
 let zil_absent (q : string) : (string * string) list =
+  match zil_f32_quadrant_isa q with
+  | Some isa -> snd (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells))
+  | None ->
   match zil_quadrant_isa q with
   | Some (base, isa) -> snd (zil_retarget ~isa (zil_base_cells base))
   | None -> []
@@ -2711,6 +2828,10 @@ let zil_absent (q : string) : (string * string) list =
 
 let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
+  | q when zil_f32_quadrant_isa q <> None ->
+    (match zil_f32_quadrant_isa q with
+     | Some isa -> fst (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells))
+     | None -> assert false)
   | q when zil_quadrant_isa q <> None ->
     (match zil_quadrant_isa q with
      | Some (base, isa) ->
@@ -2748,6 +2869,9 @@ let dir_of_quadrant (q : string) : string =
   | "zil-pure" -> "zil/avx2/pure_il"
   | "zil-boundary-avx512" -> "zil/avx512/boundary_split"
   | "zil-pure-avx512" -> "zil/avx512/pure_il"
+  (* the FP32 quadrants: every file of theirs lands through zil_folder (zil/<isa>/<family>) *)
+  | "zil-f32-avx2" -> "zil/avx2_f32"
+  | "zil-f32-avx512" -> "zil/avx512_f32"
   | _ ->
     (match String.split_on_char '-' q with
      | [ fam; isa ] -> "split/" ^ fam ^ "/" ^ isa
@@ -2779,7 +2903,7 @@ let zil_folder (name : string) : string option =
     let ls = String.length s and lf = String.length suf in
     ls >= lf && String.sub s (ls - lf) lf = suf
   in
-  match List.find_opt (fun isa -> ends_with name ("_" ^ isa ^ ".c")) zil_isas with
+  match List.find_opt (fun isa -> ends_with name ("_" ^ isa ^ ".c")) (zil_isas @ zil_f32_isas) with
   | None -> None
   | Some isa ->
   let sfxlen = String.length isa + 3 in
@@ -2866,15 +2990,17 @@ let cells_of_quadrant (q : string) : cell list =
  * never by single-codelet gen_radix runs. *)
 let corpus : (string * cell list) list Lazy.t =
   lazy
-    (let per_q = List.map (fun q -> q, cells_of_quadrant q) quadrants in
+    (let per_q = List.map (fun q -> q, cells_of_quadrant q) (quadrants @ quadrants_f32) in
      let seen_file = Hashtbl.create 1201 in
      let seen_argv = Hashtbl.create 1201 in
      List.iter
        (fun (q, cs) ->
-          let dir = dir_of_quadrant q in
           List.iter
             (fun { file; c } ->
-               let path = dir ^ "/" ^ file in
+               (* keyed on the folder the file REALLY lands in (dir_of_file: a zil file's
+                  folder follows its kind, not its quadrant), so two quadrants can never
+                  write one path unnoticed (2026-11-10; it was dir_of_quadrant) *)
+               let path = dir_of_file q file ^ "/" ^ file in
                (match Hashtbl.find_opt seen_file path with
                 | Some q0 ->
                   failwith

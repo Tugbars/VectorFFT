@@ -10,6 +10,11 @@ type cell =
   }
 
 val quadrants : string list
+
+(* the FP32 cil quadrants (2026-11-10): zil-f32-avx2 / zil-f32-avx512, emitted by
+   `gen_set f32` (never part of `all`); their isas avx2_f32 / avx512_f32 *)
+val quadrants_f32 : string list
+val zil_f32_isas : string list
 val dir_of_quadrant : string -> string
 val zil_folder : string -> string option   (* a zil file's folder by its kind (2026-09-24) *)
 val dir_of_file : string -> string -> string   (* quadrant -> file name -> the folder to write it in *)
