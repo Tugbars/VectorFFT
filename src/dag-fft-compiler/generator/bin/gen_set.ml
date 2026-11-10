@@ -29,7 +29,9 @@
  * FMA-port setting) under its own file and symbol name -- the A/B variants of a
  * corpus, written to their own --root; the FP32 ZTURN-T stage kernels, which have no
  * port setting, are re-emitted unchanged so the root holds the whole FP32 corpus; an
- * FP64 cell refuses it (the first refusal stops the run, as always). *)
+ * FP64 cell refuses it (the first refusal stops the run, as always). The FP32 corpus
+ * itself carries the pair family at 50 (Corpus.zil_f32_with_port, the A/B's verdict);
+ * --port 0 re-emits every cil cell at 0, the all-off base of an A/B. *)
 
 let rec mkdir_p (dir : string) : unit =
   if dir = "" || dir = "." || dir = "/" || Sys.file_exists dir
@@ -72,10 +74,10 @@ let emit_one (path : string) (argv_tail : string list) : unit =
 ;;
 
 (* the cell's argv with --cil-port P (the canonical position, through the descriptor) *)
-let with_port (port : int) (tail : string list) : string list =
-  if port = 0
-  then tail
-  else (
+let with_port (port : int option) (tail : string list) : string list =
+  match port with
+  | None -> tail
+  | Some port -> (
     let open Codelet in
     let c = of_argv (tail @ [ "--emit-c" ]) in
     match c.kind with
@@ -88,7 +90,7 @@ let with_port (port : int) (tail : string list) : string list =
 
 let () =
   let root = ref "codelets" in
-  let port = ref 0 in
+  let port = ref None in
   let targets = ref [] in
   let rec parse i =
     if i < Array.length Sys.argv
@@ -100,7 +102,7 @@ let () =
       | "--port" when i + 1 < Array.length Sys.argv ->
         (port :=
            match int_of_string_opt Sys.argv.(i + 1) with
-           | Some p when p >= 0 && p <= 100 -> p
+           | Some p when p >= 0 && p <= 100 -> Some p
            | _ -> failwith "gen_set: --port takes a percentage 0..100");
         parse (i + 2) |> ignore
       | t ->

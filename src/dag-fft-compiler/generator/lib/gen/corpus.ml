@@ -2795,6 +2795,31 @@ let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
   | _ -> None
 ;;
 
+(* THE FMA-PORT SETTING OF THE FP32 CORPUS (2026-11-10; the owner: an FP32-only generator
+   setting, compared on vs off family by family on the banked pow2 plans, kept only where it
+   wins). The pair family -- the pair2p and pair2p/blocked kinds: n1t, t2 with or without its
+   turned store, the blocked n1 -- is emitted at --cil-port 50: our time p50/p0 on the banked
+   FP32 2p plans (9 rounds, alternating) was 0.951 at N = 128 and 0.976 at N = 256, out of
+   place and in place. Every other FP32 kind stays at 0: the mono's n1 measured 1.09 at N = 16
+   (one ns of 11, at 50 and 100 alike), the four-step's column kinds 1.00, and chain3 (t2tg)
+   serves no banked FP32 plan. The setting is bit-identical to the add: no plan changes. *)
+let zil_f32_port = 50
+
+let zil_f32_with_port (c : Codelet.t) : Codelet.t =
+  let open Codelet in
+  match c.kind with
+  | Cil r ->
+    let pair =
+      match r.form with
+      | Cil_n1t -> true
+      | Cil_t2 -> r.turn <> Some Turnst_gs
+      | Cil_n1 -> r.blocked
+      | _ -> false
+    in
+    if pair then { c with kind = Cil { r with port = zil_f32_port } } else c
+  | _ -> c
+;;
+
 (* (cells emitted, cells declared absent with the reason) at an FP32 isa *)
 let zil_f32_retarget ~(isa : string) (cells : (string * string list) list)
   : (string * string list) list * (string * string) list
@@ -2803,7 +2828,7 @@ let zil_f32_retarget ~(isa : string) (cells : (string * string list) list)
   List.fold_right
     (fun (file, tail) (ok, gap) ->
        let c = Codelet.of_argv (tail @ [ "--emit-c" ]) in
-       let c = { c with Codelet.isa = Some isa; uarch = Some uarch } in
+       let c = zil_f32_with_port { c with Codelet.isa = Some isa; uarch = Some uarch } in
        let sfx = "_avx2.c" in
        let ln = String.length file and ls = String.length sfx in
        if not (ln >= ls && String.sub file (ln - ls) ls = sfx)
