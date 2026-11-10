@@ -103,7 +103,9 @@ place, 8.8.8.4.8.8.8 in place, both at tile 2048, and T = 8 on the one-thread ro
 | 2^21 out of / in place (control) | 0.92 / 0.63 | 0.91..0.92 / 0.62..0.64 | 0.92 / 0.63 |
 | 2^19 at T = 8 (control) | 2.06 | 1.67..2.12 | 1.69 |
 
-The banked out-of-place row records 2189538 ns, where the bench runs its plan at 1329837 ns and the night's
-race timed the same chain and tile at 1396750 ns: that one race measurement was disturbed, and the plan is
-the experiment's. 2^20 is the twiddle builders' end: 2^21 would need their fine table at 128 entries (it
-holds 64).
+The out-of-place row first banked 2189538 ns, where the bench runs its plan at 1329837 ns and the night's
+race timed the same chain and tile at 1396750 ns: that one race measurement was disturbed. The cell was raced
+again the same day (the one-thread row and the T = 8 row that copies its time taken out, raced on a miss):
+the same chain and tile, 1383900 ns; the bench after it 1.30 out of place, 1.12 in place and 1.68 at T = 8
+against MKL FP32 (2^19 beside them 1.21, on a busier machine than the morning's). 2^20 is the twiddle
+builders' end: 2^21 would need their fine table at 128 entries (it holds 64).
