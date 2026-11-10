@@ -16,6 +16,11 @@
  *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
  *        (2026-09-23: the 2D interleaved cell, dims=2, the same door and store;
  *        its verdicts bank into wisdom2_2d.txt)
+ *        recal_1d_probe.exe <wisdir> --f32 <N> [scr=0] [ip=0] [T=1] [recal=1]
+ *        (2026-11-10, a build with VFFT_HAS_FLOAT: build.py --float. The FP32
+ *        plan of the 1D c2c cell through vfftf.h, the same scope and flags; a
+ *        create on a missing cell races and banks into wisdom2f_oop.txt. The
+ *        line carries the route vfftf_info reports, and a refusal's reason)
  * Build: python build.py --compile --vfft --src benches/recal_1d_probe.c
  *        (the pin, the guard and the priority are the library's measurement
  *        scope, vfft.h, on both hosts; bench_scope.h maps the gauntlet's
@@ -42,6 +47,54 @@ static double now_ms(void)
     return 1e3 * (double)t.tv_sec + 1e-6 * (double)t.tv_nsec;
 #endif
 }
+#ifdef VFFT_HAS_FLOAT
+#include "vfftf.h"
+/* --f32 (see the header): argv = <wisdir> --f32 <N> [scr] [ip] [T] [recal], the FP64 cell's slots */
+static int recal_f32(const char *dir, int argc, char **argv)
+{
+    const int N = argc > 3 ? atoi(argv[3]) : 1024;
+    const int scr = argc > 4 ? atoi(argv[4]) : 0;
+    const int ip = argc > 5 ? atoi(argv[5]) : 0;
+    const int T = argc > 6 ? atoi(argv[6]) : 1;
+    const int recal = argc > 7 ? atoi(argv[7]) : 1;
+    vfft_config_t cfg;
+    vfftf_plan p;
+    vfft_info_t info;
+    double t0, t1;
+    /* the measurement scope of the FP64 cell (main below): the races are the measurements */
+    if (T > 1 && (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0))
+    {
+        bench_pin_pcores();
+        bench_scope(0, 1, VFFT_MEASURE_GUARD_OFF);
+    }
+    else if (!getenv("VFFT_BENCH_PIN") || atoi(getenv("VFFT_BENCH_PIN")) != 0)
+        bench_scope(-1, 1, bench_guard_mode());
+    else
+        bench_scope_lifted();
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.flags |= VFFT_FLAG_PATIENT;
+    cfg.rank = 1; cfg.n[0] = N;
+    cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.order = scr ? VFFT_ORDER_SCRAMBLED : VFFT_ORDER_NATURAL;
+    cfg.nthreads = T; cfg.wisdom_dir = dir;
+    cfg.flags |= (recal) ? VFFT_FLAG_RECALIBRATE : 0;
+    t0 = now_ms();
+    p = vfftf_create(&cfg);
+    t1 = now_ms();
+    memset(&info, 0, sizeof info);
+    if (p) vfftf_info(p, &info);
+    printf("f32 N=%d %s %s T=%d recalibrate=%d: %s route=%s (%.0f ms)\n", N, scr ? "scr" : "nat",
+           ip ? "ip" : "oop", T, recal, p ? "banked" : "REFUSED",
+           p && info.route && info.route[0] ? info.route : "-", t1 - t0);
+    if (!p)
+        printf("  refused: %s\n", vfft_error());
+    if (p) vfftf_destroy(p);
+    return p ? 0 : 1;
+}
+#endif
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
@@ -67,6 +120,10 @@ int main(int argc, char **argv)
         free(txt);
         return 0;
     }
+#ifdef VFFT_HAS_FLOAT
+    if (argc > 2 && !strcmp(argv[2], "--f32"))
+        return recal_f32(dir, argc, argv);   /* the FP32 cell (2026-11-10) */
+#endif
     /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
     int xform = VFFT_C2C;
     if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r")))
