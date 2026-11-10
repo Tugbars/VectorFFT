@@ -6,7 +6,7 @@
 /* the library's own create, execute and store calls (the public eight are vfft_api.h, at the end) */
 struct vfft_plan_s;
 static vfft_plan _vfft_create_cfg(const vfft_cfg_t *cfg);
-static void _vfft_exec6(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim);
+static void _vfft_exec6(vfft_plan h, vfft_dir_t dir, vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim);
 static vfft_wisdom *_vfft_wisdom_load(const char *dir);
 static int _vfft_wisdom_save(const vfft_wisdom *w, const char *dir);
 static void _vfft_wisdom_free(vfft_wisdom *w);
@@ -124,7 +124,7 @@ long vfft_zrb_mt_passes(void) { return _vfft_zrb_mt_count; }
  * the plan refused. Lives here because the pool is this TU's. */
 static void _vfft_pool_arm(int n); /* defined below: grow-only */
 int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
-                       int T, int arm, int bwd, const double *x, double *y)
+                       int T, int arm, int bwd, const vfft_real *x, vfft_real *y)
 {
     vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
     int rc;
@@ -144,7 +144,7 @@ int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, si
     _vfft_pool_arm(T);
     if (inplace)
     {
-        memcpy(y, x, (size_t)2 * N * sizeof(double));
+        memcpy(y, x, (size_t)2 * N * sizeof(vfft_real));
         rc = vfft_ztt_execute_mt(p, y, y, bwd);
     }
     else
@@ -155,7 +155,7 @@ int vfft__ztt_mt_probe(int N, const int *chain, int nf, int scr, int inplace, si
 /* the spike's hook: race serial / blocks / tiles at T on a plan bound as
  * asked, ns per arm into ns3 (-1 = not an arm); returns the winning arm */
 int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplace, size_t tile,
-                            int T, const double *x, double *y, double *ns3)
+                            int T, const vfft_real *x, vfft_real *y, double *ns3)
 {
     vfft_ztt_plan_t *p = vfft_ztt_create_chain_ord(N, chain, nf, scr);
     int mt;
@@ -170,7 +170,7 @@ int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplac
     _vfft_pool_arm(T);
     if (inplace)
     {
-        memcpy(y, x, (size_t)2 * N * sizeof(double));
+        memcpy(y, x, (size_t)2 * N * sizeof(vfft_real));
         mt = vfft_ztt_mt_race(p, T, y, y, ns3);
     }
     else
@@ -701,7 +701,7 @@ typedef struct
 {
     struct vfft_plan_s *h;
     vfft_dir_t dir;
-    double *s, *d;
+    vfft_real *s, *d;
     int mt;
 } _tc_mt_race_arm_t;
 static void _tc_mt_race_arm(void *v)
@@ -712,7 +712,7 @@ static void _tc_mt_race_arm(void *v)
 }
 typedef struct
 {
-    double *s, *s0;
+    vfft_real *s, *s0;
     size_t nb;
 } _tc_mt_reseed_t;
 static void _tc_mt_reseed(void *v)
@@ -766,10 +766,10 @@ static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_cfg_t *cfg,
     { /* the race: serial loop vs slabs, on this cell's own buffers */
         const vfft_dir_t dir = (cfg->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
         const size_t ns_ = K * h->tcb_sn, nd_ = K * h->tcb_dn;
-        const size_t nb = ns_ * sizeof(double);
-        double *src = (double *)vfft_aligned_alloc(nb);
-        double *dst = ip ? src : (double *)vfft_aligned_alloc(nd_ * sizeof(double));
-        double *s0 = ip ? (double *)vfft_aligned_alloc(nb) : NULL;
+        const size_t nb = ns_ * sizeof(vfft_real);
+        vfft_real *src = (vfft_real *)vfft_aligned_alloc(nb);
+        vfft_real *dst = ip ? src : (vfft_real *)vfft_aligned_alloc(nd_ * sizeof(vfft_real));
+        vfft_real *s0 = ip ? (vfft_real *)vfft_aligned_alloc(nb) : NULL;
         double st = 0, mt = 0;
         size_t i;
         if (!src || !dst || (ip && !s0))
@@ -1449,6 +1449,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
      * deleted 2026-11-06; a split real request falls to the split create, which
      * refuses it). Every transform/rank below is served by ONE side, chosen
      * here, once. */
+#ifndef VFFT_FLOAT   /* FP64 only: the FP32 unit serves 1D C2C interleaved (vfftf.c) */
     if (cfg->dims == 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm2dr_il(cfg, W, K); /* the LANE-MAJOR 2D real batch (lm_batch2dr_il.h): its own executors */
@@ -1461,10 +1462,15 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->layout == VFI_LAYOUT_IL)
         return _vfft_create_real_door(cfg, W, N, K); /* the K = 1 real door (il/real/real_create_il.h) */
+#endif
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)
         return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
+#ifndef VFFT_FLOAT
     return _vfft_split_create(cfg, W, N, K);
+#else
+    return NULL;   /* the FP32 front door refused every split request */
+#endif
 }
 
 /* The engagement COUNTER stays here, with its public accessor. It is mutable
@@ -1629,7 +1635,7 @@ static vfft_plan _vfft_create_cfg(const vfft_cfg_t *cfg)
             const size_t per = hp->transform == VFFT_R2C ? lead * last : lead * 2 * (last / 2 + 1);
             const size_t K = hp->K > 0 ? hp->K : 1;
             hp->alias_doubles = per * K;
-            hp->alias_scr = (double *)vfft_aligned_alloc(hp->alias_doubles * sizeof(double));
+            hp->alias_scr = (vfft_real *)vfft_aligned_alloc(hp->alias_doubles * sizeof(vfft_real));
             if (!hp->alias_scr)
             {
                 _vfft_warn("vfft_create: %s out of place: the one-buffer copy (%zu doubles) could not be allocated",

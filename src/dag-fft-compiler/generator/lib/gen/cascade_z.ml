@@ -450,6 +450,24 @@ let resolve_tw_off (radix : int) (s : string) : string =
 
 let zu_noperm = ref false
 
+(* the 1/sqrt2 splat of the radix-8 ingest lattice (|W8^1|): the literal FP64 has
+   always printed, and at FP32 that value rounded once to float (Isa.flit) *)
+let rh_lit (isa : Isa.t) : string =
+  if Isa.is_f32 isa then Isa.flit isa 0.70710678118654752440 else "0.70710678118654752440"
+;;
+
+(* FP32 (2026-11-10): THE ZTURN-T TARGET of an ISA record, shared by the stage kernels
+   (emit_codelet below) and the fused drivers (ztt_drivers.ml, whose header states the
+   reason): FP32 AVX-512 has no 16-lane ZTURN-T form (no {4,8} chain meets the 16-lane
+   laws), so its ZTURN-T build is the 8-lane avx2_f32 form under the avx512_f32 name,
+   compiled for avx512f,avx512vl (the 32 ymm registers) -- a STOPGAP. Every other record
+   passes through unchanged (idempotent: the drivers retarget before calling here). *)
+let ztt_isa (isa : Isa.t) : Isa.t =
+  if isa.Isa.name = "avx512_f32"
+  then { Isa.avx2_f32 with Isa.name = "avx512_f32"; target_attr = "avx512f,avx512vl,fma" }
+  else isa
+;;
+
 (* ZTURN-T body names (the probe's: zt_ingest2.c / zt_mid.c / zt_last.c):
    the fused driver TU (ztt_drivers.ml) re-emits these bodies beside the
    per-kind codelets, so the name is shared here. *)
@@ -472,6 +490,34 @@ let emit_codelet
      the Tw_zsplit payload is set at the point the record offset is known. *)
   let cfg = ref { Emit_render.Cfg.default with Emit_render.Cfg.store_on_compute } in
   let k = kind_of_string kind in
+  (* FP32 (2026-11-10): the ZTURN-T kinds on the block plane (t0tp/tmg/tlf/tlfi,
+     t0d/tmgd/tld/tldb), radix 4/8, at 8 float lanes (avx2_f32; the avx512_f32
+     ZTURN-T build runs the same 8-lane form, ztt_isa above), emitted both as the
+     fused drivers' bodies (body_only) and as the exported stage kernels the staged
+     executor and the threaded walk call (the frozen 11-arg z ABI with float pointers,
+     Abi.z11_signature ~elem). The split-body mids (msz, mszb, mszt), the zturn-ts
+     kinds and the odd radices are FP64 only. Element and pointer types come from
+     Isa.elem, so the FP64 text is unchanged. *)
+  let isa = ztt_isa isa in
+  if Isa.is_f32 isa
+  then begin
+    if k.plane <> P_block
+       || not (List.mem k.base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ])
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_zsplit: kind %s has no FP32 form (FP32 = the ZTURN-T block-plane kinds)"
+           kind);
+    if radix <> 4 && radix <> 8
+    then failwith (Printf.sprintf "codelet_zsplit: FP32 radix %d (FP32 = radix 4 and 8, pow2 only)" radix);
+    if isa.Isa.vec_width <> 8
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_zsplit: no %d-lane FP32 ZTURN-T form (target %s; the FP32 form is 8-lane ymm)"
+           isa.Isa.vec_width isa.Isa.name)
+  end;
+  let el = Isa.elem isa in
   zu_noperm := k.lanes_u;
   if radix <> 4 && radix <> 8
      && not
@@ -641,14 +687,29 @@ let emit_codelet
         then "tw_re/tw_im unused (twiddle-free leaf)."
         else
           Printf.sprintf
-            "tw_re = %s: legs 1..R-1, %d doubles/leg [c×%d][s×%d]. tw_im unused."
+            "tw_re = %s: legs 1..R-1, %d %s/leg [c×%d][s×%d]. tw_im unused."
             (if k.tw_group_reset
              then Printf.sprintf "(R-1) records of [c x%d][s x%d] PER COLUMN %s at %%TWF*k, ONE stream for every group (cursor resets per group)" vw vw (if vw = 4 then "QUAD" else "BLOCK")
              else "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)")
             (2 * vw)
+            (if Isa.is_f32 isa then "floats" else "doubles")
             vw
             vw)
        (if k.bwd then " Roundtrip = N*x (no 1/N in-kernel)." else ""));
+  if Isa.is_f32 isa
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "/* FP32: interleaved complex float (8 B per complex), %d float lanes per ymm, [re x%d][im x%d]\n\
+         \ * float blocks%s.%s */\n"
+         vw vw vw
+         (if k.base = "t0tp" then "; rb[] stays size_t (it rides in the tw_im slot)" else "")
+         (if isa.Isa.name = "avx512_f32"
+          then
+            "\n * avx512_f32 = the 8-lane avx2_f32 body under the avx512_f32 name (stopgap: no\n\
+            \ * 16-lane ZTURN-T form; cascade_z.ml ztt_isa), compiled for avx512f,avx512vl."
+          else ""));
   Buffer.add_string
     buf
     (Emit_render.provenance_block
@@ -678,7 +739,7 @@ let emit_codelet
   then
     Buffer.add_string
       buf
-      (Isa.const_splat_decl isa "_zs0t_rh" "0.70710678118654752440" ^ "  /* 1/sqrt2: |W8^1| */\n\n");
+      (Isa.const_splat_decl isa "_zs0t_rh" (rh_lit isa) ^ "  /* 1/sqrt2: |W8^1| */\n\n");
   let body_start = ref 0 in
   (* TR4 rendering helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
@@ -815,9 +876,11 @@ let emit_codelet
             [ "out_re"; "out_im" ]
         done
       | P_block ->
+      (* one prefetch per 64-B line of the leg's output span: 16*VW bytes at FP64
+         (VW/4 lines, 8 doubles apart), 8*VW at FP32 (VW/8 lines, 16 floats apart) *)
+      let nlines, lstep = if Isa.is_f32 isa then max 1 (wide_vw / 8), 16 else max 1 (wide_vw / 4), 8 in
       for r = 0 to radix - 1 do
-        (* one prefetch per 64-B line of the leg's 16*VW-byte output span *)
-        for ln = 0 to max 1 (wide_vw / 4) - 1 do
+        for ln = 0 to nlines - 1 do
           Buffer.add_string
             buf
             (Printf.sprintf
@@ -825,7 +888,7 @@ let emit_codelet
                r
                ostride
                (wide_vw * k.prefetch_out)
-               (if ln = 0 then "" else Printf.sprintf " + %d" (8 * ln)))
+               (if ln = 0 then "" else Printf.sprintf " + %d" (lstep * ln)))
         done
       done);
     (match k.in_edge with
@@ -982,9 +1045,12 @@ let emit_codelet
              [col k, col k+2] then [col k+1, col k+3]. Two loads + unpacklo/hi
              per leg give the ORDERED lanes k..k+3 back; no permute. ── *)
        Buffer.add_string buf "        /* Column-run z load edge (leg-pair unpack, no permute) */\n";
-       let unlo = Isa.intr isa "unpacklo_pd"
-       and unhi = Isa.intr isa "unpackhi_pd" in
        for p = 0 to radix - 1 do
+         (* the exact inverse of tld's store (Isa.zcol_deint: unpacklo/hi_pd at
+            FP64, vshufps 0x88/0xDD at FP32) *)
+         let lre, lim =
+           Isa.zcol_deint isa (Printf.sprintf "_zl_%d" p) (Printf.sprintf "_zh_%d" p)
+         in
          Buffer.add_string
            buf
            (Printf.sprintf
@@ -997,14 +1063,8 @@ let emit_codelet
                  isa
                  (Printf.sprintf "_zh_%d" p)
                  (Isa.loadu_pd isa (blk_addr "zin" 0 ((2 * vw * p) + vw))))
-              (Isa.const_decl
-                 isa
-                 (Printf.sprintf "lane_re_%d" p)
-                 (Printf.sprintf "%s(_zl_%d, _zh_%d)" unlo p p))
-              (Isa.const_decl
-                 isa
-                 (Printf.sprintf "lane_im_%d" p)
-                 (Printf.sprintf "%s(_zl_%d, _zh_%d)" unhi p p)))
+              (Isa.const_decl isa (Printf.sprintf "lane_re_%d" p) lre)
+              (Isa.const_decl isa (Printf.sprintf "lane_im_%d" p) lim))
        done
      | E_runs -> failwith "codelet_zsplit: E_runs is a store-only edge (t0tp)");
     (* per-slot output tag arrays (all edge shapes consume pairs) *)
@@ -1120,20 +1180,17 @@ let emit_codelet
               alone -- [col k, col k+2] at 2*R*k + 8p, [col k+1, col k+3] at
               +4 -- no permute; the lane order inside the span is part of the
               plan's permutation. Unit = one slot (leg), as E_z. ── *)
-        let unlo = Isa.intr isa "unpacklo_pd"
-        and unhi = Isa.intr isa "unpackhi_pd" in
         ( "        /* Column-run z store edge (leg-pair unpack, in place, no permute) */\n"
         , Array.init radix (fun sl ->
+            (* Isa.zcol_reint: unpacklo/hi_pd at FP64, unpacklo/hi_ps at FP32 (lo =
+               columns {0,1,4,5}, hi = {2,3,6,7} of the 8-column span) *)
+            let zlo, zhi =
+              Isa.zcol_reint isa (Printf.sprintf "t%d" re_tag.(sl)) (Printf.sprintf "t%d" im_tag.(sl))
+            in
             Printf.sprintf
               "        %s;\n        %s;\n"
-              (Isa.storeu_pd
-                 isa
-                 (blk_addr "zout" 0 (2 * vw * sl))
-                 (Printf.sprintf "%s(t%d, t%d)" unlo re_tag.(sl) im_tag.(sl)))
-              (Isa.storeu_pd
-                 isa
-                 (blk_addr "zout" 0 ((2 * vw * sl) + vw))
-                 (Printf.sprintf "%s(t%d, t%d)" unhi re_tag.(sl) im_tag.(sl)))) )
+              (Isa.storeu_pd isa (blk_addr "zout" 0 (2 * vw * sl)) zlo)
+              (Isa.storeu_pd isa (blk_addr "zout" 0 ((2 * vw * sl) + vw)) zhi)) )
       | E_splanes s ->
         ( "        /* zturn-ts split-plane store edge */\n"
         , Array.init radix (fun leg ->
@@ -1433,9 +1490,9 @@ let emit_codelet
               (v "u3")
               (Printf.sprintf "%s(%s, %s)" unhi (v "Y2") (v "Y3")));
          line
-           (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "pl") (2 * radix) pos_a);
+           (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[%s];" el (v "pl") (2 * radix) pos_a);
          line
-           (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "ph") (2 * radix) pos_b);
+           (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[%s];" el (v "ph") (2 * radix) pos_b);
          sline
            (Isa.storeu_pd
               isa
@@ -1516,9 +1573,9 @@ let emit_codelet
               "        /* ---- half %s: columns %s, %s -> runs rb[%s], rb[%s] (2 blocks each) ---- */\n"
               (String.uppercase_ascii p) pos_a pos_b pos_a pos_b);
          line
-           (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "pl") (2 * radix) pos_a);
+           (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[%s];" el (v "pl") (2 * radix) pos_a);
          line
-           (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[%s];" (v "ph") (2 * radix) pos_b);
+           (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[%s];" el (v "ph") (2 * radix) pos_b);
          for l = 0 to 7 do
            line (Isa.const_decl isa (v (string_of_int l)) (Isa.loadu_pd isa (leg_addr "zin" l "Ls" plus)))
          done;
@@ -1602,7 +1659,7 @@ let emit_codelet
               (Array.map v [| "E0"; "O0"; "E1"; "O1"; "E2"; "O2"; "E3"; "O3" |])
               (Array.init 8 (fun j -> v (Printf.sprintf "T%d" j))));
          for i = 0 to 3 do
-           line (Printf.sprintf "double * __restrict__ %s = zout + %d*rb[k+%d];" (v (Printf.sprintf "p%d" i)) (2 * radix) (c0 + i));
+           line (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[k+%d];" el (v (Printf.sprintf "p%d" i)) (2 * radix) (c0 + i));
            sline (Isa.storeu_pd isa (Printf.sprintf "%s[0]" (v (Printf.sprintf "p%d" i))) (v (Printf.sprintf "T%d" (2 * i))));
            sline (Isa.storeu_pd isa (Printf.sprintf "%s[%d]" (v (Printf.sprintf "p%d" i)) vw) (v (Printf.sprintf "T%d" ((2 * i) + 1))))
          done)
@@ -1620,10 +1677,10 @@ let emit_codelet
       buf
       (Printf.sprintf
          "static __attribute__((always_inline)) inline void %s(\n\
-         \    const double * __restrict__ zin, double * __restrict__ zout,\n\
+         \    const %s * __restrict__ zin, %s * __restrict__ zout,\n\
          \    const size_t * __restrict__ rb, size_t Ls, size_t count)\n\
           {\n"
-         body_name);
+         body_name el el);
     if vw = 8 then emit_t0tp8_vw8_body ()
     else if radix = 8 then emit_t0tp8_body () else emit_t0tp4_body ();
     Buffer.add_string buf "}\n\n";
@@ -1635,6 +1692,7 @@ let emit_codelet
         buf
         (Abi.z11_signature
            ~alias_tolerant:false
+           ~elem:el
            ~symbol:fname
            ~target_attr:isa.Isa.target_attr
            ());
@@ -1696,10 +1754,11 @@ let emit_codelet
       buf
       (Printf.sprintf
          "static __attribute__((always_inline)) inline void %s(\n\
-         \    const double *%szin, double *%szout,\n\
-         \    const double *tw_re, size_t Ls, %ssize_t count)\n\
+         \    const %s *%szin, %s *%szout,\n\
+         \    const %s *tw_re, size_t Ls, %ssize_t count)\n\
           {\n"
          body_name
+         el
          (* 🔴 The ZTURN-T stages run IN PLACE: the executor and the fused
             drivers call them f(plane, 0, plane, 0, ...) -- the SAME pointer
             for input and output -- so they must not promise the compiler
@@ -1710,7 +1769,9 @@ let emit_codelet
             qualifier — __restrict__ licensed hoisting every load above the
             stores.) *)
          (if ztt then " " else " __restrict__ ")
+         el
          (if ztt then " " else " __restrict__ ")
+         el
          (if uses "OLs" then "size_t OLs, " else ""));
     (* a twiddle-free group-looped body (tld/tldb) keeps the shared body
        signature; silence its unused stream pointer *)
@@ -1861,6 +1922,7 @@ let emit_codelet
         buf
         (Abi.z11_signature
            ~alias_tolerant:ztt   (* the in-place stages: see the body header *)
+           ~elem:el
            ~symbol:fname
            ~target_attr:isa.Isa.target_attr
            ());
@@ -1872,14 +1934,16 @@ let emit_codelet
           buf
           (Printf.sprintf
              "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)OGs;\n\
-             \    const double *ip = zin;\n\
-             \    double *op = zout;\n\
+             \    const %s *ip = zin;\n\
+             \    %s *op = zout;\n\
              \    for (size_t g = 0; g < Gs; g++) {\n\
              \        %s(ip, op, tw_re, Ls, OLs, count);\n\
              \        ip += 2 * (size_t)%d * Ls;\n\
              \        op += 2 * (size_t)%d * OLs;\n\
              \    }\n\
               }\n"
+             el
+             el
              body_name
              radix
              radix)
@@ -1894,14 +1958,16 @@ let emit_codelet
           buf
           (Printf.sprintf
              "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)OLs; (void)OGs;\n\
-             \    const double *ip = zin;\n\
-             \    double *op = zout;\n\
+             \    const %s *ip = zin;\n\
+             \    %s *op = zout;\n\
              \    for (size_t g = 0; g < Gs; g++) {\n\
              \        %s(ip, op, tw_re, Ls, count);\n\
              \        ip += 2 * (size_t)%d * %s;\n\
              \        op += 2 * (size_t)%d * %s;\n\
              \    }\n\
               }\n"
+             el
+             el
              body_name
              radix
              (if k.base = "t0d" then "Ls" else "count")
@@ -1916,14 +1982,16 @@ let emit_codelet
           (Printf.sprintf
              "    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
              \    (void)OLs; (void)OGs;\n\
-             \    double *bp = zout;\n\
-             \    const double *twg = tw_re;\n\
+             \    %s *bp = zout;\n\
+             \    const %s *twg = tw_re;\n\
              \    for (size_t g = 0; g < Gs; g++) {\n\
              \        %s(bp, bp, twg, Ls, count);\n\
              \        bp += 2 * (size_t)%d * Ls;\n\
              %s\
              \    }\n\
               }\n"
+             el
+             el
              body_name
              radix
              (if k.tw_group_reset

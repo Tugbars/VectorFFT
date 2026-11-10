@@ -57,7 +57,7 @@ static void _lm2d_rows(struct vfft_plan_s *h, double *z, vfft_dir_t dir)
 }
 /* the executor (the lean door binds it: never declining): the first axis over the plane (the
  * volume), the blocks in place on the result */
-static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     _lm_cols(h, zin, zout, dir == VFFT_BACKWARD);
     _lm2d_rows(h, zout, dir);

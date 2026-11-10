@@ -34,6 +34,7 @@
  */
 #ifndef VFFT_IL2P_H
 #define VFFT_IL2P_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include <stdio.h>
@@ -45,8 +46,8 @@
 
 #include "common/support/zalloc.h" /* vfft_aligned_alloc / vfft_aligned_free: the one allocator */
 
-typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
-                             const double *, const double *,
+typedef void (*vfft_il2p_fn)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *,
+                             const vfft_real *, const vfft_real *,
                              size_t, size_t, size_t, size_t, size_t);
 
 /* GENERATED REGISTRY (bin/emit_il_registry.ml -> generated/il_registry_<isa>.h,
@@ -80,8 +81,8 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * (src/tools/gates/blocked_tail_gate.c). */
 #define VFFT_IL2P_DECL_T2B(SYM) \
   extern void SYM( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+      const vfft_real *, const vfft_real *, vfft_real *, vfft_real *, \
+      const vfft_real *, const vfft_real *, size_t, size_t, size_t, size_t, size_t);
 VFFT_IL_DECL(VFFT_IL_SYM(radix16_z_t2b_fwd))
 VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2b_fwd))
 VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_t2b48_fwd))
@@ -113,11 +114,11 @@ VFFT_IL2P_DECL_T2B(radix64_z_t2b416_fwd_avx2)
 VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tb_fwd))
 VFFT_IL_DECL(VFFT_IL_SYM(radix32_z_n1tb48_fwd))
 extern void radix64_z_n1tb88_fwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+    const vfft_real *, const vfft_real *, vfft_real *, vfft_real *,
+    const vfft_real *, const vfft_real *, size_t, size_t, size_t, size_t, size_t);
 extern void radix64_z_n1tb416_fwd_avx2(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+    const vfft_real *, const vfft_real *, vfft_real *, vfft_real *,
+    const vfft_real *, const vfft_real *, size_t, size_t, size_t, size_t, size_t);
 
 /* n1t (leaf) and t2 (mid), the pair's two kernel kinds, resolve from the
  * registry's PAIR lists (both directions exist). The K=1 pair searches
@@ -682,8 +683,8 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
 
 typedef struct {
     int N, R1, R2;
-    double *mid;            /* interleaved scratch, 2N doubles */
-    double *tw, *twb;       /* streamed VTW2 for t2: fwd and conjugated bwd */
+    vfft_real *mid;            /* interleaved scratch, 2N doubles */
+    vfft_real *tw, *twb;       /* streamed VTW2 for t2: fwd and conjugated bwd */
     vfft_il2p_fn leaf_f, leaf_b;   /* n1t, radix R2 */
     vfft_il2p_fn mid_f,  mid_b;    /* t2,  radix R1 */
     vfft_il2p_fn n1_b;             /* plain n1 bwd, radix R1 (F-DIAG stage 2) */
@@ -769,6 +770,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
+#ifndef VFFT_FLOAT   /* the tangent kernels are FP64's (the FP32 corpus carries none) */
     if (variant == 3) {                 /* tangent interior */
         if (R1 == 8)  return VFFT_IL_SYM(radix8_z_t2tan_fwd);   /* monolithic: has  */
         if (R1 == 16) return VFFT_IL_SYM(radix16_z_t2tan_fwd);  /* the odd tail     */
@@ -783,6 +785,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         if (R1 == 32) return VFFT_IL_SYM(radix32_z_t2bw32m128_fwd);
         return 0;
     }
+#endif
     if (variant == 5)
     {
         /* ODD-COMPOSITE COOLEY-TUKEY: dft_small factors the radix
@@ -828,6 +831,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
 {
     (void)count_ok;   /* vestigial: see the registry note above */
     if (!variant) return 0;
+#ifndef VFFT_FLOAT   /* the tangent kernels are FP64's (the FP32 corpus carries none) */
     if (variant == 3) {                 /* tangent interior */
         if (R2 == 8)  return VFFT_IL_SYM(radix8_z_n1ttan_fwd);   /* monolithic   */
         if (R2 == 16) return VFFT_IL_SYM(radix16_z_n1ttan_fwd);  /* (odd legal)  */
@@ -839,6 +843,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
         if (R2 == 32) return VFFT_IL_SYM(radix32_z_n1tbw32t256_fwd);
         return 0;
     }
+#endif
     if (variant == 5)
     {
         /* ODD-COMPOSITE COOLEY-TUKEY: dft_small factors the radix
@@ -899,8 +904,10 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
      * contract — a plain-store t2 tangent twin builds, fails the planner's
      * correctness gate and is silently not an arm. No radix-32 twin: the
      * wing32 construction is forward-only. */
+#ifndef VFFT_FLOAT   /* the tangent kernels are FP64's (the FP32 corpus carries none) */
     if (R == 8  && variant == 3) return VFFT_IL_SYM(radix8_z_t2ttan_bwd);
     if (R == 16 && variant == 3) return VFFT_IL_SYM(radix16_z_t2ttan_bwd);
+#endif
     if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_t2bt216_bwd);
     if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_t2bt48_bwd);
     if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_t2bt416_bwd);
@@ -932,9 +939,11 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     if (!variant) return 0;
     /* variant 3 = the TANGENT interior, see t2t_bwd_v_fn; at radix 32 the
      * tangent 2.16 leaf (its wing-combine sibling lost the race) */
+#ifndef VFFT_FLOAT   /* the tangent kernels are FP64's (the FP32 corpus carries none) */
     if (R == 8  && variant == 3) return VFFT_IL_SYM(radix8_z_n1tan_bwd);
     if (R == 16 && variant == 3) return VFFT_IL_SYM(radix16_z_n1tan_bwd);
     if (R == 32 && variant == 3) return VFFT_IL_SYM(radix32_z_n1btan216_bwd);
+#endif
     if (R == 32 && variant == 1) return VFFT_IL_SYM(radix32_z_n1b216_bwd);
     if (R == 32 && variant == 2) return VFFT_IL_SYM(radix32_z_n1b48_bwd);
     if (R == 64 && variant == 1) return VFFT_IL_SYM(radix64_z_n1b416_bwd);
@@ -1142,6 +1151,17 @@ static inline int vfft_il2p_mid_arm_pool(int R1, int *msv, int *dm)
         if ((R1 & 1) && vfft_il2p_mid_v_fn(R1, 5, 1))
             msv[nm++] = 5;
     }
+#ifdef VFFT_FLOAT
+    {   /* FP32: the arms this unit's corpus carries (no tangent forms) */
+        int i, k = 0;
+        for (i = 0; i < nm; i++)
+            if (msv[i] == 0 || vfft_il2p_mid_v_fn(R1, msv[i], 1))
+                msv[k++] = msv[i];
+        nm = k;
+        if (*dm && !vfft_il2p_mid_v_fn(R1, *dm, 1))
+            *dm = 0;
+    }
+#endif
     return nm;
 }
 static inline int vfft_il2p_leaf_arm_pool(int R2, int *lsv, int *dl)
@@ -1160,6 +1180,17 @@ static inline int vfft_il2p_leaf_arm_pool(int R2, int *lsv, int *dl)
         if ((R2 & 1) && vfft_il2p_leaf_v_fn(R2, 5, 1))
             lsv[nl++] = 5;
     }
+#ifdef VFFT_FLOAT
+    {   /* FP32: the arms this unit's corpus carries (no tangent forms) */
+        int i, k = 0;
+        for (i = 0; i < nl; i++)
+            if (lsv[i] == 0 || vfft_il2p_leaf_v_fn(R2, lsv[i], 1))
+                lsv[k++] = lsv[i];
+        nl = k;
+        if (*dl && !vfft_il2p_leaf_v_fn(R2, *dl, 1))
+            *dl = 0;
+    }
+#endif
     return nl;
 }
 
@@ -1202,25 +1233,25 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
      * allocate by one record set. Lane 1 of that last record (column R2,
      * which does not exist) is filled with the k = R2 angle: valid values,
      * never read. */
-#if VFFT_IL_VW == 8
+#if VFFT_IL_VW >= 8
     size_t ntw = vfft_vtw512_pair2p_doubles(R1, R2);
 #else
     size_t npair = ((size_t)R2 + 1u) / 2u;
     size_t ntw = npair * (size_t)(R1 - 1) * 8u;
 #endif
-    p->mid = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
-    p->tw  = (double *)vfft_aligned_alloc(ntw * sizeof(double));
-    p->twb = (double *)vfft_aligned_alloc(ntw * sizeof(double));
+    p->mid = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
+    p->tw  = (vfft_real *)vfft_aligned_alloc(ntw * sizeof(vfft_real));
+    p->twb = (vfft_real *)vfft_aligned_alloc(ntw * sizeof(vfft_real));
     if (!p->mid || !p->tw || !p->twb) { vfft_il2p_destroy(p); return 0; }
 
-#if VFFT_IL_VW == 8
+#if VFFT_IL_VW >= 8
     vfft_vtw512_pair2p_fill(p->tw, R1, R2, N, 0);
     vfft_vtw512_pair2p_fill(p->twb, R1, R2, N, 1);   /* bwd: the conjugate table */
 #else
     for (size_t pp = 0; pp < npair; pp++)
         for (int l = 1; l < R1; l++) {
             size_t off = (pp * (size_t)(R1 - 1) + (size_t)(l - 1)) * 8u;
-            double *rf = p->tw + off, *rb = p->twb + off;
+            vfft_real *rf = p->tw + off, *rb = p->twb + off;
             for (int j = 0; j < 2; j++) {
                 double c, s;   /* a = -2*pi*l*k/N, k = 2pp+j: sin(a) = -s */
                 vfft_cs2pi_exact((long long)l * (long long)(2u * pp + (size_t)j), (long long)N, &c, &s);
@@ -1247,14 +1278,14 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
  * overlapping pair was harmless. The optimization introduced the hazard, so
  * the predicate has to carry it. A partial overlap falls back to the scratch
  * path, which is always correct. */
-static inline int vfft_il2p_planes_disjoint(const double *zin, const double *zout,
+static inline int vfft_il2p_planes_disjoint(const vfft_real *zin, const vfft_real *zout,
                                             size_t N)
 {
     return (zout + 2u * N <= zin) || (zin + 2u * N <= zout);
 }
 
 static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
-                                         const double *zin, double *zout)
+                                         const vfft_real *zin, vfft_real *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
     /* OUT-OF-PLACE SKIPS THE SCRATCH.
@@ -1311,7 +1342,7 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
  *
  * Returns 0 on success, -1 if this build lacks the plain n1 bwd twin. */
 static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
-                                              const double *zin, double *zout)
+                                              const vfft_real *zin, vfft_real *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
     if (!p->n1_b) return -1;
@@ -1326,11 +1357,11 @@ static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
      * e^{+2pi i * l * col / N} for the bwd table. Leg 0 is w^0 = 1. */
     for (size_t l = 1; l < R1; l++)
         for (size_t col = 0; col < R2; col++) {
-            const double *rb =
+            const vfft_real *rb =
                 p->twb + ((col / VFFT_IL_TWPER) * (R1 - 1) + (l - 1)) * VFFT_IL_TWREC;
             const size_t j = col % VFFT_IL_TWPER;
             const double c = rb[2 * j], s = rb[VFFT_IL_VW + 2 * j];
-            double *z = p->mid + 2 * (l * R2 + col);
+            vfft_real *z = p->mid + 2 * (l * R2 + col);
             const double xr = z[0], xi = z[1];
             z[0] = c * xr + s * xi;
             z[1] = c * xi - s * xr;
@@ -1367,7 +1398,7 @@ static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
  *
  * Returns 0 on success, -1 if this build lacks the twins. */
 static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
-                                            const double *zin, double *zout)
+                                            const vfft_real *zin, vfft_real *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
     if (!p->t2t_b || !p->n1_b_r2) return -1;
@@ -1394,7 +1425,7 @@ static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
  * F-DIAG is the availability fallback ONLY (correctness net for a build
  * lacking the t2t twins, never a speed arm). */
 static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
-                                        const double *zin, double *zout)
+                                        const vfft_real *zin, vfft_real *zout)
 {
     if (vfft_il2p_execute_bwd_t2t(p, zin, zout) == 0) return 0;
     return vfft_il2p_execute_bwd_fdiag(p, zin, zout);
@@ -1444,9 +1475,9 @@ static inline int vfft_il2p_bwd_resolves(const vfft_il2p_plan_t *p)
  * is the planner's race (plans come from measured search). */
 typedef struct {
     int N, R2, A, B;               /* R1 = A*B */
-    double *mid1, *mid2;           /* interleaved scratch, 2N doubles each */
-    double *twB, *twA;             /* fwd: S2a table; S2b BIG table         */
-    double *twAc, *twBc;           /* bwd: B1 BIG conj table; B2 conj table */
+    vfft_real *mid1, *mid2;           /* interleaved scratch, 2N doubles each */
+    vfft_real *twB, *twA;             /* fwd: S2a table; S2b BIG table         */
+    vfft_real *twAc, *twBc;           /* bwd: B1 BIG conj table; B2 conj table */
     vfft_il2p_fn leaf_f, n1_b;     /* n1t(R2) fwd; n1(R2) bwd               */
     vfft_il2p_fn tA_f, tB_f;       /* t2(A), t2(B) fwd                      */
     vfft_il2p_fn tA_b, tBg_b;      /* t2(A) bwd; t2tg(B) bwd                */
@@ -1475,29 +1506,29 @@ static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
  * blk*cols + local. */
 static inline size_t _vfft_il3p_vtw2_recs(int cols)
 {
-#if VFFT_IL_VW == 8
+#if VFFT_IL_VW >= 8
     return vfft_vtw512_il3p_recs(cols);
 #else
     return ((size_t)cols + 1u) / 2u;
 #endif
 }
-static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
+static inline vfft_real *_vfft_il3p_vtw2(int legs, int blocks, int cols,
                                       int modulus, int conj)
 {
-#if VFFT_IL_VW == 8
-    double *tw512 = (double *)vfft_aligned_alloc(vfft_vtw512_il3p_doubles(legs, blocks, cols)
+#if VFFT_IL_VW >= 8
+    vfft_real *tw512 = (vfft_real *)vfft_aligned_alloc(vfft_vtw512_il3p_doubles(legs, blocks, cols)
                                               * sizeof(double));
     if (tw512) vfft_vtw512_il3p_fill(tw512, legs, blocks, cols, modulus, conj);
     return tw512;
 #endif
     const size_t npair = _vfft_il3p_vtw2_recs(cols);
     size_t nrec = (size_t)blocks * npair * (size_t)(legs - 1);
-    double *tw = (double *)vfft_aligned_alloc(nrec * 8u * sizeof(double));
+    vfft_real *tw = (vfft_real *)vfft_aligned_alloc(nrec * 8u * sizeof(vfft_real));
     if (!tw) return 0;
     for (int blk = 0; blk < blocks; blk++)
         for (size_t pp = 0; pp < npair; pp++)
             for (int l = 1; l < legs; l++) {
-                double *rf = tw + (((size_t)blk * npair + pp) * (legs - 1)
+                vfft_real *rf = tw + (((size_t)blk * npair + pp) * (legs - 1)
                                    + (size_t)(l - 1)) * 8u;
                 for (int j = 0; j < 2; j++) {
                     double cc, ss, s;   /* a = -2*pi*l*k/modulus: sin(a) = -ss */
@@ -1593,8 +1624,8 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     p->leaf_f = lf; p->n1_b = nb;
     p->tA_f = af; p->tB_f = bf;
     p->tA_b = ab; p->tBg_b = btg;
-    p->mid1 = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
-    p->mid2 = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
+    p->mid1 = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
+    p->mid2 = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
     /* stage B: A blocks of R2 columns share ONE block's table (its angle
      * depends on the local column only: modulus B*R2, k = local);
      * stage A: B blocks of R2 columns, k global (modulus N). */
@@ -1682,7 +1713,7 @@ static inline int vfft_il3p_apply_kv_forms(vfft_il3p_plan_t *p, int kv)
 }
 
 static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,
-                                         const double *zin, double *zout)
+                                         const vfft_real *zin, vfft_real *zout)
 {
     const size_t R2 = (size_t)p->R2, A = (size_t)p->A, B = (size_t)p->B;
     const size_t R1 = A * B;
@@ -1697,7 +1728,7 @@ static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,
 }
 
 static inline void vfft_il3p_execute_bwd(const vfft_il3p_plan_t *p,
-                                         const double *zin, double *zout)
+                                         const vfft_real *zin, vfft_real *zout)
 {
     const size_t R2 = (size_t)p->R2, A = (size_t)p->A, B = (size_t)p->B;
     const size_t R1 = A * B;

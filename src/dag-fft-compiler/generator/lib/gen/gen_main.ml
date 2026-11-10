@@ -115,6 +115,10 @@ let run (argv : string array) : unit =
   let cil_st128 = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
+  (* --cil-port P (FP32 only, 2026-11-10): about P percent of the plain data add/sub of the
+     DFT body rendered as fmadd(b, 1, a) / fnmadd(b, 1, a) -- bit-identical, moved to the FMA
+     ports (Cx_render.port_take) *)
+  let cil_port = ref 0 in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -407,6 +411,13 @@ let run (argv : string array) : unit =
        Separate symbol so every existing t2t kernel stays byte-identical. *)
     else if arg = "--cil-turnst-gs"
     then cil_turnst_gs := true
+    else if arg = "--cil-port" && !i + 1 < Array.length arr
+    then (
+      (cil_port :=
+         match int_of_string_opt arr.(!i + 1) with
+         | Some p when p >= 0 && p <= 100 -> p
+         | _ -> failwith "gen_main: --cil-port takes a percentage 0..100");
+      incr i)
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -453,6 +464,15 @@ let run (argv : string array) : unit =
   done;
   let isa = Isa.of_name !isa_name in
   let uarch = Uarch.of_name !uarch_name in
+  if !cil_port <> 0 && not (Isa.is_f32 isa)
+  then
+    failwith
+      "gen_main: --cil-port is an FP32 setting (--isa avx2_f32 / avx512_f32); an FP64 target \
+       refuses it";
+  if !cil_port <> 0
+     && (!cil_k1
+         || List.mem !cil_kind [ ""; "row"; "t2h"; "t2m"; "r2z"; "r1c"; "r2zr" ])
+  then failwith "gen_main: --cil-port applies to the cil kinds (--cil-n1 / n1c / n1t / t2 / t2c)";
   (* Inform the picker about the target register budget so it can pick
    * ISA-appropriate factorizations (e.g. (4,16) over (8,8) for R=64
    * on AVX2 — narrower live windows fit better in 16 ymm). *)
@@ -746,6 +766,7 @@ let run (argv : string array) : unit =
                        "gen_main: --cil-split3 %s: expected exactly m.m2.q"
                        !cil_split3)))
            ~radix:n
+           ~port:!cil_port
            ~isa
            ~uarch)
     else if !zp_kind <> ""

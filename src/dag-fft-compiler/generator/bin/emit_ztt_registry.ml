@@ -4,6 +4,11 @@
  * (Ztt_drivers.cells), so a driver that exists is reachable and a cell the
  * runtime asks for either has all four drivers or is refused at create.
  *
+ * FP32 (2026-11-10): --isa avx2_f32 | avx512_f32 write the FP32 registries
+ * (float pointers in the typedefs and externs, the _F32 guard / count / array
+ * names, the same struct fields); the cell list is the ZTURN-T target's
+ * (Ztt_drivers.ztt_isa: 8 float lanes at both FP32 ISAs).
+ *
  * Usage:
  *   dune exec bin/emit_ztt_registry.exe > generated/ztt_registry_avx2.h
  *)
@@ -13,10 +18,12 @@ let () =
     match List.tl (Array.to_list Sys.argv) with
     | [ "--isa"; v ] -> v
     | [] -> "avx2"
-    | _ -> failwith "emit_ztt_registry: usage: [--isa avx2|avx512]"
+    | _ -> failwith "emit_ztt_registry: usage: [--isa avx2|avx512|avx2_f32|avx512_f32]"
   in
-  let vw = (Isa.of_name isa).Isa.vec_width in
-  let cells = Ztt_drivers.cells ~vw () in
+  let zisa = Ztt_drivers.ztt_isa (Isa.of_name isa) in
+  let vw = zisa.Isa.vec_width in
+  let el = Isa.elem zisa in
+  let cells = Ztt_drivers.cells ~vw ~max:(Ztt_drivers.ceiling zisa) () in
   let up = String.uppercase_ascii isa in
   let nat n ch = Ztt_drivers.natural_ok ~vw n ch
   and pln n ch = Ztt_drivers.plain_ok ~vw n ch in
@@ -28,28 +35,40 @@ let () =
   p " * solution's executable form and only that; the composable stage kernels in\n";
   p " * codelets/zil/avx2/ztt are the product (owner's ruling 2026-09-14). */\n";
   Printf.printf "#ifndef VFFT_ZTT_REGISTRY_%s_H\n#define VFFT_ZTT_REGISTRY_%s_H\n#include <stddef.h>\n\n" up up;
+  if Isa.is_f32 zisa
+  then
+    Printf.printf
+      "/* FP32: %d float lanes per vector (ymm), the cells and laws of 8 lanes; every\n\
+      \ * driver's tw stream holds [c x%d][s x%d] float records per (%d-column block, leg),\n\
+      \ * 2*(R-1)*L floats per stage, the plane 2N floats; rb[] is size_t.%s */\n\n"
+      vw vw vw vw
+      (if isa = "avx512_f32"
+       then
+         "\n * avx512_f32 = the 8-lane drivers under the avx512_f32 name (stopgap: no\n\
+         \ * 16-lane ZTURN-T form; ztt_drivers.ml ztt_isa)."
+       else "");
   p "/* the fused driver ABI: zin (natural packed z), zout (natural packed z), plane\n";
-  p " * (2N doubles, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n";
+  Printf.printf " * (2N %ss, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n" el;
   p " * stage order), rb (the run-base table, N/R0 entries), tile (the tile width in\n";
   p " * complexes, 0 = untiled: the mids with R*L <= tile run per tile) */\n";
-  Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n\n" Ztt_drivers.driver_params;
+  Printf.printf "typedef void (*vfft_ztt_fn)(%s);\n\n" (Ztt_drivers.driver_params zisa);
   p "/* the PLAIN (scrambled-class) driver ABI (docs/design/ztt_scrambled_design.md):\n";
   p " * zin (natural packed z), zout (the scrambled spectrum; zin == zout is the same\n";
   p " * driver), tw (ONE contiguous stream in stage order, the plain schedule's), tile\n";
   p " * (the stages with Len_s <= tile, the last one always, run per block). No plane,\n";
   p " * no run-base table. */\n";
-  Printf.printf "typedef void (*vfft_zttp_fn)(%s);\n\n" Ztt_drivers.plain_params;
+  Printf.printf "typedef void (*vfft_zttp_fn)(%s);\n\n" (Ztt_drivers.plain_params zisa);
   List.iter
     (fun (n, ch) ->
        if nat n ch then
        List.iter
          (fun (bwd, dest) ->
-            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.driver_name ~isa n ch ~bwd ~dest) Ztt_drivers.driver_params)
+            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.driver_name ~isa n ch ~bwd ~dest) (Ztt_drivers.driver_params zisa))
          [ false, true; false, false; true, true; true, false ];
        if pln n ch then
        List.iter
          (fun bwd ->
-            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.plain_driver_name ~isa n ch ~bwd) Ztt_drivers.plain_params)
+            Printf.printf "extern void %s(%s);\n" (Ztt_drivers.plain_driver_name ~isa n ch ~bwd) (Ztt_drivers.plain_params zisa))
          [ false; true ])
     cells;
   p "\ntypedef struct {\n    int n, nf;\n    int chain[7];\n";

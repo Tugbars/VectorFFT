@@ -1,5 +1,5 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 262144, route VFFT_K1_IL_ZTT.
+ * 16 <= N <= 262144 (FP32: 1048576), route VFFT_K1_IL_ZTT.
  *
  *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
  *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md),
@@ -47,13 +47,15 @@
  * TWO-LEVEL product: the angle 2*pi*pw/RL splits as pw = a*2^u + b
  * (u = log2 RL - 14, b < 2^u <= 16 at 262144), w = table(a) * fine(b) with
  * fine(b) = exp(-2*pi*i*b/RL) — one 2^u-entry cos/sin table per stage at
- * create, one complex product per record, ~1 ulp. The ceiling is 262144.
+ * create, one complex product per record, ~1 ulp. The ceiling is 262144
+ * (FP32: 1048576, b < 64: the fine table's 64 entries, full).
  * The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
  * NULL loudly — no fallback, no default chain (the planner is the only
  * source of a chain). */
 #ifndef VFFT_ZTT_H
 #define VFFT_ZTT_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include "tw_exact.h"   /* once-rounded cos/sin(2*pi*p/n) for the create-time tables */
 #include <stdint.h>
@@ -73,7 +75,13 @@
  * be recombined. README.md beside the fused files. */
 #include "il_isa.h"
 #include VFFT_ZTT_REGISTRY_H     /* the cells and their fused codelets (generated, per ISA) */
-#if defined(VFFT_BUILD_ISA_AVX512)
+#if defined(VFFT_FLOAT) && defined(VFFT_BUILD_ISA_AVX512)
+#define VFFT_ZTT_NCELLS VFFT_ZTT_NCELLS_AVX512_F32
+#define vfft_ztt_cells  vfft_ztt_cells_avx512_f32
+#elif defined(VFFT_FLOAT)
+#define VFFT_ZTT_NCELLS VFFT_ZTT_NCELLS_AVX2_F32
+#define vfft_ztt_cells  vfft_ztt_cells_avx2_f32
+#elif defined(VFFT_BUILD_ISA_AVX512)
 #define VFFT_ZTT_NCELLS VFFT_ZTT_NCELLS_AVX512
 #define vfft_ztt_cells  vfft_ztt_cells_avx512
 #else
@@ -90,8 +98,8 @@
  * refused at create, never at run time. The odd radices 3/5/7/9/15 exist for
  * the MIDS only (tmg, tmgb, tmgd): the ingest and the terminators are lane
  * lattices and stay 4/8 — the odd radix is always a mid. */
-typedef void (*vfft_ztt_kfn)(const double *, const double *, double *, double *,
-                             const double *, const double *,
+typedef void (*vfft_ztt_kfn)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *,
+                             const vfft_real *, const vfft_real *,
                              size_t, size_t, size_t, size_t, size_t);
 #define _ZTT_KFN2(NAME, KIND, MF, MB) static inline vfft_ztt_kfn NAME(int R, int bwd) {     if (bwd) { switch (R) { MB(_ZTT_KB_##KIND) default: return 0; } }     switch (R) { MF(_ZTT_KF_##KIND) default: return 0; } }
 #define _ZTT_KF_t0tp(R) case R: return VFFT_IL_SYM(radix##R##_z_t0tp_fwd);
@@ -118,8 +126,14 @@ _ZTT_KFN2(_ztt_kfn_t0d,  t0d,  VFFT_IL_T0D_FWD_RADICES,  _ZTT_NONE)
 _ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]                    */
+#ifdef VFFT_FLOAT
+#define VFFT_ZTT_MAX_N 1048576   /* FP32: 2^20 (ztt_drivers.ml max_n_f32), where the fine table is full */
+#define VFFT_ZTT_MAX_N_STR "1048576"
+#else
 #define VFFT_ZTT_MAX_N 262144    /* the ceiling; above the octave the streams are
                                   * the TWO-LEVEL product (below)                 */
+#define VFFT_ZTT_MAX_N_STR "262144"
+#endif
 #define VFFT_ZTT_QW_M 16384
 #define VFFT_ZTT_QW_LGM 14       /* log2 M */
 #define VFFT_ZTT_QW_Q 4096       /* M / 4 */
@@ -134,11 +148,11 @@ typedef struct
     long ncol;                        /* N / chain[0]: ingest columns = rb entries   */
     long L[VFFT_ZTT_MAX_NF];          /* run length BEFORE stage s (s >= 1)          */
     long Gs[VFFT_ZTT_MAX_NF];         /* group count of stage s                      */
-    double *tw, *twb;                 /* ONE contiguous stream each, stage order:
+    vfft_real *tw, *twb;                 /* ONE contiguous stream each, stage order:
                                        * fwd, and bwd (the s half negated)          */
     size_t twdoubles;
     size_t *rb;                       /* the run-base table, ncol entries            */
-    double *plane;                    /* 2N doubles + 4 KB of slack, 64-B: the `plane`
+    vfft_real *plane;                    /* 2N doubles + 4 KB of slack, 64-B: the `plane`
                                        * mode scratch; each in-place call starts it 2 KB
                                        * (mod 4 KB) from the caller's buffer (_ztt_plane_for) */
     const vfft_ztt_cell_t *cell;      /* the registry row: the four drivers          */
@@ -244,9 +258,9 @@ static inline int _ztt_log2(long v)
  * at tw + ((k/4)*(R-1) + (r-1))*8 doubles = [c(k..k+3)][s(k..k+3)] of
  * w_{RL}^{r*b}, b = k + lane; fwd s = -sin (times c + i s = exp(-i th)),
  * bwd s = +sin. Returns the doubles written = 2*(R-1)*L. */
-static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd)
+static inline size_t _ztt_fill_stage(vfft_real *tw, long L, int R, long RL, int bwd)
 {
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 8
     return vfft_vtw512_ztt_stage(tw, L, R, RL, bwd);   /* 8-column lane records */
 #endif
     if (RL & (RL - 1))
@@ -259,7 +273,7 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
         for (k = 0; k < L; k += 4)
             for (r = 1; r < R; r++)
             {
-                double *rec = tw + ((size_t)(k / 4) * (size_t)(R - 1) + (size_t)(r - 1)) * 8;
+                vfft_real *rec = tw + ((size_t)(k / 4) * (size_t)(R - 1) + (size_t)(r - 1)) * 8;
                 for (lane = 0; lane < 4; lane++)
                 {
                     const long b = k + lane;
@@ -276,7 +290,7 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
     const int lg = _ztt_log2(RL);
     /* up = the bits of pw ABOVE the table's octave (0 within it): the fine
      * table has 2^up entries, cos/sin of 2*pi*b/RL, b < 2^up (<= 16 at the
-     * ceiling) — the only trig the create ever runs */
+     * ceiling, FP32: 64) — the only trig the create ever runs */
     const int up = lg > VFFT_ZTT_QW_LGM ? lg - VFFT_ZTT_QW_LGM : 0;
     const int sh = up ? 0 : VFFT_ZTT_QW_LGM - lg;    /* M = 2^LGM */
     double fc[64], fs[64];
@@ -290,7 +304,7 @@ static inline size_t _ztt_fill_stage(double *tw, long L, int R, long RL, int bwd
     for (k = 0; k < L; k += 4)
         for (r = 1; r < R; r++)
         {
-            double *rec = tw + ((size_t)(k / 4) * (size_t)(R - 1) + (size_t)(r - 1)) * 8;
+            vfft_real *rec = tw + ((size_t)(k / 4) * (size_t)(R - 1) + (size_t)(r - 1)) * 8;
             for (lane = 0; lane < 4; lane++)
             {
                 const long b = k + lane;
@@ -342,7 +356,7 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     size_t off;
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTT_MAX_NF) why = "nf outside 2..7";
-    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..262144";
+    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16.." VFFT_ZTT_MAX_N_STR;
     for (s = 0; !why && s < nf; s++)
     {
         if (!_ztt_radix_ok(chain[s], s > 0 && s < nf - 1))
@@ -351,20 +365,20 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     }
     if (!why && prod != (long)N) why = "chain product != N";
     if (!why && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 8
     /* THE AVX-512 LAWS (8 columns per vector; zil_avx512_design.md §11): the
      * natural class's ingest writes R0-runs as whole 8-column blocks; the
      * plain (scrambled) class's last stage runs whole 8-column iterations of
      * R_last-runs. Fused and staged plans alike. (At 4 lanes every chain the
      * grammar admits meets them, so AVX2 has no such checks.) */
-    if (!why && (N / chain[0]) % VFFT_IL_VW) why = "(N / R0) % 8 != 0";
-    if (!why && !scr && chain[0] % VFFT_IL_VW)
+    if (!why && (N / chain[0]) % VFFT_ZTT_VW) why = "(N / R0) % 8 != 0";
+    if (!why && !scr && chain[0] % VFFT_ZTT_VW)
         why = "natural: R0 % 8 != 0 (the ingest's runs are not whole 8-column blocks)";
-    if (!why && scr && (chain[nf - 1] % VFFT_IL_VW || (N / chain[nf - 1]) % VFFT_IL_VW))
+    if (!why && scr && (chain[nf - 1] % VFFT_ZTT_VW || (N / chain[nf - 1]) % VFFT_ZTT_VW))
         why = "scrambled: R_last % 8 != 0 or (N / R_last) % 8 != 0";
 #endif
     cell = why ? NULL : vfft_ztt_lookup(N, chain, nf);
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 8
     /* an avx512 registry row may carry ONE order class only (the generator
      * refused the other under the same laws: its drivers are 0) -- a row
      * without this request's drivers is no fused cell for it */
@@ -413,6 +427,15 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
             }
             ok = ok && p->st_fwd[s] && p->st_bwd[s];
         }
+#ifdef VFFT_FLOAT
+        if (!ok && !staged)
+        {   /* FP32: a fused cell runs whole without its stage kernels; only the threaded arm and the
+             * staged executor need them, so their absence clears the table (ztt_mt.h then declines) */
+            for (s = 0; s < nf; s++) p->st_fwd[s] = p->st_bwd[s] = 0;
+            p->tl_fwd_plane = p->tl_bwd_plane = 0;
+            ok = 1;
+        }
+#endif
         if (!ok)
         {
             if (getenv("VFFT_NAT_LOG"))
@@ -433,8 +456,8 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
         p->twdoubles = 0;
         for (s = 0; s < nf - 1; s++)
             p->twdoubles += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)p->len[s + 1];
-        p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
-        p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+        p->tw = (vfft_real *)vfft_aligned_alloc(p->twdoubles * sizeof(vfft_real));
+        p->twb = (vfft_real *)vfft_aligned_alloc(p->twdoubles * sizeof(vfft_real));
         p->perm = (size_t *)vfft_aligned_alloc((size_t)N * sizeof(size_t));
         if (!p->tw || !p->twb || !p->perm) { vfft_ztt_destroy(p); return NULL; }
         for (s = 0, off = 0; s < nf - 1; s++)
@@ -449,17 +472,23 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
          * ic = digitrev(k) over the chain, then inside the last stage's
          * 4-column span at tld's unpack-only lane order [c, c+2 | c+1, c+3]:
          * R*(col & ~3) + 4*p + [0,2,1,3][col & 3], col = ic / R, p = ic % R */
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 8
         /* at 8 lanes: the span is 8 columns and tld's unpacklo/hi leave the
          * evens first, then the odds: [0,4,1,5,2,6,3,7] ->
          * position of column c = (c >> 1) + (c & 1) * 4 */
         {
-            const long R = chain[nf - 1], VW = VFFT_IL_VW;
+            const long R = chain[nf - 1], VW = VFFT_ZTT_VW;
             for (j = 0; j < (long)N; j++)
             {
                 const long ic = _ztt_digitrev(j, chain, nf);
                 const long col = ic / R, pp = ic % R, c = col & (VW - 1);
+#ifdef VFFT_FLOAT
+                /* FP32's 8-lane tld (vunpck{l,h}ps over 64-bit complex): column c at lane
+                 * (c & 1) + 2 (c >> 2) + 4 ((c >> 1) & 1) (the ZTT track's measured order) */
+                p->perm[j] = (size_t)(R * (col & ~(VW - 1)) + VW * pp + ((c & 1) + 2 * (c >> 2) + 4 * ((c >> 1) & 1)));
+#else
                 p->perm[j] = (size_t)(R * (col & ~(VW - 1)) + VW * pp + ((c >> 1) + (c & 1) * (VW / 2)));
+#endif
             }
         }
 #else
@@ -490,10 +519,10 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
         p->twdoubles += (size_t)2 * (size_t)(chain[s] - 1) * (size_t)p->L[s];
         if (s + 1 < nf) p->L[s + 1] = RL;
     }
-    p->tw = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
-    p->twb = (double *)vfft_aligned_alloc(p->twdoubles * sizeof(double));
+    p->tw = (vfft_real *)vfft_aligned_alloc(p->twdoubles * sizeof(vfft_real));
+    p->twb = (vfft_real *)vfft_aligned_alloc(p->twdoubles * sizeof(vfft_real));
     p->rb = (size_t *)vfft_aligned_alloc((size_t)p->ncol * sizeof(size_t));
-    p->plane = (double *)vfft_aligned_alloc((size_t)2 * (size_t)N * sizeof(double) + 4096u);
+    p->plane = (vfft_real *)vfft_aligned_alloc((size_t)2 * (size_t)N * sizeof(vfft_real) + 4096u);
     if (!p->tw || !p->twb || !p->rb || !p->plane) { vfft_ztt_destroy(p); return NULL; }
     /* the streams, stage order, ONE allocation each (the fused driver's
      * carried cursor walks straight from one stage's end into the next) */
@@ -617,8 +646,8 @@ static inline int vfft_ztt_tile_legal_ord(int N, const int *chain, int nf, size_
     if (nf < 3) return 0;
     if ((size_t)N % tile) return 0;
     if (tile % ((size_t)chain[nf - 2] * (size_t)chain[nf - 1])) return 0;
-#if VFFT_IL_VW == 8
-    if ((tile / (size_t)chain[nf - 1]) % VFFT_IL_VW) return 0;   /* whole 8-column last-stage iterations */
+#if VFFT_ZTT_VW >= 8
+    if ((tile / (size_t)chain[nf - 1]) % VFFT_ZTT_VW) return 0;   /* whole 8-column last-stage iterations */
 #endif
     return tile < (size_t)N;
 }
@@ -639,12 +668,12 @@ static inline int vfft_ztt_set_tile(vfft_ztt_plan_t *p, size_t tile)
  * carries 4 KB of slack and each in-place call starts it 2 KB (mod 4 KB) from
  * zout, 64-B aligned: the alias distance becomes 128 columns. Arithmetic is
  * untouched (the gate's in-place bitwise law holds). */
-static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zout)
+static inline vfft_real *_ztt_plane_for(const vfft_ztt_plan_t *p, const vfft_real *zout)
 {
     const uintptr_t base = (uintptr_t)p->plane;
     const uintptr_t want = ((uintptr_t)zout + 2048u) & 4095u;
     const uintptr_t off = ((want - (base & 4095u)) & 4095u) & ~(uintptr_t)63u;
-    return (double *)(base + off);
+    return (vfft_real *)(base + off);
 }
 
 /* THE STAGED WALK (ztt_odd_design.md): the fused drivers' loop nests
@@ -657,12 +686,12 @@ static inline double *_ztt_plane_for(const vfft_ztt_plan_t *p, const double *zou
  * sweeping mids in stage order; per block the dividing mids then tld. Plain
  * bwd: per block tldb then the dividing mids high to low; the other mids
  * high to low as sweeps; tlfb in place. */
-static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, double *zout, int bwd)
+static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const vfft_real *zin, vfft_real *zout, int bwd)
 {
     const int nf = p->nf;
     const size_t N = (size_t)p->N, tile = p->tile;
     const vfft_ztt_kfn *st = bwd ? p->st_bwd : p->st_fwd;
-    const double *tw = bwd ? p->twb : p->tw;
+    const vfft_real *tw = bwd ? p->twb : p->tw;
     int s;
     size_t t;
     if (p->scr)
@@ -678,7 +707,7 @@ static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, 
             if (tile)
                 for (t = 0; t < N / tile; t++)
                 {
-                    double *B = zout + t * tile * 2;
+                    vfft_real *B = zout + t * tile * 2;
                     for (s = 1; s < nf - 1; s++)
                         if (tile % (size_t)p->len[s] == 0)
                             st[s](B, 0, B, 0, tw + p->twoff[s], 0,
@@ -693,8 +722,8 @@ static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, 
             if (tile)
                 for (t = 0; t < N / tile; t++)
                 {
-                    const double *Bi = zin + t * tile * 2;
-                    double *B = zout + t * tile * 2;
+                    const vfft_real *Bi = zin + t * tile * 2;
+                    vfft_real *B = zout + t * tile * 2;
                     st[nf - 1](Bi, 0, B, 0, tw, 0, 0, 1, 0, 0, tile / Rl);
                     for (s = nf - 2; s >= 1; s--)
                         if (tile % (size_t)p->len[s] == 0)
@@ -713,14 +742,14 @@ static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, 
     }
     {
         const int ip = (zin == zout || p->inplace);
-        double *W = ip ? _ztt_plane_for(p, zout) : zout;
+        vfft_real *W = ip ? _ztt_plane_for(p, zout) : zout;
         const vfft_ztt_kfn last = ip ? (bwd ? p->tl_bwd_plane : p->tl_fwd_plane) : st[nf - 1];
         const size_t L = (size_t)p->L[nf - 1];
-        st[0](zin, 0, W, 0, 0, (const double *)p->rb, (size_t)p->ncol, 0, 0, 0, (size_t)p->ncol);
+        st[0](zin, 0, W, 0, 0, (const vfft_real *)p->rb, (size_t)p->ncol, 0, 0, 0, (size_t)p->ncol);
         if (tile)
             for (t = 0; t < N / tile; t++)
             {
-                double *B = W + t * tile * 2;
+                vfft_real *B = W + t * tile * 2;
                 for (s = 1; s < nf - 1; s++)
                 {
                     const size_t RL = (size_t)p->L[s] * (size_t)p->chain[s];
@@ -739,7 +768,7 @@ static inline void _ztt_staged_run(const vfft_ztt_plan_t *p, const double *zin, 
 }
 
 static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
-                                        const double *zin, double *zout)
+                                        const vfft_real *zin, vfft_real *zout)
 {
     if (p->staged) { _ztt_staged_run(p, zin, zout, 0); return; }
     if (p->scr) { p->cell->fwd_scr(zin, zout, p->tw, p->tile); return; }   /* the plain schedule: one function, either placement */
@@ -750,7 +779,7 @@ static inline void vfft_ztt_execute_fwd(const vfft_ztt_plan_t *p,
 }
 
 static inline void vfft_ztt_execute_bwd(const vfft_ztt_plan_t *p,
-                                        const double *zin, double *zout)
+                                        const vfft_real *zin, vfft_real *zout)
 {
     if (p->staged) { _ztt_staged_run(p, zin, zout, 1); return; }
     if (p->scr) { p->cell->bwd_scr(zin, zout, p->twb, p->tile); return; }   /* the plain schedule's stage-by-stage inverse */

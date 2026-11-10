@@ -8,7 +8,11 @@
  *     (re, im) multiset (the class's own permutation, checked without naming
  *     it) and the matched roundtrip;
  *   - roundtrip bwd(fwd(x)) / N == x, both classes;
- *   - in place BITWISE out of place (same class);
+ *   - in place: the same forward check and roundtrip on the in-place plan's
+ *     own output. Whether it is bitwise the out-of-place output is printed,
+ *     never asserted: each placement is raced and banked as its own row, so
+ *     the two may hold different splits (the 14900KF store at 2^21: 4096.512
+ *     out of place, 2048.1024 in place);
  *   - T=8: the plan's own serial output (pool at 1) BITWISE its threaded
  *     output;
  *   - replay: a second create on the warm store executes BITWISE the first
@@ -78,6 +82,30 @@ static int cxcmp(const void *a, const void *b)
     if (p[1] < q[1]) return -1; if (p[1] > q[1]) return 1;
     return 0;
 }
+/* a natural spectrum's five spot bins against the long-double reference: the worst error over the spectrum's scale */
+static double spot_rel(const double *y, long N, const long *bins, const double *er, const double *ei)
+{
+    double worst = 0, scale = 0;
+    for (long i = 0; i < N; i++) { const double m = fabs(y[2 * i]) + fabs(y[2 * i + 1]); if (m > scale) scale = m; }
+    for (int b = 0; b < 5; b++)
+    {
+        const double d = fabs(y[2 * bins[b]] - er[b]) + fabs(y[2 * bins[b] + 1] - ei[b]);
+        if (d > worst) worst = d;
+    }
+    return scale > 0 ? worst / scale : worst;
+}
+/* a scrambled spectrum against the natural one as sorted (re, im) multisets (sn, ss: N complex of scratch each):
+ * the worst difference over the scale */
+static double multiset_rel(const double *ynat, const double *y, long N, double *sn, double *ss)
+{
+    const size_t nb = (size_t)2 * N * sizeof(double);
+    double worst = 0, scale = 0;
+    memcpy(sn, ynat, nb); memcpy(ss, y, nb);
+    qsort(sn, (size_t)N, 2 * sizeof(double), cxcmp);
+    qsort(ss, (size_t)N, 2 * sizeof(double), cxcmp);
+    for (long i = 0; i < 2 * N; i++) { const double d = fabs(sn[i] - ss[i]); if (d > worst) worst = d; if (fabs(sn[i]) > scale) scale = fabs(sn[i]); }
+    return scale > 0 ? worst / scale : worst;
+}
 static vfft_plan mk(const char *W, int N, int scr, int ip, int T)
 {
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
@@ -137,25 +165,15 @@ int main(int argc, char **argv)
             run(p, VFFT_FORWARD, 0, x, y, N);
             if (!scr)
             {
-                double worst = 0, scale = 0;
-                for (long i = 0; i < N; i++) { const double m = fabs(y[2 * i]) + fabs(y[2 * i + 1]); if (m > scale) scale = m; }
-                for (int b = 0; b < 5; b++)
-                {
-                    const double d = fabs(y[2 * bins[b]] - er[b]) + fabs(y[2 * bins[b] + 1] - ei[b]);
-                    if (d > worst) worst = d;
-                }
-                CHECK(worst < 1e-9 * scale, "N=%d natural: spot-bin error %.2e (scale %.2e)", N, worst, scale);
-                printf("  natural oop: spot bins %.1e rel, %s\n", worst / scale, raced ? "raced+banked" : "replayed");
+                const double e = spot_rel(y, N, bins, er, ei);
+                CHECK(e < 1e-9, "N=%d natural: spot-bin error %.2e rel", N, e);
+                printf("  natural oop: spot bins %.1e rel, %s\n", e, raced ? "raced+banked" : "replayed");
             }
             else
             {   /* the same values as the natural spectrum, as a multiset */
-                double worst = 0, scale = 0;
-                memcpy(sn, ynat, nb); memcpy(ss, y, nb);
-                qsort(sn, (size_t)N, 2 * sizeof(double), cxcmp);
-                qsort(ss, (size_t)N, 2 * sizeof(double), cxcmp);
-                for (long i = 0; i < 2 * N; i++) { const double d = fabs(sn[i] - ss[i]); if (d > worst) worst = d; if (fabs(sn[i]) > scale) scale = fabs(sn[i]); }
-                CHECK(worst < 1e-9 * scale, "N=%d scrambled: multiset differs from natural by %.2e (scale %.2e)", N, worst, scale);
-                printf("  scrambled oop: multiset vs natural %.1e rel, %s\n", worst / scale, raced ? "raced+banked" : "replayed");
+                const double e = multiset_rel(ynat, y, N, sn, ss);
+                CHECK(e < 1e-9, "N=%d scrambled: multiset differs from natural by %.2e rel", N, e);
+                printf("  scrambled oop: multiset vs natural %.1e rel, %s\n", e, raced ? "raced+banked" : "replayed");
             }
             /* roundtrip */
             run(p, VFFT_BACKWARD, 0, y, r, N);
@@ -165,17 +183,24 @@ int main(int argc, char **argv)
                 CHECK(worst < 1e-10, "N=%d %s: roundtrip %.2e", N, cls, worst);
                 printf("  %s oop: roundtrip %.1e\n", cls, worst);
             }
-            /* in place, bitwise the out-of-place forward */
+            /* in place: the in-place plan's own forward against the same reference (the natural spectrum's
+             * spot bins, or the natural spectrum as a multiset), then its roundtrip; bitwise the
+             * out-of-place forward is printed, never asserted (the placement's own row, its own split) */
             q = mk(W, N, scr, 1, 1);
             CHECK(q != NULL, "N=%d %s ip: create refused", N, cls);
             if (q)
             {
+                double e;
+                int bit;
                 run(q, VFFT_FORWARD, 1, x, y2, N);
-                CHECK(memcmp(y, y2, nb) == 0, "N=%d %s: in place != out of place (bitwise)", N, cls);
+                bit = memcmp(y, y2, nb) == 0;
+                e = scr ? multiset_rel(ynat, y2, N, sn, ss) : spot_rel(y2, N, bins, er, ei);
+                CHECK(e < 1e-9, "N=%d %s ip: %s %.2e rel", N, cls, scr ? "multiset differs from natural by" : "spot-bin error", e);
                 run(q, VFFT_BACKWARD, 1, y2, r, N);
                 { double worst = 0; for (long i = 0; i < 2 * N; i++) { const double d = fabs(r[i] / (double)N - x[i]); if (d > worst) worst = d; }
                   CHECK(worst < 1e-10, "N=%d %s ip: roundtrip %.2e", N, cls, worst); }
-                printf("  %s ip: %s, roundtrip ok\n", cls, memcmp(y, y2, nb) == 0 ? "bitwise oop" : "NOT BITWISE");
+                printf("  %s ip: %s %.1e rel, roundtrip ok, %s\n", cls, scr ? "multiset vs natural" : "spot bins", e,
+                       bit ? "bitwise oop" : "own plan");
                 vfft_destroy(q);
             }
             /* T threads: the plan's own serial BITWISE its threaded output */

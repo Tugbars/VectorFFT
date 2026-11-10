@@ -52,7 +52,25 @@
  * refusal"). *)
 
 let max_n = 262144
+(* FP32's ceiling (2026-11-10, the owner's ruling): 2^20 = 8^6 * 4 fits max_nf, and the race takes
+ * ZTURN-T over the four-step there; 2^20 is the twiddle builders' end (ztt.h: the fine table's 64
+ * entries are full at RL = 2^20). FP64's list is unchanged. *)
+let max_n_f32 = 1048576
+let ceiling (isa : Isa.t) : int = if Isa.is_f32 isa then max_n_f32 else max_n
 let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
+
+(* FP32 (2026-11-10): THE ZTURN-T TARGET of an ISA record. The VW laws below are
+   in SCALAR lanes, so FP32 AVX2 (8 floats per ymm) has FP64 AVX-512's lane count,
+   laws and 159 cells, rendered with ymm float shuffles (Isa's 8-lane FP32 forms).
+   FP32 AVX-512 (16 floats per zmm): no {4,8} chain meets the 16-lane natural law
+   R0 % 16 = 0 (the ingest writes each column's R0-run as whole 16-column blocks;
+   the plain class needs R_last % 16 = 0), so a 16-lane form needs radix-16 ends
+   (a radix-16 ingest lattice with 16 x 16 transposes, a radix-16 tld) and the
+   core's chain grammar at 16. STOPGAP: the avx512_f32 ZTURN-T build runs the SAME
+   8-lane drivers under the avx512_f32 name (same cells, same tables), compiled for
+   avx512f,avx512vl so the compiler has the 32 ymm registers. FP64 records pass
+   through unchanged. *)
+let ztt_isa = Cascade_z.ztt_isa   (* one definition: the FP32 stage kernels share it *)
 
 (* every ordered {4,8} chain with product n, nf >= 2, (n / r0) mod 4 = 0;
    the order is the enumeration order (4 before 8 at every position) *)
@@ -85,8 +103,8 @@ let plain_ok ~(vw : int) (n : int) (ch : int list) : bool =
   rl mod vw = 0 && n / rl mod vw = 0 && n / r0 mod vw = 0
 ;;
 
-let cells ?(vw = 4) () : (int * int list) list =
-  let rec pow2 n acc = if n > max_n then List.rev acc else pow2 (2 * n) (n :: acc) in
+let cells ?(vw = 4) ?(max = max_n) () : (int * int list) list =
+  let rec pow2 n acc = if n > max then List.rev acc else pow2 (2 * n) (n :: acc) in
   List.concat_map
     (fun n ->
        List.filter_map
@@ -140,14 +158,20 @@ let driver_name ~(isa : string) (n : int) (ch : int list) ~(bwd : bool) ~(dest :
    (docs/design/zturn_t_2048plus_plan.md step 2). A RACED plan parameter
    (il_tw=, validated by vfft_ztt_tile_legal), never a rule; the tile changes
    group ORDER only, so every width is bitwise the untiled result. *)
-let driver_params =
-  "const double *zin, double *zout, double *plane, const double *tw, const size_t *rb, size_t tile"
+(* the element type is the target's (Isa.elem): double at FP64, float at FP32; rb
+   stays size_t at both precisions *)
+let driver_params (isa : Isa.t) : string =
+  let e = Isa.elem isa in
+  Printf.sprintf
+    "const %s *zin, %s *zout, %s *plane, const %s *tw, const size_t *rb, size_t tile"
+    e e e e
 ;;
 
 let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : bool) : string =
   let g = geom n ch in
   let r = Array.of_list ch in
   let k = Array.length r in
+  let el = Isa.elem isa in
   let body base radix = Cascade_z.ztt_body_name ~fam:"z" ~base ~radix ~bwd in
   let b = Buffer.create 4096 in
   let add = Buffer.add_string b in
@@ -156,10 +180,10 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
     (Printf.sprintf
        "void %s(%s)\n{\n"
        (driver_name ~isa:isa.Isa.name n ch ~bwd ~dest)
-       driver_params);
+       (driver_params isa));
   if dest
-  then add "    double *W = zout;   /* dest: the whole pipeline runs in the destination */\n    (void)plane;\n"
-  else add "    double *W = plane;  /* plane: the plan's scratch; the last stage writes zout */\n";
+  then add (Printf.sprintf "    %s *W = zout;   /* dest: the whole pipeline runs in the destination */\n    (void)plane;\n" el)
+  else add (Printf.sprintf "    %s *W = plane;  /* plane: the plan's scratch; the last stage writes zout */\n" el);
   (* ingest: (zin, plane, rb, Ls = N/R0, count = N/R0)          CONTRACT 7.1 *)
   add
     (Printf.sprintf
@@ -192,7 +216,7 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
     add "    if (tile)\n    {\n";
     add (Printf.sprintf "        const size_t ntile = (size_t)%d / tile;\n" n);
     add "#pragma GCC unroll 1\n        for (size_t t = 0; t < ntile; t++)\n        {\n";
-    add "            double *B = W + t * tile * 2;\n";
+    add (Printf.sprintf "            %s *B = W + t * tile * 2;\n" el);
     for s = 1 to k - 2 do
       add
         (Printf.sprintf
@@ -254,7 +278,10 @@ let emit_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) ~(dest : 
    then tlfb (in place, natural interleaved out). One driver per direction: no
    plane, no rb[], zin == zout is the same driver (every stage loads its whole
    column quad before storing it). ═══ *)
-let plain_params = "const double *zin, double *zout, const double *tw, size_t tile"
+let plain_params (isa : Isa.t) : string =
+  let e = Isa.elem isa in
+  Printf.sprintf "const %s *zin, %s *zout, const %s *tw, size_t tile" e e e
+;;
 
 let plain_driver_name ~(isa : string) (n : int) (ch : int list) ~(bwd : bool) : string =
   Printf.sprintf "zttp_%s_%s_%s" (tag n ch) (if bwd then "bwd" else "fwd") isa
@@ -287,6 +314,7 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
   let g = geom_plain n ch in
   let r = Array.of_list ch in
   let k = Array.length r in
+  let el = Isa.elem isa in
   let body base radix ~bwd = Cascade_z.ztt_body_name ~fam:"z" ~base ~radix ~bwd in
   let b = Buffer.create 4096 in
   let add = Buffer.add_string b in
@@ -295,7 +323,7 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
     (Printf.sprintf
        "void %s(%s)\n{\n"
        (plain_driver_name ~isa:isa.Isa.name n ch ~bwd)
-       plain_params);
+       (plain_params isa));
   (* stage s mid call (fwd: tmgd, bwd: tmgb) at a group base *)
   let mid s base =
     Printf.sprintf
@@ -357,7 +385,7 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
     add "    if (tile)\n    {\n";
     add (Printf.sprintf "        const size_t ntile = (size_t)%d / tile;\n" n);
     add "#pragma GCC unroll 1\n        for (size_t t = 0; t < ntile; t++)\n        {\n";
-    add "            double *B = zout + t * tile * 2;\n";
+    add (Printf.sprintf "            %s *B = zout + t * tile * 2;\n" el);
     for s = 1 to k - 2 do
       per_block s
     done;
@@ -379,8 +407,8 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
     add "    if (tile)\n    {\n";
     add (Printf.sprintf "        const size_t ntile = (size_t)%d / tile;\n" n);
     add "#pragma GCC unroll 1\n        for (size_t t = 0; t < ntile; t++)\n        {\n";
-    add "            const double *Bi = zin + t * tile * 2;\n";
-    add "            double *B = zout + t * tile * 2;\n";
+    add (Printf.sprintf "            const %s *Bi = zin + t * tile * 2;\n" el);
+    add (Printf.sprintf "            %s *B = zout + t * tile * 2;\n" el);
     add
       (Printf.sprintf
          "            %s(Bi, B, tw, (size_t)0, tile / (size_t)%d);   /* inverse of the last stage */\n"
@@ -418,8 +446,8 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
    objects of sources that are gone). Each file re-emits the bodies its
    drivers inline (static, byte-identical to the per-kind codelets); the
    natural file also carries the s0t masks its ingest bodies need. ═══ *)
-let sizes () : int list =
-  let rec pow2 n acc = if n > max_n then List.rev acc else pow2 (2 * n) (n :: acc) in
+let sizes ?(max = max_n) () : int list =
+  let rec pow2 n acc = if n > max then List.rev acc else pow2 (2 * n) (n :: acc) in
   pow2 16 []
 ;;
 
@@ -449,13 +477,14 @@ let bodies ?(vw = 4) ~(scr : bool) () : (string * int * bool) list =
 ;;
 
 let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string =
+  let isa = ztt_isa isa in
   let b = Buffer.create (1 lsl 18) in
   let add = Buffer.add_string b in
   let vw = isa.Isa.vec_width in
   let cells =
     List.filter
       (fun (m, ch) -> m = n && (if scr then plain_ok ~vw m ch else natural_ok ~vw m ch))
-      (cells ~vw ())
+      (cells ~vw ~max:(ceiling isa) ())
   in
   add
     (Printf.sprintf
@@ -481,12 +510,27 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
            \ * the tile width in complexes (0 = untiled; the mids with R*L <= tile run per tile).")
        isa.Isa.name
        uarch.Uarch.name);
+  if Isa.is_f32 isa
+  then
+    add
+      (Printf.sprintf
+         "/* FP32: interleaved complex float (8 B per complex); %d float lanes per ymm =\n\
+         \ * %d complex per z vector; the plane holds [re x%d][im x%d] float blocks (64 B) and\n\
+         \ * every count is a multiple of %d columns. tw = per stage, for each %d-column\n\
+         \ * block and leg r = 1..R-1, one record [c x%d][s x%d] of floats (lane i = column\n\
+         \ * k+i; fwd s = -sin, bwd s = +sin), 2*(R-1)*L floats per stage; rb[] is size_t.%s */\n"
+         vw (vw / 2) vw vw vw vw vw vw
+         (if isa.Isa.name = "avx512_f32"
+          then
+            "\n * avx512_f32 = the 8-lane drivers under the avx512_f32 name (stopgap: no\n\
+            \ * 16-lane ZTURN-T form; ztt_drivers.ml ztt_isa), compiled for avx512f,avx512vl."
+          else ""));
   add "#include <immintrin.h>\n#include <stddef.h>\n\n";
   if not scr
   then (
     add (Isa.im_mask_decl isa "_zs0t_mim" ^ "   /* x(-i): the forward quarter-turn */\n");
     add (Isa.re_mask_decl isa "_zs0t_pim" ^ "   /* x(+i): the backward quarter-turn */\n");
-    add (Isa.const_splat_decl isa "_zs0t_rh" "0.70710678118654752440" ^ "  /* 1/sqrt2: |W8^1| */\n\n"));
+    add (Isa.const_splat_decl isa "_zs0t_rh" (Cascade_z.rh_lit isa) ^ "  /* 1/sqrt2: |W8^1| */\n\n"));
   List.iter
     (fun (kind, radix, bwd) ->
        add
@@ -527,6 +571,7 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
 
 (* write every file into dir (the dune promote rule's action runs in generated/) *)
 let emit_all ~(isa : Isa.t) ~(uarch : Uarch.t) ~(dir : string) : unit =
+  let isa = ztt_isa isa in
   List.iter
     (fun scr ->
        List.iter
@@ -535,6 +580,6 @@ let emit_all ~(isa : Isa.t) ~(uarch : Uarch.t) ~(dir : string) : unit =
             let oc = open_out_bin path in
             output_string oc (emit_file ~isa ~uarch ~scr n);
             close_out oc)
-         (sizes ()))
+         (sizes ~max:(ceiling isa) ()))
     [ false; true ]
 ;;

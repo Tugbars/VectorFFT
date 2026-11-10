@@ -465,6 +465,7 @@ The door refuses rather than degrading, in every one of these cases, and names t
 | a 3D C2C batch outside the queue's law (an extent below 2) | refused at create — `vfft_create: 3D INTERLEAVED serves C2C one volume per plan, either placement, every order (a batch of howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the volume queue over this plan; lane-major when named through its own door), every dim >= 2 (got %s, howmany=%zu, %dx%dx%d); real has its own tier, rank 4 is the tier's next phase` |
 | a rank-4 INTERLEAVED request, in any geometry | refused at create — `vfft_create: %dD %s with layout=INTERLEAVED is not wired yet (the rank-3+ interleaved tier is a planned feature); use VFFT_LAYOUT_SPLIT` |
 | a distinct destination on an in-place real plan | refused at execute |
+| a distinct destination on an in-place INTERLEAVED C2C plan | refused at execute — `vfft_execute: this C2C plan is IN-PLACE and must be called with out == in; got distinct pointers; for separate buffers create the plan with placement=VFFT_PLACEMENT_OUT -- nothing executed` |
 | a SPLIT plan through `vfft_execute`, an INTERLEAVED one through `vfft_execute_split` | refused at execute |
 
 ## 15. What stays in `vfft.c`

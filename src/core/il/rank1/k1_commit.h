@@ -46,6 +46,7 @@
  */
 #ifndef VFFT_IL_K1_COMMIT_H
 #define VFFT_IL_K1_COMMIT_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include <stdlib.h>
 #include <string.h>
@@ -157,7 +158,7 @@ static int _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
 
 /* the two arms of the (R1,R2) ordering race: two il2p plans on one
  * aliased buffer, re-seeded before every burst */
-typedef struct { vfft_il2p_plan_t *p; double *rz, *r0; size_t nb; } _k1ord_arm_t;
+typedef struct { vfft_il2p_plan_t *p; vfft_real *rz, *r0; size_t nb; } _k1ord_arm_t;
 static void _k1ord_arm_run(void *v)
 {
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
@@ -168,7 +169,7 @@ static void _k1ord_reseed(void *v)
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
     memcpy(c->rz, c->r0, c->nb);
 }
-static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form); /* below, with the threaded arm */
+static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int ip, int il_kv, int *chain, int *form); /* below, with the threaded arm */
 static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
@@ -507,7 +508,7 @@ static vfft_ilprime_plan_t *_ilprime_build_with(int N, int rader, _ilprime_inner
     if (p && d->failed) { vfft_ilprime_destroy(p); p = 0; }
     return p;
 }
-typedef struct { vfft_ilprime_plan_t *p; double *zi, *zo; } _ilprime_iarm_t;
+typedef struct { vfft_ilprime_plan_t *p; vfft_real *zi, *zo; } _ilprime_iarm_t;
 static void _ilprime_iarm_run(void *v)
 {
     _ilprime_iarm_t *a = (_ilprime_iarm_t *)v;
@@ -515,7 +516,7 @@ static void _ilprime_iarm_run(void *v)
     else _ilprime_exec_bluestein(a->p, a->zi, a->zo, 0);
 }
 /* one same-run race over np live plans: the index of the fastest */
-static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, double *zi, double *zo)
+static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, vfft_real *zi, vfft_real *zo)
 {
     _ilprime_iarm_t ctx[VFFT_RACE_MAX_ARMS];
     vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -621,7 +622,7 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         int fin_ci[_ILPR_MAX_CANDS / _ILPR_HEAT + 1];
         int nc = 0, nfin = 0, mi, h, w, wci, nbuilt = 0, hs = _ILPR_HEAT;
         int ncm[2] = { 0, 0 }, builtm[2] = { 0, 0 };   /* [0] = rader, [1] = bluestein */
-        double *zi, *zo;
+        vfft_real *zi, *zo;
         struct vfft_wisdom_s *pS = NULL;   /* the four-step inners' race store */
         vfft_cfg_t pcfg;
         for (mi = 0; mi < 2; mi++)
@@ -1214,14 +1215,14 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
         int picked_swap = 0;
         if (alt)
         {
-            double *rz = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
-            double *r0 = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
+            vfft_real *rz = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N * sizeof(vfft_real));
+            vfft_real *r0 = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N * sizeof(vfft_real));
             if (rz && r0)
             {
                 for (long i = 0; i < 2L * N; i++)
                     r0[i] = (double)(i % 17) * 0.0625 - 0.5;
                 const int reps = N <= 256 ? 64 : (N <= 1024 ? 24 : 8);
-                const size_t nb = 2 * (size_t)N * sizeof(double);
+                const size_t nb = 2 * (size_t)N * sizeof(vfft_real);
                 double ta, tb;
                 {
                     _k1ord_arm_t ca = { *il2p_out, rz, r0, nb };
@@ -1334,8 +1335,8 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
         return;
     }
     {   /* the race on scratch, out of place (the in-place serving is the same lists) */
-        double *zi = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
-        double *zo = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
+        vfft_real *zi = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N * sizeof(vfft_real));
+        vfft_real *zo = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N * sizeof(vfft_real));
         size_t i;
         if (!zi || !zo)
         {
@@ -1404,9 +1405,9 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
         return;
     }
     {   /* the race on 64-B aligned scratch, in the plan's own placement */
-        const size_t nb = (size_t)2 * N * sizeof(double);
-        double *zi = (double *)vfft_aligned_alloc(nb);
-        double *zo = (double *)vfft_aligned_alloc(nb);
+        const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+        vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
+        vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
         size_t i;
         if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); p->mt = 0; return; }
         for (i = 0; i < 2 * (size_t)N; i++) zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
@@ -1477,8 +1478,8 @@ static void _ilpr_mt_replay_or_race(struct vfft_plan_s *h,
  * its key, v1.3): ZTURN-T's tokens, each route reading them as its own arm.
  * Replay rebuilds the banked plan when it differs from the row's serial
  * one. VFFT_K1_FS / VFFT_K1_FSSB (the probe pins) skip both. */
-typedef struct { vfft_k1fs_plan_t *p; const double *zi; double *zo; int ip; } _k1fs_mt_ctx_t;
-typedef struct { double *dst; const double *src; size_t nb; } _k1fs_mt_rst_t;
+typedef struct { vfft_k1fs_plan_t *p; const vfft_real *zi; vfft_real *zo; int ip; } _k1fs_mt_ctx_t;
+typedef struct { vfft_real *dst; const vfft_real *src; size_t nb; } _k1fs_mt_rst_t;
 static void _k1fs_mt_arm_run(void *v)
 {
     const _k1fs_mt_ctx_t *c = (const _k1fs_mt_ctx_t *)v;
@@ -1507,15 +1508,17 @@ static void _k1fs_chain_str(const vfft_k1fs_plan_t *p, char *b, size_t n)
         off += snprintf(b + off, n - (size_t)off, "%s%d", k ? "." : "", p->sbR[k]);
 }
 /* the natural class's serial form from the row (il_kv=1 + il_sb) or the
- * probe pin VFFT_K1_FSSB; returns the chain length (0 = form 0) */
-static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form)
+ * probe pin VFFT_K1_FSSB; returns the chain length (0 = form 0). The row is
+ * the one-thread row of the request's PLACEMENT, where the planner banks
+ * il_sb beside the il_kv the caller read (vfft_il_dp_emit_wisdom) */
+static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int ip, int il_kv, int *chain, int *form)
 {
     const char *e = getenv("VFFT_K1_FSSB");
     *form = 0;
     if (e && *e) { const int n = _k1fs_parse_chain(e, chain); if (n >= 2) { *form = 1; return n; } }
     if (il_kv == 1 && W && !W->vw2_off_oop)
     {
-        const vw2_rec_t *r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, 0);
+        const vw2_rec_t *r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, 0, ip ? VW2_PL_IP : VW2_PL_OOP, 1);
         const char *v = r ? vw2_rec_get(r, "il_sb") : NULL;
         if (v) { const int n = _k1fs_parse_chain(v, chain); if (n >= 2) { *form = 1; return n; } }
     }
@@ -1558,7 +1561,7 @@ static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t 
         }
     }
     else if (!scr)
-        sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
+        sbn = _k1fs_row_sb(W, N, ip, ke->il_kv, sbc, &form);
     races0 = _vfft_create_race_count;   /* did the child measure: every race counts (race.h), an outermost */
     scopes0 = vfft_measure_scopes();    /* clock read enters a scope (race_scope.h); c2c_estimate_il.h's detectors */
     fp = _k1fs_build_own(N, pn1, pn2, scr, cfg, ip, T, form, sbc, sbn, child ? r : NULL, &grew);
@@ -1630,9 +1633,9 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
          * on 64-B aligned scratch, the plan's placement; the candidates'
          * children race into ONE private store (a copy of the plan's own,
          * k1_fourstep.h) that the winner keeps */
-        const size_t nb = (size_t)2 * N * sizeof(double);
-        double *zi = (double *)vfft_aligned_alloc(nb);
-        double *zo = (double *)vfft_aligned_alloc(nb);
+        const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+        vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
+        vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
         struct vfft_wisdom_s *mS = p->own ? _k1fs_store_dup(p->own) : _k1fs_store_new();
         vfft_cfg_t mcfg = *cfg;
         vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS];

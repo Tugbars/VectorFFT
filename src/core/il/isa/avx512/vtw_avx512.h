@@ -29,14 +29,28 @@
  * streams expand from the baked quarter wave (ztt_qw16384.h), as ztt.h does. */
 #ifndef VFFT_VTW_AVX512_H
 #define VFFT_VTW_AVX512_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include <stddef.h>
 #include "tw_exact.h"
 #include "ztt_qw16384.h"
 
+#ifdef VFFT_FLOAT
+/* FP32 (vfftf.c): the same records in floats, at the unit's lane count -- 8 floats per ymm at
+ * avx2_f32 (the layouts below exactly, 4 complex per pair record), 16 per zmm at avx512_f32 (8);
+ * the ZTURN-T LANE records follow ZTURN-T's own lane count (VFFT_ZTT_VW, il_isa.h) */
+#define VFFT_VTW512_VW  VFFT_IL_VW
+#define VFFT_VTW512_PER (VFFT_IL_VW / 2)
+#define VFFT_VTW512_REC (2 * VFFT_IL_VW)
+#define VFFT_VTW512_ZVW VFFT_ZTT_VW
+#define VFFT_VTW512_ZREC (2 * VFFT_ZTT_VW)
+#else
 #define VFFT_VTW512_VW  8    /* doubles per zmm */
 #define VFFT_VTW512_PER 4    /* complex columns per pair record */
 #define VFFT_VTW512_REC 16   /* doubles per record */
+#define VFFT_VTW512_ZVW 8    /* ZTURN-T's lanes */
+#define VFFT_VTW512_ZREC 16
+#endif
 
 /* the block -> natural index map of a table's sets (NULL = identity) */
 typedef size_t (*vfft_vtw512_q_fn)(const void *ctx, size_t b);
@@ -50,19 +64,19 @@ static inline void _vtw512_w(long long p, long long n, int conj, double *c, doub
     vfft_cs2pi_exact(p, n, c, &s);
     *t = conj ? s : -s;
 }
-static inline void vfft_vtw512_pair_put(double *rec, int j, double c, double t)
+static inline void vfft_vtw512_pair_put(vfft_real *rec, int j, double c, double t)
 {
     rec[2 * j] = c;
     rec[2 * j + 1] = c;
     rec[VFFT_VTW512_VW + 2 * j] = -t;
     rec[VFFT_VTW512_VW + 2 * j + 1] = t;
 }
-static inline void vfft_vtw512_bcast(double *rec, double c, double t)
+static inline void vfft_vtw512_bcast(vfft_real *rec, double c, double t)
 {
     int j;
     for (j = 0; j < VFFT_VTW512_PER; j++) vfft_vtw512_pair_put(rec, j, c, t);
 }
-static inline void vfft_vtw512_splat(double *rec, double c, double t)
+static inline void vfft_vtw512_splat(vfft_real *rec, double c, double t)
 {
     int i;
     for (i = 0; i < VFFT_VTW512_VW; i++) { rec[i] = c; rec[VFFT_VTW512_VW + i] = t; }
@@ -79,14 +93,14 @@ static inline size_t vfft_vtw512_pair2p_doubles(int R1, int R2)
 {
     return vfft_vtw512_groups((size_t)R2) * (size_t)(R1 - 1) * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_pair2p_fill(double *tw, int R1, int R2, int N, int conj)
+static inline void vfft_vtw512_pair2p_fill(vfft_real *tw, int R1, int R2, int N, int conj)
 {
     const size_t ng = vfft_vtw512_groups((size_t)R2);
     size_t g;
     int l, j;
     for (g = 0; g < ng; g++)
         for (l = 1; l < R1; l++) {
-            double *rec = tw + (g * (size_t)(R1 - 1) + (size_t)(l - 1)) * VFFT_VTW512_REC;
+            vfft_real *rec = tw + (g * (size_t)(R1 - 1) + (size_t)(l - 1)) * VFFT_VTW512_REC;
             for (j = 0; j < VFFT_VTW512_PER; j++) {
                 double c, t;
                 _vtw512_w((long long)l * (long long)(VFFT_VTW512_PER * g + (size_t)j),
@@ -108,7 +122,7 @@ static inline size_t vfft_vtw512_il3p_doubles(int legs, int blocks, int cols)
 {
     return (size_t)blocks * vfft_vtw512_il3p_recs(cols) * (size_t)(legs - 1) * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_il3p_fill(double *tw, int legs, int blocks, int cols,
+static inline void vfft_vtw512_il3p_fill(vfft_real *tw, int legs, int blocks, int cols,
                                          int modulus, int conj)
 {
     const size_t ng = vfft_vtw512_il3p_recs(cols);
@@ -117,7 +131,7 @@ static inline void vfft_vtw512_il3p_fill(double *tw, int legs, int blocks, int c
     for (blk = 0; blk < blocks; blk++)
         for (g = 0; g < ng; g++)
             for (l = 1; l < legs; l++) {
-                double *rec = tw + (((size_t)blk * ng + g) * (size_t)(legs - 1)
+                vfft_real *rec = tw + (((size_t)blk * ng + g) * (size_t)(legs - 1)
                                     + (size_t)(l - 1)) * VFFT_VTW512_REC;
                 for (j = 0; j < VFFT_VTW512_PER; j++) {
                     double c, t;
@@ -136,7 +150,7 @@ static inline size_t vfft_vtw512_blocks_doubles(size_t nb, int R)
 {
     return nb * (size_t)(R - 1) * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_blocks_splat(double *tw, size_t nb, int R, size_t L,
+static inline void vfft_vtw512_blocks_splat(vfft_real *tw, size_t nb, int R, size_t L,
                                             vfft_vtw512_q_fn q, const void *ctx, int conj)
 {
     size_t b;
@@ -144,7 +158,7 @@ static inline void vfft_vtw512_blocks_splat(double *tw, size_t nb, int R, size_t
     for (b = 0; b < nb; b++) {
         const size_t Q = q ? q(ctx, b) : b;
         for (l = 1; l < R; l++) {
-            double *rec = tw + (b * (size_t)(R - 1) + (size_t)(l - 1)) * VFFT_VTW512_REC;
+            vfft_real *rec = tw + (b * (size_t)(R - 1) + (size_t)(l - 1)) * VFFT_VTW512_REC;
             double c, t;
             _vtw512_w((long long)((size_t)l * Q % L), (long long)L, conj, &c, &t);
             vfft_vtw512_splat(rec, c, t);
@@ -159,13 +173,13 @@ static inline size_t vfft_vtw512_step_doubles(size_t G)
 {
     return vfft_vtw512_groups(G) * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_step_fill(double *tw, size_t G, size_t W, size_t L, int conj)
+static inline void vfft_vtw512_step_fill(vfft_real *tw, size_t G, size_t W, size_t L, int conj)
 {
     const size_t ng = vfft_vtw512_groups(G);
     size_t g;
     int j;
     for (g = 0; g < ng; g++) {
-        double *rec = tw + g * VFFT_VTW512_REC;
+        vfft_real *rec = tw + g * VFFT_VTW512_REC;
         for (j = 0; j < VFFT_VTW512_PER; j++) {
             const size_t jj = VFFT_VTW512_PER * g + (size_t)j;
             double c, t;
@@ -185,7 +199,7 @@ static inline size_t vfft_vtw512_step_bases_doubles(size_t G, int nb)
 {
     return vfft_vtw512_groups(G) * (size_t)nb * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_step_fill_bases(double *tw, size_t G, size_t W, size_t L,
+static inline void vfft_vtw512_step_fill_bases(vfft_real *tw, size_t G, size_t W, size_t L,
                                                const int *b, int nb, int conj)
 {
     const size_t ng = vfft_vtw512_groups(G);
@@ -193,7 +207,7 @@ static inline void vfft_vtw512_step_fill_bases(double *tw, size_t G, size_t W, s
     int t, j;
     for (g = 0; g < ng; g++)
         for (t = 0; t < nb; t++) {
-            double *rec = tw + (g * (size_t)nb + (size_t)t) * VFFT_VTW512_REC;
+            vfft_real *rec = tw + (g * (size_t)nb + (size_t)t) * VFFT_VTW512_REC;
             for (j = 0; j < VFFT_VTW512_PER; j++) {
                 const size_t jj = VFFT_VTW512_PER * g + (size_t)j;
                 double c, tt;
@@ -206,7 +220,7 @@ static inline size_t vfft_vtw512_group_bases_doubles(size_t ngrp, int nb)
 {
     return ngrp * (size_t)nb * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_group_bases_bcast(double *tw, size_t ngrp, size_t L,
+static inline void vfft_vtw512_group_bases_bcast(vfft_real *tw, size_t ngrp, size_t L,
                                                  vfft_vtw512_q_fn q, const void *ctx,
                                                  const int *b, int nb, int conj)
 {
@@ -230,7 +244,7 @@ static inline size_t vfft_vtw512_groups_doubles(size_t ngrp, size_t G, int R)
 {
     return ngrp * vfft_vtw512_groups(G) * (size_t)(R - 1) * VFFT_VTW512_REC;
 }
-static inline void vfft_vtw512_groups_fill(double *tw, size_t ngrp, size_t G, size_t nb,
+static inline void vfft_vtw512_groups_fill(vfft_real *tw, size_t ngrp, size_t G, size_t nb,
                                            int R, size_t L, vfft_vtw512_q_fn q, const void *ctx)
 {
     const size_t np = vfft_vtw512_groups(G), recs_blk = (size_t)(R - 1);
@@ -239,7 +253,7 @@ static inline void vfft_vtw512_groups_fill(double *tw, size_t ngrp, size_t G, si
     for (g = 0; g < ngrp; g++)
         for (pp = 0; pp < np; pp++)
             for (l = 1; l < R; l++) {
-                double *rec = tw + ((g * np + pp) * recs_blk + (size_t)(l - 1)) * VFFT_VTW512_REC;
+                vfft_real *rec = tw + ((g * np + pp) * recs_blk + (size_t)(l - 1)) * VFFT_VTW512_REC;
                 for (j = 0; j < VFFT_VTW512_PER; j++) {
                     const size_t b2 = g * G + VFFT_VTW512_PER * pp + (size_t)j;
                     const size_t Q = (b2 < nb) ? (q ? q(ctx, b2) : b2) : 0;
@@ -269,23 +283,23 @@ static inline double _vtw512_qsin(long u)
                              : VFFT_ZTT_QW16384_SIN[rem];
     return (q & 2) ? -v : v;
 }
-static inline size_t vfft_vtw512_ztt_stage(double *tw, long L, int R, long RL, int bwd)
+static inline size_t vfft_vtw512_ztt_stage(vfft_real *tw, long L, int R, long RL, int bwd)
 {
     long k;
     int r, lane;
     if (RL & (RL - 1)) {
-        for (k = 0; k < L; k += VFFT_VTW512_VW)
+        for (k = 0; k < L; k += VFFT_VTW512_ZVW)
             for (r = 1; r < R; r++) {
-                double *rec = tw + ((size_t)(k / VFFT_VTW512_VW) * (size_t)(R - 1)
-                                    + (size_t)(r - 1)) * VFFT_VTW512_REC;
-                for (lane = 0; lane < VFFT_VTW512_VW; lane++) {
+                vfft_real *rec = tw + ((size_t)(k / VFFT_VTW512_ZVW) * (size_t)(R - 1)
+                                    + (size_t)(r - 1)) * VFFT_VTW512_ZREC;
+                for (lane = 0; lane < VFFT_VTW512_ZVW; lane++) {
                     const long b = k + lane;
                     long pw = ((long)r * b) % RL;
                     double c, sn;   /* a = 2*pi*pw/RL */
                     if (2 * pw > RL) pw -= RL;
                     vfft_cs2pi_exact((long long)pw, (long long)RL, &c, &sn);
                     rec[lane] = c;
-                    rec[VFFT_VTW512_VW + lane] = bwd ? sn : -sn;
+                    rec[VFFT_VTW512_ZVW + lane] = bwd ? sn : -sn;
                 }
             }
         return (size_t)2 * (size_t)(R - 1) * (size_t)L;
@@ -300,11 +314,11 @@ static inline size_t vfft_vtw512_ztt_stage(double *tw, long L, int R, long RL, i
         if (up)
             for (bf = 0; bf < (1L << up); bf++)
                 vfft_cs2pi_exact((long long)bf, (long long)RL, &fc[bf], &fs[bf]);
-        for (k = 0; k < L; k += VFFT_VTW512_VW)
+        for (k = 0; k < L; k += VFFT_VTW512_ZVW)
             for (r = 1; r < R; r++) {
-                double *rec = tw + ((size_t)(k / VFFT_VTW512_VW) * (size_t)(R - 1)
-                                    + (size_t)(r - 1)) * VFFT_VTW512_REC;
-                for (lane = 0; lane < VFFT_VTW512_VW; lane++) {
+                vfft_real *rec = tw + ((size_t)(k / VFFT_VTW512_ZVW) * (size_t)(R - 1)
+                                    + (size_t)(r - 1)) * VFFT_VTW512_ZREC;
+                for (lane = 0; lane < VFFT_VTW512_ZVW; lane++) {
                     const long b = k + lane;
                     const long pw = ((long)r * b) % RL;
                     double c, s;
@@ -320,7 +334,7 @@ static inline size_t vfft_vtw512_ztt_stage(double *tw, long L, int R, long RL, i
                         s = sa * fc[bb] + ca * fs[bb];
                     }
                     rec[lane] = c;
-                    rec[VFFT_VTW512_VW + lane] = bwd ? s : -s;
+                    rec[VFFT_VTW512_ZVW + lane] = bwd ? s : -s;
                 }
             }
     }

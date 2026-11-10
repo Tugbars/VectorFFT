@@ -37,12 +37,42 @@ let const_name (tbl : consts) (lanes : int) (c : float) (s : float) : string =
   const_name_v tbl (Array.make lanes (c, s))
 ;;
 
-let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
+let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
   let b = Buffer.create 256 in
   let items =
     Hashtbl.fold (fun _ v acc -> v :: acc) tbl []
     |> List.sort (fun (a, _) (b, _) -> compare a b)
   in
+  if Isa.is_f32 isa
+  then (
+    (* FP32 (2026-11-10): one complex lane = two floats. The C type by lane count: 1 lane
+       (the one-complex tail arm) and 2 lanes (the 2-complex arm) are __m128 -- the 1-lane
+       initializer fills the low half, the rest is zero --, 4 lanes __m256, 8 lanes __m512.
+       Values are the double constants rounded once to float (Isa.flit). *)
+    List.iter
+      (fun (n, w) ->
+         let ty =
+           match Array.length w with
+           | 1 | 2 -> "__m128"
+           | 4 -> "__m256"
+           | 8 -> "__m512"
+           | n -> failwith (Printf.sprintf "emit_const_decls: %d-lane FP32 constant" n)
+         in
+         let lanes f =
+           String.concat
+             ", "
+             (Array.to_list
+                (Array.map (fun (c, s) -> let x, y = f c s in Isa.flit isa x ^ ", " ^ Isa.flit isa y) w))
+         in
+         Buffer.add_string
+           b
+           (Printf.sprintf "static const %s %s_c = { %s };\n" ty n (lanes (fun c _ -> c, c)));
+         Buffer.add_string
+           b
+           (Printf.sprintf "static const %s %s_s = { %s };\n" ty n (lanes (fun _ s -> -.s, s))))
+      items;
+    Buffer.contents b)
+  else (
   List.iter
     (fun (n, w) ->
        (* cos duplicated across each complex; sin sign-folded as [-s, +s] per
@@ -77,7 +107,7 @@ let emit_const_decls (_isa : Isa.t) (tbl : consts) : string =
          b
          (Printf.sprintf "static const %s %s_s = { %s };\n" ty n sin_lanes))
     items;
-  Buffer.contents b
+  Buffer.contents b)
 ;;
 
 (* ── Symbolic address -> C expression (complete-IR arc, 2026-08-09).
@@ -415,7 +445,7 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
        _mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 3)*OGs)], \
        &zout[2*((size_t)%d*OLs + ((size_t)k + 2)*OGs)], _mm512_extractf64x4_pd(_cv, 1)); }"
       v l l l l
-  | AZoutLeg _ when !store128 && isa.Isa.vec_width = 4 ->
+  | AZoutLeg _ when !store128 && isa.Isa.vec_width = 4 && not (Isa.is_f32 isa) ->
     Printf.sprintf
       "_mm_storeu_pd(&%s, _mm256_castpd256_pd128(%s)); _mm_storeu_pd(&%s + 2, \
        _mm256_extractf128_pd(%s, 1))"
@@ -441,6 +471,38 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
       v
   | AZoutReal _ -> failwith "cx_render.render_store: AZoutReal renders at 512 / 256 / 128 bits only"
   | _ -> Isa.storeu_pd isa (addr_str a) v
+;;
+
+(* THE FMA-PORT SETTING (FP32 only, --cil-port P, 2026-11-10). About P percent of the plain
+   data add/sub nodes (the CAdd / CSub arms below that no ROTFMA fold claims; never a twiddle
+   multiply) render as FMA-unit ops against the (1, 1) constant entry's _c half, a file-scope
+   1.0f splat:
+     a + b = fmadd(b, 1, a)        a - b = fnmadd(b, 1, a)
+   b*1 is exact and the sum is rounded once, so every output bit equals the add's. The ops are
+   counted per ARM in final emission order (C2c_il.emit calls port_reset at the start of the
+   wide loop's body and of every tail arm); op i converts iff
+   floor((i+1)P/100 + 1/2) > floor(iP/100 + 1/2), the FP32 prototype's rule (deterministic,
+   spread evenly). Why (measured in that prototype, 2026-11-08): on the P-core plain FP add/sub
+   issue on ports 1 and 5, the lane swaps and unpacks on port 5 only, the FMA units on ports 0
+   and 1, so moving adds to the FMA units frees port 5. P = 0 (the default) renders every add
+   as before; an FP64 target never reaches the counter. *)
+let port_pct = ref 0
+let port_ctr = ref 0
+let port_seen = ref 0 (* plain add/sub rendered in this emission, all arms *)
+let port_conv = ref 0 (* of them, rendered as fmadd / fnmadd *)
+let port_reset () = port_ctr := 0
+
+let port_take (isa : Isa.t) : bool =
+  if (not (Isa.is_f32 isa)) || !port_pct <= 0
+  then false
+  else (
+    let i = !port_ctr in
+    incr port_ctr;
+    incr port_seen;
+    let p = !port_pct in
+    let take = (((i + 1) * p) + 50) / 100 > ((i * p) + 50) / 100 in
+    if take then incr port_conv;
+    take)
 ;;
 
 (* Render one scheduled node as a C initializer expression.
@@ -474,6 +536,9 @@ let render
   | CLoad a -> Isa.loadu_pd ~mode isa (addr_str a)
   | CStore _ -> failwith "codelet_cil.render: CStore is a statement — use render_store"
   | CTurn (a, b, odd) -> Isa.cx_deint_pd isa ~odd (v a) (v b)
+  | CUnpack (a, b, hi) when Isa.is_f32 isa ->
+    (* FP32: the 64-bit unit IS one complex -- the corner turn's first round *)
+    Isa.cx_unpack isa ~hi (v a) (v b)
   | CUnpack (a, b, hi) ->
     (match isa.Isa.vec_width with
      | 8 -> Printf.sprintf "_mm512_unpack%s_pd(%s, %s)" (if hi then "hi" else "lo") (v a) (v b)
@@ -497,11 +562,20 @@ let render
   | CSub (a, { node = CRotPI y; _ }) when ctx.rotfma ->
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
     Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
-  | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
-  | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
+  | CAdd (a, b) ->
+    if port_take isa
+    then
+      Isa.fmadd_pd isa (v b) (const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 ^ "_c") (v a)
+    else Isa.add_pd isa (v a) (v b)
+  | CSub (a, b) ->
+    if port_take isa
+    then
+      Isa.fnmadd_pd isa (v b) (const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 ^ "_c") (v a)
+    else Isa.sub_pd isa (v a) (v b)
   (* complex negation: flip both lanes' signs — same rendering the real side
      uses for NK_Neg (xor with a -0.0 broadcast; no named mask needed). *)
-  | CNeg a -> Isa.xor_mask_pd isa (v a) (Isa.set1_pd_str isa "-0.0")
+  | CNeg a ->
+    Isa.xor_mask_pd isa (v a) (Isa.set1_pd_str isa (if Isa.is_f32 isa then "-0.0f" else "-0.0"))
   | CRotNI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_IM" ^ msuf)
   | CRotPI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_RE" ^ msuf)
   | CRotAdd (a, y) ->
@@ -526,9 +600,9 @@ let render
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
     Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
   | CFmaC (c, x, acc) ->
-    Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
+    Isa.fmadd_pd isa (Isa.set1_pd_str isa (Isa.flit isa c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
-    Isa.fnmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
+    Isa.fnmadd_pd isa (Isa.set1_pd_str isa (Isa.flit isa c)) (v x) (v acc)
   | CTwC (c, s, x) when c = 1.0 ->
     (* Unit-cosine twiddle = a tangent SHEAR x·(1 + i·s). The c-multiply is
        an exact identity, so fold it away: fmadd(_s, cflip x, x) — 2 uops,

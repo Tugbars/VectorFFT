@@ -46,6 +46,7 @@
  */
 #ifndef VFFT_INTERNAL_H
 #define VFFT_INTERNAL_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include "common/support/zalloc.h"   /* the one allocator: vfft_aligned_alloc / vfft_aligned_free */
 #include "common/plan/vfft_cfg.h"    /* the request the engines read (API v2) */
@@ -101,7 +102,7 @@ struct vfft_plan_s
     int N4; /* 4D fourth dim (0 = rank<4)  — §6a62 */
     size_t K;
     int nthreads;
-    double *alias_scr;      /* an OUT-OF-PLACE interleaved real plan called with one buffer (dre == sre,
+    vfft_real *alias_scr;      /* an OUT-OF-PLACE interleaved real plan called with one buffer (dre == sre,
                              * field trial V11; owner 2026-10-13: served, as in place) computes from a copy
                              * of its input made here: the input's size, allocated at create (execute
                              * allocates nothing), freed with the plan */
@@ -208,7 +209,7 @@ struct vfft_plan_s
      * served; nonzero = fall through to the general dispatch (the 2D real
      * forms, on an aliased call of an out-of-place plan).
      * NULL = the general dispatch (batches, 2D/3D, the cascade, split). */
-    int (*k1_exec)(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
+    int (*k1_exec)(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
     /* THE LEAN DOOR'S EXECUTOR, per direction (2026-10-11): set when the bound
      * executor never declines -- every 1D c2c and 1D real executor -- to
      * k1_exec itself, or to its per-direction form (mono: the kernel call
@@ -217,8 +218,8 @@ struct vfft_plan_s
      * (the 2D real forms, which can decline). A plan created with more than
      * one thread enters through _vfft_k1_go_mt, which arms the caller's pin
      * around the executor kept in k1_go_mt (vfft_api.h, threads.h). */
-    int (*k1_go[2])(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
-    int (*k1_go_mt[2])(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
+    int (*k1_go[2])(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
+    int (*k1_go_mt[2])(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
     /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.
@@ -238,7 +239,7 @@ struct vfft_plan_s
      * fold's twiddles lm_tw (w^k, k = 0..M) */
     int lm;
     int lm_M;
-    double *lm_W, *lm_tw;
+    vfft_real *lm_W, *lm_tw;
     int *lm_perm;
     struct vfft_plan_s *lm_row;    /* the 2D batch's row child: the 1D batch at (N2, K); the 3D batch's child: the
                                     * 2D batch at (N2, N3, K); in role on lm_rowS */
@@ -293,8 +294,8 @@ struct vfft_plan_s
                                        * role and banked on the real row, and the engines
                                        * built from it (il/real/zr2c_build.h; owned) */
     int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
-    double *zr2c_aff;               /* affS ++ affC (one allocation)      */
-    double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
+    vfft_real *zr2c_aff;               /* affS ++ affC (one allocation)      */
+    vfft_real *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
     int zr2c_fold_mt;               /* 1 = the fold cut over the plan's threads (raced at T > 1, fold=mt) */
     /* the REAL PAIR (2026-09-29, il/real/zrp.h): the stock n1t leaf over
      * the packed view and the t2h Hermitian top stage, no fold pass; the
@@ -390,7 +391,7 @@ struct vfft_plan_s
      * decide whether it serves. */
     int il2d_rowb2;
     vfft_il2p_fn il2d_rowb2_leaf_f, il2d_rowb2_mid_f, il2d_rowb2_t2t_b, il2d_rowb2_n1_b;
-    double *il2d_rowb2_scr;        /* T slots x CHUNK rows x 2*N2 doubles */
+    vfft_real *il2d_rowb2_scr;        /* T slots x CHUNK rows x 2*N2 doubles */
     int il2d_rowb2_ch;             /* the TILE: rows per stage call, from the raced rbk= (KB of scratch) */
     /* the TURN route (2026-09-23): the whole plane through the 1D engine, no
      * column chain. The batched mono row kernel stores its row DFTs
@@ -405,7 +406,7 @@ struct vfft_plan_s
     int il2d_turn;
     struct vfft_plan_s *il2d_turn_plan; /* the in-place K=1 natural plan at N1 */
     struct vfft_wisdom_s *il2d_turnS;   /* its private store: turn_* on this cell's row */
-    double *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
+    vfft_real *il2d_turn_scr;              /* the N2 x P plane, P = N1 + 8 complex (the skewed pitch) */
     struct vfft_plan_s **il2d_turnw;    /* the threaded turn: clones of il2d_turn_plan, T-1 slots */
     int il2d_turnw_n;
     /* the SKEWED column pass (csk, 2026-09-23): a single-stage column chain
@@ -420,7 +421,7 @@ struct vfft_plan_s
      * 2026-09-24: the column stage over 16-lane column blocks, the rows over
      * row slabs (route 0 through worker t's clone of the OOP row plan). */
     int il2d_csk;
-    double *il2d_csk_scr;               /* the N1 x (N2 + 8) plane */
+    vfft_real *il2d_csk_scr;               /* the N1 x (N2 + 8) plane */
     struct vfft_plan_s *il2d_csk_row;   /* the OOP K=1 natural plan at N2: the per-row route from the scratch */
     struct vfft_wisdom_s *il2d_cskS;    /* its private store: csk_* on this cell's row */
     struct vfft_plan_s **il2d_cskw;     /* the threaded csk rows on route 0: clones of il2d_csk_row, T-1 slots */
@@ -442,7 +443,7 @@ struct vfft_plan_s
      * row plan (forward) / after it with the conjugate (backward), and every
      * backward walk runs its rows BEFORE any column stage. NULL = the plain
      * 2D transform, bitwise its standing. */
-    const double *il2d_fs_tw;
+    const vfft_real *il2d_fs_tw;
     int il2d_fs_B;
     /* staged band route (§10b): copy each band into scratch at il2d_col.pitch
      * (skew-selected so every suffix-stage leg stride and the leaf stride
@@ -456,7 +457,7 @@ struct vfft_plan_s
      * wl/tfuse/rowoop/staged stay 0 for real — the Hermitian fold does
      * not commute with the column stages (§2.5), rows sit OUTSIDE any
      * banded walk. */
-    double *il2d_rscr;
+    vfft_real *il2d_rscr;
     /* THE REAL TIER'S ROW ENGINE, by the plan's direction (il/rank2/
      * il2d_real_plan.h): the row pass's own plan, picked by the create's row
      * race in the row role and banked on the 2D real row (rx= / rxs=; a c2r
@@ -473,7 +474,7 @@ struct vfft_plan_s
      * replayed from il2d_rxS); the door route threads as the door's batch
      * does. The verdict lands on the T row. */
     int il2d_rx_on;
-    void (*il2d_rx_lm)(const double *, const double *, double *, double *, const double *, const double *,
+    void (*il2d_rx_lm)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *, const vfft_real *, const vfft_real *,
                        size_t, size_t, size_t, size_t, size_t);
     struct vfft_plan_s *il2d_rx_eng;
     struct vfft_plan_s **il2d_rxw;      /* the row engine's WORKER CLONES (T-1 slots, il2d_real_plan.h): NULL
@@ -495,7 +496,7 @@ struct vfft_plan_s
      * each stage under its own entry. */
     int il2d_cx_on, il2d_cx_st, il2d_cx_stk, il2d_cx_perk;
     signed char il2d_cx_ks[8];
-    void (*il2d_cx_leaf)(const double *, const double *, double *, double *, const double *, const double *,
+    void (*il2d_cx_leaf)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *, const vfft_real *, const vfft_real *,
                          size_t, size_t, size_t, size_t, size_t);
     /* THE DESTROYING C2R COLUMN PLAN (il2d_real_plan.h; the request's
      * destroy_input permission, the law in policy_il.h): il2d_cxd_on = the
@@ -507,7 +508,7 @@ struct vfft_plan_s
      * scratch form per cell on the whole transform, banked cxd_c2r= /
      * cxds_c2r= on the 2D real row (cxd_c2r=off: the scratch form won). */
     int il2d_cxd_on, il2d_cxd_stk;
-    void (*il2d_cxd_leaf)(const double *, const double *, double *, double *, const double *, const double *,
+    void (*il2d_cxd_leaf)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *, const vfft_real *, const vfft_real *,
                           size_t, size_t, size_t, size_t, size_t);
     /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
@@ -520,7 +521,7 @@ struct vfft_plan_s
                       * fft2d_real_il.h primitives. hp1 = (N2+1)/2; the
                       * column machinery is count-agnostic so everything
                       * past the rows is the even path unchanged. */
-    double *il2d_orbuf; /* 2 x 2*N2 doubles: the odd row's in/out pair */
+    vfft_real *il2d_orbuf; /* 2 x 2*N2 doubles: the odd row's in/out pair */
     /* ── THE REAL AXIS ON N1 (2026-10-07, il/rank2/il2d_real_axis.h): a whole-plan
      * FORM of the r2c plan at an even N1 and an odd N2 -- row pairs packed into
      * one complex row (il2d_rax_W, N1/2 x N2), the c2c column chain at N1/2
@@ -536,7 +537,7 @@ struct vfft_plan_s
      * stage-0 sub-problem; raced against the standard walk, banked tf=1|0 on
      * the real row. il2d_tf_on = the form serves. */
     int il2d_tf_on;
-    double *il2d_tf_stg;
+    vfft_real *il2d_tf_stg;
     size_t il2d_tf_P;
     /* ── THE PITCH FORMS (2026-10-07, il/rank2/il2d_real_pitch.h). il2d_rscr_P =
      * the c2r column-inverse plane's pitch in complex: hp1, or hp1 + d off the
@@ -553,13 +554,13 @@ struct vfft_plan_s
      * place: the real plane at pitch N2, the CCE plane at hp1. */
     int il2d_ip;
     size_t il2d_ipP;
-    double *own_plane;            /* door 2 (owned_buffers = 1): the plan's own padded plane, both roles */
+    vfft_real *own_plane;            /* door 2 (owned_buffers = 1): the plan's own padded plane, both roles */
     size_t own_pitch;             /* its row pitch in doubles (vfft_plan_stride) */
     int il2d_rcsk_on;
-    double *il2d_rcsk_scr;
+    vfft_real *il2d_rcsk_scr;
     size_t il2d_rcsk_P;
     int il2d_rax_on, il2d_rax_M;
-    double *il2d_rax_W, *il2d_rax_A, *il2d_rax_T, *il2d_rax_tw;
+    vfft_real *il2d_rax_W, *il2d_rax_A, *il2d_rax_T, *il2d_rax_tw;
     int *il2d_rax_perm;                 /* natural row k -> the scrambled pass's row; NULL = natural */
     vfft_ilcol_t il2d_rax_col;
     struct vfft_wisdom_s *il2d_raxS;
@@ -604,6 +605,14 @@ struct vfft_plan_s
                           * plane it still reads (block b's natural
                           * targets can be block b' > b's unread comb
                           * rows — the clobber the first cut shipped) */
+    /* AN OUT-OF-PLACE C2C PLAN CALLED WITH ONE BUFFER (out == in): the executor of that call where
+     * the bound one must not take it. The solo kernels are restrict (il_solo_registry.h), so their
+     * plan runs the call on the alias-tolerant n1c twins (_k1x_mono_alias, il_execute.h). NULL = the
+     * bound executor takes the call as it is: the pair, the chains, ZTURN-T and the four-step see
+     * the one buffer and run their in-place form. vfft_execute's lean compare leaves the call of a
+     * plan that sets this to its slow path, which runs it (vfft_api.h); a contiguous batch over such
+     * a plan, called with one buffer, runs it on every transform (_vfft_il_execute, _tc_mt_tramp). */
+    int (*k1_alias)(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
 };
 
 

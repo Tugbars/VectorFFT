@@ -51,7 +51,7 @@ static inline int vw2_folder_stamp(const char *dir, char *out, size_t n)
         char path[768], line[4096];
         FILE *f;
         int fresh = 1;                               /* at the start of a line */
-        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[shard]);
+        snprintf(path, sizeof path, "%s/%s", dir, VW2_STAMP_NAMES[shard]);
         f = fopen(path, "rb");
         if (!f) continue;
         nfiles++;
@@ -73,7 +73,7 @@ static inline int vw2_folder_stamp(const char *dir, char *out, size_t n)
         fclose(f);
         if (n && out[0]) {                           /* count the rest without reading them */
             for (shard++; shard < VW2_NSHARDS; shard++) {
-                snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[shard]);
+                snprintf(path, sizeof path, "%s/%s", dir, VW2_STAMP_NAMES[shard]);
                 f = fopen(path, "rb");
                 if (f) { nfiles++; fclose(f); }
             }

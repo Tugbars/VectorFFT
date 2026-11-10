@@ -31,7 +31,15 @@
 /* THE REFUSAL RECORD (API v2, 2026-10-15): every message lands in the calling thread's buffer,
  * which vfft_error() returns; it is printed only under VFFT_FLAG_VERBOSE (the create in progress
  * on this thread) or VFFT_VERBOSE set in the environment (the whole process). */
-static VFFT_TLS char _vfft_err_buf[512];
+#define VFFT_ERR_CAP 512
+#ifdef VFFT_FLOAT
+/* the FP32 unit (vfftf.c) writes its refusals into the FP64 unit's buffer, so vfft_error() serves
+ * both precisions (vfft_api.h defines the accessor in the FP64 unit) */
+char *_vfft_err_shared(void);
+#define _vfft_err_buf (_vfft_err_shared())
+#else
+static VFFT_TLS char _vfft_err_buf[VFFT_ERR_CAP];
+#endif
 static VFFT_TLS int _vfft_verbose_tls = 0;
 static int _vfft_verbose_env(void)
 {
@@ -47,7 +55,7 @@ static void _vfft_warn(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(_vfft_err_buf, sizeof _vfft_err_buf, fmt, ap);
+    vsnprintf(_vfft_err_buf, VFFT_ERR_CAP, fmt, ap);
     va_end(ap);
     if (_vfft_verbose_tls || _vfft_verbose_env())
     {

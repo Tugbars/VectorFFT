@@ -37,6 +37,7 @@
  */
 #ifndef VFFT_DP_PLANNER_IL_H
 #define VFFT_DP_PLANNER_IL_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 #include "common/math/pi.h"
 
 #include <stdio.h>
@@ -111,7 +112,14 @@ static inline void _il_dp_sleep_ms(int ms)
  * margin; the nearest wrong thing (one interior twiddle off by a relative
  * 1e-9) reads 1.1e-10 and a mismatched permutation reads ~1.2e+00. Never
  * weaken it. */
+#ifdef VFFT_FLOAT
+/* FP32 (vfftf.c): float candidates against a float-rounded reference built in long double from
+ * the same float input; correct plans sit near 1e-7..1e-6 of the spectrum's scale, a mismatched
+ * permutation or kernel near 1, so 2e-5 separates them with margin on both sides. */
+#define VFFT_IL_DP_GATE_TOL      2e-5
+#else
 #define VFFT_IL_DP_GATE_TOL      1e-12
+#endif
 
 /* SEPARATE tolerance for the reference's own self-check, and it must stay
  * separate: the self-check residual is a naive O(N) summation against a
@@ -119,7 +127,13 @@ static inline void _il_dp_sleep_ms(int ms)
  * N=32768), while the candidate band above is flat. Sharing one constant would
  * mean that tightening the candidate gate toward its measured band silently
  * makes the REFERENCE unbuildable at large N and refuses whole cells. */
+#ifdef VFFT_FLOAT
+#define VFFT_IL_DP_REF_TOL       2e-5   /* FP32: the reference is stored rounded to float */
+#define VFFT_IL_DP_RT_TOL        1e-4   /* FP32: the backward roundtrip, absolute on unit-scale input */
+#else
 #define VFFT_IL_DP_REF_TOL       1e-9
+#define VFFT_IL_DP_RT_TOL        1e-11  /* the backward roundtrip, absolute on unit-scale input */
+#endif
 #define VFFT_IL_DP_REF_PROBES    8        /* reference self-check bins       */
 
 typedef enum
@@ -203,7 +217,7 @@ typedef struct
      * trial; z_out is the destination. z_ref holds the INDEPENDENT reference
      * spectrum of z_orig in NATURAL bin order (_il_dp_ref_build) — it is never
      * a candidate's output. All 2*max_N doubles (re,im interleaved). */
-    double *z_orig, *z_in, *z_out, *z_ref;
+    vfft_real *z_orig, *z_in, *z_out, *z_ref;
     size_t  buf_total;                       /* elements, = 2*max_N           */
     int     max_N;
 
@@ -241,7 +255,7 @@ typedef struct
      * race never banks the c2c cell: its caller banks the verdict on its own
      * row. */
     int (*role_run)(void *role_ctx, const vfft_il_cand_t *c, const struct _il_dp_built_s *b,
-                    double *zin, double *zout, int inplace);
+                    vfft_real *zin, vfft_real *zout, int inplace);
     void *role_ctx;
     int role_bwd, role_key;
 
@@ -259,11 +273,11 @@ static void vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
     ctx->believe_cached_cost = 1;
     ctx->beam = VFFT_IL_DP_BEAM_MEASURE;
 
-    size_t bytes = ctx->buf_total * sizeof(double);
-    ctx->z_orig = (double *)vfft_aligned_alloc(bytes);
-    ctx->z_in   = (double *)vfft_aligned_alloc(bytes);
-    ctx->z_out  = (double *)vfft_aligned_alloc(bytes);
-    ctx->z_ref  = (double *)vfft_aligned_alloc(bytes);
+    size_t bytes = ctx->buf_total * sizeof(vfft_real);
+    ctx->z_orig = (vfft_real *)vfft_aligned_alloc(bytes);
+    ctx->z_in   = (vfft_real *)vfft_aligned_alloc(bytes);
+    ctx->z_out  = (vfft_real *)vfft_aligned_alloc(bytes);
+    ctx->z_ref  = (vfft_real *)vfft_aligned_alloc(bytes);
 
     /* Deterministic seed so two runs bench identical data (as dp_planner.h). */
     srand(42);
@@ -373,7 +387,7 @@ static int  _il_dp_fs_map_n1 = 0, _il_dp_fs_map_n2 = 0, _il_dp_fs_map_cap = 0;
  * Every engine here consumes its input through a staging
  * plane or an alias-tolerant kernel before it writes, so z -> z is legal
  * for all of them -- the same contract the in-place door relies on. */
-static inline double *_il_dp_dst(const vfft_il_dp_context_t *ctx)
+static inline vfft_real *_il_dp_dst(const vfft_il_dp_context_t *ctx)
 {
     return ctx->inplace ? ctx->z_in : ctx->z_out;
 }
@@ -497,7 +511,7 @@ static void _il_dp_free(_il_dp_built_t *b)
  * unknown route, or the pair's backward with no composition: never a timed
  * empty call). */
 static int _il_dp_exec_io(const vfft_il_cand_t *c, const _il_dp_built_t *b,
-                          const double *in, double *out, int bwd)
+                          const vfft_real *in, vfft_real *out, int bwd)
 {
     switch (c->route)
     {
@@ -529,7 +543,7 @@ static int _il_dp_exec_io(const vfft_il_cand_t *c, const _il_dp_built_t *b,
     {
         vfft_oop11_fn f = bwd ? b->monob : b->mono;
         if (!f) return -1;
-        f((double *)in, 0, out, 0, 0, 0, 1, 0, 1, 0, 1);   /* one leg */
+        f((vfft_real *)in, 0, out, 0, 0, 0, 1, 0, 1, 0, 1);   /* one leg */
         return 0;
     }
     case VFFT_K1_IL_PRIME:   /* the whole convolution: modulate, inner, demodulate (bwd: the conjugate chirp, unnormalized) */
@@ -565,7 +579,7 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
 {
     _il_dp_built_t b;
     if (_il_dp_build(N, c, &b, ctx->inplace) != 0) return -1;
-    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
     int rc = _il_dp_exec(ctx, c, &b);
     _il_dp_free(&b);
     return rc ? -2 : 0;
@@ -588,9 +602,9 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
  * transform below does not apply. Long double accumulators: this is what every
  * candidate is gated against, so it must not carry more error than the kernels
  * it judges. Cost is one-time per (N, ord) at plan time. */
-static void _il_dp_ref_dft_direct(double *z, long N)
+static void _il_dp_ref_dft_direct(vfft_real *z, long N)
 {
-    double *out = (double *)vfft_aligned_alloc((size_t)N * 2u * sizeof(double));
+    vfft_real *out = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
     long f, n;
     if (!out) return;                     /* caller's scale check catches it */
     for (f = 0; f < N; f++)
@@ -608,7 +622,7 @@ static void _il_dp_ref_dft_direct(double *z, long N)
         out[2 * f] = (double)sr;
         out[2 * f + 1] = (double)si;
     }
-    memcpy(z, out, (size_t)N * 2u * sizeof(double));
+    memcpy(z, out, (size_t)N * 2u * sizeof(vfft_real));
     vfft_aligned_free(out);
 }
 
@@ -663,7 +677,7 @@ static void _il_dp_ref_mixed_rec(const long double *ir, const long double *ii,
         free(wr);
     }
 }
-static void _il_dp_ref_dft_mixed(double *z, long N)
+static void _il_dp_ref_dft_mixed(vfft_real *z, long N)
 {
     long double *buf = (long double *)malloc((size_t)N * 6u * sizeof(long double));
     long double *ir, *ii, *outr, *outi, *sr, *si;
@@ -676,7 +690,24 @@ static void _il_dp_ref_dft_mixed(double *z, long N)
     free(buf);
 }
 
-static void _il_dp_ref_dft(double *z, long N)
+#ifdef VFFT_FLOAT
+/* FP32: the radix-2 reference runs in double on a copy of the float input and is rounded once at
+ * the end (a float-stored tree would round at every stage) */
+static void _il_dp_ref_dft_d(double *z, long N);
+static void _il_dp_ref_dft(vfft_real *z, long N)
+{
+    double *d = (double *)malloc((size_t)N * 2u * sizeof(double));
+    long i;
+    if (!d) return;                     /* the caller's scale check catches it */
+    for (i = 0; i < 2 * N; i++) d[i] = z[i];
+    _il_dp_ref_dft_d(d, N);
+    for (i = 0; i < 2 * N; i++) z[i] = (vfft_real)d[i];
+    free(d);
+}
+static void _il_dp_ref_dft_d(double *z, long N)
+#else
+static void _il_dp_ref_dft(vfft_real *z, long N)
+#endif
 {
     for (long i = 1, j = 0; i < N; i++)              /* bit reversal */
     {
@@ -729,7 +760,7 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
 
     /* the SAME bytes _il_dp_run_once feeds every candidate. If that ever
      * changes, ref_N must be invalidated with it. */
-    memcpy(ctx->z_ref, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+    memcpy(ctx->z_ref, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
     if ((N & (N - 1)) == 0)
         _il_dp_ref_dft(ctx->z_ref, (long)N);
     else
@@ -806,12 +837,16 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
              * ic = col*R + p, and digitrev over the REVERSED chain undoes
              * digitrev over the chain (the digits read in the opposite radix
              * system). */
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 16
+            static const long colat[16] = { 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15 };
+#elif VFFT_ZTT_VW == 8 && defined(VFFT_FLOAT)
+            static const long colat[8] = { 0, 1, 4, 5, 2, 3, 6, 7 };   /* FP32's 8-lane tld order (ztt.h) */
+#elif VFFT_ZTT_VW == 8
             static const long colat[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
 #else
             static const long colat[4] = { 0, 2, 1, 3 };
 #endif
-            const long VW = VFFT_IL_VW;
+            const long VW = VFFT_ZTT_VW;
             const int K = c->il_zt_n;
             const long R = c->il_zt[K - 1];
             const long span = idx / (VW * R), within = idx % (VW * R);
@@ -875,7 +910,7 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
                               const vfft_il_cand_t *c)
 {
     if (ctx->ref_N != N) return -1.0;
-    const double *out = _il_dp_dst(ctx);
+    const vfft_real *out = _il_dp_dst(ctx);
     double worst = 0.0;
     for (long idx = 0; idx < N; idx++)
     {
@@ -955,7 +990,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     }
 
     /* warmup */
-    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
     if (_il_dp_exec_dir(ctx, c, &b, bwd) != 0)
     { _ILDP_WHY(why, "BUILT but the executor refused it"); _il_dp_free(&b); return 1e18; }
     /* BACKWARD arms are correctness-checked HERE, because nothing else
@@ -969,14 +1004,14 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     {
         double worst = 0.0;
         long i;
-        double *dst = _il_dp_dst(ctx);
+        vfft_real *dst = _il_dp_dst(ctx);
         /* the roundtrip lands back in z_in out of place (the plan's own
          * shape, in != out), in the destination in place */
-        double *back = ctx->inplace ? dst : ctx->z_in;
+        vfft_real *back = ctx->inplace ? dst : ctx->z_in;
         /* the warmup above ran the BACKWARD on z_in; IN PLACE that consumed
          * the input, so refill it before the forward the roundtrip starts
          * from (out of place z_in is still pristine: a no-op) */
-        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
         if (_il_dp_exec(ctx, c, &b) != 0)
         { _ILDP_WHY(why, "BUILT but the forward executor refused it"); _il_dp_free(&b); return 1e18; }
         if (_il_dp_exec_io(c, &b, dst, back, 1) != 0)
@@ -987,17 +1022,21 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
             if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
             if (d > worst) worst = d;
         }
-        if (worst > 1e-11)
+        if (worst > VFFT_IL_DP_RT_TOL)
         {   /* BUILT, RAN, AND WRONG — the kernel the resolver handed back
              * does not compute this slot's transform. A defect in the
              * resolver (wrong kind for the slot), never "missing coverage". */
             snprintf(_ildp_why_buf, sizeof _ildp_why_buf,
+#ifdef VFFT_FLOAT
+                     "BUILT but WRONG: backward roundtrip err %.1e > %.0e", worst, VFFT_IL_DP_RT_TOL);
+#else
                      "BUILT but WRONG: backward roundtrip err %.1e > 1e-11", worst);
+#endif
             _ILDP_WHY(why, _ildp_why_buf);
             _il_dp_free(&b);
             return 1e18;
         }
-        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));   /* out of place the roundtrip wrote z_in */
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));   /* out of place the roundtrip wrote z_in */
     }
     double best = 1e30, elapsed = 0.0;
     int reps = 1, calibrated = 0;
@@ -1008,7 +1047,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         for (int t = 0; t < VFFT_IL_DP_TIME_REPEAT; t++)
         {
             /* refill per TRIAL, not per rep — as dp_planner.h does */
-            memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+            memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
             double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
             {
@@ -1019,7 +1058,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
                  * the same for every arm of the cell: the ranking is unbiased
                  * and the banked ns carries at most a few percent of it. */
                 if (ctx->inplace && i && (i & 31) == 0)
-                    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+                    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
                 (void)_il_dp_exec_dir(ctx, c, &b, bwd);
             }
             double trial = vfft_now_ns() - t0;
@@ -1273,7 +1312,7 @@ static void _il_dp_flat_arm_run(void *v)
 static void _il_dp_flat_reset(void *v)
 {   /* the pristine input (in place: before every sample, the arm walks its own output) */
     const _il_dp_flat_hctx_t *h = (const _il_dp_flat_hctx_t *)v;
-    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
+    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(vfft_real));
 }
 /* THE HEAT: the chains f[idx[0..n)] built, gated against the cell's
  * reference and raced on the planner's planes (min of 3 alternated rounds,
@@ -1302,7 +1341,7 @@ static void _il_dp_flat_heat(void *hv, vfft_chain_t *f, const int *idx, int n, i
             if (_il_dp_build(N, &arm[na].c, &arm[na].b, ctx->inplace) == 0)
             {
                 double g;
-                memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+                memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
                 g = _il_dp_exec(ctx, &arm[na].c, &arm[na].b) == 0 ? _il_dp_gate_err(ctx, N, &arm[na].c) : -1.0;
                 if (g >= 0.0 && g <= VFFT_IL_DP_GATE_TOL) { ok = 1; break; }
                 _il_dp_free(&arm[na].b);
@@ -1363,7 +1402,7 @@ static int _il_dp_flat_search(vfft_il_dp_context_t *ctx, int N, int scr, vfft_il
     e.heat = _il_dp_flat_heat;
     e.hctx = &hc;
     e.budget = VFFT_IL_DP_FLAT_HEAT_BYTES;
-    e.per_stage_point = 2u * 2u * sizeof(double);   /* a table a stage, both directions, N complex */
+    e.per_stage_point = 2u * 2u * sizeof(vfft_real);   /* a table a stage, both directions, N complex */
     e.tag = "[il-dp]";
     nf = vfft_chain_search(&e, N, fin, &st);
     for (i = 0; i < nf && nout < room; i++)
@@ -1647,8 +1686,10 @@ static void _il_dp_enumerate_pairs(int N, vfft_il_cand_sink_t *s)
                  * 3-stage chain. Same codes, same order. */
                 nm = vfft_il2p_mid_arm_pool(R1, msv, &dm);
                 nl = vfft_il2p_leaf_arm_pool(R2, lsv, &dl);
+#ifndef VFFT_FLOAT   /* FP32 has no tangent kernels: its radix-8/16 slots race the forms it has */
                 if (pow2_cell && (R1 == 8 || R1 == 16)) { nm = 1; msv[0] = 3; dm = 3; }
                 if (pow2_cell && (R2 == 8 || R2 == 16)) { nl = 1; lsv[0] = 3; dl = 3; }
+#endif
                 /* the BASE candidate: the structural default of each slot
                  * (nibble 0 = what create resolves), except that a sunset
                  * slot names its one surviving kernel explicitly so the
@@ -1883,13 +1924,13 @@ static void _il_dp_heat_arm_run(void *v)
     /* IN PLACE the arm transforms its own output: the input restored every
      * 32 executes, as the bench does (the same copy for every arm) */
     if (a->ctx->inplace && (++a->calls & 31u) == 0)
-        memcpy(a->ctx->z_in, a->ctx->z_orig, (size_t)a->N * 2u * sizeof(double));
+        memcpy(a->ctx->z_in, a->ctx->z_orig, (size_t)a->N * 2u * sizeof(vfft_real));
     (void)_il_dp_exec_dir(a->ctx, a->c, &a->b, a->bwd);
 }
 static void _il_dp_heat_reset(void *v)
 {   /* the pristine input before every sample (in place: the arm walks its own output) */
     const _il_dp_heat_ctx_t *h = (const _il_dp_heat_ctx_t *)v;
-    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(double));
+    memcpy(h->ctx->z_in, h->ctx->z_orig, (size_t)h->N * 2u * sizeof(vfft_real));
 }
 /* THE HEAT: candidates idx[0..n) rebuilt, gated, raced; a candidate that no
  * longer builds or passes is dead (cost 1e18) */
@@ -1909,7 +1950,7 @@ static void _il_dp_heat(void *hv, const int *idx, int n, double *ns)
         ns[k] = 1e18;
         if (_il_dp_build(N, c, &arm[na].b, ctx->inplace) != 0)
         { c->cost_ns = 1e18; continue; }
-        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+        memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));
         g = _il_dp_exec(ctx, c, &arm[na].b) == 0 ? _il_dp_gate_err(ctx, N, c) : -1.0;   /* right after its build: the four-step's map is its own */
         if (!(g >= 0.0) || g > VFFT_IL_DP_GATE_TOL)
         { _il_dp_free(&arm[na].b); c->cost_ns = 1e18; continue; }
@@ -1925,7 +1966,7 @@ static void _il_dp_heat(void *hv, const int *idx, int n, double *ns)
     reps = (int)(VFFT_IL_DP_HEAT_SAMPLE_NS / (fast > 1.0 && fast < 1e17 ? fast : VFFT_IL_DP_HEAT_SAMPLE_NS));
     if (reps < VFFT_IL_DP_HEAT_MIN_REPS) reps = VFFT_IL_DP_HEAT_MIN_REPS;
     if (reps > (1 << 20)) reps = 1 << 20;
-    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));   /* the input, once (out of place it stays) */
+    memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(vfft_real));   /* the input, once (out of place it stays) */
     {
         const vfft_race_proto_t proto = { VFFT_IL_DP_HEAT_ROUNDS, reps, VFFT_RACE_MIN, 1, 1,
                                           ctx->inplace ? _il_dp_heat_reset : NULL, h, 1, 1 }; /* single-thread arms: paced (VFFT_RACE_PACE_MS); each sample warm */
@@ -2349,7 +2390,13 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, 
     vfft_il_cand_t nat, scr;
     ctx->inplace = inplace ? 1 : 0;   /* the cell's placement, for both order classes */
     double nns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_NATURAL,   &nat, verbose);
+#ifdef VFFT_FLOAT
+    /* FP32 serves natural order only (include/vfftf.h): the scrambled class is not raced */
+    double sns = 1e18;
+    memset(&scr, 0, sizeof scr);
+#else
     double sns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_SCRAMBLED, &scr, verbose);
+#endif
     if (nns >= 1e17) nat.cost_ns = 1e18;
     if (sns >= 1e17) scr.cost_ns = 1e18;
     return vfft_il_dp_emit_wisdom(st, N, inplace, &nat, &scr);

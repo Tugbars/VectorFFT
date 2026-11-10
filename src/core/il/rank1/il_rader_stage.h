@@ -71,8 +71,8 @@ typedef struct vfft_ilrd_s {
     const size_t *natbase; /* last: block -> natural base (the plan's table) */
     size_t nstride;        /* last: the output leg stride N/p */
     int *gpow, *ginvpow;   /* g^q and g^-q mod p, q in [0, p-1) */
-    double *omf, *omb;     /* the comb-order kernels at p-1 (fwd / bwd), 1/(p-1) baked */
-    double *twf, *twb;     /* the stage's twiddles (fwd / conj), p complex per set; NULL at a leaf */
+    vfft_real *omf, *omb;     /* the comb-order kernels at p-1 (fwd / bwd), 1/(p-1) baked */
+    vfft_real *twf, *twb;     /* the stage's twiddles (fwd / conj), p complex per set; NULL at a leaf */
     int twmode;            /* 0 none; 1 the flat chain's PRE-twiddle per block (set b = block b);
                             * 2 the DIF column chain's stage-0 twiddle per column group of twrun
                             *   columns (set d = c / twrun): POST on the forward, PRE-conj on the
@@ -81,10 +81,10 @@ typedef struct vfft_ilrd_s {
     /* the inner chain at p-1 */
     int nst, Rs[VFFT_ILRD_MAX_NST], Ls[VFFT_ILRD_MAX_NST];
     vfft_il2p_fn ff[VFFT_ILRD_MAX_NST], fb[VFFT_ILRD_MAX_NST];
-    double *tf[VFFT_ILRD_MAX_NST], *tb[VFFT_ILRD_MAX_NST];
+    vfft_real *tf[VFFT_ILRD_MAX_NST], *tb[VFFT_ILRD_MAX_NST];
     struct vfft_ilrd_s *nest;   /* the inner's own Rader leaf at Rs[0], or NULL */
     size_t W;                   /* the window width in columns */
-    double *scr[VFFT_ILRD_MAX_SLOTS];
+    vfft_real *scr[VFFT_ILRD_MAX_SLOTS];
     int nslot;
     /* THE COLUMN STAGE (the 2D tier's stage 0, section 13): Dp = the DIF stage's digit
      * count N1 / p (digit d's legs at rows l * Dp + d) */
@@ -92,7 +92,7 @@ typedef struct vfft_ilrd_s {
 } vfft_ilrd_t;
 
 /* ── row primitives (SIMD along the column axis) ─────────────────────── */
-static inline void _ilrd_row_add(double *dst, const double *src, size_t n)
+static inline void _ilrd_row_add(vfft_real *dst, const vfft_real *src, size_t n)
 {
     size_t k = 0;
     const size_t n2 = 2 * n;
@@ -102,7 +102,7 @@ static inline void _ilrd_row_add(double *dst, const double *src, size_t n)
 #endif
     for (; k < n2; k++) dst[k] += src[k];
 }
-static inline void _ilrd_row_sum(double *dst, const double *a, const double *b, size_t n)
+static inline void _ilrd_row_sum(vfft_real *dst, const vfft_real *a, const vfft_real *b, size_t n)
 {
     size_t k = 0;
     const size_t n2 = 2 * n;
@@ -221,20 +221,20 @@ static int _ilrd_slot(vfft_ilrd_t *rd, int k)
 {
     if (k < 0 || k >= VFFT_ILRD_MAX_SLOTS) return 0;
     if (!rd->scr[k]) {
-        rd->scr[k] = (double *)vfft_aligned_alloc(_ilrd_scr_doubles(rd) * sizeof(double));
+        rd->scr[k] = (vfft_real *)vfft_aligned_alloc(_ilrd_scr_doubles(rd) * sizeof(vfft_real));
         if (!rd->scr[k]) return 0;
-        memset(rd->scr[k], 0, _ilrd_scr_doubles(rd) * sizeof(double));
+        memset(rd->scr[k], 0, _ilrd_scr_doubles(rd) * sizeof(vfft_real));
         if (k + 1 > rd->nslot) rd->nslot = k + 1;
     }
     return rd->nest ? _ilrd_slot(rd->nest, k) : 1;
 }
 
-static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
+static void _ilrd_window(const vfft_ilrd_t *rd, const vfft_real *src, vfft_real *dst,
                          size_t c0, size_t c1, int bwd, int slot);
 
 /* the inner chain over the scratch plane sc (row stride rn, the first w lanes
  * live), forward or reverse; stage 0 is the nested leaf where one exists. */
-static void _ilrd_inner_run(const vfft_ilrd_t *rd, double *sc, size_t rn, size_t w, int reverse, int slot)
+static void _ilrd_inner_run(const vfft_ilrd_t *rd, vfft_real *sc, size_t rn, size_t w, int reverse, int slot)
 {
     const int M = rd->p - 1;
     int si;
@@ -257,7 +257,7 @@ static void _ilrd_inner_run(const vfft_ilrd_t *rd, double *sc, size_t rn, size_t
         for (b = 0; b < M / rd->Ls[s]; b++) {
             const size_t off = 2 * (size_t)b * (size_t)rd->Ls[s] * rn;
             const vfft_il2p_fn fn = reverse ? rd->fb[s] : rd->ff[s];
-            const double *tab = reverse ? rd->tb[s] : rd->tf[s];
+            const vfft_real *tab = reverse ? rd->tb[s] : rd->tf[s];
             if (D == 1) fn(sc + off, NULL, sc + off, NULL, NULL, NULL, rn, 0, rn, 0, w);
             else fn(sc + off, NULL, sc + off, NULL, tab, NULL, (size_t)D * rn, rn, (size_t)D * rn, (size_t)D, w);
         }
@@ -271,16 +271,16 @@ static void _ilrd_inner_run(const vfft_ilrd_t *rd, double *sc, size_t rn, size_t
  * side by side, the inner chain and the multiply run ONCE over all of them,
  * the scatter returns each run to its own rows. The flat chain's windows and
  * the column stage's are both lists of such runs. */
-typedef struct { const double *s0; double *d0; size_t ss, ds, n; const double *gi; } _ilrd_run_t;
+typedef struct { const vfft_real *s0; vfft_real *d0; size_t ss, ds, n; const vfft_real *gi; } _ilrd_run_t;
 static void _ilrd_window_runs(const vfft_ilrd_t *rd, const _ilrd_run_t *runs, int nr, int bwd, int slot)
 {
     const int p = rd->p, M = p - 1;
     const int *gat = bwd ? rd->ginvpow : rd->gpow, *sct = bwd ? rd->gpow : rd->ginvpow;
-    const double *om = bwd ? rd->omb : rd->omf;
+    const vfft_real *om = bwd ? rd->omb : rd->omf;
     const int pre = (rd->twmode == 1) || (rd->twmode == 2 && bwd);   /* twiddle on the way in */
     const int post = (rd->twmode == 2 && !bwd);                        /* twiddle on the way out */
     const size_t W = rd->W;
-    double *sc = rd->scr[slot], *x0 = sc + 2 * (size_t)M * W, *dc = x0 + 2 * W;
+    vfft_real *sc = rd->scr[slot], *x0 = sc + 2 * (size_t)M * W, *dc = x0 + 2 * W;
     size_t o = 0, w = 0;
     int r, q;
     (void)p;
@@ -289,14 +289,14 @@ static void _ilrd_window_runs(const vfft_ilrd_t *rd, const _ilrd_run_t *runs, in
     /* gather, run by run */
     for (r = 0, o = 0; r < nr; o += runs[r].n, r++) {
         const _ilrd_run_t *u = &runs[r];
-        memcpy(x0 + 2 * o, u->s0, 2 * u->n * sizeof(double));
-        memcpy(dc + 2 * o, u->s0, 2 * u->n * sizeof(double));
+        memcpy(x0 + 2 * o, u->s0, 2 * u->n * sizeof(vfft_real));
+        memcpy(dc + 2 * o, u->s0, 2 * u->n * sizeof(vfft_real));
         for (q = 0; q < M; q++) {
             const int l = gat[q];
-            const double *row = u->s0 + 2 * (size_t)l * u->ss;
-            double *d = sc + 2 * ((size_t)q * W + o);
+            const vfft_real *row = u->s0 + 2 * (size_t)l * u->ss;
+            vfft_real *d = sc + 2 * ((size_t)q * W + o);
             if (pre && u->gi) _il2d_row_cmul(d, row, u->gi[2 * l], u->gi[2 * l + 1], u->n);
-            else memcpy(d, row, 2 * u->n * sizeof(double));
+            else memcpy(d, row, 2 * u->n * sizeof(vfft_real));
             _ilrd_row_add(dc + 2 * o, d, u->n);
         }
     }
@@ -307,9 +307,9 @@ static void _ilrd_window_runs(const vfft_ilrd_t *rd, const _ilrd_run_t *runs, in
     /* scatter, run by run */
     for (r = 0, o = 0; r < nr; o += runs[r].n, r++) {
         const _ilrd_run_t *u = &runs[r];
-        memcpy(u->d0, dc + 2 * o, 2 * u->n * sizeof(double));
+        memcpy(u->d0, dc + 2 * o, 2 * u->n * sizeof(vfft_real));
         for (q = 0; q < M; q++) {
-            double *orow = u->d0 + 2 * (size_t)sct[q] * u->ds;
+            vfft_real *orow = u->d0 + 2 * (size_t)sct[q] * u->ds;
             _ilrd_row_sum(orow, x0 + 2 * o, sc + 2 * ((size_t)q * W + o), u->n);
             if (post && u->gi) _il2d_row_cmul(orow, orow, u->gi[2 * sct[q]], u->gi[2 * sct[q] + 1], u->n);
         }
@@ -319,11 +319,11 @@ static void _ilrd_window_runs(const vfft_ilrd_t *rd, const _ilrd_run_t *runs, in
 /* ONE WINDOW [c0, c1) of the flat stage's column space: the Rader convolution
  * over those columns, src -> dst (src may equal dst). A run = the columns of
  * one block, and of one twiddle set where the set is a column group (mode 2). */
-static void _ilrd_window(const vfft_ilrd_t *rd, const double *src, double *dst,
+static void _ilrd_window(const vfft_ilrd_t *rd, const vfft_real *src, vfft_real *dst,
                          size_t c0, size_t c1, int bwd, int slot)
 {
     const int p = rd->p;
-    const double *tw = bwd ? rd->twb : rd->twf;
+    const vfft_real *tw = bwd ? rd->twb : rd->twf;
     const size_t D = rd->D, L = rd->L;
     const size_t grp = (rd->twmode == 2 && rd->twrun) ? rd->twrun : 0;
     _ilrd_run_t runs[VFFT_ILRD_W_MAX + 2];
@@ -357,8 +357,8 @@ static int _ilrd_dif_tw(vfft_ilrd_t *rd, int span, size_t Dp, size_t twrun)
     size_t d;
     int l;
     const size_t P = (size_t)rd->p;
-    rd->twf = (double *)vfft_aligned_alloc(2 * Dp * P * sizeof(double));
-    rd->twb = (double *)vfft_aligned_alloc(2 * Dp * P * sizeof(double));
+    rd->twf = (vfft_real *)vfft_aligned_alloc(2 * Dp * P * sizeof(vfft_real));
+    rd->twb = (vfft_real *)vfft_aligned_alloc(2 * Dp * P * sizeof(vfft_real));
     if (!rd->twf || !rd->twb) return 0;
     for (d = 0; d < Dp; d++)
         for (l = 0; l < rd->p; l++) {
@@ -438,8 +438,8 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
     rd->W = W;
     rd->gpow = (int *)malloc((size_t)M * sizeof(int));
     rd->ginvpow = (int *)malloc((size_t)M * sizeof(int));
-    rd->omf = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
-    rd->omb = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
+    rd->omf = (vfft_real *)vfft_aligned_alloc(2 * (size_t)M * sizeof(vfft_real));
+    rd->omb = (vfft_real *)vfft_aligned_alloc(2 * (size_t)M * sizeof(vfft_real));
     if (!rd->gpow || !rd->ginvpow || !rd->omf || !rd->omb) { _ilrd_free(rd); return 0; }
     {
         const int g = vfft_primitive_root(pr), ginv = (int)vfft_powmod(g, M - 1, pr);
@@ -454,7 +454,7 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
          * sequence is one column (row stride 1): a nested leaf is run through a
          * twin built for that width (the same chain, the same values, its own
          * scratch), since the serving nest's geometry is the window's. */
-        double *za = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
+        vfft_real *za = (vfft_real *)vfft_aligned_alloc(2 * (size_t)M * sizeof(vfft_real));
         vfft_ilrd_t *serving = rd->nest, *one = 0;
         int d, m;
         if (!za) { _ilrd_free(rd); return 0; }
@@ -483,7 +483,7 @@ static vfft_ilrd_t *_ilrd_create(int pr, size_t D, size_t L, size_t nb, int dept
         for (d = 0; !exact && d < 2; d++) {
             const int *perm = d ? rd->gpow : rd->ginvpow;
             const double sign = d ? 1.0 : -1.0, inv = 1.0 / (double)M;
-            double *om = d ? rd->omb : rd->omf;
+            vfft_real *om = d ? rd->omb : rd->omf;
             for (m = 0; m < M; m++) {
                 double c, sn;   /* a = sign*2*pi*perm/p: sin(a) = sign*sn */
                 vfft_cs2pi_exact((long long)perm[m], (long long)pr, &c, &sn);
@@ -512,8 +512,8 @@ static int _ilrd_build_stage(vfft_ilfd_plan_t *p, int s, const int *req, int nre
         const size_t M = (size_t)p->N / D;
         size_t b;
         int l;
-        rd->twf = (double *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(double));
-        rd->twb = (double *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(double));
+        rd->twf = (vfft_real *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(vfft_real));
+        rd->twb = (vfft_real *)vfft_aligned_alloc(2 * nb * (size_t)p->R[s] * sizeof(vfft_real));
         if (!rd->twf || !rd->twb) { _ilrd_free(rd); return 0; }
         rd->twmode = 1;
         for (b = 0; b < nb; b++) {
@@ -548,14 +548,14 @@ static int _ilrd_build_stage(vfft_ilfd_plan_t *p, int s, const int *req, int nre
  * pool worker i), so every walker runs it with no worker index of its own.
  * The walkers find the engine in the stage-0 table slots as two direction
  * tags (il2d_cols.h, _il2d_rd0_hook). ─────────────────────────────────── */
-static void _ilrd_col0_run(const void *v, const double *src, size_t spitch, double *dst, size_t dpitch,
+static void _ilrd_col0_run(const void *v, const vfft_real *src, size_t spitch, vfft_real *dst, size_t dpitch,
                            size_t sk, size_t dk, size_t w, size_t d0, size_t nd)
 {
     const _ilrd_ctab_t *tag = (const _ilrd_ctab_t *)v;
     const vfft_ilrd_t *rd = tag->rd;
     const int bwd = tag->bwd;
     const size_t W = rd->W, D0 = rd->Dp;
-    const double *tw = bwd ? rd->twb : rd->twf;
+    const vfft_real *tw = bwd ? rd->twb : rd->twf;
     /* the scratch slot: the thread's pool slot on an engine built for the plan's
      * team; an engine with ONE slot belongs to a plan created at one thread --
      * a per-worker clone of the 3D tier, or any one-thread plan -- and runs
@@ -730,7 +730,7 @@ static int _ilrd_enum_inners(int M, _ilrd_inner_t *out, int max)
     return n;
 }
 
-typedef struct { vfft_ilfd_plan_t *p; int s; vfft_ilrd_t *rd; const double *zin; double *zout; char name[40]; } _ilrd_race_ctx_t;
+typedef struct { vfft_ilfd_plan_t *p; int s; vfft_ilrd_t *rd; const vfft_real *zin; vfft_real *zout; char name[40]; } _ilrd_race_ctx_t;
 static void _ilrd_race_arm_run(void *v)
 {
     _ilrd_race_ctx_t *c = (_ilrd_race_ctx_t *)v;
@@ -756,7 +756,7 @@ static vfft_ilrd_t *_ilrd_arm_engine(vfft_ilfd_plan_t *p, int s, const int *Rs, 
 }
 /* the race: inner chains, then widths; the plan leaves bound to the best.
  * Returns the best arm's ns (1e18 = nothing raced, the plan unchanged). */
-static double vfft_ilrd_race(vfft_ilfd_plan_t *p, int s, const double *zin, double *zout, int pace)
+static double vfft_ilrd_race(vfft_ilfd_plan_t *p, int s, const vfft_real *zin, vfft_real *zout, int pace)
 {
     _ilrd_inner_t cand[VFFT_ILRD_MAX_INNERS];
     _ilrd_race_ctx_t cx[VFFT_ILRD_MAX_INNERS + 4];
@@ -863,11 +863,11 @@ static int vfft_ilrd_get_inner(const vfft_ilfd_plan_t *p, int *s_out, int *Rs, i
 }
 static void _ilrd_free_hook_fn(void *rd) { _ilrd_free((vfft_ilrd_t *)rd); }
 static void _ilrd_run_hook_fn(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *c,
-                              size_t c0, size_t c1, const double *zin, double *zout)
+                              size_t c0, size_t c1, const vfft_real *zin, vfft_real *zout)
 {
     const vfft_ilrd_t *rd = (const vfft_ilrd_t *)c->rd;
-    const double *src = (c->in_sel == _ILFD_ZIN) ? zin : p->stg;
-    double *dst = (c->out_sel == _ILFD_ZOUT) ? zout : p->stg;
+    const vfft_real *src = (c->in_sel == _ILFD_ZIN) ? zin : p->stg;
+    vfft_real *dst = (c->out_sel == _ILFD_ZOUT) ? zout : p->stg;
     size_t k;
     for (k = c0; k < c1; k += rd->W) {
         const size_t e = (k + rd->W < c1) ? k + rd->W : c1;
@@ -890,11 +890,11 @@ static int (*_ilfd_rd_build_hook)(vfft_ilfd_plan_t *, int) = _ilrd_build_hook_fn
 static void (*_ilfd_rd_last_hook)(vfft_ilfd_plan_t *, int) = _ilrd_last_hook_fn;
 static void (*_ilfd_rd_free_hook)(void *) = _ilrd_free_hook_fn;
 static void (*_ilfd_rd_run_hook)(const vfft_ilfd_plan_t *, const vfft_ilfd_call_t *, size_t, size_t,
-                                 const double *, double *) = _ilrd_run_hook_fn;
+                                 const vfft_real *, vfft_real *) = _ilrd_run_hook_fn;
 static int (*_ilfd_rd_mt_hook)(vfft_ilfd_plan_t *, int) = _ilrd_mt_hook_fn;
 static size_t (*_ilfd_rd_width_hook)(const void *) = _ilrd_width_hook_fn;
 /* the column stage's hooks (il2d_cols.h's tentative definitions) */
-static void (*_il2d_rd0_hook)(const void *, const double *, size_t, double *, size_t, size_t, size_t,
+static void (*_il2d_rd0_hook)(const void *, const vfft_real *, size_t, vfft_real *, size_t, size_t, size_t,
                               size_t, size_t, size_t) = _ilrd_col0_run;
 static int (*_il2d_rd0_ok_hook)(int) = _ilrd_col0_ok;
 static void (*_il2d_rd0_free_hook)(void *) = _ilrd_free_hook_fn;
@@ -907,7 +907,7 @@ void *vfft_tool_ilfd_chain(int N, const int *R, int K)
 {
     return vfft_ilfd_create_chain(N, R, K);
 }
-void vfft_tool_ilfd_exec(void *plan, const double *zin, double *zout, int bwd)
+void vfft_tool_ilfd_exec(void *plan, const vfft_real *zin, vfft_real *zout, int bwd)
 {
     if (bwd) vfft_ilfd_execute_bwd((vfft_ilfd_plan_t *)plan, zin, zout);
     else vfft_ilfd_execute_fwd((vfft_ilfd_plan_t *)plan, zin, zout);
@@ -915,7 +915,7 @@ void vfft_tool_ilfd_exec(void *plan, const double *zin, double *zout, int bwd)
 void vfft_tool_ilfd_destroy(void *plan) { vfft_ilfd_destroy((vfft_ilfd_plan_t *)plan); }
 /* the Rader stage's inner race in role on this chain (the planner's bench step);
  * returns the best arm's ns, 1e18 = no Rader stage */
-double vfft_tool_ilfd_race_inner(void *plan, const double *zin, double *zout)
+double vfft_tool_ilfd_race_inner(void *plan, const vfft_real *zin, vfft_real *zout)
 {
     vfft_ilfd_plan_t *p = (vfft_ilfd_plan_t *)plan;
     int s = 0;
@@ -924,7 +924,7 @@ double vfft_tool_ilfd_race_inner(void *plan, const double *zin, double *zout)
 }
 /* the chain threaded over T workers (the BLOCKS form, every stage by units):
  * 1 = ran threaded, 0 = declined (the caller runs serial) */
-int vfft_tool_ilfd_exec_mt(void *plan, const double *zin, double *zout, int bwd, int T)
+int vfft_tool_ilfd_exec_mt(void *plan, const vfft_real *zin, vfft_real *zout, int bwd, int T)
 {
     vfft_ilfd_plan_t *p = (vfft_ilfd_plan_t *)plan;
     if (T < 2) return 0;

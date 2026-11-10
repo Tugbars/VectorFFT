@@ -276,7 +276,9 @@ built (`_k1fs_sb_admit` in both races); below it, form 0 without a race.
 ## Gates
 
 - `il2d_real_gate`, the four-step gate (T=8 bitwise the plan's own serial,
-  in place bitwise out of place, replay without a race, at 2^19..2^22),
+  in place against the same reference with its own roundtrip -- each
+  placement is its own raced row, so bitwise out of place is printed, not
+  asserted -- replay without a race, at 2^19..2^22),
   `k1_pow2_gate`, `ztt_gate`; the 3D probes' bitwise passes (the 3D tier
   shares the column pass).
 - A strips arm is a pure loop restriction of the full pass and sub-strips

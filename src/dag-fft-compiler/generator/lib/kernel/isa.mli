@@ -2,6 +2,10 @@
    MODULE CARD. ISA record + VALUE intrinsics (all width branches internal) — the model shared module.
    Generated from the inferred signature; trim = later per-module work. *)
 
+type prec =
+  | F64
+  | F32
+
 type t =
   { name : string
   ; vec_type : string
@@ -14,6 +18,7 @@ type t =
   ; set1_pd : string
   ; maskload_pd : string
   ; maskstore_pd : string
+  ; prec : prec
   }
 
 type ls_mode =
@@ -25,7 +30,24 @@ val avx2 : t
 val avx512vl256 : t
 val scalar : t
 val sse2 : t
+
+(* FP32 targets (2026-11-10): vec_width counts floats *)
+val avx2_f32 : t
+val avx512_f32 : t
+val sse_f32 : t
+val avx512vl256_f32 : t
+
+(* one complex float (64 bits, bits = 64): the FP32 cil tail's last rung *)
+val sse_f32x1 : t
 val of_name : string -> t
+val is_f32 : t -> bool
+val bits : t -> int
+val cpv : t -> int
+val sfx : t -> string
+val elem : t -> string
+val kmask_type : t -> string
+val flit : t -> float -> string
+val f32_todo : t -> string -> unit
 val intr : t -> string -> string
 val mul_pd : t -> string -> string -> string
 val add_pd : t -> string -> string -> string
@@ -53,9 +75,18 @@ val reint_pre : t -> string -> string
 val reint_ordered : t -> string -> string -> string * string
 val shuffle_consts : t -> deint:bool -> reint:bool -> transpose:bool -> string
 val transpose : t -> qid:string -> string array -> string array -> string
+
+(* ZTURN-T plain class column-run z edge (FP32 2026-11-10; FP64 = the unpack pair) *)
+val zcol_reint : t -> string -> string -> string * string
+val zcol_deint : t -> string -> string -> string * string
 val const_splat_decl : t -> string -> string -> string
 
 val cx_deint_pd : t -> odd:bool -> string -> string -> string
 val cx_part_pd : t -> string -> int -> string
+
+(* FP32 corner-turn stores (2026-11-10): a complex lane is one 64-bit unit *)
+val storeu_cx_lane : t -> string -> string -> int -> string
+val storeu_cx_unit : t -> string -> string -> int -> string
+val cx_unpack : t -> hi:bool -> string -> string -> string
 val storeu_cx_prefix : t -> string -> string -> int -> string
 val cx_target_attr : t -> string

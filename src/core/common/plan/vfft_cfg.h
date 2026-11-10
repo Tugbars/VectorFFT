@@ -12,6 +12,7 @@
  * and constants only, no function. */
 #ifndef VFFT_CFG_H
 #define VFFT_CFG_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include <stddef.h>
 #include "vfft.h"   /* vfft_transform_t, vfft_dir_t, VFFT_BATCH_* (the batch values are shared) */

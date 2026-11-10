@@ -20,8 +20,18 @@
  * Corpus.zil_isa_gap and never reaches emit_one.
  *
  * Usage:
- *   gen_set.exe [--root DIR] [quadrant ...]      (default: all)
- * --root: the codelets/ directory (default "codelets" under cwd). *)
+ *   gen_set.exe [--root DIR] [--port P] [quadrant ...]      (default: all)
+ * --root: the codelets/ directory (default "codelets" under cwd).
+ * "all" is the FP64 tree (Corpus.quadrants); "f32" the FP32 quadrants (cil kernels and
+ * ZTURN-T stage kernels; Corpus.quadrants_f32: zil-f32-avx2, zil-f32-avx512), never part
+ * of "all".
+ * --port P (FP32 only, 2026-11-10): every cil cell re-emitted with --cil-port P (the
+ * FMA-port setting) under its own file and symbol name -- the A/B variants of a
+ * corpus, written to their own --root; the FP32 ZTURN-T stage kernels, which have no
+ * port setting, are re-emitted unchanged so the root holds the whole FP32 corpus; an
+ * FP64 cell refuses it (the first refusal stops the run, as always). The FP32 corpus
+ * itself carries the pair family at 50 (Corpus.zil_f32_with_port, the A/B's verdict);
+ * --port 0 re-emits every cil cell at 0, the all-off base of an A/B. *)
 
 let rec mkdir_p (dir : string) : unit =
   if dir = "" || dir = "." || dir = "/" || Sys.file_exists dir
@@ -63,8 +73,24 @@ let emit_one (path : string) (argv_tail : string list) : unit =
   Unix.rename tmp path
 ;;
 
+(* the cell's argv with --cil-port P (the canonical position, through the descriptor) *)
+let with_port (port : int option) (tail : string list) : string list =
+  match port with
+  | None -> tail
+  | Some port -> (
+    let open Codelet in
+    let c = of_argv (tail @ [ "--emit-c" ]) in
+    match c.kind with
+    | Cil r ->
+      List.filter (fun a -> a <> "--emit-c") (to_argv { c with kind = Cil { r with port } })
+    | Zsplit _ when (match c.isa with Some i -> List.mem i Corpus.zil_f32_isas | None -> false) ->
+      tail   (* the FP32 ZTURN-T stage kernels: no port setting, emitted unchanged *)
+    | _ -> failwith "gen_set: --port applies to the cil kinds only")
+;;
+
 let () =
   let root = ref "codelets" in
+  let port = ref None in
   let targets = ref [] in
   let rec parse i =
     if i < Array.length Sys.argv
@@ -72,6 +98,12 @@ let () =
       match Sys.argv.(i) with
       | "--root" when i + 1 < Array.length Sys.argv ->
         root := Sys.argv.(i + 1);
+        parse (i + 2) |> ignore
+      | "--port" when i + 1 < Array.length Sys.argv ->
+        (port :=
+           match int_of_string_opt Sys.argv.(i + 1) with
+           | Some p when p >= 0 && p <= 100 -> Some p
+           | _ -> failwith "gen_set: --port takes a percentage 0..100");
         parse (i + 2) |> ignore
       | t ->
         targets := t :: !targets;
@@ -81,12 +113,13 @@ let () =
   let targets =
     match List.rev !targets with
     | [] | [ "all" ] -> Corpus.quadrants
+    | [ "f32" ] -> Corpus.quadrants_f32
     | l -> l
   in
   let total = ref 0 in
   List.iter
     (fun q ->
-       let files = Corpus.files q in
+       let files = List.map (fun (name, tail) -> name, with_port !port tail) (Corpus.files q) in
        List.iter
          (fun (name, tail) ->
             (* the folder follows the file's kind (2026-09-24): Corpus.dir_of_file *)

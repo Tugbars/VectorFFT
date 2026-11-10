@@ -187,6 +187,10 @@ type kind =
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
+      ; port : int
+        (* --cil-port P (FP32 only, 2026-11-10): about P percent of the plain data add/sub
+           of the DFT body as fmadd(b, 1, a) / fnmadd(b, 1, a), bit-identical; 0 (every FP64
+           cell, and the FP32 corpus) prints nothing, so no recorded argv changes *)
       }
   | Zsplit of { k : zs_kind } (* --zp-<kind> *)
   | K1_mono of
@@ -419,7 +423,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and transposed = ref false
   and herm = ref false
   and st128 = ref false
-  and rowloop = ref false in
+  and rowloop = ref false
+  and port = ref 0 in
   let k1_r1 = ref None
   and k1_il = ref false
   and k1_sw = ref false in
@@ -652,6 +657,11 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-st128" :: tl ->
       st128 := true;
       go tl
+    | "--cil-port" :: v :: tl ->
+      (match int_of_string_opt v with
+       | Some p when p >= 0 && p <= 100 -> port := p
+       | _ -> fail "--cil-port expects a percentage 0..100");
+      go tl
     | "--cil-oddct" :: tl ->
       oddct := true;
       go tl
@@ -792,6 +802,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; st128 = !st128
         ; rowloop = !rowloop
         ; form_tag = !cil_form_tag
+        ; port = !port
         }
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
     | [ t ] when String.length t > 3 && String.sub t 0 3 = "zp:" ->
@@ -936,7 +947,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; split3; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; split3; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag; port } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -980,6 +991,7 @@ let to_argv (c : t) : string list =
     @ g (pre_tw && form <> Cil_t2c) "--cil-pretw"
     @ g form_tag "--cil-form-tag"
     @ g st128 "--cil-st128"
+    @ (if port <> 0 then [ "--cil-port"; string_of_int port ] else [])
     @ g (m.dir = Bwd) "--cil-bwd"
     @ isa
     @ uarch

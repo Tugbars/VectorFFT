@@ -158,6 +158,33 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         _vfft_warn("vfft_create: nthreads %d is negative (0 or 1 is one thread)", p->nthreads);
         return 0;
     }
+#ifdef VFFT_FLOAT
+    {   /* THE FP32 SCOPE (include/vfftf.h): 1D C2C, INTERLEAVED, natural order, a power-of-two N up to
+         * 2^24, one transform or a batch (contiguous or lane-major), any nthreads, planned by measuring.
+         * Everything else is refused here, before any engine sees it. */
+        const int n0 = p->n[0];
+        const char *why = NULL;
+        if (p->transform != VFFT_C2C)
+            why = "VFFT_C2C only";
+        else if (p->rank > 1)
+            why = "rank 1 only";
+        else if (p->layout != VFFT_LAYOUT_INTERLEAVED)
+            why = "VFFT_LAYOUT_INTERLEAVED only";
+        else if (p->order != VFFT_ORDER_NATURAL)
+            why = "VFFT_ORDER_NATURAL only";
+        else if (p->flags & (VFFT_FLAG_ESTIMATE | VFFT_FLAG_OWN_PITCH))
+            why = "planned by measuring only (VFFT_FLAG_ESTIMATE and VFFT_FLAG_OWN_PITCH are not served at FP32)";
+        else if (n0 < 2 || (n0 & (n0 - 1)) != 0)
+            why = "a power-of-two n[0] of 2 or more only";
+        else if (n0 > VFFT_K1FS_MAX_N)
+            why = "n[0] up to 16777216";
+        if (why)
+        {
+            _vfft_warn("vfftf_create: n[0] = %d: the FP32 library serves %s", n0, why);
+            return 0;
+        }
+    }
+#endif
     if (p->flags & VFFT_FLAG_ESTIMATE)
     {   /* an INTERLEAVED C2C transform: 1D in any order on any thread count, rank 2 and 3 in natural
          * order on any thread count (il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h), and a contiguous
@@ -236,7 +263,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
  * bound executor (k1_go_mt), so the call's first fork-join places the calling thread and the
  * thread is put back when the call returns (threads.h, thread_pool_caller_arm). An executor whose
  * verdict is serial never forks: the call costs what the one-thread plan's does. */
-static int _vfft_k1_go_mt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _vfft_k1_go_mt(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     thread_pool_pin_t *pin = thread_pool_caller_arm();
     const int r = h->k1_go_mt[dir](h, dir, zin, zout);
@@ -260,7 +287,11 @@ vfft_plan vfft_create(const vfft_config_t *config)
     _vfft_create_lock();   /* the store table is the lock's too (recursive: the create takes it again) */
     if (_vfft_api_translate(config, &c))
     {
+#ifdef VFFT_FLOAT
+        h = _vfft_create_cfg(&c);   /* FP32 plans by measuring only (the estimate is FP64's) */
+#else
         h = (config->flags & VFFT_FLAG_ESTIMATE) ? _vfft_create_estimate(&c) : _vfft_create_cfg(&c);
+#endif
         if (h && h->nthreads > 1)   /* the lean entry arms the caller's pin around the executor */
             for (int d = VFFT_FORWARD; d <= VFFT_BACKWARD; d++)
                 if (h->k1_go[d])
@@ -277,12 +308,29 @@ vfft_plan vfft_create(const vfft_config_t *config)
 }
 
 /* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ── */
-static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, double *in, double *out)
+static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, vfft_real *in, vfft_real *out)
 {
     thread_pool_pin_t *pin;
     if (h && h->layout == VFI_LAYOUT_SPLIT && !_VFFT_IS_TRIG(h->transform))
     {
         _vfft_warn("vfft_execute: a SPLIT plan runs through vfft_execute_split(); nothing executed");
+        return;
+    }
+    if (h && h->k1_alias && in && out == in && (unsigned)dir <= (unsigned)VFFT_BACKWARD)
+    {   /* AN OUT-OF-PLACE C2C PLAN CALLED WITH ONE BUFFER whose bound kernels are restrict (the solo
+         * kernels): its one-buffer executor, the alias-tolerant twins (il/il_execute.h). The lean
+         * compare of vfft_execute left the call here. */
+        h->k1_alias(h, dir, in, out);
+        return;
+    }
+    if (h && h->placement == VFFT_INPLACE && h->transform == VFFT_C2C && in && out && out != in &&
+        (unsigned)dir <= (unsigned)VFFT_BACKWARD)
+    {   /* PLACEMENT IS A COMMITMENT (vfft.h: in place, out == in), as on the real plans and the split
+         * ones (_vfft_sig_bad). Refused at this door only: a composite runs its own in-place child
+         * with two buffers through _vfft_exec6 */
+        _vfft_warn("vfft_execute: this C2C plan is IN-PLACE and must be called with out == in; got "
+                   "distinct pointers; for separate buffers create the plan with "
+                   "placement=VFFT_PLACEMENT_OUT -- nothing executed");
         return;
     }
     pin = (h && h->nthreads > 1) ? thread_pool_caller_arm() : NULL;   /* the caller's pin, at the first fork-join */
@@ -295,15 +343,16 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
  * plan created with more than one thread is entered through _vfft_k1_go_mt (vfft_create). */
 void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
-    double *s = (double *)in, *d = (double *)out;
+    vfft_real *s = (vfft_real *)in, *d = (vfft_real *)out;
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && s && d &&
-        (h->placement == VFFT_INPLACE ? d == s : (d != s || h->transform == VFFT_C2C)) && h->k1_go[dir])
+        (h->placement == VFFT_INPLACE ? d == s : (d != s || (h->transform == VFFT_C2C && !h->k1_alias))) && h->k1_go[dir])
     {
         h->k1_go[dir](h, dir, s, d);
         return;
     }
     _vfft_api_execute_slow(h, dir, s, d);
 }
+#ifndef VFFT_FLOAT   /* the split door is FP64's alone: the FP32 unit serves interleaved plans only */
 void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
                         const double *in_re, const double *in_im,
                         double *out_re, double *out_im)
@@ -321,6 +370,7 @@ void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
             thread_pool_caller_release(pin);
     }
 }
+#endif
 
 /* ── the plan's facts ── */
 /* the doubles execute reads and writes (per plane under SPLIT); 0 when the product overflows */
@@ -405,9 +455,12 @@ int vfft_info(vfft_plan p, vfft_info_t *out)
     _vfft_api_sizes(h, &out->in_doubles, &out->out_doubles);
     return 0;
 }
+#ifndef VFFT_FLOAT   /* vfft_error serves both precisions: the FP64 unit's alone */
 const char *vfft_error(void)
 {
     return _vfft_err_buf;
 }
+char *_vfft_err_shared(void) { return _vfft_err_buf; }   /* the FP32 unit's refusals land here (diag.h) */
+#endif
 
 #endif /* VFFT_API_H */

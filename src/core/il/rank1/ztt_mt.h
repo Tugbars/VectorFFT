@@ -21,10 +21,10 @@
  * At T > 1 a pow2 cell runs this walk, not its fused codelet: the fusion is
  * worth 0-3% above 2048, the threads are worth multiples.
  *
- * Column ranges are cut at multiples of VFFT_IL_VW, the column kinds' step
- * (4 at avx2, 8 at avx512: a kernel runs whole VFFT_IL_VW-column iterations
+ * Column ranges are cut at multiples of VFFT_ZTT_VW, the column kinds' step
+ * (4 at avx2, 8 at avx512: a kernel runs whole VFFT_ZTT_VW-column iterations
  * and does nothing with a shorter rest), so every range is whole iterations;
- * every column count is a multiple of VFFT_IL_VW (ztt.h _ztt_create's laws),
+ * every column count is a multiple of VFFT_ZTT_VW (ztt.h _ztt_create's laws),
  * so the ranges cover it. An empty range does nothing. The plane offset is
  * computed once by the caller and shared: the threads write disjoint spans
  * of the plan's one plane. Nesting is forbidden by the pool's law: this runs
@@ -34,6 +34,7 @@
  * per translation unit — a bench that included it would own a second pool). */
 #ifndef VFFT_OOP_ZTT_MT_H
 #define VFFT_OOP_ZTT_MT_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include "ztt.h"
 #include "common/support/threads.h"
@@ -47,23 +48,23 @@ typedef struct
     int kind;                         /* 0 = one kernel call, 1 = natural tile range,
                                        * 2 = plain block range fwd, 3 = plain block range bwd */
     vfft_ztt_kfn fn;
-    const double *zin, *tw, *tw_im;
-    double *zout;
+    const vfft_real *zin, *tw, *tw_im;
+    vfft_real *zout;
     size_t Ls, Gs, OLs, count;
     const vfft_ztt_plan_t *p;         /* kinds 1-3 */
-    double *W;
-    const double *tws;                /* the stream base for the direction */
-    const double *zin_b;              /* plain bwd: the block source (zin) */
+    vfft_real *W;
+    const vfft_real *tws;                /* the stream base for the direction */
+    const vfft_real *zin_b;              /* plain bwd: the block source (zin) */
     int bwd;
     size_t t_lo, t_hi;
 } _ztt_mt_arg;
 
 /* the natural tile's prefix / the plain block's suffix, as _ztt_staged_run runs them */
 static inline void _ztt_mt_tile_natural(const vfft_ztt_plan_t *p, const vfft_ztt_kfn *st,
-                                        const double *tw, double *W, size_t t)
+                                        const vfft_real *tw, vfft_real *W, size_t t)
 {
     const size_t tile = p->tile;
-    double *B = W + t * tile * 2;
+    vfft_real *B = W + t * tile * 2;
     int s;
     for (s = 1; s < p->nf - 1; s++)
     {
@@ -73,11 +74,11 @@ static inline void _ztt_mt_tile_natural(const vfft_ztt_plan_t *p, const vfft_ztt
     }
 }
 static inline void _ztt_mt_block_plain(const vfft_ztt_plan_t *p, const vfft_ztt_kfn *st,
-                                       const double *tw, const double *zin, double *zout,
+                                       const vfft_real *tw, const vfft_real *zin, vfft_real *zout,
                                        size_t t, int bwd)
 {
     const size_t tile = p->tile, Rl = (size_t)p->chain[p->nf - 1];
-    double *B = zout + t * tile * 2;
+    vfft_real *B = zout + t * tile * 2;
     int s;
     if (!bwd)
     {
@@ -89,7 +90,7 @@ static inline void _ztt_mt_block_plain(const vfft_ztt_plan_t *p, const vfft_ztt_
     }
     else
     {
-        const double *Bi = zin + t * tile * 2;
+        const vfft_real *Bi = zin + t * tile * 2;
         st[p->nf - 1](Bi, 0, B, 0, tw, 0, 0, 1, 0, 0, tile / Rl);
         for (s = p->nf - 2; s >= 1; s--)
             if (tile % (size_t)p->len[s] == 0)
@@ -122,31 +123,31 @@ static void _ztt_mt_tramp(void *v)
 
 /* a COLUMN stage: count columns from base pointers, both edges advancing one
  * complex per column, the stream twrec doubles per column quad (a record
- * group covers VFFT_IL_VW columns: a cut at a multiple of VFFT_IL_VW starts
+ * group covers VFFT_ZTT_VW columns: a cut at a multiple of VFFT_ZTT_VW starts
  * on one) */
-static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const double *zin, double *zout, int oshift,
-                                   const double *tw, const double *tw_im, int twrec,
+static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const vfft_real *zin, vfft_real *zout, int oshift,
+                                   const vfft_real *tw, const vfft_real *tw_im, int twrec,
                                    size_t Ls, size_t OLs, size_t count, const size_t *rb)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
-    const size_t ni = count / VFFT_IL_VW;   /* kernel iterations */
+    const size_t ni = count / VFFT_ZTT_VW;   /* kernel iterations */
     int w;
     for (w = 0; w < T; w++)
     {
-        const size_t lo = VFFT_IL_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_IL_VW * (ni * (size_t)(w + 1) / (size_t)T);
+        const size_t lo = VFFT_ZTT_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_ZTT_VW * (ni * (size_t)(w + 1) / (size_t)T);
         memset(&a[w], 0, sizeof a[w]);
         a[w].kind = 0; a[w].fn = fn;
         a[w].zin = zin + 2 * lo; a[w].zout = oshift ? zout + 2 * lo : zout;   /* the ingest stores at rb[c]*R0, absolute */
         a[w].tw = tw ? tw + (lo / 4) * (size_t)twrec : 0;
-        a[w].tw_im = rb ? (const double *)(rb + lo) : tw_im;
+        a[w].tw_im = rb ? (const vfft_real *)(rb + lo) : tw_im;
         a[w].Ls = Ls; a[w].Gs = 1; a[w].OLs = OLs; a[w].count = hi - lo;
     }
     thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
 /* a GROUP stage: Gs groups at pitch doubles apart, one group-invariant stream */
-static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, double *base, size_t pitch,
-                                  const double *tw, size_t Ls, size_t Gs, size_t count)
+static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, vfft_real *base, size_t pitch,
+                                  const vfft_real *tw, size_t Ls, size_t Gs, size_t count)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
@@ -162,16 +163,16 @@ static inline void _ztt_mt_groups(int T, vfft_ztt_kfn fn, double *base, size_t p
     thread_pool_run(T, _ztt_mt_tramp, a, sizeof a[0]);
 }
 
-/* the plain untiled last stage: N/R groups of R, VFFT_IL_VW per kernel iteration */
-static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const double *zin, double *zout,
-                               const double *tw, size_t R, size_t ngroups)
+/* the plain untiled last stage: N/R groups of R, VFFT_ZTT_VW per kernel iteration */
+static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const vfft_real *zin, vfft_real *zout,
+                               const vfft_real *tw, size_t R, size_t ngroups)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
-    const size_t ni = ngroups / VFFT_IL_VW;   /* kernel iterations */
+    const size_t ni = ngroups / VFFT_ZTT_VW;   /* kernel iterations */
     int w;
     for (w = 0; w < T; w++)
     {
-        const size_t lo = VFFT_IL_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_IL_VW * (ni * (size_t)(w + 1) / (size_t)T);
+        const size_t lo = VFFT_ZTT_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_ZTT_VW * (ni * (size_t)(w + 1) / (size_t)T);
         memset(&a[w], 0, sizeof a[w]);
         a[w].kind = 0; a[w].fn = fn;
         a[w].zin = zin + 2 * R * lo; a[w].zout = zout + 2 * R * lo;
@@ -181,8 +182,8 @@ static inline void _ztt_mt_tld(int T, vfft_ztt_kfn fn, const double *zin, double
 }
 
 /* the TILE / BLOCK range dispatch */
-static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, const double *tws,
-                                 double *W, const double *zin_b, double *zout, int bwd, size_t ntile)
+static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, const vfft_real *tws,
+                                 vfft_real *W, const vfft_real *zin_b, vfft_real *zout, int bwd, size_t ntile)
 {
     _ztt_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int w;
@@ -200,6 +201,9 @@ static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, cons
  * cannot run: TILES needs a tile and at least two of them) */
 static inline int vfft_ztt_mt_bind(vfft_ztt_plan_t *p, int T, int arm)
 {
+#ifdef VFFT_FLOAT
+    if (!p->st_fwd[0]) { p->mt = 0; p->mt_t = 0; return 0; }   /* no stage kernels: serial only */
+#endif
     if (T < 2 || arm < 1 || arm > 2) { p->mt = 0; p->mt_t = 0; return 0; }
     if (arm == 2 && (p->tile == 0 || (size_t)p->N / p->tile < 2)) { p->mt = 0; p->mt_t = 0; return 0; }
     p->mt = arm;
@@ -211,12 +215,12 @@ static inline int vfft_ztt_mt_bind(vfft_ztt_plan_t *p, int T, int arm)
  * bound, T < 2, or a live pool clamped below the bound T (the cut is for
  * exactly mt_t threads: fewer would not cover the units the same way, and
  * the verdict was raced at that T). */
-static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const double *zin, double *zout, int bwd)
+static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const vfft_real *zin, vfft_real *zout, int bwd)
 {
     const int T = thread_pool_workers_for(p->mt_t);
     const int nf = p->nf;
     const vfft_ztt_kfn *st = bwd ? p->st_bwd : p->st_fwd;
-    const double *tw = bwd ? p->twb : p->tw;
+    const vfft_real *tw = bwd ? p->twb : p->tw;
     const size_t N = (size_t)p->N, tile = p->tile;
     int s;
     if (p->mt <= 0 || T < 2 || T != p->mt_t || !st[0]) return 0;
@@ -253,7 +257,7 @@ static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const double *zi
     else
     {
         const int ip = (zin == zout || p->inplace);
-        double *W = ip ? _ztt_plane_for(p, zout) : zout;
+        vfft_real *W = ip ? _ztt_plane_for(p, zout) : zout;
         const vfft_ztt_kfn last = ip ? (bwd ? p->tl_bwd_plane : p->tl_fwd_plane) : st[nf - 1];
         const size_t L = (size_t)p->L[nf - 1];
         const int Rl = p->chain[nf - 1];
@@ -278,8 +282,8 @@ static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const double *zi
  * hot). An in-place plan races ALIASED arms (z -> z through the plane) with
  * the buffer re-seeded before every sample; an out-of-place plan races
  * zin -> zout. Leaves the plan at the winner, bound for T. Returns mt. */
-typedef struct { vfft_ztt_plan_t *p; const double *zin; double *zout; int mt, ok; } _ztt_mt_ctx_t;
-typedef struct { double *dst; const double *src; size_t nb; } _ztt_mt_rst_t;
+typedef struct { vfft_ztt_plan_t *p; const vfft_real *zin; vfft_real *zout; int mt, ok; } _ztt_mt_ctx_t;
+typedef struct { vfft_real *dst; const vfft_real *src; size_t nb; } _ztt_mt_rst_t;
 static void _ztt_mt_arm_run(void *v)
 {
     _ztt_mt_ctx_t *c = (_ztt_mt_ctx_t *)v;
@@ -288,7 +292,7 @@ static void _ztt_mt_arm_run(void *v)
     if (c->ok && !vfft_ztt_execute_mt(c->p, c->zin, c->zout, 0)) c->ok = 0;
 }
 static void _ztt_mt_reseed(void *v) { _ztt_mt_rst_t *r = (_ztt_mt_rst_t *)v; memcpy(r->dst, r->src, r->nb); }
-static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin, double *zout, double *ns_out)
+static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *zin, vfft_real *zout, double *ns_out)
 {
     static const char *names[3] = { "serial", "blocks", "tiles" };
     _ztt_mt_ctx_t cx[3];
@@ -298,6 +302,9 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
     const int ip = (zin == zout);
     int na = 0, a, best = 0, reps;
     if (T < 2) { p->mt = 0; p->mt_t = 0; return 0; }
+#ifdef VFFT_FLOAT
+    if (!p->st_fwd[0]) { p->mt = 0; p->mt_t = 0; if (ns_out) ns_out[0] = ns_out[1] = ns_out[2] = -1.0; return 0; }
+#endif
     p->mt_t = T;
     {   /* reps from one serial timing */
         double t0;
@@ -318,10 +325,10 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const double *zin,
     rs.dst = zout; rs.src = ip ? p->plane : zin; rs.nb = 0;   /* placeholder, set below */
     if (ip)
     {   /* aliased arms: re-seed the buffer from a copy before every sample */
-        double *seed = (double *)vfft_aligned_alloc((size_t)2 * p->N * sizeof(double));
+        vfft_real *seed = (vfft_real *)vfft_aligned_alloc((size_t)2 * p->N * sizeof(vfft_real));
         if (!seed) { p->mt = 0; return 0; }
-        memcpy(seed, zout, (size_t)2 * p->N * sizeof(double));
-        rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(double);
+        memcpy(seed, zout, (size_t)2 * p->N * sizeof(vfft_real));
+        rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(vfft_real);
         {
             const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, _ztt_mt_reseed, &rs, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
             vfft_race_run(&proto, arms, na, ns);

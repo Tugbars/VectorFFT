@@ -76,6 +76,8 @@ let macro_of_tag (tag : string) : string =
 
 let quadrants_of_isa isa =
   if isa = "avx2" then [ "zil-boundary"; "zil-pure" ]
+  else if isa = "avx2_f32" then [ "zil-f32-avx2" ]
+  else if isa = "avx512_f32" then [ "zil-f32-avx512" ]
   else [ "zil-boundary-" ^ isa; "zil-pure-" ^ isa ]
 ;;
 
@@ -102,10 +104,19 @@ let () =
   (match List.tl (Array.to_list Sys.argv) with
    | [] -> ()
    | [ "--isa"; v ] -> isa := v
-   | l -> failwith ("emit_il_registry: usage [--isa avx2|avx512], got " ^ String.concat " " l));
+   | l -> failwith ("emit_il_registry: usage [--isa avx2|avx512|avx2_f32|avx512_f32], got " ^ String.concat " " l));
   let isa = !isa in
+  if not (List.mem isa (Corpus.zil_isas @ Corpus.zil_f32_isas))
+  then failwith ("emit_il_registry: unknown isa " ^ isa ^ " (avx2 | avx512 | avx2_f32 | avx512_f32)");
+  (* FP32 (2026-11-10): the avx2_f32 / avx512_f32 registries carry float pointers, VW in
+     floats, and every list macro of the FP64 universe (empty where FP32 has no such kernel)
+     beside their own, so the core compiles against either header. The FP64 registries keep
+     the FP64 universe alone: byte-identical. *)
+  let f32 = List.mem isa Corpus.zil_f32_isas in
   let up = String.uppercase_ascii isa in
-  let tables = List.map (fun i -> i, table_of_isa i) Corpus.zil_isas in
+  let tables =
+    List.map (fun i -> i, table_of_isa i) (if f32 then Corpus.zil_isas @ Corpus.zil_f32_isas else Corpus.zil_isas)
+  in
   let tbl = List.assoc isa tables in
   let radices k = match Hashtbl.find_opt tbl k with Some l -> List.sort_uniq compare l | None -> [] in
   (* THE KIND UNIVERSE: every (kind, list) non-empty at ANY isa is DEFINED at
@@ -149,12 +160,19 @@ let () =
   Printf.printf " * kind of the union over ISAs is defined (empty = absent at this ISA). */\n";
   Printf.printf "#ifndef VFFT_IL_REGISTRY_%s_H\n#define VFFT_IL_REGISTRY_%s_H\n\n#include <stddef.h>\n\n" up up;
   Printf.printf "#define VFFT_IL_ISA_NAME \"%s\"\n" isa;
-  Printf.printf "#define VFFT_IL_VW %d          /* doubles per vector: the twiddle-record width */\n" (match isa with "avx2" -> 4 | _ -> 8);
+  if f32
+  then
+    Printf.printf
+      "#define VFFT_IL_VW %d          /* floats per vector: the twiddle-record width */\n"
+      (match isa with "avx2_f32" -> 8 | _ -> 16)
+  else
+    Printf.printf "#define VFFT_IL_VW %d          /* doubles per vector: the twiddle-record width */\n" (match isa with "avx2" -> 4 | _ -> 8);
   Printf.printf "#define VFFT_IL_SYM(stem) stem##_%s\n\n" isa;
   Printf.printf "/* the frozen 11-arg z ABI (vfft_il2p_fn's pointee) */\n";
   Printf.printf "#define VFFT_IL_DECL(SYM) \\\n";
-  Printf.printf "  extern void SYM(const double *, const double *, double *, double *, \\\n";
-  Printf.printf "                  const double *, const double *, \\\n                  size_t, size_t, size_t, size_t, size_t);\n\n";
+  let e = if f32 then "float" else "double" in
+  Printf.printf "  extern void SYM(const %s *, const %s *, %s *, %s *, \\\n" e e e e;
+  Printf.printf "                  const %s *, const %s *, \\\n                  size_t, size_t, size_t, size_t, size_t);\n\n" e e;
   let total = ref 0 in
   List.iter
     (fun tag ->
