@@ -34,6 +34,9 @@
  *             2D / 3D c2c batches; --lm2dr2c / --lm2dc2r and --lm3dr2c / --lm3dc2r the 2D / 3D real
  *             batches (the contiguous queue timed beside them); --ilmt the threaded
  *             transform-contiguous batch
+ *   FP32      --f32 (a build with VFFT_HAS_FLOAT: build.py --float) beside --k1noop [--mt] or --k1nat:
+ *             the K=1 natural cell on float data through vfftf.h, MKL DFTI_SINGLE; K > 1 in the K slot
+ *             is the contiguous batch; plan z:ilp-f32, path nat-oop-f32 / nat-ip-f32 (run_k1z_cell_f32)
  * Build: python gauntlet/build.py --compile --mkl --vfft, or the CMake target vfft-gauntlet.
  *   MKL is linked LP64 through mkl_rt: ILP64 corrupts the DFTI strides array ("Inconsistent
  *   configuration parameters" at DftiCommit).
@@ -929,6 +932,343 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     free_d(rt);
     vfft_destroy(h);
 }
+
+#ifdef VFFT_HAS_FLOAT
+/* ═════════════════════════════════════════════════════════════════════════
+ * --f32 (2026-11-10): THE FP32 ARM of the K=1 natural cells, in a build with
+ * VFFT_HAS_FLOAT (gauntlet/build.py --float). A leading flag beside --k1noop
+ * (out of place; with --mt the threaded cell) or --k1nat (in place): the same
+ * cell on FLOAT data, complex float pairs, through the public FP32 door only
+ * (vfftf.h: vfftf_create / vfftf_execute / vfftf_destroy, the route from
+ * vfftf_info), against MKL DFTI_SINGLE at the same placement and thread count.
+ * The FP64 cell's protocol: the pin and the sibling guard (the threaded cell:
+ * the P-cores and >= 5 ms untimed warm), 10 warm-ups, two timing windows of
+ * best-of-5 with the idle + re-warm gap between them, cachebust + cool between
+ * the engines, the engine order by the flip argument. K > 1 in the K slot is a
+ * CONTIGUOUS batch (howmany = K, transform t at complex offset t N; MKL
+ * NUMBER_OF_TRANSFORMS = K at distance N); K omitted or 1 is one transform.
+ * The rt_err column: our float forward against MKL's DOUBLE forward of the
+ * same float input (converted), the elementwise max error over the
+ * reference's max magnitude; the FP32 limit is 1e-5, and the line says FAIL
+ * above it or on a NaN (a build without MKL: the roundtrip against N x). The
+ * csv row has the FP64 cell's columns with plan "z:ilp-f32" and path
+ * "nat-oop-f32" / "nat-ip-f32", so it never replaces an FP64 row of a shared
+ * csv. Under --mt the engaged column reads -1: vfftf.h has no engagement
+ * counter (the line prints the plan's thread count from vfftf_info instead). */
+#include "vfftf.h"
+#define K1Z_F32_LIMIT 1e-5
+static int g_f32 = 0;   /* --f32 */
+
+static float *alloc_f(size_t n)
+{
+    float *p = (float *)vfft_malloc(n * sizeof(float));
+    if (!p)
+    {
+        fprintf(stderr, "alloc failed\n");
+        exit(1);
+    }
+    return p;
+}
+static void free_f(float *p) { vfft_free(p); }
+
+/* one execute of the cell: in place on the evolving buffer S, or z0 -> S */
+#define K1Z_F32_EXEC(h, z0, S) (g_k1zip ? vfftf_execute((h), VFFT_FORWARD, (S), (S)) \
+                                        : vfftf_execute((h), VFFT_FORWARD, (z0), (S)))
+
+/* k1z_time_vfft_d's shape on the FP32 plan, forward */
+static double k1z_time_vfft_f32(vfftf_plan h, const float *z0, float *S, size_t total)
+{
+    if (g_k1zip)
+        memcpy(S, z0, 2 * total * sizeof(float));
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: the pool and the caller core settle (as the FP64 cell) */
+        const double tw = vfft_now_ns();
+        do
+            vfftf_execute(h, VFFT_FORWARD, z0, S);
+        while (vfft_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            K1Z_F32_EXEC(h, z0, S);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {   /* k1z_window_gap: the idle, then >= 10 ms of the plan's own work untimed */
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                K1Z_F32_EXEC(h, z0, S);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                K1Z_F32_EXEC(h, z0, S);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    return best;
+}
+
+#ifdef VFFT_HAS_MKL
+/* the cell's MKL descriptor at precision prec: K transforms at distance N (K = 1: one), in place or not */
+static DFTI_DESCRIPTOR_HANDLE k1z_dfti_f32(enum DFTI_CONFIG_VALUE prec, int N, size_t K, int inplace)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, prec, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR)
+        return NULL;
+    DftiSetValue(d, DFTI_PLACEMENT, inplace ? DFTI_INPLACE : DFTI_NOT_INPLACE);
+    if (K > 1)
+    {
+        DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N);
+    }
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return NULL;
+    }
+    return d;
+}
+
+/* k1z_time_mkl's shape on DFTI_SINGLE (in place under --k1nat) */
+static double k1z_time_mkl_f32(int N, size_t K, const float *z0, size_t total)
+{
+    DFTI_DESCRIPTOR_HANDLE d = k1z_dfti_f32(DFTI_SINGLE, N, K, g_k1zip);
+    if (!d)
+        return 0;
+    float *zi = alloc_f(2 * total), *zo = alloc_f(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(float));
+#define K1Z_F32_MKL() (g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo))
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: MKL's parked team wakes and settles */
+        const double tw = vfft_now_ns();
+        do
+            DftiComputeForward(d, zi, zo);
+        while (vfft_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            K1Z_F32_MKL();
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                K1Z_F32_MKL();
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                K1Z_F32_MKL();
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+#undef K1Z_F32_MKL
+    free_f(zi);
+    free_f(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+
+/* max_j |a_j - b_j| / max_j |b_j| over n values; NaN when a holds a NaN */
+static double k1z_rel_f32(const float *a, const double *b, size_t n)
+{
+    double e = 0.0, m = 0.0;
+    for (size_t j = 0; j < n; j++)
+    {
+        const double d = fabs((double)a[j] - b[j]);
+        if (d != d)
+            return NAN;
+        if (d > e) e = d;
+        if (fabs(b[j]) > m) m = fabs(b[j]);
+    }
+    return m > 0 ? e / m : e;
+}
+
+/* the rt_err column: our float forward against MKL's DOUBLE forward of the same float input;
+ * -1 when MKL cannot make the descriptor */
+static double k1z_xerr_f32(vfftf_plan h, int N, size_t K, const float *z0, size_t total)
+{
+    DFTI_DESCRIPTOR_HANDLE d = k1z_dfti_f32(DFTI_DOUBLE, N, K, 1);
+    double *zr, rel;
+    float *zv;
+    if (!d)
+        return -1.0;
+    zr = (double *)vfft_malloc(2 * total * sizeof(double));
+    zv = alloc_f(2 * total);
+    if (!zr)
+    {
+        fprintf(stderr, "alloc failed\n");
+        exit(1);
+    }
+    for (size_t i = 0; i < 2 * total; i++)
+        zr[i] = (double)z0[i];
+    DftiComputeForward(d, zr);
+    if (g_k1zip)
+    {
+        memcpy(zv, z0, 2 * total * sizeof(float));
+        vfftf_execute(h, VFFT_FORWARD, zv, zv);
+    }
+    else
+        vfftf_execute(h, VFFT_FORWARD, z0, zv);
+    rel = k1z_rel_f32(zv, zr, 2 * total);
+    vfft_free(zr);
+    free_f(zv);
+    DftiFreeDescriptor(&d);
+    return rel;
+}
+#endif
+
+/* the comparator of the FP32 cell: MKL DFTI_SINGLE (0 = none in this build) */
+static double k1z_time_cmp_f32(int N, size_t K, const float *z0, size_t total)
+{
+#ifdef VFFT_HAS_MKL
+    return k1z_time_mkl_f32(N, K, z0, total);
+#else
+    (void)N; (void)K; (void)z0; (void)total;
+    return 0;
+#endif
+}
+
+static void run_k1z_cell_f32(int N, size_t K, FILE *out, int cool_ms, int flip)
+{
+    const char *plan_s = "z:ilp-f32";
+    const char *path = g_k1zip ? "nat-ip-f32" : "nat-oop-f32";
+    const int T = g_k1noop_mt ? g_mt : 1;
+    if (!g_k1noop_mt) bench_pin_one_thread();   /* the one-thread protocol (once per process) */
+    const char *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8d %-16s   SKIP (front-door bundle unavailable)\n", N, plan_s);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = g_k1zip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1;
+    cfg.n[0] = N;
+    cfg.howmany = K;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch = K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT;
+    cfg.nthreads = T;
+    cfg.wisdom_dir = W;
+    vfftf_plan h = vfftf_create(&cfg);
+    if (!h)
+    {
+        printf("%-8d %-16s   vfftf_create FAILED: %s\n", N, plan_s, vfft_error());
+        return;
+    }
+    vfft_info_t info;
+    memset(&info, 0, sizeof info);
+    vfftf_info(h, &info);
+    const char *route = (info.route && info.route[0]) ? info.route : "-";
+
+    const size_t total = (size_t)N * K;
+    float *z0 = alloc_f(2 * total), *S = alloc_f(2 * total), *rt = alloc_f(2 * total);
+    srand(42 + N + 1);   /* the FP64 cell's seed */
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (float)((double)rand() / RAND_MAX - 0.5);
+
+    /* the roundtrip (backward of forward against N x): the column of a build without MKL */
+    if (g_k1zip)
+    {
+        memcpy(rt, z0, 2 * total * sizeof(float));
+        vfftf_execute(h, VFFT_FORWARD, rt, rt);
+        vfftf_execute(h, VFFT_BACKWARD, rt, rt);
+    }
+    else
+    {
+        vfftf_execute(h, VFFT_FORWARD, z0, S);
+        vfftf_execute(h, VFFT_BACKWARD, S, rt);
+    }
+    double rel;
+    {
+        double e = 0.0, m = 0.0;
+        const double inv = 1.0 / (double)N;
+        rel = 0.0;
+        for (size_t i = 0; i < 2 * total; i++)
+        {
+            const double d = fabs((double)rt[i] * inv - (double)z0[i]);
+            if (d != d) { rel = NAN; break; }
+            if (d > e) e = d;
+            if (fabs((double)z0[i]) > m) m = fabs((double)z0[i]);
+        }
+        if (rel == 0.0)
+            rel = m > 0 ? e / m : e;
+    }
+#ifdef VFFT_HAS_MKL
+    {   /* the cross-engine column against the double-precision reference (overwrites the roundtrip,
+         * as the FP64 cell's MKL compare does) */
+        const double x = k1z_xerr_f32(h, N, K, z0, total);
+        if (!(x < 0))
+            rel = x;
+    }
+#endif
+
+    double vns = 0, mns = 0;
+    if (flip)
+    { /* comparator first */
+        mns = k1z_time_cmp_f32(N, K, z0, total);
+        cachebust();
+        pace(cool_ms);
+        vns = k1z_time_vfft_f32(h, z0, S, total);
+    }
+    else
+    { /* ours first */
+        vns = k1z_time_vfft_f32(h, z0, S, total);
+        cachebust();
+        pace(cool_ms);
+        mns = k1z_time_cmp_f32(N, K, z0, total);
+    }
+    const double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
+    const double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
+    const int bad = !(rel < K1Z_F32_LIMIT);
+    printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e  K=%d T=%d route=%s%s\n",
+           N, plan_s, path, vns, mns, vgf, ratio, rel, (int)K, T, route,
+           bad ? "   *** FAIL: above the FP32 limit 1e-5 ***" : "");
+    if (g_k1noop_mt)
+        printf("         k1noop-mt N=%-6d T=%d: engaged n/a at FP32 (vfftf.h has no counter); the plan runs on %d threads\n",
+               N, g_mt, info.nthreads);
+    if (out)
+    {
+        char row[320];
+        snprintf(row, sizeof row, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%d",
+                 N, (int)K, plan_s, path, vns, mns, vgf, ratio, rel, route, flip);
+        if (g_k1noop_mt)   /* the threaded run's engaged column: no FP32 counter */
+            strncat(row, ",-1", sizeof row - strlen(row) - 1);
+        strncat(row, "\n", sizeof row - strlen(row) - 1);
+        fflush(out);
+        if (!k1z_csv_replace(g_csv_path, row))   /* a re-run REPLACES the cell's row */
+            fputs(row, out);
+        fflush(out);
+    }
+    free_f(z0);
+    free_f(S);
+    free_f(rt);
+    vfftf_destroy(h);
+}
+#endif /* VFFT_HAS_FLOAT */
 
 /* ═════════════════════════════════════════════════
  * --realfwd / --realbwd : the REAL gauntlet cell (2026-09-29): 1D at K=1, 1D
@@ -4948,6 +5288,9 @@ int main(int argc, char **argv)
         "  1D real   --realfwd / --realbwd; --zr2c\n"
         "  2D / 3D   --2dilnat / --3dilnat; --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt\n"
+#ifdef VFFT_HAS_FLOAT
+        "  FP32      --f32 with --k1noop [--mt] / --k1nat: the cell on float data (K > 1: a contiguous batch), MKL DFTI_SINGLE\n"
+#endif
         "  wisdom = a file inside the wisdom directory (names the directory); the header of bench_1d_vs_mkl.c has the rest\n";
     /* --mt: the threaded cells (both engines at T), pinned core 0. Detect + strip
      * argv[1] so the positional args below keep their meaning. Thread count =
@@ -5107,6 +5450,10 @@ int main(int argc, char **argv)
             const char *e = getenv("VFFT_MT");
             g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
         }
+#ifdef VFFT_HAS_FLOAT
+        else if (strcmp(argv[1], "--f32") == 0)
+            g_f32 = 1;   /* the FP32 arm of --k1noop / --k1nat (the run_k1z_cell_f32 block) */
+#endif
         else
             break;
         argv++;
@@ -5118,6 +5465,22 @@ int main(int argc, char **argv)
         fputs(usage, stderr);
         return 2;
     }
+#ifdef VFFT_HAS_FLOAT
+    /* --f32 serves the K=1 natural cell and its contiguous batch, MKL as the comparator: --k1noop
+     * (with --mt the threaded cell) or --k1nat, nothing else */
+    if (g_f32 && (!g_k1nat || g_k1dir || (mt && g_k1zip) || g_cmp_fftw || il2d || il3d || real2d || g_k3nat ||
+                  g_k2nat || g_zr2c || g_kzb || g_kzbr || g_lm2d || g_lm2dr || g_lm3dr || g_real || g_k2real ||
+                  g_k3real || g_real_ip || g_ilmt
+#ifdef VFFT_HAS_KFR
+                  || g_cmp_kfr
+#endif
+                  ))
+    {
+        fprintf(stderr, "--f32: the FP32 arm is the K=1 natural cell against MKL: --k1noop (out of place; --mt threaded) "
+                        "or --k1nat (in place); K > 1 in the K slot is the contiguous batch\n");
+        return 2;
+    }
+#endif
 #ifdef VFFT_HAS_KFR
     if (g_cmp_kfr && (mt || il2d || il3d || real2d || g_k2real || g_k3real || g_real_ip))
     {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) and the 2D/3D c2c cells (--2dilnat / --3dilnat) */
@@ -5463,6 +5826,26 @@ int main(int argc, char **argv)
             fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip%s\n",
                     g_k1noop_mt ? ",engaged" : "");
     }
+#ifdef VFFT_HAS_FLOAT
+    if (g_f32)
+    {   /* --f32: one isolated FP32 cell per process (the N slot; K > 1 in the K slot: the contiguous
+         * batch); nothing else runs in this process */
+        if (!target_N)
+        {
+            printf("--f32 needs the cell's N\n");
+            if (out)
+                fclose(out);
+            fclose(f);
+            return 2;
+        }
+        run_k1z_cell_f32(target_N, (argc >= 6 && target_K > 1) ? (size_t)target_K : 1u, out, cool_ms, flip);
+        if (out)
+            fclose(out);
+        fclose(f);
+        printf("\nbenched 1 cell.  CSV -> %s\n", csv);
+        return 0;
+    }
+#endif
     if (g_k3nat)
     {   /* --3dilnat: the 3D interleaved gauntlet cell, the shape N1xN2xN3 in
          * the N argument; nothing else runs in this process (2026-09-24) */

@@ -31,11 +31,24 @@
  * fftw3.dll) and never loaded without
  * the flag. The gauntlet's `verify --cmp fftw` passes it.
  *
+ * --f32 (2026-11-10, a build with VFFT_HAS_FLOAT: build.py --float): the
+ * FP32 plans of the same 1D cells (vfftf.h), the powers of two among the N
+ * given (FP32 serves no other length; the others are skipped and counted).
+ * The input is drawn as above and ROUNDED TO FLOAT; the reference is the
+ * long-double DFT of that float-rounded input, so the error is the FP32
+ * transform's own. Pass: the forward's and the roundtrip's elementwise max
+ * error below 1e-5 (the FP32 limit); the run's largest of each is printed at
+ * the end. MKL's rows run DFTI_SINGLE on the same float input against the same
+ * reference; the csv labels are VectorFFT-f32 and MKL-f32. --ip and --k K as
+ * above (--k K: a contiguous batch, transform 0 gated); not with --2d, --3d,
+ * --fftw or --time.
+ *
  * Run:   k1_fwd_ref_probe.exe [--ip] [--fftw] [--csv FILE] <wisdir> N [N ...]   (N or a-b)
  *        k1_fwd_ref_probe.exe [--csv FILE] --2d <wisdir> N1xN2 [N1xN2 ...]
  *        (2026-09-23: the 2D interleaved cell, OOP natural K=1, against a
  *        long-double 2D DFT -- row DFTs then column DFTs; csv N = "N1xN2")
- * Build: python gauntlet/build.py --src gauntlet/k1_fwd_ref_probe.c --vfft --mkl --compile
+ *        k1_fwd_ref_probe.exe --f32 [--ip] [--k K] [--csv FILE] <wisdir> N [N ...]
+ * Build: python gauntlet/build.py --src gauntlet/k1_fwd_ref_probe.c --vfft --mkl --compile [--float]
  */
 #include <math.h>
 #include <stdio.h>
@@ -267,6 +280,127 @@ static int probe(const char *W, int N)
     free(x); free(X); free(y); free(r);
     return ok;
 }
+
+#ifdef VFFT_HAS_FLOAT
+/* --f32 (see the header): the FP32 plan of one 1D cell, through vfftf.h */
+#include "vfftf.h"
+#define F32_LIMIT 1e-5   /* the FP32 pass limit: relative, elementwise max */
+static int g_f32 = 0;
+static int g_f32_skipped = 0;                    /* lengths that are not powers of two */
+static double g_f32_maxf = 0, g_f32_maxr = 0;    /* the run's largest forward / roundtrip error */
+static int g_f32_maxf_n = 0, g_f32_maxr_n = 0;
+/* relerr / l2err / rterr on float data; NaN when the data holds one */
+static double relerr_f(const float *a, const long double *b, int N, double scale)
+{
+    long double m = 0, e = 0;
+    for (int j = 0; j < 2 * N; j++)
+    {
+        long double d = fabsl((long double)a[j] * scale - b[j]);
+        if (d != d) return NAN;
+        if (fabsl(b[j]) > m) m = fabsl(b[j]);
+        if (d > e) e = d;
+    }
+    return (double)(m > 0 ? e / m : e);
+}
+static double l2err_f(const float *a, const long double *b, int N, double scale)
+{
+    long double num = 0, den = 0;
+    for (int j = 0; j < 2 * N; j++)
+    {
+        long double d = (long double)a[j] * scale - b[j];
+        num += d * d; den += b[j] * b[j];
+    }
+    return (double)(den > 0 ? sqrtl(num / den) : sqrtl(num));
+}
+static double rterr_f(const float *r, const float *x, int N, double scale)
+{
+    double m = 0, e = 0;
+    for (int j = 0; j < 2 * N; j++)
+    {
+        const double d = fabs((double)r[j] * scale - (double)x[j]);
+        if (d != d) return NAN;
+        if (fabs((double)x[j]) > m) m = fabs((double)x[j]);
+        if (d > e) e = d;
+    }
+    return m > 0 ? e / m : e;
+}
+#ifdef VFFT_HAS_MKL
+/* MKL's FP32 forward and backward of the same cell, out of place, natural order */
+static int mkl_cell_f32(int N, const float *x, float *y, float *r)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_SINGLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR) return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return 0; }
+    DftiComputeForward(d, (void *)x, y);
+    DftiComputeBackward(d, y, r);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+#endif
+static int probe_f32(const char *W, int N)
+{
+    vfft_config_t cfg; vfftf_plan h; double ef = 1, er = 1, el = 1; int ok;
+    const size_t K = (size_t)g_k, tot = 2 * (size_t)N * K;
+    float *x = calloc(tot, sizeof(float)), *y = calloc(tot, sizeof(float)), *r = calloc(tot, sizeof(float));
+    double *xd = calloc(2 * (size_t)N, sizeof(double));
+    long double *X = calloc(2 * (size_t)N, sizeof(long double));
+    vfft_info_t info;
+    srand(4242 + N);   /* the FP64 probe's draw, rounded to float */
+    for (size_t j = 0; j < tot; j++) x[j] = (float)((double)rand() / RAND_MAX - 0.5);
+    for (size_t j = 0; j < 2 * (size_t)N; j++) xd[j] = (double)x[j];
+    naive_dft(xd, X, N);   /* transform 0's reference, of the float-rounded input */
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C; cfg.placement = g_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+    cfg.rank = 1; cfg.n[0] = N; cfg.howmany = K; cfg.order = VFFT_ORDER_NATURAL;
+    cfg.batch = K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom_dir = W;
+    h = vfftf_create(&cfg);
+    memset(&info, 0, sizeof info);
+    if (h) vfftf_info(h, &info);
+    if (h && g_ip)
+    {   /* in place: the forward on a copy of x, then the backward on that */
+        memcpy(y, x, tot * sizeof(float));
+        vfftf_execute(h, VFFT_FORWARD, y, y);
+        ef = relerr_f(y, X, N, 1.0); el = l2err_f(y, X, N, 1.0);
+        vfftf_execute(h, VFFT_BACKWARD, y, y);
+        er = rterr_f(y, x, N, 1.0 / N);
+    }
+    else if (h)
+    {
+        vfftf_execute(h, VFFT_FORWARD, x, y);
+        vfftf_execute(h, VFFT_BACKWARD, y, r);
+        ef = relerr_f(y, X, N, 1.0); el = l2err_f(y, X, N, 1.0); er = rterr_f(r, x, N, 1.0 / N);
+    }
+    ok = h && ef < F32_LIMIT && er < F32_LIMIT;
+    if (h)
+    {   /* the run's largest errors (a NaN counts as the largest, and stays) */
+        if (g_f32_maxf == g_f32_maxf && !(ef <= g_f32_maxf)) { g_f32_maxf = ef; g_f32_maxf_n = N; }
+        if (g_f32_maxr == g_f32_maxr && !(er <= g_f32_maxr)) { g_f32_maxr = er; g_f32_maxr_n = N; }
+    }
+    printf("%-6d %-7s %s f32 fwd %.2e  rt %.2e  %s", N, h ? (info.route && info.route[0] ? info.route : "-") : "NOPLAN",
+           g_ip ? "ip " : "oop", ef, er, ok ? "ok" : "*** FAIL ***");
+    if (!h) printf(" (%s)", vfft_error());
+    if (h && g_csv) fprintf(g_csv, "VectorFFT-f32,%d,%.3e,%.3e,%.3e\n", N, el, ef, er);
+#ifdef VFFT_HAS_MKL
+    if (g_csv && K == 1)
+    {
+        float *my = calloc(tot, sizeof(float)), *mr = calloc(tot, sizeof(float));
+        if (mkl_cell_f32(N, x, my, mr))
+        {
+            double mf = relerr_f(my, X, N, 1.0), ml = l2err_f(my, X, N, 1.0), mrt = rterr_f(mr, x, N, 1.0 / N);
+            printf("  mkl fwd %.2e", mf);
+            fprintf(g_csv, "MKL-f32,%d,%.3e,%.3e,%.3e\n", N, ml, mf, mrt);
+        }
+        free(my); free(mr);
+    }
+#endif
+    printf("\n");
+    if (h) vfftf_destroy(h);
+    free(x); free(xd); free(X); free(y); free(r);
+    return ok;
+}
+#endif /* VFFT_HAS_FLOAT */
 /* the 2D reference: separable, row DFTs of length N2 then column DFTs of
  * length N1, every sum in long double over a reduced-angle table */
 static void naive_dft2(const double *x, long double *X, int N1, int N2)
@@ -505,10 +639,27 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a0], "--csv") && a0 + 1 < argc) { csv = argv[a0 + 1]; a0++; }
         else if (!strcmp(argv[a0], "--2d")) twod = 1;
         else if (!strcmp(argv[a0], "--3d")) threed = 1;   /* the 3D cell (2026-09-24): N1xN2xN3 */
+#ifdef VFFT_HAS_FLOAT
+        else if (!strcmp(argv[a0], "--f32")) g_f32 = 1;   /* the FP32 plans (vfftf.h), 2026-11-10 */
+#endif
         else break;
         a0++;
     }
-    if (argc < a0 + 2) { printf("usage: %s [--ip] [--fftw] [--csv FILE] [--2d | --3d] <wisdir> N [N ...] (N or a-b; with --2d: N1xN2, --3d: N1xN2xN3)\n", argv[0]); return 2; }
+    if (argc < a0 + 2)
+    {
+        printf("usage: %s [--ip] [--fftw] [--csv FILE] [--2d | --3d] <wisdir> N [N ...] (N or a-b; with --2d: N1xN2, --3d: N1xN2xN3)\n", argv[0]);
+#ifdef VFFT_HAS_FLOAT
+        printf("       %s --f32 [--ip] [--k K] [--csv FILE] <wisdir> N [N ...] (the FP32 plans: the powers of two among the N)\n", argv[0]);
+#endif
+        return 2;
+    }
+#ifdef VFFT_HAS_FLOAT
+    if (g_f32 && (twod || threed || g_fftw || g_time))
+    {
+        printf("--f32: the FP32 plans are 1D (vfftf.h), with MKL's rows; not with --2d, --3d, --fftw or --time\n");
+        return 2;
+    }
+#endif
     setvbuf(stdout, NULL, _IONBF, 0);
     if (csv)
     {
@@ -548,11 +699,26 @@ int main(int argc, char **argv)
         for (int N = lo; N <= hi; N++)
         {
             if (N < 2) continue;
+#ifdef VFFT_HAS_FLOAT
+            if (g_f32)
+            {   /* FP32 serves the powers of two only: any other length is not its cell */
+                if (N & (N - 1)) { g_f32_skipped++; continue; }
+                cells++;
+                if (!probe_f32(W, N)) fails++;
+                continue;
+            }
+#endif
             cells++;
             if (!probe(W, N)) fails++;
         }
     }
     if (g_csv) fclose(g_csv);
+#ifdef VFFT_HAS_FLOAT
+    if (g_f32)
+        printf("f32: the largest forward error %.2e (N=%d), the largest roundtrip error %.2e (N=%d), limit %.0e; "
+               "%d lengths skipped (not powers of two)\n",
+               g_f32_maxf, g_f32_maxf_n, g_f32_maxr, g_f32_maxr_n, F32_LIMIT, g_f32_skipped);
+#endif
     printf("=== %d cells, %d failed: %s ===\n", cells, fails, fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;
 }
