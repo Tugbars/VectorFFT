@@ -201,6 +201,9 @@ static inline void _ztt_mt_tiles(int T, const vfft_ztt_plan_t *p, int kind, cons
  * cannot run: TILES needs a tile and at least two of them) */
 static inline int vfft_ztt_mt_bind(vfft_ztt_plan_t *p, int T, int arm)
 {
+#ifdef VFFT_FLOAT
+    if (!p->st_fwd[0]) { p->mt = 0; p->mt_t = 0; return 0; }   /* no stage kernels: serial only */
+#endif
     if (T < 2 || arm < 1 || arm > 2) { p->mt = 0; p->mt_t = 0; return 0; }
     if (arm == 2 && (p->tile == 0 || (size_t)p->N / p->tile < 2)) { p->mt = 0; p->mt_t = 0; return 0; }
     p->mt = arm;
@@ -299,6 +302,9 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *z
     const int ip = (zin == zout);
     int na = 0, a, best = 0, reps;
     if (T < 2) { p->mt = 0; p->mt_t = 0; return 0; }
+#ifdef VFFT_FLOAT
+    if (!p->st_fwd[0]) { p->mt = 0; p->mt_t = 0; if (ns_out) ns_out[0] = ns_out[1] = ns_out[2] = -1.0; return 0; }
+#endif
     p->mt_t = T;
     {   /* reps from one serial timing */
         double t0;

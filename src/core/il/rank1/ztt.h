@@ -420,6 +420,15 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
             }
             ok = ok && p->st_fwd[s] && p->st_bwd[s];
         }
+#ifdef VFFT_FLOAT
+        if (!ok && !staged)
+        {   /* FP32: a fused cell runs whole without its stage kernels; only the threaded arm and the
+             * staged executor need them, so their absence clears the table (ztt_mt.h then declines) */
+            for (s = 0; s < nf; s++) p->st_fwd[s] = p->st_bwd[s] = 0;
+            p->tl_fwd_plane = p->tl_bwd_plane = 0;
+            ok = 1;
+        }
+#endif
         if (!ok)
         {
             if (getenv("VFFT_NAT_LOG"))
