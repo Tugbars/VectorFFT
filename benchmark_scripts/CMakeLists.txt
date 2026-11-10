@@ -8,9 +8,14 @@
 #   cmake --build <build> --target vectorfft_vs_mkl_selected
 #   <build>/benchmark_scripts/vectorfft_vs_mkl_selected
 #
+#   vectorfft_vs_mkl_selected          18 commonly used transforms, 1D / 2D / 3D, the estimate's plans
+#   vectorfft_vs_mkl_selected_planned  the same 18, the planner's plans (measured into this machine's wisdom folder)
+#   vectorfft_vs_mkl_pow2              the 1D powers of two from 64 to 4M, the estimate's plans
+#
 # Each program compiles the library into itself (vectorfft_vs_mkl.h includes src/core/vfft.c with the
 # gauntlet's flags and store definitions, as vfft_core is built): it writes the estimate's plans into a store
-# and checks them before the bench times them. It times nothing itself.
+# and checks them, or plans through the gauntlet's recal_1d_probe, before the bench times them. It times
+# nothing itself.
 # ============================================================================
 
 if(NOT VFFT_MKL_FOUND)
@@ -45,13 +50,14 @@ if(WIN32)
     message(STATUS "VectorFFT: vectorfft_vs_mkl_* run the bench with MKL from '${_vs_mkl_bin}', OpenMP from '${_vs_omp_bin}'")
 endif()
 
-set(VFFT_VS_MKL_PROGRAMS vectorfft_vs_mkl_selected)
+set(VFFT_VS_MKL_PROGRAMS vectorfft_vs_mkl_selected vectorfft_vs_mkl_selected_planned vectorfft_vs_mkl_pow2)
 foreach(_p ${VFFT_VS_MKL_PROGRAMS})
     add_executable(${_p} "${CMAKE_CURRENT_SOURCE_DIR}/${_p}.c" $<TARGET_OBJECTS:dagcodelets>)
     target_include_directories(${_p} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" ${VFFT_INCLUDE_DIRS})
     target_compile_options(${_p} PRIVATE ${VFFT_C_FLAGS})
     target_compile_definitions(${_p} PRIVATE ${VFFT_WISDOM_DEFS} _CRT_SECURE_NO_WARNINGS
         "VS_BENCH_EXE=\"$<TARGET_FILE:bench_1d_vs_mkl>\""
+        "VS_RECAL_EXE=\"$<TARGET_FILE:recal_1d_probe>\""
         "VS_TOOLCHAIN_BIN=\"${_vs_cc_bin}\"")
     if(_vs_mkl_bin)
         target_compile_definitions(${_p} PRIVATE "VS_MKL_BIN=\"${_vs_mkl_bin}\"")
@@ -65,7 +71,7 @@ foreach(_p ${VFFT_VS_MKL_PROGRAMS})
             target_link_options(${_p} PRIVATE -static)   # starts without the compiler's DLLs on PATH
         endif()
     endif()
-    add_dependencies(${_p} bench_1d_vs_mkl)
+    add_dependencies(${_p} bench_1d_vs_mkl recal_1d_probe)   # the bench, and the planning tool (the planned program)
     add_custom_command(TARGET ${_p} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E echo "VectorFFT: built $<TARGET_FILE_NAME:${_p}> -- codelet ISA ${VFFT_ISA}; run it: $<TARGET_FILE:${_p}>"
         VERBATIM)

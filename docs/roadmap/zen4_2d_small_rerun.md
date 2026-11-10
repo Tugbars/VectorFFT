@@ -37,7 +37,7 @@ GCC on Windows spills vector registers with unaligned moves at a stack offset th
 ## What to run
 
 1. **Check the change is in your checkout.** `grep -n "_k2x_il2d_c2c" src/core/il/il_execute.h` must find it. If it doesn't, pull first.
-2. **Rebuild the tools.** The gauntlet uses prebuilt binaries in `gauntlet/`, and stale ones test old code. Run `python benchmark_scripts/build_tools.py --fftw-dll <the same FFTW DLL as on 10-28>`. On 10-28 that was `gauntlet/fftw/libfftw3-3.dll`, FFTW 3.3.10 with AVX-512.
+2. **Rebuild the tools.** The gauntlet uses prebuilt binaries in `gauntlet/`, and stale ones test old code. Run `python benchmark_scripts/scripts/build_tools.py --fftw-dll <the same FFTW DLL as on 10-28>`. On 10-28 that was `gauntlet/fftw/libfftw3-3.dll`, FFTW 3.3.10 with AVX-512.
 3. **Run the cells.** Use a quiet machine on mains power; the 10-28 pow2 run on this laptop ran at half speed. One thread, the default 2D contract.
 
    ```

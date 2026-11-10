@@ -25,8 +25,8 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 `vectorfft-fftw-pow2-gflops.svg`:
 
 ```sh
-./benchmark_scripts/build_avx512.sh   # once; build_avx2.sh on a CPU without AVX-512
-./benchmark_scripts/run_pow2.sh       # FFTW; run_pow2.sh mkl for MKL
+./benchmark_scripts/scripts/build_avx512.sh   # once; build_avx2.sh on a CPU without AVX-512
+./benchmark_scripts/scripts/run_pow2.sh       # FFTW; run_pow2.sh mkl for MKL
 ```
 
 It is not one of the five pictures and the full runs never include it.
@@ -44,7 +44,9 @@ build/benchmark_scripts/vectorfft_vs_mkl_selected
 
 | Target | What it runs | Time |
 |---|---|---|
-| `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 3 minutes |
+| `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 2 minutes |
+| `vectorfft_vs_mkl_selected_planned` | the same 18 transforms with the plans of the library's default planner, which measures: each transform is planned first into this machine's wisdom folder (`src/wisdom/<CPU>/`), where a transform planned on this machine before is read back at once | 2 minutes, plus the planning of the transforms new to this machine (up to about 15 minutes when all are new) |
+| `vectorfft_vs_mkl_pow2` | the 1D transform at every power of two from 64 to 4,194,304 (17 lengths), the lengths MKL is tuned for most; the estimate's plans | about 2 minutes |
 
 Each program times through the gauntlet's own bench (`gauntlet/bench_1d_vs_mkl`), as
 `gauntlet/gauntlet.py` does: one process per transform and engine order, the timed thread
@@ -53,7 +55,8 @@ the target builds the bench. It needs Intel MKL where CMake finds it (`MKLROOT`)
 MKL the targets are not configured. It prints a table, MKL's time over VectorFFT's for each
 transform (the worse of the two engine orders), and writes it with the bench's own rows to a
 run directory under `vectorfft_results/` in the current directory (`--out DIR` names
-another). Nothing is written into `src/wisdom/`.
+another). Only `vectorfft_vs_mkl_selected_planned` writes into `src/wisdom/`: the plans it
+measures, as the library itself does.
 
 ## What you need
 
@@ -130,12 +133,12 @@ library a run will use. With `mkl` none of this runs.
 ### 1. Build the tools
 
 ```sh
-./benchmark_scripts/build_avx512.sh                    # the AVX-512 tree, on a CPU with AVX-512; Windows: the FFTW in gauntlet/fftw/ is used
-./benchmark_scripts/build_avx2.sh                      # the AVX2 tree, on a CPU without AVX-512
-./benchmark_scripts/build_avx512.sh --fftw-dll <path>  # Linux, or an FFTW of your own
+./benchmark_scripts/scripts/build_avx512.sh                    # the AVX-512 tree, on a CPU with AVX-512; Windows: the FFTW in gauntlet/fftw/ is used
+./benchmark_scripts/scripts/build_avx2.sh                      # the AVX2 tree, on a CPU without AVX-512
+./benchmark_scripts/scripts/build_avx512.sh --fftw-dll <path>  # Linux, or an FFTW of your own
 ```
 
-Each script calls `python benchmark_scripts/build_tools.py` with its ISA (`--isa avx512` or
+Each script calls `python benchmark_scripts/scripts/build_tools.py` with its ISA (`--isa avx512` or
 `--isa avx2`) and your arguments (`python3` when that is a working Python, else `python`):
 
 | Option | Meaning |
@@ -151,7 +154,7 @@ after the other, and prints each build's result line. The first build compiles t
 library's codelets (about 1,600 files) once; that takes a few minutes, and later builds
 reuse them until a codelet or the ISA changes. The binaries land in `gauntlet/`. What was
 chosen (the ISA, whether MKL is in, the FFTW path and its version string, the compiler) is
-recorded in `benchmark_scripts/.config.json`, which `run_suite.py` reads; the file is per
+recorded in `benchmark_scripts/scripts/.config.json`, which `run_suite.py` reads; the file is per
 machine and not tracked by git. Run the other script to switch trees: the record changes
 with it.
 
@@ -160,14 +163,14 @@ with it.
 One script per picture, and one for all five:
 
 ```sh
-./benchmark_scripts/run_pow2.sh fftw               # the quick check: 1D, every power of two to 2^23, minutes
-./benchmark_scripts/run_all.sh fftw --yes          # all five pictures, one after the other
-./benchmark_scripts/run_1d.sh fftw --yes           # the 1D picture
-./benchmark_scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
-./benchmark_scripts/run_2d.sh fftw --yes           # the 2D picture
-./benchmark_scripts/run_2d_mt.sh fftw --yes        # the 2D picture threaded (needs the run of run_2d.sh)
-./benchmark_scripts/run_3d.sh fftw --yes           # the 3D picture
-./benchmark_scripts/run_2d.sh mkl --yes            # the same against MKL
+./benchmark_scripts/scripts/run_pow2.sh fftw               # the quick check: 1D, every power of two to 2^23, minutes
+./benchmark_scripts/scripts/run_all.sh fftw --yes          # all five pictures, one after the other
+./benchmark_scripts/scripts/run_1d.sh fftw --yes           # the 1D picture
+./benchmark_scripts/scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
+./benchmark_scripts/scripts/run_2d.sh fftw --yes           # the 2D picture
+./benchmark_scripts/scripts/run_2d_mt.sh fftw --yes        # the 2D picture threaded (needs the run of run_2d.sh)
+./benchmark_scripts/scripts/run_3d.sh fftw --yes           # the 3D picture
+./benchmark_scripts/scripts/run_2d.sh mkl --yes            # the same against MKL
 ```
 
 The threaded picture runs at as many threads as your machine has physical cores in its
@@ -176,7 +179,7 @@ front page's own picture used 8 threads on an Intel Core i9-14900KF with 8 P-cor
 six-core Zen 4 the script uses 6. `--threads N` sets another count.
 
 The first argument is the comparator, `fftw` (the default when left out) or `mkl`; every
-further argument goes to `python benchmark_scripts/run_suite.py`, the script they all call
+further argument goes to `python benchmark_scripts/scripts/run_suite.py`, the script they all call
 (`run_all.sh fftw --yes` is `run_suite.py --cmp fftw --yes`, `run_2d.sh mkl` is
 `run_suite.py --cmp mkl --sets 2d`). Its options:
 
@@ -278,11 +281,11 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 
 ## Files
 
-- `build_avx512.sh`, `build_avx2.sh` -- build the tools with the AVX-512 or the AVX2 tree: call `build_tools.py` with that ISA and your arguments
-- `run_all.sh`, `run_1d.sh`, `run_accuracy.sh`, `run_2d.sh`, `run_2d_mt.sh`, `run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `run_suite.py`'s options
-- `run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
-- `run_estimate_pow2.sh`, `estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused. Windows only; `--help` for the options
-- `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`
-- `run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
-- `.config.json` -- the record of the last build (per machine, not tracked)
-- `CMakeLists.txt`, `vectorfft_vs_mkl_selected.c`, `vectorfft_vs_mkl.h` -- the build targets above: the programs' cell lists and the machinery they share
+- `scripts/build_avx512.sh`, `scripts/build_avx2.sh` -- build the tools with the AVX-512 or the AVX2 tree: call `scripts/build_tools.py` with that ISA and your arguments
+- `scripts/run_all.sh`, `scripts/run_1d.sh`, `scripts/run_accuracy.sh`, `scripts/run_2d.sh`, `scripts/run_2d_mt.sh`, `scripts/run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `scripts/run_suite.py`'s options
+- `scripts/run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
+- `scripts/run_estimate_pow2.sh`, `scripts/estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused. Windows only; `--help` for the options
+- `scripts/build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `scripts/.config.json`
+- `scripts/run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
+- `scripts/.config.json` -- the record of the last build (per machine, not tracked)
+- `CMakeLists.txt`, `vectorfft_vs_mkl_selected.c`, `vectorfft_vs_mkl_selected_planned.c`, `vectorfft_vs_mkl_pow2.c`, `vectorfft_vs_mkl.h` -- the build targets above: the programs, and the machinery and selection they share

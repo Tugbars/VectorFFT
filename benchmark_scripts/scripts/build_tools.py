@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """build_tools.py -- build the gauntlet's three tools for the benchmark scripts (benchmark_scripts/README.md).
 
-    python benchmark_scripts/build_tools.py --fftw-dll <path to fftw3.dll or libfftw3.so>
-    python benchmark_scripts/build_tools.py --isa avx2 --fftw-dll <path>       # the AVX2 codelet tree, on a CPU without AVX-512
-    python benchmark_scripts/build_tools.py --no-mkl                            # without MKL, even when it is installed
+    python benchmark_scripts/scripts/build_tools.py --fftw-dll <path to fftw3.dll or libfftw3.so>
+    python benchmark_scripts/scripts/build_tools.py --isa avx2 --fftw-dll <path>       # the AVX2 codelet tree, on a CPU without AVX-512
+    python benchmark_scripts/scripts/build_tools.py --no-mkl                            # without MKL, even when it is installed
 
 Builds bench_1d_vs_mkl, recal_1d_probe and k1_fwd_ref_probe through gauntlet/build.py, one
 after the other, with the library (--vfft) and with MKL (--mkl, the bench and the verify
 probe) when MKL is on. The binaries land in gauntlet/, where gauntlet.py looks for them.
-What was chosen is written to benchmark_scripts/.config.json, which run_suite.py reads: the
+What was chosen is written to benchmark_scripts/scripts/.config.json, which run_suite.py reads: the
 ISA, whether MKL is built in, the FFTW library's path and its version string, the compiler.
 
     --isa avx2|avx512   the codelet tree to compile (VFFT_ISA for build.py; default avx512)
@@ -32,7 +32,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(os.path.dirname(HERE))   # benchmark_scripts/scripts/ -> the repository
 GAUNTLET = os.path.join(ROOT, "gauntlet")
 CONFIG = os.path.join(HERE, ".config.json")
 # (source stem, built with --mkl when MKL is on): the calibrator never links MKL
@@ -74,7 +74,7 @@ def resolve_fftw(given, recorded):
     tried = []
     if given:                       # named on the command line: that one, or nothing
         return (given if not os.path.dirname(given) or os.path.isfile(given) else None), ["--fftw-dll: " + given]
-    for what, p in (("benchmark_scripts/.config.json", recorded),
+    for what, p in (("benchmark_scripts/scripts/.config.json", recorded),
                     ("VFFT_FFTW_DLL", os.environ.get("VFFT_FFTW_DLL"))) + fftw_defaults():
         if p:
             tried.append("%s: %s" % (what, p))

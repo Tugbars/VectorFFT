@@ -2,8 +2,8 @@
 (VFFT_FLAG_ESTIMATE, planned by formulas, nothing measured) against its own measured plan (the planner's,
 banked in the wisdom store), in one process per set:
 
-    python benchmark_scripts/estimate_pow2.py [options]
-    ./benchmark_scripts/run_estimate_pow2.sh [options]
+    python benchmark_scripts/scripts/estimate_pow2.py [options]
+    ./benchmark_scripts/scripts/run_estimate_pow2.sh [options]
 
     --isa avx512|avx2   the codelet tree to compile (default avx512)
     --sets LIST         which sets, from 1d, 2d, 3d (complex) and r2d, r3d (real: R2C and C2R); default 1d,2d,3d
@@ -38,7 +38,7 @@ import shutil
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # benchmark_scripts/scripts/
 GAUNTLET = os.path.join(ROOT, "gauntlet")
 EST = os.path.join(ROOT, "src", "estimate")
 EXE = ".exe" if os.name == "nt" else ""

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """run_suite.py -- the five benchmark pictures of the repository's README on this machine, against FFTW or MKL (benchmark_scripts/README.md).
 
-    python benchmark_scripts/run_suite.py --cmp fftw --yes                     # all five sets
-    python benchmark_scripts/run_suite.py --cmp mkl --sets 2d,2d-mt8 --yes     # two of them
-    python benchmark_scripts/run_suite.py --cmp fftw --plots-only              # redraw from runs already finished
+    python benchmark_scripts/scripts/run_suite.py --cmp fftw --yes                     # all five sets
+    python benchmark_scripts/scripts/run_suite.py --cmp mkl --sets 2d,2d-mt8 --yes     # two of them
+    python benchmark_scripts/scripts/run_suite.py --cmp fftw --plots-only              # redraw from runs already finished
 
 Each set is one command of the gauntlet (gauntlet/gauntlet.py: the README's own command with
 --cmp added), then the plot script of that picture (src/tools/plots/), drawn into the run
@@ -269,7 +269,7 @@ def write_summary(s, machine, lines):
         for part in open(path, encoding="utf-8").read().split("\n## ")[1:]:
             sections[part.split("\n", 1)[0].strip()] = "## " + part.rstrip() + "\n"
     sections[s.name] = "## %s\n\n%s\n\n%s\n" % (s.name, s.about, "\n".join("- " + l for l in lines))
-    head = "# %s\n\nWritten by benchmark_scripts/run_suite.py, %s.\n\n%s\n\n" % (
+    head = "# %s\n\nWritten by benchmark_scripts/scripts/run_suite.py, %s.\n\n%s\n\n" % (
         s.run, datetime.datetime.now().strftime("%Y-%m-%d %H:%M"), "\n".join("- " + l for l in machine))
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(head + "\n".join(sections[k] for k in ALL_SETS if k in sections))

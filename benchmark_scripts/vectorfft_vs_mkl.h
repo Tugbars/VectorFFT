@@ -7,16 +7,24 @@
  * timing), a control cell before and after each dimension's cells, the bench's own csv. Nothing is timed in
  * this program itself.
  *
- * The plans are the library's ESTIMATE (VFFT_FLAG_ESTIMATE: planned from formulas, nothing measured). The bench
- * creates its plans from a wisdom store, so this program writes the estimate's plans as rows into a new store
- * in the run directory, with the calls the estimate's front door makes for one thread
- * (src/core/il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h). Before anything is timed every cell is
- * checked: the store's plan must be served without a measurement, and its output must equal, bit for bit, the
- * output of a plan created with VFFT_FLAG_ESTIMATE. So the bench times exactly the estimate's plan.
+ * The bench creates its plans from a wisdom store. Two sources of plans:
+ *
+ *   ESTIMATE (vs_main measured = 0): the library's VFFT_FLAG_ESTIMATE plans (planned from formulas, nothing
+ *   measured). This program writes them as rows into a new store in the run directory, with the calls the
+ *   estimate's front door makes for one thread (src/core/il/estimate/c2c_estimate_il.h, c2c_estimate_nd_il.h).
+ *   Before anything is timed every cell is checked: the store's plan must be served without a measurement, and
+ *   its output must equal, bit for bit, the output of a plan created with VFFT_FLAG_ESTIMATE. So the bench
+ *   times exactly the estimate's plan.
+ *
+ *   THE PLANNER (measured = 1): the library's default planning, which measures. The store is this machine's
+ *   own wisdom folder, the one the library itself serves from (vfft_wisdom_folder(): src/wisdom/<CPU>/). Each
+ *   cell is planned first with the gauntlet's planning tool (recal_1d_probe, as gauntlet.py's calibrate stage
+ *   runs it): a cell this machine planned before is read back at once, a new one is measured and saved there,
+ *   so the next run is quick.
  *
  * Output: <out>/<program>_<date>-<time>/ with summary.txt (the table printed at the end), summary.csv (one row
  * per cell), results_<d>d.csv and control_<d>d.csv (the bench's rows, both engine orders), bench.log (the
- * tools' own output) and store/ (the plans). */
+ * tools' own output), and store/ (the estimate's plans) or plan.log (the planner's output). */
 #ifndef VECTORFFT_VS_MKL_H
 #define VECTORFFT_VS_MKL_H
 
@@ -32,23 +40,35 @@ static void vs_clock_probe(void);
 #include "vfft.c"                            /* the whole library, as the bench has it: its estimate and its store writers */
 static void vs_clock_probe(void) { vs_clock_reads++; }
 
+#include <sys/stat.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
 #else
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
 
-#ifndef VS_BENCH_EXE
-#error "VS_BENCH_EXE (the path of bench_1d_vs_mkl) is set by benchmark_scripts/CMakeLists.txt"
+#if !defined(VS_BENCH_EXE) || !defined(VS_RECAL_EXE)
+#error "VS_BENCH_EXE and VS_RECAL_EXE (the paths of bench_1d_vs_mkl and recal_1d_probe) are set by benchmark_scripts/CMakeLists.txt"
 #endif
 
 #define VS_PACE_MS "300"     /* gauntlet.py PACE_MS: the bench's pacing and cool-down between its timing blocks */
 #define VS_CORE "2"          /* gauntlet.py: the logical CPU the bench pins its thread to */
 #define VS_MAXCELL 64
+
+/* the selection of vectorfft_vs_mkl_selected and vectorfft_vs_mkl_selected_planned: commonly used transforms
+ * VectorFFT wins clearly (timed on the i9-14900KF 2026-11-10, gauntlet/results/sortie_*_est_20261110) */
+static const char *const VS_SELECTED[] = {
+    /* 1D */
+    "1920", "2048", "2560", "3072", "3840", "1048576", "4194304",
+    /* 2D: N1 rows of N2 points (1080 x 1920 = a 1920 x 1080 frame) */
+    "512x512", "1024x1024", "2048x1024", "2048x2048", "1080x1920", "720x1280",
+    /* 3D */
+    "128x128x128", "256x128x128", "256x256x64", "64x256x256", "256x256x256",
+    NULL
+};
 
 typedef struct {
     int d;                   /* 1, 2 or 3 */
@@ -489,9 +509,202 @@ static double vs_expected_seconds(const vs_cell_t *cells, int n)
     return s + 2 * 1.5 * (dims[1] + dims[2] + dims[3]) + 5;
 }
 
+/* gauntlet.py estimate_seconds' planning model when every cell is new (a race), the control cells included */
+static double vs_expected_plan_seconds(const vs_cell_t *cells, int n)
+{
+    double s = 3 + 2 + 2;   /* the control cells 4096, 64x64, 64x64x64 */
+    for (int i = 0; i < n; i++)
+    {
+        const double p = vs_points(&cells[i]);
+        const long long N = (long long)p;
+        if (cells[i].d > 1)
+            s += 2.0 + p / 50000.0;
+        else if ((N & (N - 1)) == 0)
+            s += N <= 2048 ? 3 : N <= 262144 ? 20 : 60;
+        else
+            s += N <= 2048 ? 4 : N <= 4096 ? 8 : N <= 65536 ? 20 : 60;
+    }
+    return s;
+}
+
+/* a stamp of the store's rows: the files' contents without their date= tokens (gauntlet.py cell_rows compares the
+ * rows the same way), so a cell that was measured and saved changes it and a cell read back does not */
+static unsigned long long vs_store_stamp(const char *store)
+{
+    static const char *const files[] = { "wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt",
+                                         "wisdom2_2d.txt", "wisdom2_3d.txt", "wisdom2_real.txt" };
+    unsigned long long h = 1469598103934665603ull;
+    for (int k = 0; k < 6; k++)
+    {
+        char p[1400];
+        snprintf(p, sizeof p, "%s/%s", store, files[k]);
+        FILE *f = fopen(p, "rb");
+        if (!f)
+            continue;
+        int ch, skip = 0;
+        char last[6] = { 0 };   /* the last 5 bytes, to see " date=" arrive */
+        while ((ch = fgetc(f)) != EOF)
+        {
+            if (skip)
+            {
+                if (ch == ' ' || ch == '\n' || ch == '\r' || ch == '|')
+                    skip = 0;
+                else
+                    continue;
+            }
+            memmove(last, last + 1, 4);
+            last[4] = (char)ch;
+            if (!memcmp(last, "date=", 5))
+            {
+                skip = 1;
+                continue;
+            }
+            h = (h ^ (unsigned char)ch) * 1099511628211ull;
+        }
+        fclose(f);
+    }
+    return h;
+}
+
+/* plan one cell with the library's planner into store, as gauntlet.py's calibrate stage does (recal_1d_probe:
+ * natural order, out of place, one thread, no recalibration); its output appended to planlog. 1 = planned */
+static int vs_plan_cell(const vs_cell_t *c, const char *store, const char *run, const char *planlog)
+{
+    char a[3][16], tmp[1400];
+    snprintf(tmp, sizeof tmp, "%s/probe.out", run);
+    remove(tmp);
+    char *argv[12];
+    int k = 0;
+    argv[k++] = (char *)VS_RECAL_EXE;
+    argv[k++] = (char *)store;
+    if (c->d > 1)
+        argv[k++] = (char *)(c->d == 2 ? "--2d" : "--3d");
+    for (int i = 0; i < c->d; i++)
+    {
+        snprintf(a[i], sizeof a[i], "%d", c->n[i]);
+        argv[k++] = a[i];
+    }
+    argv[k++] = (char *)"0";   /* natural order */
+    argv[k++] = (char *)"0";   /* out of place */
+    argv[k++] = (char *)"1";   /* one thread */
+    argv[k++] = (char *)"0";   /* no recalibration: a planned cell is read back */
+    argv[k] = NULL;
+    const int rc = vs_run(argv, tmp);
+    char text[4096] = "";
+    FILE *f = fopen(tmp, "rb");
+    if (f)
+    {
+        const size_t n = fread(text, 1, sizeof text - 1, f);
+        text[n] = 0;
+        fclose(f);
+    }
+    FILE *lg = fopen(planlog, "ab");
+    if (lg)
+    {
+        fputs(text, lg);
+        fclose(lg);
+    }
+    remove(tmp);
+    return rc == 0 && strstr(text, "banked") && !strstr(text, "REFUSED");
+}
+
+/* the estimate's plans of the cells and the control cells written into store, then each cell checked: the
+ * store's plan served with no measurement and equal, bit for bit, to VFFT_FLAG_ESTIMATE's. 0 = ready */
+static int vs_plan_estimate(const char *program, const vs_cell_t *cells, int ncell, const char *const *controls,
+                            const char *store)
+{
+    est_machine_t m;
+    vs_machine(&m);
+    vw2_store_t st;
+    if (vw2_open(&st, store, 1) != VW2_OK && st.nrec != 0)
+    {
+        printf("%s: cannot open the store %s\n", program, store);
+        return 1;
+    }
+    char why[1024];
+    int bad = 0;
+    for (int i = 0; i < ncell; i++)
+        if (vs_put_estimate(&st, &m, &cells[i], why, sizeof why))
+        {
+            printf("  %s: the estimate refused it: %s\n", cells[i].name, why);
+            bad = 1;
+        }
+    for (int d = 1; d <= 3; d++)
+    {
+        vs_cell_t ctl;
+        vs_parse_cell(controls[d], &ctl);
+        if (vs_put_estimate(&st, &m, &ctl, why, sizeof why))
+        {
+            printf("  control %s: the estimate refused it: %s\n", ctl.name, why);
+            bad = 1;
+        }
+    }
+    const int saved = vw2_save(&st);
+    vw2_close(&st);
+    if (bad || saved != VW2_OK || vs_clock_reads)
+    {
+        printf("%s: the estimate's plans could not be written (save %s, clock reads %ld)\n", program,
+               saved == VW2_OK ? "ok" : "FAILED", vs_clock_reads);
+        return 1;
+    }
+    printf("checking the %d plans (the store's plan = the estimate's plan, bit for bit) ...\n", ncell);
+    fflush(stdout);
+    for (int i = 0; i < ncell; i++)
+        if (vs_check_cell(&cells[i], store, why, sizeof why))
+        {
+            printf("  %s: %s\n", cells[i].name, why);
+            bad = 1;
+        }
+    if (bad)
+        printf("%s: a plan failed its check; nothing was timed\n", program);
+    return bad;
+}
+
+/* the control cells and every cell planned by the library's planner into the wisdom folder store. 0 = ready */
+static int vs_plan_measured(const char *program, const vs_cell_t *cells, int ncell, const char *const *controls,
+                            const char *store, const char *run)
+{
+    if (!vs_exists(VS_RECAL_EXE))
+    {
+        printf("%s: the planning tool %s is missing: build the target recal_1d_probe (building this target builds it)\n",
+               program, VS_RECAL_EXE);
+        return 1;
+    }
+    char planlog[1300];
+    snprintf(planlog, sizeof planlog, "%s/plan.log", run);
+    vs_setenv("VFFT_WISDOM_DIR", store);   /* gauntlet.py env(): the store, and the runtimes on PATH */
+    vs_child_path();
+    int bad = 0, fresh = 0;
+    const time_t p0 = time(NULL);
+    for (int i = -3; i < ncell; i++)
+    {
+        vs_cell_t ctl;
+        const vs_cell_t *c = &ctl;
+        if (i < 0)
+            vs_parse_cell(controls[i + 4], &ctl);
+        else
+            c = &cells[i];
+        const unsigned long long s0 = vs_store_stamp(store);
+        const time_t c0 = time(NULL);
+        const int ok = vs_plan_cell(c, store, run, planlog);
+        const int new_row = vs_store_stamp(store) != s0;
+        fresh += ok && new_row;
+        printf("  plan %s%dD %-14s %s (%.0f s)\n", i < 0 ? "control " : "", c->d, c->name,
+               !ok ? "REFUSED (see plan.log)" : new_row ? "measured now and saved" : "read from this machine's wisdom",
+               difftime(time(NULL), c0));
+        fflush(stdout);
+        bad |= !ok;
+    }
+    printf("planning done in %.0f s (%d planned now)\n\n", difftime(time(NULL), p0), fresh);
+    if (bad)
+        printf("%s: a transform could not be planned; nothing was timed\n", program);
+    return bad;
+}
+
 /* ── the program ────────────────────────────────────────────────────────── */
 
-static int vs_main(int argc, char **argv, const char *program, const char *title, const char *const *list)
+/* measured = 0: the estimate's plans; 1: the planner's, from and into this machine's wisdom folder */
+static int vs_main(int argc, char **argv, const char *program, const char *title, const char *const *list, int measured)
 {
     const char *out = "vectorfft_results";
     for (int i = 1; i < argc; i++)
@@ -536,7 +749,10 @@ static int vs_main(int argc, char **argv, const char *program, const char *title
         return 1;
     }
     snprintf(run, sizeof run, "%s/%s_%s", out, program, stamp);
-    snprintf(store, sizeof store, "%s/store", run);
+    if (measured)
+        snprintf(store, sizeof store, "%s", vfft_wisdom_folder());   /* this machine's folder of the library's store */
+    else
+        snprintf(store, sizeof store, "%s/store", run);
     snprintf(store_file, sizeof store_file, "%s/wisdom2_oop.txt", store);
     snprintf(benchlog, sizeof benchlog, "%s/bench.log", run);
     if (vs_mkdir(run) || vs_mkdir(store))
@@ -548,64 +764,29 @@ static int vs_main(int argc, char **argv, const char *program, const char *title
     printf("%s -- %s\n", program, title);
     printf("VectorFFT (codelets %s) against Intel MKL, one thread; the gauntlet's bench, both engine orders per cell\n",
            VFFT_IL_VW == 8 ? "AVX-512" : "AVX2");
-    printf("%d transforms, expected time about %.0f minutes on a fast desktop; run directory %s\n\n", ncell,
+    printf("%d transforms; timing them takes about %.0f minutes on a fast desktop; run directory %s\n", ncell,
            ceil(vs_expected_seconds(cells, ncell) / 60.0), run);
+    if (measured)
+        printf("plans: the library's planner, which measures; this machine's wisdom folder %s\n"
+               "a transform planned on this machine before is read back at once; a new one is measured first and saved\n"
+               "there (with none planned yet, planning takes about %.0f minutes)\n",
+               store, ceil(vs_expected_plan_seconds(cells, ncell) / 60.0));
+    else
+        printf("plans: the library's estimate (VFFT_FLAG_ESTIMATE), nothing measured\n");
+    printf("\n");
     fflush(stdout);
 
-    /* 1. the estimate's plans into the store: the cells and the control cells */
-    est_machine_t m;
-    vs_machine(&m);
-    vw2_store_t st;
-    if (vw2_open(&st, store, 1) != VW2_OK && st.nrec != 0)
-    {
-        printf("%s: cannot open the store %s\n", program, store);
+    /* 1. the plans */
+    if (measured ? vs_plan_measured(program, cells, ncell, controls, store, run)
+                 : vs_plan_estimate(program, cells, ncell, controls, store))
         return 1;
-    }
-    char why[1024];
-    int bad = 0;
-    for (int i = 0; i < ncell; i++)
-        if (vs_put_estimate(&st, &m, &cells[i], why, sizeof why))
-        {
-            printf("  %s: the estimate refused it: %s\n", cells[i].name, why);
-            bad = 1;
-        }
-    for (int d = 1; d <= 3; d++)
-    {
-        vs_cell_t ctl;
-        vs_parse_cell(controls[d], &ctl);
-        if (vs_put_estimate(&st, &m, &ctl, why, sizeof why))
-        {
-            printf("  control %s: the estimate refused it: %s\n", ctl.name, why);
-            bad = 1;
-        }
-    }
-    const int saved = vw2_save(&st);
-    vw2_close(&st);
-    if (bad || saved != VW2_OK || vs_clock_reads)
-    {
-        printf("%s: the estimate's plans could not be written (save %s, clock reads %ld)\n", program,
-               saved == VW2_OK ? "ok" : "FAILED", vs_clock_reads);
-        return 1;
-    }
 
-    /* 2. every plan checked before anything is timed */
-    printf("checking the %d plans (the store's plan = the estimate's plan, bit for bit) ...\n", ncell);
-    fflush(stdout);
-    for (int i = 0; i < ncell; i++)
-        if (vs_check_cell(&cells[i], store, why, sizeof why))
-        {
-            printf("  %s: %s\n", cells[i].name, why);
-            bad = 1;
-        }
-    if (bad)
-    {
-        printf("%s: a plan failed its check; nothing was timed\n", program);
-        return 1;
+    /* 2. the timing: the gauntlet's bench, one dimension at a time, a control cell before and after */
+    if (!measured)
+    {   /* (the planner's children have them already) */
+        vs_setenv("VFFT_WISDOM_DIR", store);
+        vs_child_path();
     }
-
-    /* 3. the timing: the gauntlet's bench, one dimension at a time, a control cell before and after */
-    vs_setenv("VFFT_WISDOM_DIR", store);
-    vs_child_path();
 #ifdef _WIN32
     SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);   /* gauntlet.py keep_awake */
 #endif

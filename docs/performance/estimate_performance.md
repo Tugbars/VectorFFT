@@ -969,7 +969,7 @@ By rank and direction:
 > GCC 16.2, one thread. Two builds of the library: AVX-512 (8 lanes) and AVX2 (4 lanes)
 > **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1
 > **Arms and method:** as at the top of this page, run through
-> [`benchmark_scripts/estimate_pow2.py`](../../benchmark_scripts/estimate_pow2.py). The measured plans are the rows of
+> [`benchmark_scripts/scripts/estimate_pow2.py`](../../benchmark_scripts/scripts/estimate_pow2.py). The measured plans are the rows of
 > [`src/wisdom/Zen4_avx512`](../../src/wisdom/Zen4_avx512) and [`src/wisdom/Zen4`](../../src/wisdom/Zen4), the rows these
 > runs found missing raced on the laptop first
 > **Cells:** the powers of two from 64 to 8,388,608; the 108 other lengths above 4,096 with a planner row in the 14900KF
