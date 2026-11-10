@@ -75,8 +75,9 @@ typedef struct est_plan2d_s
     int cmt;               /* [cmt] T > 1: the column pass threaded (1) or serial (0) */
     int mtarm;             /* [mtarm] T > 1, threaded: 0 the one threaded walk (the skew's, the turn's), 1 the strips */
     int msw;               /* [msw] the strips' width in columns, 0 = each worker's whole range */
-    int nls;               /* [nls] T > 1: the natural leaf staged (1) or strided (0); -1 = not written (no natural
-                            * leaf: the door banks it only beside one, il2d_tier.h:4517) */
+    int nls;               /* [nls] the natural leaf staged (1) or strided (0); -1 = not written (no natural leaf: the
+                            * door banks it only beside one, il2d_tier.h:4517). T > 1: the threaded verdict's; T = 1:
+                            * the LEAF rule's (est__leaf_staged), -1 = the door's staged default */
     est_recipe_t rp;       /* [rp_]   N2, in place, natural, T = 1: always */
     est_recipe_t turnp;    /* [turn_] N1, in place, natural: has_turn */
     est_recipe_t cskp;     /* [csk_]  N2, out of place, natural: has_csk */
@@ -152,7 +153,8 @@ typedef struct est_plan3d_s
  *   TURN   2.4  the turn wherever the column has no one column kernel, on rows of at most EST_ND_TURN_N2_R points
  *   BAND   2.6  the band only past three planes in the L2, on even rows, with last-stage blocks of EST_ND_BAND_BLK
  *   CSK32  2.7  csk at 32 rows where the one-stage chain crowds an L1d set and csk's loads fit the L2's sets
- *   CSK21  2.8  csk at 21, 25, 27 on planes of EST_ND_CSK_TINY bytes or less; at 21 also past two planes in L1d */
+ *   CSK21  2.8  csk at 21, 25, 27 on planes of EST_ND_CSK_TINY bytes or less; at 21 also past two planes in L1d
+ *   LEAF   2.9  the natural leaf staged or stored at its stride (est__leaf_staged, 2026-11-10) */
 #ifndef EST_ND_2D_RULE_ORDER
 #define EST_ND_2D_RULE_ORDER 1
 #endif
@@ -174,6 +176,9 @@ typedef struct est_plan3d_s
 #ifndef EST_ND_2D_RULE_CSK21
 #define EST_ND_2D_RULE_CSK21 1
 #endif
+#ifndef EST_ND_2D_RULE_LEAF
+#define EST_ND_2D_RULE_LEAF 1
+#endif
 #define EST_ND_2D_R_ORDER 0x01u
 #define EST_ND_2D_R_CSK 0x02u
 #define EST_ND_2D_R_ROWS 0x04u
@@ -181,10 +186,11 @@ typedef struct est_plan3d_s
 #define EST_ND_2D_R_BAND 0x10u
 #define EST_ND_2D_R_CSK32 0x20u
 #define EST_ND_2D_R_CSK21 0x40u
+#define EST_ND_2D_R_LEAF 0x80u
 #define EST_ND_2D_RULES ((EST_ND_2D_RULE_ORDER ? EST_ND_2D_R_ORDER : 0u) | (EST_ND_2D_RULE_CSK ? EST_ND_2D_R_CSK : 0u) | \
                          (EST_ND_2D_RULE_ROWS ? EST_ND_2D_R_ROWS : 0u) | (EST_ND_2D_RULE_TURN ? EST_ND_2D_R_TURN : 0u) | \
                          (EST_ND_2D_RULE_BAND ? EST_ND_2D_R_BAND : 0u) | (EST_ND_2D_RULE_CSK32 ? EST_ND_2D_R_CSK32 : 0u) | \
-                         (EST_ND_2D_RULE_CSK21 ? EST_ND_2D_R_CSK21 : 0u))
+                         (EST_ND_2D_RULE_CSK21 ? EST_ND_2D_R_CSK21 : 0u) | (EST_ND_2D_RULE_LEAF ? EST_ND_2D_R_LEAF : 0u))
 /* TURN: the turn's row bound in points (the planner turns rows of 4 and 9 at every column without one column kernel
  * the night raced; at rows of 10 it turns at 4096 rows and ties the chain below) */
 #define EST_ND_TURN_N2_R 10
@@ -1141,6 +1147,28 @@ static inline int est__csk_2d(const est_machine_t *m, const est_plan2d_t *p, uns
            ((N1 & 1) && N1 <= EST_ND_CSK_ODD_MAX && N2 >= EST_ND_CSK_ODD_N2 && !est__spills_single(N1));
 }
 
+/* LEAF (2026-11-10): the natural leaf at one thread, staged (1) or stored at its stride (0). The leaf's kernel
+ * writes R_last rows at once, (N1 / R_last) rows of N2 apart (_il2d_nat_leaf_blocks, il2d_tier.h). Staged, it writes
+ * them into an R_last x N2 block and copies each row out as one stream: a pass of copies. At its stride the rows go
+ * straight to their places; they fall into one L1d set as the column chain's legs do (est__col_crowds: R_last
+ * min(lowbit(gap), way) / way rows to a set). Where a vector store is half a line (AVX2) the line waits in the L1d for
+ * the next column's half, so more rows to a set than the L1d has ways fetch lines twice; where one store fills the
+ * line (AVX-512, EST_ND_VEC_FILLS_LINE) no line waits. Columns of EST_ND_LEAF_STAGE_N1 or more stage on both ISAs,
+ * measured, the cause not found. Evidence, the estimate's one-thread plan with the leaf forced against itself, 69
+ * power-of-two planes with a staged natural leaf: 14900KF (AVX2), columns >= 1024 staged faster on 28 of 30 (strided
+ * 1.23x); below, 8 or fewer rows to a set strided 0.94, more 1.24; Emerald Rapids (AVX-512), columns <= 512
+ * strided 0.928 (11 faster, none slower), >= 1024 1.134. Non-power-of-two planes not measured. */
+#define EST_ND_LEAF_STAGE_N1 1024
+static inline int est__leaf_staged(const est_machine_t *m, const est_plan2d_t *p)
+{
+    const int Rl = p->col.R[p->col.nst - 1];
+    const long long way = est__l1_way(m), gap = 16LL * (p->N1 / Rl) * p->N2, low = gap & -gap;
+    if (p->N1 >= EST_ND_LEAF_STAGE_N1)
+        return 1;
+    if (EST_ND_VEC_FILLS_LINE)
+        return 0;
+    return (long long)Rl * (low < way ? low : way) > est__l1_ways(m) * way;
+}
 /* est_plan_2d_r: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10), under the rules (EST_ND_2D_R_*;
  * 0 = the rules before 2026-11-09). Returns 0 with *out filled, or -1 with the reason. Pure. est_plan_2d: the
  * one-thread 2D request's plan, under EST_ND_2D_RULES. */
@@ -1155,6 +1183,7 @@ static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned
     if (!out)
         return est_refuse(why, whylen, "no plan");
     memset(out, 0, sizeof *out);
+    out->nls = -1;
     if (est__machine_ok(m, why, whylen))
         return -1;
     if (N1 < 2 || N2 < 2)
@@ -1198,6 +1227,8 @@ static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned
     out->rbk = EST_ND_RBK;
     out->sw = 0;
     out->col.wl = est_wl_2d_r(m, &out->col, N2, out->csk, out->turn, EST_ND_2D_PLANE_DIV, rules);
+    if ((rules & EST_ND_2D_R_LEAF) && out->col.nat && out->col.blu <= 0 && out->col.nst > 1 && !out->csk && !out->turn)
+        out->nls = est__leaf_staged(m, out);   /* LEAF: the walks that run the natural leaf */
     return 0;
 }
 static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d_t *out, char *why, size_t whylen)
@@ -1286,9 +1317,9 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
     const int nat = p->col.nat && p->col.blu <= 0;   /* the natural leaf, once the chain has two stages */
     p->T = T > 1 ? T : 1;
     p->cmt = p->mtarm = p->msw = 0;
-    p->nls = -1;
     if (T < 2)
-        return;
+        return;   /* one thread: nls stays est_plan_2d_r's (LEAF) */
+    p->nls = -1;
     if (16LL * p->N1 * p->N2 > m->l1d / EST_ND_MT_SERIAL_2D_L1_DIV && p->N1 != 2 && p->col.tpc != 1)
     {
         const int tall = p->N1 >= (long long)EST_ND_MT_TILE_N1_PER_N2 * p->N2;
@@ -1562,7 +1593,9 @@ static inline int est__put_child(vw2_store_t *st, const vw2_key_t *key, const ch
     return 0;
 }
 /* est_put_rows_2d: the 2D row into st -- the column tokens, sw rbk turn csk (il2d_tier.h:4201-4204), at
- * T > 1 under the key nthreads=T with the threaded verdict cmt mtarm msw nls (il2d_tier.h:4511-4517), then
+ * T > 1 under the key nthreads=T with the threaded verdict cmt mtarm msw nls (il2d_tier.h:4511-4517), at one
+ * thread the LEAF rule's nls where it gave one (the door reads it, fft2d_create_il.h; the measuring planner races
+ * no leaf at one thread and writes none), then
  * the children rp_ turn_ csk_ tpc_ (il2d_tier.h:4225-4228), one-thread rows as the door's. Returns 0, or -1
  * with the reason. */
 static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *why, size_t whylen)
@@ -1580,6 +1613,8 @@ static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *
          vw2_ilcol_tok_seti(st, &ck, "msw", p->msw) != VW2_OK ||
          (p->nls >= 0 && vw2_ilcol_tok_seti(st, &ck, "nls", p->nls) != VW2_OK)))
         return est_refuse(why, whylen, "the %dx%d row's threaded verdict was refused by the store's writers", p->N1, p->N2);
+    if (p->T <= 1 && p->nls >= 0 && vw2_ilcol_tok_seti(st, &ck, "nls", p->nls) != VW2_OK)   /* LEAF */
+        return est_refuse(why, whylen, "the %dx%d row's leaf verdict was refused by the store's writers", p->N1, p->N2);
     vw2__ilcol_key(&ck, &key);
     if (est__put_child(st, &key, "rp_", &p->rp, p->N2, VFFT_PLACEMENT_IN, why, whylen))
         return -1;

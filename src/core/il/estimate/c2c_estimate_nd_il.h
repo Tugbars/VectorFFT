@@ -204,6 +204,10 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
     }
     else if (p->cmt || p->mtarm || p->msw)
         return est_refuse(why, whylen, "%dx%d: a threaded verdict on a one-thread plan", p->N1, p->N2);
+    else if (p->nls > 1 ||
+             (p->nls >= 0 && !(p->col.nat && p->col.blu <= 0 && p->col.nst > 1 && !p->turn && !p->csk)))
+        return est_refuse(why, whylen, "%dx%d: nls=%d is no one-thread leaf the door serves here (a natural chain of "
+                          "two stages or more, no turn, no skew)", p->N1, p->N2, p->nls);
     return 0;
 }
 /* The 3D row as the 3D door replays it (fftnd_il.h:1410-1940): axis 0, the structure
@@ -324,6 +328,9 @@ static inline int est__check_2d(const struct vfft_plan_s *h, const est_plan2d_t 
         return est_refuse(why, whylen, "%dx%d: the door serves T=%d cmt=%d mtarm=%d msw=%d nls=%d, the recipe T=%d cmt=%d "
                           "mtarm=%d msw=%d nls=%d", p->N1, p->N2, h->nthreads, h->il2d_col.colmt, h->il2d_col.natarm,
                           h->il2d_col.msw, h->il2d_col.natst, p->T, p->cmt, p->mtarm, p->msw, p->nls);
+    if (p->T <= 1 && h->il2d_col.natst != (p->nls >= 0 ? p->nls : 1))   /* LEAF */
+        return est_refuse(why, whylen, "%dx%d: the door serves the one-thread leaf natst=%d, the recipe nls=%d", p->N1,
+                          p->N2, h->il2d_col.natst, p->nls);
     if (h->il2d_col.wc != p->sw || h->il2d_rowb != (p->ro == 2) || h->il2d_rowb2 != (p->ro == 3) ||
         (p->ro == 3 && h->il2d_rowb2_ch != (int)_il2d_rb2_rows(p->rbk, (size_t)p->N2)) || h->il2d_turn != p->turn ||
         h->il2d_csk != p->csk)

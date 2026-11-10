@@ -130,6 +130,8 @@ static int est_tokens(const est_machine_t *m, const int *n, int rank, int T, cha
                              p->rbk, p->turn, p->csk, vw2_oop_il_name[p->rp.k1_il_route]);
         if (T > 1 && l < cap)
             snprintf(out + l, cap - l, " cmt=%d mtarm=%d msw=%d nls=%d", p->cmt, p->mtarm, p->msw, p->nls);
+        else if (p->nls >= 0 && l < cap)
+            snprintf(out + l, cap - l, " nls=%d", p->nls);   /* the one-thread LEAF rule */
         free(p);
         return 0;
     }

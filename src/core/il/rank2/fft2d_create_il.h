@@ -1160,6 +1160,10 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
         else
             _il2d_c2c_mt_race(h, W, cfg, N1, N2);
     }
+    else if (h->transform == VFFT_C2C && h->il2d_row && h->il2d_col.nat && h->il2d_col.natstage && W && !W->vw2_off_2d)
+        /* one thread: the leaf the row names, else staged. The measuring planner races no leaf at one thread and
+         * writes no nls there; the estimate's recipe carries its LEAF rule's (est__leaf_staged, estimate_nd_il.h) */
+        h->il2d_col.natst = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "nls", 1) != 0;
     /* the raced per-stage forms land on the c2c chain row HERE, the twin
      * of the real tier's re-bank below: the column build raced them
      * before the axis race wrote the row (vw2_2d_forms_rebank) */

@@ -57,7 +57,8 @@ typedef struct {
     int *natperm;             /* N entries, scr row -> natural row */
     double *natscr;           /* 2*N*rn: the pre-leaf plane */
     int natst;                /* the leaf STAGED (1) or at its natural stride (0): the serial
-                               * walk's form is staged (dominant); the threaded arms race both,
+                               * walk's form is staged (dominant) unless its row names nls= (the
+                               * estimate's LEAF rule, estimate_nd_il.h); the threaded arms race both,
                                * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
     double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
                                * aligned (il2d_natural_leaf_design.md);
