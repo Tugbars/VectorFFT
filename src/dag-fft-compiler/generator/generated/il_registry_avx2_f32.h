@@ -246,13 +246,17 @@ VFFT_IL_DECL(radix64_z_n1tb88_fwd_avx2_f32)
 #define VFFT_IL_ROWSWAP_BWD_RADICES(X)
 #define VFFT_IL_ROWSWAP_PAIR_RADICES(X)
 
-/* ── t0d ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_T0D_FWD_RADICES(X)
+/* ── t0d ── fwd 2 · bwd 0 · pair 0 */
+VFFT_IL_DECL(radix4_z_t0d_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_t0d_fwd_avx2_f32)
+#define VFFT_IL_T0D_FWD_RADICES(X) X(4) X(8)
 
-/* ── t0tp ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_T0TP_FWD_RADICES(X)
-#define VFFT_IL_T0TP_BWD_RADICES(X)
-#define VFFT_IL_T0TP_PAIR_RADICES(X)
+/* ── t0tp ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix8_z_t0tp_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_t0tp_bwd_avx2_f32)
+#define VFFT_IL_T0TP_FWD_RADICES(X) X(8)
+#define VFFT_IL_T0TP_BWD_RADICES(X) X(8)
+#define VFFT_IL_T0TP_PAIR_RADICES(X) X(8)
 
 /* ── t2 ── fwd 5 · bwd 5 · pair 5 */
 VFFT_IL_DECL(radix4_z_t2_fwd_avx2_f32)
@@ -419,34 +423,53 @@ VFFT_IL_DECL(radix64_z_t2tg_bwd_avx2_f32)
 /* ── t2trtan ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_T2TRTAN_BWD_RADICES(X)
 
-/* ── tld ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_TLD_FWD_RADICES(X)
-#define VFFT_IL_TLD_BWD_RADICES(X)
-#define VFFT_IL_TLD_PAIR_RADICES(X)
+/* ── tld ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix8_z_tld_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tld_bwd_avx2_f32)
+#define VFFT_IL_TLD_FWD_RADICES(X) X(8)
+#define VFFT_IL_TLD_BWD_RADICES(X) X(8)
+#define VFFT_IL_TLD_PAIR_RADICES(X) X(8)
 
-/* ── tlf ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_TLF_FWD_RADICES(X)
-#define VFFT_IL_TLF_BWD_RADICES(X)
-#define VFFT_IL_TLF_PAIR_RADICES(X)
+/* ── tlf ── fwd 2 · bwd 2 · pair 2 */
+VFFT_IL_DECL(radix4_z_tlf_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tlf_fwd_avx2_f32)
+VFFT_IL_DECL(radix4_z_tlf_bwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tlf_bwd_avx2_f32)
+#define VFFT_IL_TLF_FWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLF_BWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLF_PAIR_RADICES(X) X(4) X(8)
 
-/* ── tlfi ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_TLFI_FWD_RADICES(X)
-#define VFFT_IL_TLFI_BWD_RADICES(X)
-#define VFFT_IL_TLFI_PAIR_RADICES(X)
+/* ── tlfi ── fwd 2 · bwd 2 · pair 2 */
+VFFT_IL_DECL(radix4_z_tlfi_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tlfi_fwd_avx2_f32)
+VFFT_IL_DECL(radix4_z_tlfi_bwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tlfi_bwd_avx2_f32)
+#define VFFT_IL_TLFI_FWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLFI_BWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLFI_PAIR_RADICES(X) X(4) X(8)
 
-/* ── tmg ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_TMG_FWD_RADICES(X)
-#define VFFT_IL_TMG_BWD_RADICES(X)
-#define VFFT_IL_TMG_PAIR_RADICES(X)
+/* ── tmg ── fwd 2 · bwd 2 · pair 2 */
+VFFT_IL_DECL(radix4_z_tmg_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tmg_fwd_avx2_f32)
+VFFT_IL_DECL(radix4_z_tmg_bwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tmg_bwd_avx2_f32)
+#define VFFT_IL_TMG_FWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TMG_BWD_RADICES(X) X(4) X(8)
+#define VFFT_IL_TMG_PAIR_RADICES(X) X(4) X(8)
 
-/* ── tmgd ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_TMGD_FWD_RADICES(X)
+/* ── tmgd ── fwd 2 · bwd 0 · pair 0 */
+VFFT_IL_DECL(radix4_z_tmgd_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_tmgd_fwd_avx2_f32)
+#define VFFT_IL_TMGD_FWD_RADICES(X) X(4) X(8)
 
 /* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes, and the
  * turned-store twin for the 2D turn route ── */
 #define VFFT_IL_ROW_CHOICE(X)
 #define VFFT_IL_ROWT_CHOICE(X)
 
-/* 98 declarations over 79 kinds */
+/* zil-f32-avx2: 4 cells DECLARED ABSENT at avx2_f32:
+ *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
+ */
+/* 118 declarations over 79 kinds */
 
 #endif

@@ -2699,8 +2699,9 @@ let zil_retarget ~(isa : string) (cells : (string * string list) list)
    forms (pair2p/blocked), t2tg (chain3) -- DERIVED from the avx2 list above by kind, so the
    two corpora cannot drift, plus the six blocked forward pair variants the FP64 tree builds
    outside its corpus (gates/recipes.tsv, the replay arm: plain argv), which at FP32 are
-   ordinary cells. Not FP32: odd radixes, flat (t2cp and the t2cs family), rows, real, the half stores,
-   the tangent bodies, the ZTURN-T stage kernels, the mono. *)
+   ordinary cells, plus the ZTURN-T stage kernels of the pow2 chains (zil_f32_ztt_in_scope,
+   below). Not FP32: odd radixes, flat (t2cp and the t2cs family), rows, real, the half stores,
+   the tangent bodies, the split-body mids (msz), the mono. *)
 let zil_f32_extra_cells : (string * string list) list =
   let row r flags = r :: flags @ [ "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] in
   [ "radix16_z_n1tb44_avx2.c", row "16" [ "--cil-n1t"; "--cil-blocked"; "--cil-split"; "4.4"; "--cil-form-tag" ]
@@ -2728,23 +2729,49 @@ let zil_f32_in_scope (c : Codelet.t) : bool =
   | _ -> false
 ;;
 
+(* THE FP32 ZTURN-T STAGE KERNELS (2026-11-10): the block-plane kinds of the pow2 chains --
+   natural t0tp / tmg / tlf / tlfi and plain t0d / tmgd / tld / tldb, each direction FP64 has
+   -- at radix 4 and 8, taken from the FP64 avx2 list (zil_boundary_cells) by kind so the
+   two cannot drift. Both FP32 ISAs run them at 8 float lanes (avx512_f32 = the 8-lane form
+   under its own name, Cascade_z.ztt_isa), so the radix-4 lane lattices t0tp / tld are
+   DECLARED absent by the R % VW law (zil_f32_gap): exactly FP64 avx512's cell set. They
+   land in zil/<isa>/ztt through zil_folder. *)
+let zil_f32_ztt_in_scope (c : Codelet.t) : bool =
+  match c.Codelet.kind with
+  | Codelet.Zsplit
+      { k = Codelet.(T0tp | T0tpb | Tmg | Tmgb | Tlf | Tlfb | Tlfi | Tlfib | T0d | Tmgd | Tld | Tldb) } ->
+    c.Codelet.radix = 4 || c.Codelet.radix = 8
+  | _ -> false
+;;
+
 let zil_f32_base_cells : (string * string list) list Lazy.t =
   lazy
     (List.filter
        (fun (_, tail) -> zil_f32_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
        zil_pure_cells
-     @ zil_f32_extra_cells)
+     @ zil_f32_extra_cells
+     @ List.filter
+         (fun (_, tail) -> zil_f32_ztt_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
+         zil_boundary_cells)
 ;;
 
-(* every FP32 cell the generator refuses at that width, with the refusal it restates. ONE
-   law: the blocked corner-turned forms (the n1tb and t2bt kinds) store per adjacent pass-2
+(* every FP32 cell the generator refuses at that width, with the refusal it restates. TWO
+   laws. The blocked corner-turned forms (the n1tb and t2bt kinds) store per adjacent pass-2
    groups, so their split's p must be a multiple of the complex per vector, or (FP32: one
    tuple of all the groups) divide it with the radix a multiple of it (c2c_il.ml
    emit_blocked). Every FP32 cell of the corpus satisfies it at both widths (the 4.4 split
-   of radix16_z_n1tb44 at 512 bits takes the all-groups tuple); the law stays declared. *)
+   of radix16_z_n1tb44 at 512 bits takes the all-groups tuple); the law stays declared. And
+   the ZTURN-T lane lattices t0tp / tld write or read R-runs as whole 8-lane blocks (the
+   FP32 ZTURN-T form is 8 float lanes at both ISAs), so R % 8 == 0: radix 4 is absent, as
+   at FP64 avx512 (cascade_z.ml refuses it). *)
 let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
   let per = if isa = "avx2_f32" then 4 else 8 in
   match c.Codelet.kind with
+  | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod 8 <> 0 ->
+    Some
+      (Printf.sprintf
+         "codelet_zsplit: t0tp/tld radix %d is not a whole number of 8-lane blocks (law: R %% VW == 0)"
+         c.Codelet.radix)
   | Codelet.Cil { form; blocked = true; split; turn; _ }
     when form = Codelet.Cil_n1t || turn = Some Codelet.Turnst ->
     let r = c.Codelet.radix in

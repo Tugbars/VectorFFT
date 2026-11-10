@@ -65,11 +65,7 @@ let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
    8-lane drivers under the avx512_f32 name (same cells, same tables), compiled for
    avx512f,avx512vl so the compiler has the 32 ymm registers. FP64 records pass
    through unchanged. *)
-let ztt_isa (isa : Isa.t) : Isa.t =
-  if isa.Isa.name = "avx512_f32"
-  then { Isa.avx2_f32 with Isa.name = "avx512_f32"; target_attr = "avx512f,avx512vl,fma" }
-  else isa
-;;
+let ztt_isa = Cascade_z.ztt_isa   (* one definition: the FP32 stage kernels share it *)
 
 (* every ordered {4,8} chain with product n, nf >= 2, (n / r0) mod 4 = 0;
    the order is the enumeration order (4 before 8 at every position) *)
