@@ -169,7 +169,7 @@ static void _k1ord_reseed(void *v)
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
     memcpy(c->rz, c->r0, c->nb);
 }
-static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form); /* below, with the threaded arm */
+static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int ip, int il_kv, int *chain, int *form); /* below, with the threaded arm */
 static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out,
@@ -1508,15 +1508,17 @@ static void _k1fs_chain_str(const vfft_k1fs_plan_t *p, char *b, size_t n)
         off += snprintf(b + off, n - (size_t)off, "%s%d", k ? "." : "", p->sbR[k]);
 }
 /* the natural class's serial form from the row (il_kv=1 + il_sb) or the
- * probe pin VFFT_K1_FSSB; returns the chain length (0 = form 0) */
-static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int il_kv, int *chain, int *form)
+ * probe pin VFFT_K1_FSSB; returns the chain length (0 = form 0). The row is
+ * the one-thread row of the request's PLACEMENT, where the planner banks
+ * il_sb beside the il_kv the caller read (vfft_il_dp_emit_wisdom) */
+static int _k1fs_row_sb(struct vfft_wisdom_s *W, int N, int ip, int il_kv, int *chain, int *form)
 {
     const char *e = getenv("VFFT_K1_FSSB");
     *form = 0;
     if (e && *e) { const int n = _k1fs_parse_chain(e, chain); if (n >= 2) { *form = 1; return n; } }
     if (il_kv == 1 && W && !W->vw2_off_oop)
     {
-        const vw2_rec_t *r = vw2__oop_k1_scan_ord(&W->vw2, N, VW2_LAY_IL, 0);
+        const vw2_rec_t *r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, 0, ip ? VW2_PL_IP : VW2_PL_OOP, 1);
         const char *v = r ? vw2_rec_get(r, "il_sb") : NULL;
         if (v) { const int n = _k1fs_parse_chain(v, chain); if (n >= 2) { *form = 1; return n; } }
     }
@@ -1559,7 +1561,7 @@ static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t 
         }
     }
     else if (!scr)
-        sbn = _k1fs_row_sb(W, N, ke->il_kv, sbc, &form);
+        sbn = _k1fs_row_sb(W, N, ip, ke->il_kv, sbc, &form);
     races0 = _vfft_create_race_count;   /* did the child measure: every race counts (race.h), an outermost */
     scopes0 = vfft_measure_scopes();    /* clock read enters a scope (race_scope.h); c2c_estimate_il.h's detectors */
     fp = _k1fs_build_own(N, pn1, pn2, scr, cfg, ip, T, form, sbc, sbn, child ? r : NULL, &grew);

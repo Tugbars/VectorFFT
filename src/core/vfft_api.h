@@ -316,6 +316,23 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
         _vfft_warn("vfft_execute: a SPLIT plan runs through vfft_execute_split(); nothing executed");
         return;
     }
+    if (h && h->k1_alias && in && out == in && (unsigned)dir <= (unsigned)VFFT_BACKWARD)
+    {   /* AN OUT-OF-PLACE C2C PLAN CALLED WITH ONE BUFFER whose bound kernels are restrict (the solo
+         * kernels): its one-buffer executor, the alias-tolerant twins (il/il_execute.h). The lean
+         * compare of vfft_execute left the call here. */
+        h->k1_alias(h, dir, in, out);
+        return;
+    }
+    if (h && h->placement == VFFT_INPLACE && h->transform == VFFT_C2C && in && out && out != in &&
+        (unsigned)dir <= (unsigned)VFFT_BACKWARD)
+    {   /* PLACEMENT IS A COMMITMENT (vfft.h: in place, out == in), as on the real plans and the split
+         * ones (_vfft_sig_bad). Refused at this door only: a composite runs its own in-place child
+         * with two buffers through _vfft_exec6 */
+        _vfft_warn("vfft_execute: this C2C plan is IN-PLACE and must be called with out == in; got "
+                   "distinct pointers; for separate buffers create the plan with "
+                   "placement=VFFT_PLACEMENT_OUT -- nothing executed");
+        return;
+    }
     pin = (h && h->nthreads > 1) ? thread_pool_caller_arm() : NULL;   /* the caller's pin, at the first fork-join */
     _vfft_exec6(h, dir, in, NULL, out, NULL);
     if (pin)
@@ -328,7 +345,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
     vfft_real *s = (vfft_real *)in, *d = (vfft_real *)out;
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && s && d &&
-        (h->placement == VFFT_INPLACE ? d == s : (d != s || h->transform == VFFT_C2C)) && h->k1_go[dir])
+        (h->placement == VFFT_INPLACE ? d == s : (d != s || (h->transform == VFFT_C2C && !h->k1_alias))) && h->k1_go[dir])
     {
         h->k1_go[dir](h, dir, s, d);
         return;

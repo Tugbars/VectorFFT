@@ -89,6 +89,14 @@ static int _k1x_mono_b(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *z
     h->k1_mono_ilb(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
+/* an OUT-OF-PLACE solo plan called with one buffer (k1_alias: vfft_execute's slow path, vfft_api.h):
+ * the kernels above are restrict, so the call runs the alias-tolerant n1c of the plan's length, the
+ * kernel an in-place plan binds (same math; n1c exists at every solo length, il_solo_registry.h) */
+static int _k1x_mono_alias(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
+{
+    vfft_k1_mono_ilc_fn(h->N, dir != VFFT_FORWARD)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
+    return 0;
+}
 /* bound only when the backward resolves (vfft_il2p_bwd_resolves, at the binder): never declines */
 static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
@@ -466,6 +474,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
     struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
     if (!h) return hp;
     h->k1_exec = NULL;
+    h->k1_alias = NULL;
     h->k1_go[VFFT_FORWARD] = h->k1_go[VFFT_BACKWARD] = NULL;   /* the 2D real forms below decline: the full door */
     if (h->lm)
     {   /* the lane-major batch: the column pass (the 2D and 3D batches: their axes), both directions, never declining */
@@ -506,7 +515,14 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
         if (!h->k1_on) return hp;
         switch (h->k1_il_route)
         {
-        case VFFT_K1_IL_MONO:    if (h->k1_mono_ilf && h->k1_mono_ilb) h->k1_exec = _k1x_mono; break;
+        case VFFT_K1_IL_MONO:
+            if (h->k1_mono_ilf && h->k1_mono_ilb)
+            {
+                h->k1_exec = _k1x_mono;
+                if (vfft_k1_mono_ilc_fn(h->N, 0) && vfft_k1_mono_ilc_fn(h->N, 1))
+                    h->k1_alias = _k1x_mono_alias;   /* called with one buffer: the n1c twins, never the restrict kernels */
+            }
+            break;
         case VFFT_K1_IL_2P_PURE: if (h->k1il2p && vfft_il2p_bwd_resolves(h->k1il2p)) h->k1_exec = _k1x_il2p; break;
         case VFFT_K1_IL_CHAIN3:  if (h->k1il3p) h->k1_exec = _k1x_il3p; break;
         case VFFT_K1_IL_FLAT:    if (h->k1ilfd) h->k1_exec = _k1x_ilfd; break;

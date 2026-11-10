@@ -605,6 +605,13 @@ struct vfft_plan_s
                           * plane it still reads (block b's natural
                           * targets can be block b' > b's unread comb
                           * rows — the clobber the first cut shipped) */
+    /* AN OUT-OF-PLACE C2C PLAN CALLED WITH ONE BUFFER (out == in): the executor of that call where
+     * the bound one must not take it. The solo kernels are restrict (il_solo_registry.h), so their
+     * plan runs the call on the alias-tolerant n1c twins (_k1x_mono_alias, il_execute.h). NULL = the
+     * bound executor takes the call as it is: the pair, the chains, ZTURN-T and the four-step see
+     * the one buffer and run their in-place form. vfft_execute's lean compare leaves the call of a
+     * plan that sets this to its slow path, which runs it (vfft_api.h). */
+    int (*k1_alias)(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
 };
 
 

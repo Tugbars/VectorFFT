@@ -12,6 +12,13 @@
  *   4. the cell's banked kind-3 row names il_route=mono (read back from the
  *      scratch store), i.e. the cell is SERVED by the solo tier, not by a
  *      pair, chain or prime that happened to be correct.
+ *   5. THE OUT-OF-PLACE PLAN CALLED WITH ONE BUFFER (out == in): served, and
+ *      gated like 1 and 2 on that one buffer. The plan's own solo kernels are
+ *      restrict; the public door runs the call on the alias-tolerant n1c
+ *      twins (k1_alias), the other routes on their own in-place form.
+ *   6. THE IN-PLACE PLAN CALLED WITH TWO BUFFERS: refused at the public door
+ *      (vfft.h: in place, out == in) -- vfft_error() names the plan IN-PLACE,
+ *      the output buffer keeps its canary and the input its values.
  *
  * COLD on purpose (run_gates: ("flag", False)): every cell races the planner
  * pool once (mono forms vs the pairs) and banks; the gate asserts what won
@@ -108,13 +115,14 @@ int main(int argc, char **argv)
     const char *W = (wisdir);
     if (!W) { printf("wisdom load FAILED\n"); return 2; }
     printf("=== MONO tier solo kernels: N in {2..64} x {oop, ip}, DEFAULT order ===\n");
-    printf("%-4s | %-5s %-9s %-9s | %-9s %-9s | %s\n", "N", "route", "oop fwd", "oop rt", "ip fwd", "ip rt", "");
+    printf("%-4s | %-5s %-9s %-9s | %-9s %-9s | %-9s %-9s | %-7s | %s\n", "N", "route", "oop fwd", "oop rt", "ip fwd", "ip rt",
+           "1buf fwd", "1buf rt", "ip 2buf", "");
     for (size_t i = 0; i < sizeof NS / sizeof NS[0]; i++)
     {
         const int N = NS[i];
         double *x = calloc(2 * (size_t)N, 8), *X = calloc(2 * (size_t)N, 8);
         double *y = calloc(2 * (size_t)N, 8), *r = calloc(2 * (size_t)N, 8), *z = calloc(2 * (size_t)N, 8);
-        double eo = 1, ero = 1, ei = 1, eri = 1; int route = -1, ok;
+        double eo = 1, ero = 1, ei = 1, eri = 1, ea = 1, era = 1; int route = -1, ok, refused = 0;
         srand(1000 + N);
         for (int j = 0; j < 2 * N; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
         naive_dft(x, X, N);
@@ -134,6 +142,27 @@ int main(int argc, char **argv)
             vfft_execute(hi, VFFT_BACKWARD, z, z);
             eri = relerr(z, x, N, 1.0 / N);
         }
+        if (ho)
+        {   /* 5: the out-of-place plan on one buffer */
+            memcpy(z, x, 2 * (size_t)N * 8);
+            vfft_execute(ho, VFFT_FORWARD, z, z);
+            ea = relerr(z, X, N, 1.0);
+            vfft_execute(ho, VFFT_BACKWARD, z, z);
+            era = relerr(z, x, N, 1.0 / N);
+        }
+        if (hi)
+        {   /* 6: the in-place plan with two buffers (the only refusal of this cell: both creates above
+             * left vfft_error() empty) */
+            const char *why;
+            int canary = 1;
+            memcpy(z, x, 2 * (size_t)N * 8);
+            memset(y, 0xff, 2 * (size_t)N * 8);
+            vfft_execute(hi, VFFT_FORWARD, z, y);
+            why = vfft_error();
+            for (size_t j = 0; j < 2 * (size_t)N * 8; j++)
+                if (((const unsigned char *)y)[j] != 0xff) canary = 0;
+            refused = why && strstr(why, "IN-PLACE") && canary && !memcmp(z, x, 2 * (size_t)N * 8);
+        }
         /* mono_only: no pair or chain can serve, so the verdict is the solo
          * kernel -- or, since the prime cell became a raced arm (2026-09-21),
          * Rader/Bluestein on the whole N when the race measured it faster
@@ -142,12 +171,13 @@ int main(int argc, char **argv)
          * was in the race, which is what the resolver trap this gate exists
          * for looks like when it fails: a route that is neither. */
         ok = ho && hi && eo < 1e-12 && ero < 1e-12 && ei < 1e-12 && eri < 1e-12 &&
+             ea < 1e-12 && era < 1e-12 && refused &&
              (!mono_only(N) || route == 3 || route == 7);
         if (!ok) fails++;
-        printf("%-4d | %-5s %.2e  %.2e | %.2e  %.2e | %s%s\n", N,
+        printf("%-4d | %-5s %.2e  %.2e | %.2e  %.2e | %.2e  %.2e | %-7s | %s%s\n", N,
                route == 3 ? "mono" : route == 5 ? "pair" : route == 6 ? "chain3"
                : route == 7 ? "prime" : ho ? "?" : "NOPLAN",
-               eo, ero, ei, eri, hi ? "" : "ip NOPLAN ",
+               eo, ero, ei, eri, ea, era, refused ? "refused" : "SERVED", hi ? "" : "ip NOPLAN ",
                ok ? "" : "   *** FAIL ***");
         if (ho) vfft_destroy(ho);
         if (hi) vfft_destroy(hi);

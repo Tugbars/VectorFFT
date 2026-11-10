@@ -343,7 +343,13 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
      * compare goes to the full door, which says why. An OUT-OF-PLACE real
      * plan called with one buffer (dre == sre) is the full door's: it is
      * served from a copy of the input (V11, below); a c2c plan's executors
-     * take an aliased call as they are. */
+     * take an aliased call as they are. The public door (vfft_api.h) is
+     * stricter on two c2c calls before it comes here: an out-of-place solo
+     * plan called with one buffer runs its alias-tolerant twins (k1_alias),
+     * and an in-place plan called with two buffers is refused. This door
+     * serves that last call as out of place: a composite runs its in-place
+     * child that way (the 2D tier's rows from the source to the
+     * destination). */
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && sre && dre && !sim && !dim &&
         (h->placement == VFFT_INPLACE ? dre == sre : (dre != sre || h->transform == VFFT_C2C)))
     {
