@@ -610,7 +610,8 @@ struct vfft_plan_s
      * plan runs the call on the alias-tolerant n1c twins (_k1x_mono_alias, il_execute.h). NULL = the
      * bound executor takes the call as it is: the pair, the chains, ZTURN-T and the four-step see
      * the one buffer and run their in-place form. vfft_execute's lean compare leaves the call of a
-     * plan that sets this to its slow path, which runs it (vfft_api.h). */
+     * plan that sets this to its slow path, which runs it (vfft_api.h); a contiguous batch over such
+     * a plan, called with one buffer, runs it on every transform (_vfft_il_execute, _tc_mt_tramp). */
     int (*k1_alias)(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);
 };
 

@@ -42,6 +42,13 @@ typedef struct
 static void _tc_mt_tramp(void *v)
 {
     _tc_mt_arg *a = (_tc_mt_arg *)v;
+    if (a->s == a->d && a->p->k1_alias)
+    {   /* the batch called with ONE buffer over an inner solo plan: its one-buffer executor (k1_alias),
+         * asked once per slab, never per transform */
+        for (size_t t = 0; t < a->tc; t++)
+            a->p->k1_alias(a->p, a->dir, a->s + (a->t0 + t) * a->sn, a->d + (a->t0 + t) * a->dn);
+        return;
+    }
     for (size_t t = 0; t < a->tc; t++)
         _tc_one(a->p, a->dir, a->s + (a->t0 + t) * a->sn, a->d + (a->t0 + t) * a->dn);
 }
@@ -89,9 +96,10 @@ static int _k1x_mono_b(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *z
     h->k1_mono_ilb(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
-/* an OUT-OF-PLACE solo plan called with one buffer (k1_alias: vfft_execute's slow path, vfft_api.h):
- * the kernels above are restrict, so the call runs the alias-tolerant n1c of the plan's length, the
- * kernel an in-place plan binds (same math; n1c exists at every solo length, il_solo_registry.h) */
+/* an OUT-OF-PLACE solo plan called with one buffer (k1_alias: vfft_execute's slow path, vfft_api.h,
+ * and the contiguous batch over this plan): the kernels above are restrict, so the call runs the
+ * alias-tolerant n1c of the plan's length, the kernel an in-place plan binds (same math; n1c exists
+ * at every solo length, il_solo_registry.h) */
 static int _k1x_mono_alias(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     vfft_k1_mono_ilc_fn(h->N, dir != VFFT_FORWARD)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
@@ -610,6 +618,14 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
             }
             thread_pool_run(n, _tc_mt_tramp, a, sizeof a[0]);
             _vfft_tc_mt_dispatch_count += n - 1; /* one per worker dispatched, see vfft.h */
+            return;
+        }
+        if (sre == d && h->tcb->k1_alias)
+        {   /* an OUT-OF-PLACE batch called with ONE buffer over an inner solo plan: the inner's bound
+             * kernels are restrict, so every transform runs its one-buffer executor (k1_alias), asked
+             * once per call, never per transform (_tc_mt_tramp asks the same of its slab) */
+            for (size_t t = 0; t < h->K; t++)
+                h->tcb->k1_alias(h->tcb, dir, sre + t * sn, d + t * dn);
             return;
         }
         for (size_t t = 0; t < h->K; t++)
