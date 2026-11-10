@@ -235,8 +235,11 @@ let carries_ratio_leaf ~(radix : int) ~(factored : bool) =
   && (radix mod 2 = 0 || factored || radix = 5 || radix = 7)
 ;;
 
+(* The FP32 targets (2026-11-10) take the fold too: the same construction as their FP64
+   twins (only pow2 radixes are emitted at FP32, none of them with a ratio-form leaf). *)
 let rotfma_default ~(isa_name : string) ~(radix : int) ~(factored : bool) =
-  (isa_name = "avx2" || isa_name = "avx512") && not (carries_ratio_leaf ~radix ~factored)
+  (isa_name = "avx2" || isa_name = "avx512" || isa_name = "avx2_f32" || isa_name = "avx512_f32")
+  && not (carries_ratio_leaf ~radix ~factored)
 ;;
 
 let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs ~tangent ~rotfma =

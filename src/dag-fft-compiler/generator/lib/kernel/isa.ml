@@ -233,6 +233,28 @@ let avx512vl256_f32 =
   }
 ;;
 
+(* ONE complex float (64 bits) in the low half of an __m128: the last rung of the FP32 cil
+   tail (a lone leftover column, and the per-column loop of the corner-turned kinds), inline
+   inside an avx2_f32 / avx512_f32 codelet. vec_width 2 (bits = 64): loadu_pd / storeu_pd
+   render the 64-bit forms (_mm_loadu_si64 zero-fills the upper half, _mm_storel_pi stores the
+   low half), so the record's loadu/storeu strings are never printed; the arithmetic is the
+   _mm_*_ps family on the whole xmm (the upper two floats are zeros and never stored). *)
+let sse_f32x1 =
+  { name = "sse_f32x1"
+  ; vec_type = "__m128"
+  ; vec_width = 2
+  ; vec_regs = 16
+  ; intrinsic_prefix = "_mm"
+  ; target_attr = "sse2,fma"
+  ; loadu_pd = "_mm_loadu_si64"
+  ; storeu_pd = "_mm_storel_pi"
+  ; set1_pd = "_mm_set1_ps"
+  ; maskload_pd = ""
+  ; maskstore_pd = ""
+  ; prec = F32
+  }
+;;
+
 (* Look up by name, for CLI. *)
 let of_name (s : string) : t =
   match s with
@@ -398,7 +420,7 @@ let cflip_pd (isa : t) (a : string) : string =
   if isa.prec = F32
   then (
     match isa.vec_width with
-    | 16 | 8 | 4 -> Printf.sprintf "%s_permute_ps(%s, 0xB1)" isa.intrinsic_prefix a
+    | 16 | 8 | 4 | 2 -> Printf.sprintf "%s_permute_ps(%s, 0xB1)" isa.intrinsic_prefix a
     | w -> failwith (Printf.sprintf "cflip_pd: no FP32 complex swap at vec_width %d" w))
   else
   match isa.vec_width with
@@ -444,6 +466,12 @@ let re_mask_decl (isa : t) (name : string) : string =
 let loadu_pd ?(mode = LS_vector) (isa : t) (addr : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "%s" addr
+  else if bits isa = 64
+  then (
+    (* FP32, one complex: a 64-bit load into the low half, the upper half zeroed *)
+    match mode with
+    | LS_vector -> Printf.sprintf "_mm_castsi128_ps(_mm_loadu_si64(&%s))" addr
+    | LS_masked _ -> failwith "Isa.loadu_pd: the one-complex FP32 record takes no mask")
   else (
     match mode with
     | LS_vector -> Printf.sprintf "%s(&%s)" isa.loadu_pd addr
@@ -460,6 +488,12 @@ let loadu_pd ?(mode = LS_vector) (isa : t) (addr : string) : string =
 let storeu_pd ?(mode = LS_vector) (isa : t) (addr : string) (value : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "%s = %s" addr value
+  else if bits isa = 64
+  then (
+    (* FP32, one complex: the low 64 bits of the xmm *)
+    match mode with
+    | LS_vector -> Printf.sprintf "_mm_storel_pi((__m64 *)&%s, %s)" addr value
+    | LS_masked _ -> failwith "Isa.storeu_pd: the one-complex FP32 record takes no mask")
   else (
     match mode with
     | LS_vector -> Printf.sprintf "%s(&%s, %s)" isa.storeu_pd addr value
@@ -671,7 +705,30 @@ let const_splat_decl (isa : t) (name : string) (lit : string) : string =
  *   8 (avx512, 4 cplx)  : vshuff64x2 imm 0x88 / 0xDD  (1 uop, p5, 3c)
  * NOT unpacklo/hi or permute_pd: those act inside each 128-bit lane. *)
 let cx_deint_pd (isa : t) ~(odd : bool) (a : string) (b : string) : string =
-  f32_todo isa "cx_deint_pd";
+  if isa.prec = F32
+  then (
+    (* FP32: a complex lane is ONE 64-bit unit, so the deinterleave is a 64-bit element
+       permute on cast vectors. 128 bits (2 complex): movelh / movehl. 256 (4 complex):
+       unpacklo/hi_pd within the 128-bit halves then permute4x64 0xD8 = [a0,a2,b0,b2] /
+       [a1,a3,b1,b3] (2 shuffles). 512 (8 complex): one permutex2var_pd. *)
+    match isa.vec_width with
+    | 4 -> if odd then Printf.sprintf "_mm_movehl_ps(%s, %s)" b a else Printf.sprintf "_mm_movelh_ps(%s, %s)" a b
+    | 8 ->
+      Printf.sprintf
+        "_mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_unpack%s_pd(_mm256_castps_pd(%s), _mm256_castps_pd(%s)), 0xD8))"
+        (if odd then "hi" else "lo")
+        a
+        b
+    | 16 ->
+      Printf.sprintf
+        "_mm512_castpd_ps(_mm512_permutex2var_pd(_mm512_castps_pd(%s), %s, _mm512_castps_pd(%s)))"
+        a
+        (if odd
+         then "_mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15)"
+         else "_mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14)")
+        b
+    | w -> failwith (Printf.sprintf "cx_deint_pd: no FP32 complex-lane deinterleave at vec_width %d" w))
+  else
   match isa.vec_width with
   | 2 -> if odd then b else a
   | 4 -> Printf.sprintf "_mm256_permute2f128_pd(%s, %s, 0x%x)" a b (if odd then 0x31 else 0x20)
@@ -684,7 +741,14 @@ let cx_deint_pd (isa : t) ~(odd : bool) (a : string) (b : string) : string =
  * store-form vextractf128 / vextractf64x2 m128 — store uops only, no
  * shuffle port. castpd*_pd128 is free. extractf64x2 is AVX512DQ. *)
 let cx_part_pd (isa : t) (v : string) (c : int) : string =
-  f32_todo isa "cx_part_pd";
+  if isa.prec = F32
+  then
+    failwith
+      (Printf.sprintf
+         "Isa.cx_part_pd: an FP32 complex lane is 64 bits, not a 128-bit value (complex lane %d \
+          of %s); its store is Isa.storeu_cx_lane"
+         c
+         isa.name);
   match isa.vec_width, c with
   | 2, 0 -> v
   | 4, 0 -> Printf.sprintf "_mm256_castpd256_pd128(%s)" v
@@ -699,8 +763,88 @@ let cx_part_pd (isa : t) (v : string) (c : int) : string =
  * r = per is the plain store. The partial forms are ISA policy: a
  * half-width prefix is a narrower cast store (no mask), anything else a
  * k-masked store (AVX-512 fault-suppresses the masked-off lanes). *)
+(* FP32: the 128-bit unit q (complex lanes 2q, 2q+1) of v as an __m128 -- the cast is free,
+   the extracts are the operand of a store (store-form vextractf128 / vextractf32x4: store
+   uops only, no shuffle port) *)
+let f32_quarter (isa : t) (v : string) (q : int) : string =
+  match isa.vec_width, q with
+  | 4, 0 -> v
+  | 8, 0 -> Printf.sprintf "_mm256_castps256_ps128(%s)" v
+  | 8, 1 -> Printf.sprintf "_mm256_extractf128_ps(%s, 1)" v
+  | 16, 0 -> Printf.sprintf "_mm512_castps512_ps128(%s)" v
+  | 16, (1 | 2 | 3) -> Printf.sprintf "_mm512_extractf32x4_ps(%s, %d)" v q
+  | w, _ -> failwith (Printf.sprintf "Isa: no FP32 128-bit unit %d at vec_width %d" q w)
+;;
+
+(* FP32: store complex lane c (one 64-bit unit) of v at addr -- the scatter store of the
+   leg-strided turn (t2tg) and of a lone turned leg: movlps / movhps of the 128-bit unit that
+   holds it *)
+let storeu_cx_lane (isa : t) (addr : string) (v : string) (c : int) : string =
+  if isa.prec <> F32 then failwith "Isa.storeu_cx_lane: FP32 only (FP64 stores Isa.cx_part_pd)";
+  if bits isa = 64
+  then (
+    if c <> 0 then failwith "Isa.storeu_cx_lane: the one-complex record has lane 0 only";
+    Printf.sprintf "_mm_storel_pi((__m64 *)&%s, %s)" addr v)
+  else
+    Printf.sprintf
+      "_mm_store%s_pi((__m64 *)&%s, %s)"
+      (if c land 1 = 0 then "l" else "h")
+      addr
+      (f32_quarter isa v (c / 2))
+;;
+
+(* FP32: store the 128-bit unit q of v (complex lanes 2q, 2q+1) at addr -- the half stores of
+   the FP32 corner turn *)
+let storeu_cx_unit (isa : t) (addr : string) (v : string) (q : int) : string =
+  if isa.prec <> F32 then failwith "Isa.storeu_cx_unit: FP32 only";
+  Printf.sprintf "_mm_storeu_ps(&%s, %s)" addr (f32_quarter isa v q)
+;;
+
+(* FP32: the 64-bit (one complex) interleave inside each 128-bit lane, on cast vectors:
+   lo = [a0 b0 | a2 b2 | ..], hi = [a1 b1 | a3 b3 | ..] in complex lanes (Cx_ir.CUnpack). *)
+let cx_unpack (isa : t) ~(hi : bool) (a : string) (b : string) : string =
+  if isa.prec <> F32 then failwith "Isa.cx_unpack: FP32 only (FP64 renders CUnpack per double)";
+  if not (List.mem isa.vec_width [ 4; 8; 16 ])
+  then failwith (Printf.sprintf "Isa.cx_unpack: no FP32 unpack at vec_width %d" isa.vec_width);
+  let p = isa.intrinsic_prefix in
+  Printf.sprintf
+    "%s_castpd_ps(%s_unpack%s_pd(%s_castps_pd(%s), %s_castps_pd(%s)))"
+    p
+    p
+    (if hi then "hi" else "lo")
+    p
+    a
+    p
+    b
+;;
+
 let storeu_cx_prefix (isa : t) (addr : string) (v : string) (r : int) : string =
-  f32_todo isa "storeu_cx_prefix";
+  if isa.prec = F32
+  then (
+    (* FP32: r complex = 8*r bytes. Halves and quarters are cast / store-form extract
+       stores, a single complex a movlps; anything else two stores (256 bits) or one k-masked
+       store (512 bits, __mmask16 over the 2r floats). *)
+    let per = isa.vec_width / 2 in
+    if r = per
+    then storeu_pd isa addr v
+    else (
+      match isa.vec_width, r with
+      | (4 | 8 | 16), 1 -> storeu_cx_lane isa addr v 0
+      | (8 | 16), 2 -> storeu_cx_unit isa addr v 0
+      | 8, 3 ->
+        Printf.sprintf
+          "%s; %s"
+          (storeu_cx_unit isa addr v 0)
+          (Printf.sprintf "_mm_storel_pi((__m64 *)(&%s + 4), _mm256_extractf128_ps(%s, 1))" addr v)
+      | 16, 4 -> Printf.sprintf "_mm256_storeu_ps(&%s, _mm512_castps512_ps256(%s))" addr v
+      | 16, _ ->
+        Printf.sprintf
+          "_mm512_mask_storeu_ps(&%s, (__mmask16)0x%X, %s)"
+          addr
+          ((1 lsl (2 * r)) - 1)
+          v
+      | w, _ -> failwith (Printf.sprintf "storeu_cx_prefix: FP32 r=%d at vec_width %d" r w)))
+  else
   let per = isa.vec_width / 2 in
   if r = per
   then storeu_pd isa addr v

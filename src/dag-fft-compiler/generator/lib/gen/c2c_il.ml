@@ -248,10 +248,63 @@ let emit
       ~(split : (int * int) option)
       ~(split3 : (int * int * int) option)
       ~(radix : int)
+      ~(port : int)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
   =
+  (* FP32 (2026-11-10): the interleaved c2c kinds of the power-of-two 1D scope, and nothing
+     else -- n1, n1c, t2c (plain and blocked), n1t and t2 (plain and blocked), and the
+     backward t2's turned stores t2t / t2tg (plain and blocked). Every other FP32 request
+     refuses here, loudly, before any FP64-only rendering can be reached. *)
+  let f32 = Isa.is_f32 isa in
+  if f32
+  then (
+    let why =
+      if radix < 2 || radix land (radix - 1) <> 0
+      then Some (Printf.sprintf "radix %d (not a power of two)" radix)
+      else if kind = RN1
+      then Some "the real mono (rn1)"
+      else if herm
+      then Some "the Hermitian edge (t2csgh / t2csght)"
+      else if st128
+      then Some "the half stores (--cil-st128, shared/col/half)"
+      else if colstride || gen2 || grouploop || transposed
+      then Some "the column-stride / flat kinds (t2cs*, n1ccs)"
+      else if pretw
+      then Some "the pre-twiddle placement (t2cp)"
+      else if rowloop
+      then Some "the row loop (rows)"
+      else if tangent
+      then Some "the tangent bodies"
+      else if log3
+      then Some "the log3 twiddle sourcing"
+      else if (turnst || turnst_gs) && not (kind = T2 && dir = Bwd)
+      then Some "a turned store other than the backward t2's (t2t / t2tg)"
+      else
+        List.find_map
+          (fun v ->
+             if Sys.getenv_opt v <> None then Some (v ^ " (an FP64 form knob)") else None)
+          [ "VFFT_CX_TURN128"; "VFFT_CX_STORE128"; "VFFT_TAIL256"; "VFFT_TAIL512"; "VFFT_CX_WING"
+          ; "VFFT_CX_W32TG"; "VFFT_CX_TANGENT" ]
+    in
+    match why with
+    | Some w ->
+      failwith
+        (Printf.sprintf
+           "codelet_cil: no FP32 form for %s at %s. FP32 emits the power-of-two n1 / n1c / t2c / \
+            n1t / t2 kinds (plain and blocked) and the backward t2's turned stores t2t / t2tg"
+           w
+           isa.Isa.name)
+    | None -> ());
+  if port < 0 || port > 100 then failwith "codelet_cil: --cil-port takes a percentage 0..100";
+  if port > 0 && not f32
+  then failwith "codelet_cil: --cil-port is an FP32 setting; an FP64 target refuses it";
+  Cx_render.port_pct := port;
+  Cx_render.port_seen := 0;
+  Cx_render.port_conv := 0;
+  Cx_render.port_reset ();
+  let elem = Isa.elem isa in
   (* --cil-split3 m.m2.q (2026-10-01): the THREE-PASS blocked form of the
      column leaf, R = m * m2 * q. The two-pass form's pass 1 runs m sub-DFTs
      of p = m2 * q points; at p = 16 a sub-DFT holds more values than the
@@ -612,7 +665,63 @@ let emit
                      paired permute2f128 0x20/0x31 edge, byte-for-byte. *)
   let turned_group_store (dst : Buffer.t) ~(l0 : int) (legs : t array) : unit =
     let r = Array.length legs in
-    if r = 1
+    if f32 && r = 1
+    then
+      (* FP32 lone leg: complex lane c (one 64-bit unit) to column c, a movlps / movhps
+         each. Unreachable for power-of-two radixes (r is a power of two >= 2). *)
+      for c = 0 to per - 1 do
+        let q = cpart legs.(0) c in
+        let (_ : t) = cstore (AZoutTurn (l0, c)) q in
+        Buffer.add_string
+          dst
+          (Printf.sprintf
+             "        %s;\n"
+             (Isa.storeu_cx_lane isa (addr_str (AZoutTurn (l0, c))) (Printf.sprintf "z%d" legs.(0).tag) c))
+      done
+    else if f32 && Isa.bits isa = 256
+    then (
+      (* FP32 AVX2 (per = 4): the HALF-STORE corner turn. One unpack round on 64-bit units
+         (one complex) pairs legs (2j, 2j+1): lo_j = [L2j c0, L2j+1 c0 | L2j c2, L2j+1 c2],
+         hi_j = [.. c1 .. | .. c3 ..]; then 128-bit unit q of lo_j (hi_j) IS legs 2j, 2j+1 of
+         column 2q (2q+1), stored whole: cast / store-form vextractf128 stores, no
+         permute2f128 -- one shuffle per leg vector and two 16-byte stores per column pair
+         of legs. The FP32 prototype measured these half stores 10-24 % faster than
+         vperm2f128 + 32-byte stores in its transposes (2026-11-08). Column c of the group
+         lands at zout[2*((k+c)*OLs + l0)], legs l0 .. l0+r-1. *)
+      if r mod 2 <> 0
+      then
+        failwith
+          (Printf.sprintf "codelet_cil: the FP32 half-store turn pairs legs; a group of %d legs" r);
+      let pairs =
+        Array.init (r / 2) (fun j ->
+          let lo = cunpack legs.(2 * j) legs.((2 * j) + 1) false
+          and hi = cunpack legs.(2 * j) legs.((2 * j) + 1) true in
+          List.iter
+            (fun (x : t) ->
+               Buffer.add_string
+                 dst
+                 (Printf.sprintf
+                    "        %s\n"
+                    (Isa.const_decl isa (Printf.sprintf "z%d" x.tag) (render ~ctx isa tbl x))))
+            [ lo; hi ];
+          lo, hi)
+      in
+      for c = 0 to per - 1 do
+        Array.iteri
+          (fun j ((lo : t), (hi : t)) ->
+             let src = if c land 1 = 0 then lo else hi in
+             Buffer.add_string
+               dst
+               (Printf.sprintf
+                  "        %s;\n"
+                  (Isa.storeu_cx_unit
+                     isa
+                     (addr_str (AZoutTurn (l0 + (2 * j), c)))
+                     (Printf.sprintf "z%d" src.tag)
+                     (c / 2))))
+          pairs
+      done)
+    else if r = 1
     then
       for c = 0 to per - 1 do
         let q = cpart legs.(0) c in
@@ -1034,7 +1143,11 @@ let emit
       failwith
         "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) turn; only \
          the contiguous corner-turn is supported blocked.";
-    if turned && (not turn128) && p mod per <> 0
+    (* FP32 with p < per (2026-11-10; radix16_z_n1tb44 at 512 bits: p = 4, 8 complex per
+       vector): ONE pass-tuple holds all p groups -- every leg -- and the legs leave in turned
+       groups of per adjacent legs (below). Needs per % p = 0 and R % per = 0. *)
+    let all_groups_tuple = f32 && turned && (not turn128) && p mod per <> 0 && per mod p = 0 && radix mod per = 0 in
+    if turned && (not turn128) && p mod per <> 0 && not all_groups_tuple
     then
       failwith
         (Printf.sprintf
@@ -1065,7 +1178,10 @@ let emit
               body
               (Printf.sprintf
                  "        %s;\n"
-                 (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+                 (* pass_store: a remainder pass under LS_masked (the FP32 AVX-512 blocked
+                    leaf's masked tail) stores its legs through the mask; LS_vector renders
+                    the plain store exactly as render_store does *)
+                 (pass_store isa mode ad (Printf.sprintf "z%d" e.tag))))
       done
     else if turn128
     then
@@ -1092,6 +1208,50 @@ let emit
                    (render ~ctx isa tbl q))
             done)
       done
+    else if all_groups_tuple
+    then (
+      (* ─── PASS 2, TURNED, ALL GROUPS (FP32, p < per): the p groups j = 0..p-1 in ONE
+         scheduled sub-DAG (nin = m*p = R: the radix's every leg), built last group first as
+         the pass-tuple below is; output (g, k2) is leg g + p*k2. Every leg is stashed; when
+         the last arrives, the legs leave as R/per turned groups of per ADJACENT legs
+         (l0 = per*t) through turned_group_store. *)
+      let by_leg : t option array = Array.make radix None in
+      let got = ref 0 in
+      emit_pass
+        ~lazy_store:false
+        ~label:
+          (Printf.sprintf
+             "PASS 2.0..%d TURNED (all groups): S[i*%d+g] -> columns k..k+%d"
+             (p - 1)
+             p
+             (per - 1))
+        ~nin:(p * m)
+        ~laddr_of:(fun idx ->
+          let i = idx mod m
+          and g = idx / m in
+          AS (vw * ((i * p) + g)))
+        ~build:(fun ins ->
+          let parts = Array.make p [||] in
+          for g = p - 1 downto 0 do
+            parts.(g) <- pass2_math ~jv:g (Array.sub ins (g * m) m)
+          done;
+          Array.concat (Array.to_list parts))
+        ~store:(fun idx e ->
+          let g = idx / m
+          and k2 = idx mod m in
+          by_leg.(g + (p * k2)) <- Some e;
+          incr got;
+          if !got = p * m
+          then
+            for t = 0 to (radix / per) - 1 do
+              let legs =
+                Array.init per (fun i ->
+                  match by_leg.((per * t) + i) with
+                  | Some x -> x
+                  | None -> failwith "codelet_cil: all-groups turned tuple: leg missing")
+              in
+              turned_group_store body ~l0:(per * t) legs
+            done))
     else
       (* ─── PASS 2, TURNED (N1T / t2t): the corner-turn pairs ADJACENT legs
          (l, l+1), but pass 2.j produces legs {j + p*k2} — stride p apart.
@@ -1428,6 +1588,8 @@ let emit
     && (kind = T2 || kind = N1 || kind = N1C || kind = T2C)
   in
   let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
+  (* the FMA-port counter (FP32 --cil-port) restarts per arm: here the wide loop's body *)
+  Cx_render.port_reset ();
   if blocked
   then emit_blocked ()
   else if odd_blocked
@@ -1588,12 +1750,15 @@ let emit
      ("" = reuse the wide names). ~lane_off: add 2*(k % per) to the stream
      cursor (per-lane VTW2/gen2 records read at the column's own lane). *)
   let tail_prologue ~(nisa : Isa.t) ~(msuf : string) ~(mode : Isa.ls_mode) ~(lane_off : bool) body_n =
+    (* every tail arm starts the FMA-port count afresh (FP32 --cil-port) *)
+    Cx_render.port_reset ();
     if kind = T2
     then
       Buffer.add_string
         body_n
         (Printf.sprintf
-           "        const double *twp = tw_re + (k / %d) * (size_t)%d%s;\n"
+           "        const %s *twp = tw_re + (k / %d) * (size_t)%d%s;\n"
+           elem
            per
            (if ctx.tw_gen2 then nb2 * 2 * vw else (radix - 1) * 2 * vw)
            (if lane_off then Printf.sprintf " + 2 * (k %% %d)" per else ""));
@@ -1718,8 +1883,35 @@ let emit
      ymm), "overrun" / "blk_overrun" (the monolithic DAG / the blocked passes
      in one unmasked ymm pass: reads and WRITES one column past the end -- a
      cost floor, never a kernel). *)
+  (* THE FP32 TAIL (2026-11-10). One complex is 64 bits, so a kernel's count leaves 1..per-1
+     columns (AVX2 per = 4, AVX-512 per = 8) -- any of them, odd ones included (the FP64
+     AVX2 law of one even leftover column does not hold). Every FP32 kernel takes EVERY
+     count >= 1:
+       f32_ladder      AVX2 n1 / n1c / t2 / t2c (and their blocked forms but the blocked
+                       n1c): one 128-bit pass of 2 complex (sse_f32) when 2+ columns are
+                       left, then one 64-bit pass of the last complex (sse_f32x1); the T2
+                       record read at the column's own lane (lane_off)
+       f32_blk_ladder  AVX2 blocked n1c leaf: the same two rungs, each the blocked passes
+       f32_masked      AVX-512 vertical kinds: ONE k-masked zmm pass (__mmask16 over the
+                       2r floats of the r leftover columns; the T2 records masked alike)
+       f32_blk_masked  AVX-512 blocked n1c leaf: the blocked passes in one masked zmm pass
+       f32_col         the corner-turned kinds (n1t, t2t, t2tg, and blocked), both ISAs: the
+                       leftover columns one at a time at 64 bits -- a turned column store of
+                       one complex per leg (a wider rung would store several columns through
+                       a one-column turn address). *)
   let tail_policy =
-    if vw <= 4
+    if f32
+    then (
+      let turned = kind = N1T || ctx.st_turn in
+      let blk = blocked && kind = N1C in
+      if turned
+      then "f32_col"
+      else if Isa.bits isa = 256
+      then if blk then "f32_blk_ladder" else "f32_ladder"
+      else if blk
+      then "f32_blk_masked"
+      else "f32_masked")
+    else if vw <= 4
     then (
       match Sys.getenv_opt "VFFT_TAIL256" with
       | None ->
@@ -1745,6 +1937,15 @@ let emit
   let body_y = Buffer.create 2048 in
   let body_m = Buffer.create 2048 in
   (match tail_policy with
+   | "f32_ladder" ->
+     tail_arm ~nisa:Isa.sse_f32 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_y;
+     tail_arm ~nisa:Isa.sse_f32x1 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
+   | "f32_blk_ladder" ->
+     tail_blocked ~nisa:Isa.sse_f32 ~msuf:"_n" ~mode:Isa.LS_vector body_y;
+     tail_blocked ~nisa:Isa.sse_f32x1 ~msuf:"_n" ~mode:Isa.LS_vector body_n
+   | "f32_masked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_m
+   | "f32_blk_masked" -> tail_blocked ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") body_m
+   | "f32_col" -> tail_arm ~nisa:Isa.sse_f32x1 ~msuf:"_n" ~mode:Isa.LS_vector ~lane_off:true body_n
    | "masked" -> tail_arm ~nisa:isa ~msuf:"" ~mode:(Isa.LS_masked "_tm") ~lane_off:false body_n
    | "ladder" ->
      tail_arm ~nisa:Isa.avx2 ~msuf:"_y" ~mode:Isa.LS_vector ~lane_off:true body_y;
@@ -1779,7 +1980,7 @@ let emit
             (match dir with
              | Fwd -> "fwd"
              | Bwd -> "bwd"))
-       [ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
+       ([ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
        ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
        ; Printf.sprintf
            "Form: blocked=%b split=%s turnst=%b turnst_gs=%b pretw=%b \
@@ -1802,7 +2003,19 @@ let emit
                 (if odd_p1 then " p1" else "")
                 (if odd_roll then " roll" else "")
             else "")
-       ]);
+       ]
+       @ (if f32 then [ Printf.sprintf "FP32 tail: %s" tail_policy ] else [])
+       @
+       if port > 0
+       then
+         [ Printf.sprintf
+             "FMA port: --cil-port %d: %d of the %d plain data add/sub (all arms) rendered as \
+              fmadd(b, 1, a) / fnmadd(b, 1, a), bit-identical to the add"
+             port
+             !Cx_render.port_conv
+             !Cx_render.port_seen
+         ]
+       else []));
   Buffer.add_string
     buf
     (Printf.sprintf
@@ -1827,6 +2040,9 @@ let emit
              in-place same-slot)"
         | N1T -> "bailey2 stage-1 leaf n1t (four-step TRANSPOSE fused into the stores)"
         | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)"
+        | T2C when f32 ->
+          "2D column-stage mid t2c (same-slot DIF stage; one 8-byte twiddle \
+           record [c, s] (2 floats) per (d,leg), broadcast at each use)"
         | T2C ->
           "2D column-stage mid t2c (same-slot DIF stage; one 16-byte twiddle \
            record per (d,leg), broadcast at each use)"
@@ -1836,9 +2052,26 @@ let emit
            loaded, R/2+1..R-1 the conjugates of their mirrors, real lanes stored. \
            count = 1 is the K=1 solo (the VEX-128 tail); 2 rows per vector wide")
        per
-       (vw * 64)
+       (Isa.bits isa)
        (match kind with
         | N1 | N1C | RN1 -> "tw_re/tw_im unused."
+        | T2C when f32 ->
+          "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
+           1..R-1 one 8-byte record [c, s] (2 floats), the twiddle c + i*s, DRIVER-built. \
+           fwd applies it POST-butterfly (DIF); bwd is the HERMITIAN-TRANSPOSE stage — \
+           conjugated table applied PRE-butterfly, stages run in REVERSE order by the \
+           driver. Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one stage over one \
+           block. tw_im unused."
+        | T2 when f32 ->
+          Printf.sprintf
+            "tw_re = VTW2 records, cos-first and sign-folded: per group of %d columns, per\n\
+            \ * leg 1..R-1, one %d-float record [c0 c0 c1 c1 .. x%d][-s0 +s0 -s1 +s1 ..].\n\
+            \ * Cursor advances %d floats per group; BYTW2 = fmadd(c, x, mul(s, cflip x)).\n\
+            \ * The tail reads the group's record at its column's lane. tw_im unused."
+            per
+            (2 * vw)
+            per
+            ((radix - 1) * 2 * vw)
         | T2C ->
           "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
            1..R-1 one 16-byte record [c, s], the twiddle c + i*s, DRIVER-built. fwd \
@@ -1866,11 +2099,27 @@ let emit
           contract states is the word BLOCKED, which is load-bearing:
           CODELET_TAXONOMY.md reads this line to tell the two apart, because
           blocked-ness is invisible in every other descriptive line. *)
-       (Printf.sprintf
-          "count: ANY >= 1 — %s%d columns per wide iteration, inline VEX-128\n\
-          \ * odd-count tail for the leftover (il_odd_count_tail.md §3)."
-          (if blocked then "BLOCKED, " else "")
-          per));
+       (if f32
+        then
+          Printf.sprintf
+            "count: ANY >= 1 — %s%d columns per wide iteration; the 1..%d leftover\n\
+            \ * columns: %s."
+            (if blocked then "BLOCKED, " else "")
+            per
+            (per - 1)
+            (match tail_policy with
+             | "f32_ladder" -> "one 128-bit pass of 2 complex, then one 64-bit pass of 1"
+             | "f32_blk_ladder" ->
+               "the blocked passes at 128 bits (2 complex), then at 64 bits (1)"
+             | "f32_masked" -> "ONE k-masked zmm pass (__mmask16)"
+             | "f32_blk_masked" -> "the blocked passes in ONE k-masked zmm pass (__mmask16)"
+             | _ -> "one column per pass at 64 bits (one complex per leg)")
+        else
+          Printf.sprintf
+            "count: ANY >= 1 — %s%d columns per wide iteration, inline VEX-128\n\
+            \ * odd-count tail for the leftover (il_odd_count_tail.md §3)."
+            (if blocked then "BLOCKED, " else "")
+            per));
   Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
   (* Only the quarter-turn mask this direction actually uses — emitting both
      would leave an unused static const (warning noise). The monolithic tail
@@ -1880,6 +2129,23 @@ let emit
      to avoid an unused static const; blocked now renders the same DAG at
      Isa.sse2 in its tail and references _M_IM_n / _M_RE_n by name, so
      withholding the declaration is a compile error rather than tidiness. *)
+  if f32
+  then (
+    (* FP32: the wide mask, and the __m128 twin (_n) that BOTH narrow rungs read (the
+       2-complex arm and the one-complex arm are __m128 values alike) when a narrow arm
+       exists; the AVX-512 masked arm reads the wide one *)
+    let decl, nm, what =
+      if dir = Fwd
+      then Isa.im_mask_decl, "_M_IM", "negate im lanes: x*(-i)"
+      else Isa.re_mask_decl, "_M_RE", "negate re lanes: x*(+i)"
+    in
+    Buffer.add_string buf (decl isa nm);
+    Buffer.add_string buf (Printf.sprintf "  /* %s */\n" what);
+    if List.mem tail_policy [ "f32_ladder"; "f32_blk_ladder"; "f32_col" ]
+    then (
+      Buffer.add_string buf (decl Isa.sse_f32 (nm ^ "_n"));
+      Buffer.add_string buf "  /* 128-bit tail twin (both narrow arms) */\n"))
+  else (
   if herm && dir = Bwd
   then (
     (* the Hermitian load edge conjugates: the imaginary mask beside the backward's own *)
@@ -1909,7 +2175,7 @@ let emit
     Buffer.add_string buf "  /* tail twin */\n");
     if List.mem tail_policy ["ladder"; "ladder_m3"; "hyb2"] then (
     Buffer.add_string buf (Isa.re_mask_decl Isa.avx2 "_M_RE_y");
-    Buffer.add_string buf "  /* ymm tail twin */\n"));
+    Buffer.add_string buf "  /* ymm tail twin */\n")));
   Buffer.add_string buf (emit_const_decls isa tbl);
   Buffer.add_string buf odd_tables;
   (* M4 phase 3: the FROZEN 11-arg z ABI comes from Abi.z11_signature — the
@@ -1920,6 +2186,7 @@ let emit
     buf
     (Abi.z11_signature
        ~static_inline:grouploop
+       ~elem
        (* il2p calls the forward T2 and the backward N1 with zin == zout on
           its out-of-place fast path (il2p.h), so those two must not promise
           the compiler their planes are disjoint. The real mono RN1 is the
@@ -1988,8 +2255,9 @@ let emit
     Buffer.add_string
       buf
       (Printf.sprintf
-         "    double S[%d]%s;  /* half-DFT spill: function-scope, L1-hot across iterations \
+         "    %s S[%d]%s;  /* half-DFT spill: function-scope, L1-hot across iterations \
           */\n"
+         elem
          (vw * radix)
          (if odd_blocked && odd_roll then " __attribute__((aligned(64)))" else ""))
   else if ctx.mono_spill_slots > 0
@@ -1997,13 +2265,14 @@ let emit
     Buffer.add_string
       buf
       (Printf.sprintf
-         "    double S[%d];  /* cx_spill Belady scratch (peak-pressure cap) */\n"
+         "    %s S[%d];  /* cx_spill Belady scratch (peak-pressure cap) */\n"
+         elem
          (vw * ctx.mono_spill_slots));
   if kind = T2C
   then (
     (* per-(d,leg) 16-byte records, one per leg, shared by the whole column
        tile; each use broadcasts its own (Cx_ir.ctx.tw_group) *)
-    Buffer.add_string buf "    const double *twp = tw_re;\n";
+    Buffer.add_string buf (Printf.sprintf "    const %s *twp = tw_re;\n" elem);
     Buffer.add_string buf "    for (size_t d = 0; d < OGs; d++) {\n");
   if rowloop
   then
@@ -2028,7 +2297,8 @@ let emit
     Buffer.add_string
       buf
       (Printf.sprintf
-         "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
+         "        const %s *twp = tw_re + (k / %d) * (size_t)%d;\n"
+         elem
          per
          (if ctx.tw_gen2 then nb2 * 2 * vw else (radix - 1) * 2 * vw));
   (* LOG3 binds every leg's record up front — loaded for power-of-two legs,
@@ -2097,7 +2367,12 @@ let emit
                  buf
                  (Printf.sprintf
                     "        %s;\n"
-                    (render_store Isa.sse2 (AZoutTurnG (l, c)) (render ~ctx isa tbl q)))
+                    (if f32
+                     then
+                       (* FP32: each complex is one 64-bit unit -- movlps / movhps of the
+                          128-bit unit holding lane c *)
+                       Isa.storeu_cx_lane isa (addr_str (AZoutTurnG (l, c))) (Printf.sprintf "z%d" e.tag) c
+                     else render_store Isa.sse2 (AZoutTurnG (l, c)) (render ~ctx isa tbl q)))
              done)
           outs
       else (
@@ -2141,6 +2416,37 @@ let emit
     (* at vw = 4 the leftover is one column: a constant lane mask *)
     let ymm_mask = "        const __m256i _tm = _mm256_setr_epi64x(-1, -1, 0, 0);\n" in
     (match tail_policy with
+     | "f32_ladder" | "f32_blk_ladder" ->
+       (* FP32 AVX2: after the wide loop k is a multiple of 4, so 0..3 columns are left *)
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k + 2 <= %s) {  /* FP32 tail: one 128-bit pass, 2 complex%s */\n" cnt
+            (if tail_policy = "f32_blk_ladder" then " (the blocked passes)" else ""));
+       Buffer.add_buffer buf body_y;
+       Buffer.add_string buf "        k += 2;\n    }\n";
+       Buffer.add_string buf
+         (Printf.sprintf "    if (k < %s) {  /* FP32 tail: one 64-bit pass, the last complex%s */\n" cnt
+            (if tail_policy = "f32_blk_ladder" then " (the blocked passes)" else ""));
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
+     | "f32_masked" | "f32_blk_masked" ->
+       (* FP32 AVX-512: 1..7 leftover columns = 2..14 floats under one __mmask16 *)
+       Buffer.add_string buf
+         (Printf.sprintf
+            "    if (k < %s) {  /* FP32 tail: 1..%d leftover complex in ONE k-masked zmm pass%s */\n\
+            \        const __mmask16 _tm = (__mmask16)((1u << (2u * (unsigned)(%s - k))) - 1u);\n"
+            cnt
+            (per - 1)
+            (if tail_policy = "f32_blk_masked" then " (the blocked passes)" else "")
+            cnt);
+       Buffer.add_buffer buf body_m;
+       Buffer.add_string buf "    }\n"
+     | "f32_col" ->
+       Buffer.add_string buf
+         (Printf.sprintf
+            "    for (; k < %s; ++k) {  /* FP32 tail: the leftover columns one at a time, one complex (64 bits) per leg */\n"
+            cnt);
+       Buffer.add_buffer buf body_n;
+       Buffer.add_string buf "    }\n"
      | "masked" when vw <= 4 ->
        Buffer.add_string buf
          (Printf.sprintf "    if (k < %s) {  /* masked tail: the leftover column in ONE ymm pass */\n" cnt);
@@ -2371,6 +2677,13 @@ let emit_k1
       ~(uarch : Uarch.t)
   : string
   =
+  if Isa.is_f32 isa
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: --cil-k1 (the fused K=1 kernel) has no FP32 form (target %s): it is AVX2 \
+          FP64 only (double P[], permute2f128_pd)"
+         isa.Isa.name);
   Cx_render.colstride := false;
   (* the mono path never column-strides *)
   let ctx =
@@ -2739,6 +3052,13 @@ let emit_row
       ~(uarch : Uarch.t)
   : string
   =
+  if Isa.is_f32 isa
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: the row kinds (--cil-row / --cil-rowswap, the 2D tier) have no FP32 form \
+          (target %s)"
+         isa.Isa.name);
   Cx_render.colstride := whole;
   Cx_render.herm := 0;
   let ctx =

@@ -2264,6 +2264,14 @@ let emit_k1_mono
   =
   (* M6.1: per-emission scratch — this entry's own instance *)
   let sc = Emit_render.Scratch.create () in
+  if Isa.is_f32 isa
+  then
+    failwith
+      (Printf.sprintf
+         "--k1-mono: no FP32 form (target %s): the mono is emitted through the split-real \
+          body (Emit_render / emit_body) with FP64 lattices -- double tables, __m256d / \
+          __m512d transposes -- an FP32 form is a rewrite of that path"
+         isa.Isa.name);
   let vw = isa.Isa.vec_width in
   if vw <> 4 && vw <> 8 then failwith "--k1-mono: vec_width 4 (avx2) or 8 (avx512)";
   if sw && not il then failwith "--k1-mono: --k1-sw requires --k1-il";

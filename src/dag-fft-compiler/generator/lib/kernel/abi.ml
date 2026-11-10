@@ -173,7 +173,12 @@ let signature t =
    grouping is part of the frozen bytes, and one source replaces the
    twice-printed divergence risk (zsplit derived its silencers, cil
    hardcoded them — that asymmetry stays caller-side and out of scope). *)
-let z11_signature ?(alias_tolerant = false) ?(static_inline = false) ~symbol ~target_attr () =
+let z11_signature ?(alias_tolerant = false) ?(static_inline = false) ?(elem = "double") ~symbol ~target_attr () =
+  (* elem (2026-11-10): the plane / table element type, "double" (every FP64 caller, the
+     default: the bytes below are the frozen ones) or "float" (the FP32 cil kinds). The
+     column alignment pads the pointer star 7 spaces past the element name either way. *)
+  let cp = Printf.sprintf "    const %s *" elem
+  and mp = Printf.sprintf "    %s       *" elem in
   (* alias_tolerant: OMIT __restrict__ on the four plane pointers. Required
      for the kernels il2p calls with zin == zout on its out-of-place fast
      path (forward T2, backward N1): passing one pointer to two
@@ -201,11 +206,11 @@ let z11_signature ?(alias_tolerant = false) ?(static_inline = false) ~symbol ~ta
        else
          Printf.sprintf "__attribute__((target(\"%s\")))\n" target_attr
          ^ Printf.sprintf "void %s(\n" symbol)
-    ; "    const double *" ^ r ^ "zin,\n"
-    ; "    const double *" ^ r ^ "zin_unused,\n"
-    ; "    double       *" ^ r ^ "zout,\n"
-    ; "    double       *" ^ r ^ "zout_unused,\n"
-    ; "    const double * tw_re, const double * tw_im,\n"
+    ; cp ^ r ^ "zin,\n"
+    ; cp ^ r ^ "zin_unused,\n"
+    ; mp ^ r ^ "zout,\n"
+    ; mp ^ r ^ "zout_unused,\n"
+    ; Printf.sprintf "    const %s * tw_re, const %s * tw_im,\n" elem elem
     ; "    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n"
     ; "{\n"
     ]
