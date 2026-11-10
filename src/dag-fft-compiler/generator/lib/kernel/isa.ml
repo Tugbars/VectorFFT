@@ -532,9 +532,36 @@ let forward_decl (isa : t) (names : string list) : string =
  *   deint_ordered lo hi : two z vectors (VW/2 complex each) -> (re, im) planes,
  *                         lane c = column c.
  *   reint_ordered re im : the inverse, -> (lo, hi) z vectors.
- *   transpose           : a VW x VW transpose of VW vectors. *)
+ *   transpose           : a VW x VW transpose of VW vectors.
+ * FP32 (2026-11-10): one complex = one 64-bit unit. The ZTURN-T forms exist at 8
+ * lanes (ymm, avx2_f32: the FP64 AVX-512 lane count, laws and cell set); there is
+ * no 16-lane form (the avx512_f32 ZTURN-T build runs the 8-lane drivers,
+ * ztt_drivers.ml ztt_isa). At 8 lanes a z vector holds 4 complex, and the
+ * renderings below use only immediates (no index constants): vshufps / vunpck*ps
+ * (in-lane) and vpermpd / vperm2f128 (lane-crossing), the FP64 AVX2 counts. *)
+let f32_no_lanes (isa : t) (what : string) : 'a =
+  failwith
+    (Printf.sprintf
+       "Isa.%s: no %d-lane FP32 ZTURN-T form (target %s; the FP32 ZTT forms are 8-lane ymm)"
+       what isa.vec_width isa.name)
+;;
+
 let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
-  f32_todo isa "deint_ordered";
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 ->
+      (* lo = [r0 i0 r1 i1 | r2 i2 r3 i3], hi = [r4 i4 r5 i5 | r6 i6 r7 i7]:
+         vshufps 0x88 / 0xDD picks the re / im floats per 128-bit lane
+         ([r0 r1 r4 r5 | r2 r3 r6 r7]), vpermpd 0xD8 orders the 64-bit pairs *)
+      let g imm =
+        Printf.sprintf
+          "_mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(_mm256_shuffle_ps(%s, %s, %s)), 0xD8))"
+          lo hi imm
+      in
+      g "0x88", g "0xDD"
+    | _ -> f32_no_lanes isa "deint_ordered")
+  else
   match isa.vec_width with
   | 8 ->
     ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_de, %s)" lo hi
@@ -553,14 +580,30 @@ let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
    caller (cascade_z keeps its _pr_/_qi_ temporaries), so this returns the
    PRE-permute (width 4: permute4x64 0xD8) and the final pair separately *)
 let reint_pre (isa : t) (v : string) : string =
-  f32_todo isa "reint_pre";
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 ->
+      (* plane [x0 .. x7] -> [x0 x1 x4 x5 | x2 x3 x6 x7] (vpermpd 0xD8 on the
+         64-bit pairs): unpacklo/hi_ps of two such planes are the z vectors *)
+      Printf.sprintf "_mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(%s), 0xD8))" v
+    | _ -> f32_no_lanes isa "reint_pre")
+  else
   match isa.vec_width with
   | 4 -> Printf.sprintf "%s(%s, 0xD8)" (intr isa "permute4x64_pd") v
   | _ -> v
 ;;
 
 let reint_ordered (isa : t) (re : string) (im : string) : string * string =
-  f32_todo isa "reint_ordered";
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 ->
+      (* re/im pre-permuted by reint_pre: unpacklo_ps = [r0 i0 r1 i1 | r2 i2 r3 i3]
+         (columns 0..3), unpackhi_ps = columns 4..7 *)
+      Printf.sprintf "_mm256_unpacklo_ps(%s, %s)" re im, Printf.sprintf "_mm256_unpackhi_ps(%s, %s)" re im
+    | _ -> f32_no_lanes isa "reint_ordered")
+  else
   match isa.vec_width with
   | 8 ->
     ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_pe, %s)" re im
@@ -574,7 +617,13 @@ let reint_ordered (isa : t) (re : string) (im : string) : string * string =
 
 (* function-scope constants the width-8 renderings above name *)
 let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool) : string =
-  if isa.prec = F32 && (deint || reint || transpose) then f32_todo isa "shuffle_consts";
+  if isa.prec = F32
+  then (
+    (* the 8-lane FP32 forms are immediate-only: no index constants *)
+    if isa.vec_width <> 8 && (deint || reint || transpose)
+    then f32_no_lanes isa "shuffle_consts"
+    else "")
+  else
   if isa.vec_width <> 8
   then ""
   else
@@ -606,8 +655,41 @@ let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool)
    _u0_<qid>.. names); width 8 = Simd.load_transpose_8x8's 3-stage lattice
    (8 unpack + 8 permutex2var + 8 shuffle_f64x2). *)
 let transpose (isa : t) ~(qid : string) (srcs : string array) (dsts : string array) : string =
-  f32_todo isa "transpose";
   let cd n e = Printf.sprintf "        %s\n" (const_decl isa n e) in
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 ->
+      (* the 8 x 8 float transpose, dsts.(j)[i] = srcs.(i)[j]: the 3-stage lattice
+         8 vunpck{l,h}ps + 8 vshufps (in-lane) + 8 vperm2f128 (lane-crossing),
+         the same names as the FP64 8-lane lattice (_t, _x) *)
+      let b = Buffer.create 2048 in
+      for p = 0 to 3 do
+        Buffer.add_string b
+          (cd (Printf.sprintf "_t%d_%s" (2 * p) qid)
+             (Printf.sprintf "_mm256_unpacklo_ps(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)));
+        Buffer.add_string b
+          (cd (Printf.sprintf "_t%d_%s" ((2 * p) + 1) qid)
+             (Printf.sprintf "_mm256_unpackhi_ps(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)))
+      done;
+      (* _x_{4h+2u+v} = shuffle(_t_{4h+u}, _t_{4h+u+2}, v ? 0xEE : 0x44): rows
+         4h..4h+3 of columns {2u+v, 2u+v+4} *)
+      List.iter
+        (fun (x, a, c, imm) ->
+           Buffer.add_string b
+             (cd (Printf.sprintf "_x%d_%s" x qid)
+                (Printf.sprintf "_mm256_shuffle_ps(_t%d_%s, _t%d_%s, %s)" a qid c qid imm)))
+        [ 0, 0, 2, "0x44"; 1, 0, 2, "0xEE"; 2, 1, 3, "0x44"; 3, 1, 3, "0xEE"
+        ; 4, 4, 6, "0x44"; 5, 4, 6, "0xEE"; 6, 5, 7, "0x44"; 7, 5, 7, "0xEE" ];
+      List.iteri
+        (fun j (a, c, imm) ->
+           Buffer.add_string b
+             (cd dsts.(j) (Printf.sprintf "_mm256_permute2f128_ps(_x%d_%s, _x%d_%s, %s)" a qid c qid imm)))
+        [ 0, 4, "0x20"; 1, 5, "0x20"; 2, 6, "0x20"; 3, 7, "0x20"
+        ; 0, 4, "0x31"; 1, 5, "0x31"; 2, 6, "0x31"; 3, 7, "0x31" ];
+      Buffer.contents b
+    | _ -> f32_no_lanes isa "transpose")
+  else
   match isa.vec_width with
   | 4 ->
     let unlo = intr isa "unpacklo_pd"
@@ -646,6 +728,37 @@ let transpose (isa : t) ~(qid : string) (srcs : string array) (dsts : string arr
       ; 0, 4, "0xEE"; 1, 5, "0xEE"; 2, 6, "0xEE"; 3, 7, "0xEE" ];
     Buffer.contents b
   | w -> failwith (Printf.sprintf "Isa.transpose: width %d" w)
+;;
+
+(* The column-run z edge of ZTURN-T's plain class (cascade_z.ml E_zcol): the store
+   side (tld) turns leg p's re/im planes into TWO interleaved z registers with one
+   in-lane op each, no permute; the load side (tldb) is its exact inverse. The lane
+   order inside the VW-column span is part of the plan's permutation (ztt.h perm).
+     FP64: unpacklo/hi_pd both ways (per 128-bit lane a 2 x 2 complex turn, an
+           involution): lo = columns 0,2,4,.. hi = 1,3,5,..
+     FP32 (8 lanes): store unpacklo/hi_ps: lo = columns {0,1,4,5}, hi = {2,3,6,7};
+           load vshufps 0x88 / 0xDD of (lo, hi) = the ordered re / im planes.
+           Column c of the span sits at complex (c&1) + 2*(c>>2) + 4*((c>>1)&1). *)
+let zcol_reint (isa : t) (re : string) (im : string) : string * string =
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 -> Printf.sprintf "_mm256_unpacklo_ps(%s, %s)" re im, Printf.sprintf "_mm256_unpackhi_ps(%s, %s)" re im
+    | _ -> f32_no_lanes isa "zcol_reint")
+  else
+    ( Printf.sprintf "%s(%s, %s)" (intr isa "unpacklo_pd") re im
+    , Printf.sprintf "%s(%s, %s)" (intr isa "unpackhi_pd") re im )
+;;
+
+let zcol_deint (isa : t) (lo : string) (hi : string) : string * string =
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 8 -> Printf.sprintf "_mm256_shuffle_ps(%s, %s, 0x88)" lo hi, Printf.sprintf "_mm256_shuffle_ps(%s, %s, 0xDD)" lo hi
+    | _ -> f32_no_lanes isa "zcol_deint")
+  else
+    ( Printf.sprintf "%s(%s, %s)" (intr isa "unpacklo_pd") lo hi
+    , Printf.sprintf "%s(%s, %s)" (intr isa "unpackhi_pd") lo hi )
 ;;
 
 (* a vector-width constant splat as a file-scope initializer ({v, v, ...}) *)

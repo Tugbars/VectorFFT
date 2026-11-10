@@ -72,6 +72,10 @@ val reint_pre : t -> string -> string
 val reint_ordered : t -> string -> string -> string * string
 val shuffle_consts : t -> deint:bool -> reint:bool -> transpose:bool -> string
 val transpose : t -> qid:string -> string array -> string array -> string
+
+(* ZTURN-T plain class column-run z edge (FP32 2026-11-10; FP64 = the unpack pair) *)
+val zcol_reint : t -> string -> string -> string * string
+val zcol_deint : t -> string -> string -> string * string
 val const_splat_decl : t -> string -> string -> string
 
 val cx_deint_pd : t -> odd:bool -> string -> string -> string

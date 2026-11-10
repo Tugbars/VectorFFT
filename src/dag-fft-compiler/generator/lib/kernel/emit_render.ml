@@ -613,6 +613,11 @@ let render_load
  * not correctness. Multi-use nodes act as natural "stop" points. *)
 let inline_max_depth = 32
 
+(* the sign-flip mask literal of xor_pd: "-0.0" at FP64 (the existing text), "-0.0f"
+   at FP32 (2026-11-10). The constants above print through Isa.flit, which is the
+   "%.17g" form at FP64. *)
+let neg_zero_lit (isa : Isa.t) : string = if Isa.is_f32 isa then "-0.0f" else "-0.0"
+
 (* === Selective pinning (doc 56 follow-up) ===
  *
  * When M-project's register pinning is active (current_regalloc is
@@ -713,7 +718,7 @@ let render_hoisted_consts ~(sc : Scratch.t) ~(isa : Isa.t) (nodes : t list) : st
                 (Isa.const_decl
                    isa
                    (Printf.sprintf "t%d" e.tag)
-                   (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c))))
+                   (Isa.set1_pd_str isa (Isa.flit isa c))))
          | _ -> ())
       nodes;
     Buffer.contents b)
@@ -780,13 +785,13 @@ let render_node_def_core
        * NK_Fma node (created by `fma_lift`) IS rendered as fmadd directly;
        * that path is the only one that explicitly emits FMA intrinsics. *)
       match n.node with
-      | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
+      | NK_Const c -> Isa.set1_pd_str isa (Isa.flit isa c)
       | NK_Load _ -> v n (* don't inline loads — keep named *)
       | NK_Neg inner ->
         (match inner.node with
-         | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
+         | NK_Const c -> Isa.set1_pd_str isa (Isa.flit isa (-.c))
          | _ ->
-           Isa.xor_pd isa (render_operand (depth + 1) inner) (Isa.set1_pd_str isa "-0.0"))
+           Isa.xor_pd isa (render_operand (depth + 1) inner) (Isa.set1_pd_str isa (neg_zero_lit isa)))
       | NK_Add (a, b) ->
         Isa.add_pd isa (render_operand (depth + 1) a) (render_operand (depth + 1) b)
       | NK_Sub (a, b) ->
@@ -814,14 +819,14 @@ let render_node_def_core
     let op = render_operand 0 in
     let body =
       match e.node with
-      | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
+      | NK_Const c -> Isa.set1_pd_str isa (Isa.flit isa c)
       | NK_Load r -> render_load ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
       | NK_Neg inner ->
         (* Neg(Const c) is a compile-time constant — emit as a single
          * broadcast of -c rather than a runtime XOR. *)
         (match inner.node with
-         | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
-         | _ -> Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa "-0.0"))
+         | NK_Const c -> Isa.set1_pd_str isa (Isa.flit isa (-.c))
+         | _ -> Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa (neg_zero_lit isa)))
       | NK_Add (a, b) -> Isa.add_pd isa (op a) (op b)
       | NK_Sub (a, b) -> Isa.sub_pd isa (op a) (op b)
       | NK_Mul (a, b) -> Isa.mul_pd isa (op a) (op b)
