@@ -45,13 +45,38 @@ Branch `dev/FP32Experiments`, i9-14900KF (AVX2). The fixes are in core code both
   call), which is why these cells were measured.
 - **AVX-512**: the CMake library with both precisions (`VFFT_ISA=avx512`, `VFFT_ENABLE_FLOAT=ON`) builds with 0 errors.
 
-## Found on the way, not changed
+## Found on the way (the first two fixed the same afternoon, below)
 
 - `k1_fourstep_gate` fails on the current 14900KF store with the tree before the fixes and with the fixed tree alike:
   four checks of its law "in place bitwise out of place" (524288 and 2097152, both order classes). The two placements
   are raced and banked as their own rows (2^21: 4096.512 out of place, 2048.1024 in place), and the in-place rows of
   2026-09-30 carry no child, so the gate's in-place create races on its scratch store.
-- `gauntlet/ab_fp64.py`'s default cells include `ip:8192`, `ip:16384` and `ip:32768`, which have no in-place row in the
-  14900KF store: the default run stops at the first of them (a cell raced). The run here names its 27 cells.
 - A contiguous batch of solo-length transforms, out of place, called with one buffer still runs the `restrict` kernel
   on it: the batch loop calls its one-transform plan's executor directly, not through the public door.
+- `gauntlet/ab_fp64.py`'s default cells include `ip:8192`, `ip:16384` and `ip:32768`, which have no in-place row in the
+  14900KF store: the default run stops at the first of them (a cell raced). The runs here name their 27 cells.
+
+## The second round (the same afternoon)
+
+| file | what |
+| --- | --- |
+| `batch_probe_under_gdb.md` | the out-of-place contiguous batch on one buffer, serial and threaded, before and after: which kernel it reaches |
+| `k1_fourstep_gate_new_law.md` | the four-step gate with its in-place law against the reference |
+| `vfft_tcbatch_gate.md` | the FP64 contiguous-batch gate after the batch fix |
+| `fp64_ab_summary_round2.md`, `fp64_ab_rounds_round2.csv` | FP64 timing A/B, main against the final tree, 15 rounds, 27 cells |
+| `real2d_odd_n2_ab_round2.md` | 2D r2c at an odd N2 on a second pair of builds, 15 rounds |
+
+- **The batch.** An out-of-place contiguous batch over a solo plan, called with one buffer, runs every transform on the
+  alias-tolerant kernel (`k1_alias`, asked once per call in the serial loop and once per slab in the threaded one).
+  Under gdb: `radix8_z_n1_fwd` before, `radix8_z_n1c_fwd` after, serial (K = 3) and threaded (K = 8, T = 4), both
+  precisions, bitwise the two-buffer result.
+- **The four-step gate.** Its in-place law is now the forward check against the same reference (the natural spectrum's
+  spot bins, or the natural spectrum as a multiset) and the in-place roundtrip; bitwise the out-of-place output is
+  printed, never asserted. ALL PASS on the seeded scratch store (in place 9.0e-17..1.2e-16 on the spot bins, at most
+  3.8e-16 on the multisets). `vfft_tcbatch_gate`, `il_solo_gate` and `vfftf_gate` (80 cells): ALL PASS again.
+- **2D r2c at an odd N2 is not slower.** The inlining the first fixes moved in `_il2d_rows_fwd_set` is in a cold
+  fallback (a child plan without a bound executor); the per-row loop is instruction for instruction the same. On a
+  second pair of builds, 15 rounds: 0.996, 1.004 and 0.998 at 16x61, 24x31 and 128x225.
+- **FP64 against main, the final tree**: median new/old 0.986..1.005 on the 25 one-thread cells (the lowest, 0.986, is
+  the lane-major batch), every route matched; `tc:4096:4` threaded 0.995, `mt:65536` 1.009 (0.977..1.028).
+- **AVX-512**: both precisions build with 0 errors.
