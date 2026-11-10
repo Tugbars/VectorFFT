@@ -1,7 +1,7 @@
 # ZTURN-T fused drivers, avx2_f32 (FP32)
 
-The 32 whole-transform drivers (N = 16..524288: FP32's ceiling is the same 4 MB plane as FP64's 262144) for interleaved complex float at 8 lanes per ymm
-(179 cells: `../../ztt_registry_avx2_f32.h`), emitted by
+The 34 whole-transform drivers (N = 16..1048576: FP32's ceiling, where the twiddle builders' fine table is full) for interleaved complex float at 8 lanes per ymm
+(186 cells: `../../ztt_registry_avx2_f32.h`), emitted by
 `emit_ztt_drivers.exe --isa avx2_f32 --uarch raptor_lake_avx2 --split .`.
 8 float lanes is FP64 AVX-512's lane count, so the cells, laws and table layout are
 those of `../avx512/`, in floats: per stage, for each 8-column block and leg

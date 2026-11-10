@@ -52,10 +52,10 @@
  * refusal"). *)
 
 let max_n = 262144
-(* FP32's ceiling (2026-11-10): the same 4 MB plane in floats -- 524288 complex at 8 B (MKL switches its
- * engine at the same plane BYTES in both precisions: FP64 262144, FP32 524288); 2^19 = 8^5 * 4 * 4 fits
- * max_nf. FP64's list is unchanged. *)
-let max_n_f32 = 524288
+(* FP32's ceiling (2026-11-10, the owner's ruling): 2^20 = 8^6 * 4 fits max_nf, and the race takes
+ * ZTURN-T over the four-step there; 2^20 is the twiddle builders' end (ztt.h: the fine table's 64
+ * entries are full at RL = 2^20). FP64's list is unchanged. *)
+let max_n_f32 = 1048576
 let ceiling (isa : Isa.t) : int = if Isa.is_f32 isa then max_n_f32 else max_n
 let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
 

@@ -1,5 +1,5 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 262144 (FP32: 524288, the same plane bytes), route VFFT_K1_IL_ZTT.
+ * 16 <= N <= 262144 (FP32: 1048576), route VFFT_K1_IL_ZTT.
  *
  *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
  *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md),
@@ -48,7 +48,7 @@
  * (u = log2 RL - 14, b < 2^u <= 16 at 262144), w = table(a) * fine(b) with
  * fine(b) = exp(-2*pi*i*b/RL) — one 2^u-entry cos/sin table per stage at
  * create, one complex product per record, ~1 ulp. The ceiling is 262144
- * (FP32: 524288, b < 32; the fine table holds 64).
+ * (FP32: 1048576, b < 64: the fine table's 64 entries, full).
  * The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
  * NULL loudly — no fallback, no default chain (the planner is the only
@@ -127,8 +127,8 @@ _ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]                    */
 #ifdef VFFT_FLOAT
-#define VFFT_ZTT_MAX_N 524288    /* FP32: the same 4 MB plane as FP64's ceiling, in floats (ztt_drivers.ml max_n_f32) */
-#define VFFT_ZTT_MAX_N_STR "524288"
+#define VFFT_ZTT_MAX_N 1048576   /* FP32: 2^20 (ztt_drivers.ml max_n_f32), where the fine table is full */
+#define VFFT_ZTT_MAX_N_STR "1048576"
 #else
 #define VFFT_ZTT_MAX_N 262144    /* the ceiling; above the octave the streams are
                                   * the TWO-LEVEL product (below)                 */
@@ -290,7 +290,7 @@ static inline size_t _ztt_fill_stage(vfft_real *tw, long L, int R, long RL, int 
     const int lg = _ztt_log2(RL);
     /* up = the bits of pw ABOVE the table's octave (0 within it): the fine
      * table has 2^up entries, cos/sin of 2*pi*b/RL, b < 2^up (<= 16 at the
-     * ceiling) — the only trig the create ever runs */
+     * ceiling, FP32: 64) — the only trig the create ever runs */
     const int up = lg > VFFT_ZTT_QW_LGM ? lg - VFFT_ZTT_QW_LGM : 0;
     const int sh = up ? 0 : VFFT_ZTT_QW_LGM - lg;    /* M = 2^LGM */
     double fc[64], fs[64];
