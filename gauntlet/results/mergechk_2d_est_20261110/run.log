@@ -1,0 +1,6 @@
+2026-11-10 20:48:17 run: 5 cells, contract 2D out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-10 20:48:17 calibrate: 5 cells (0 already done)
+2026-11-10 20:48:17   calibrated 5/5 (4096x256), 0 s elapsed
+2026-11-10 20:48:17 bench: 5 cells (0 already benched, 0 not banked -> not benched)
+2026-11-10 20:48:28   benched 5/5 (4096x256), 9 s elapsed
+2026-11-10 20:48:29 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\mergechk_2d_est_20261110\report_2d.md

@@ -1,0 +1,5 @@
+1024       banked        34ms replayed  ztt
+4096       banked        10ms replayed  ztt
+65536      banked        10ms replayed  ztt
+1048576    banked        17ms replayed  fs
+4194304    banked        23ms replayed  fs

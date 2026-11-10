@@ -719,6 +719,7 @@ endif()
 # build_tuned/ was retired 2026-10-07; the gates live in src/tools/gates/.
 if(VFFT_BUILD_GAUNTLET)
     add_subdirectory(gauntlet)
+    add_subdirectory(benchmark_scripts)   # the vectorfft_vs_mkl_* programs: they drive the gauntlet's bench
 endif()
 
 # ── The examples of the guide ────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+1920       banked        12ms replayed  chain3
+2048       banked        10ms replayed  ztt
+2560       banked        10ms replayed  ztt
+3072       banked        11ms replayed  ztt
+3840       banked        10ms replayed  ztt
+65536      banked        15ms replayed  ztt
+1048576    banked        18ms replayed  fs
+4194304    banked        24ms replayed  fs

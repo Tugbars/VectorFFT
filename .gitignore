@@ -39,6 +39,8 @@ Thumbs.db
 !/gauntlet/CMakeLists.txt
 # ...and the examples' CMake file (how-to-use/examples/), which the root CMakeLists.txt adds
 !/how-to-use/examples/CMakeLists.txt
+# ...and the benchmark programs' CMake file (benchmark_scripts/), which the root CMakeLists.txt adds
+!/benchmark_scripts/CMakeLists.txt
 # the gauntlet's tools as build.py leaves them beside their sources on Linux
 # (no .exe suffix there)
 /gauntlet/bench_1d_vs_mkl

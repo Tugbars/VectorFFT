@@ -31,6 +31,30 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 
 It is not one of the five pictures and the full runs never include it.
 
+## Build targets: no Python, no shell
+
+The CMake build has programs that run a comparison with Intel MKL by themselves: pick the
+target in your editor (in VS Code, the CMake Tools build and launch targets in the status
+bar), build it and run it, or from a terminal:
+
+```sh
+cmake --build build --target vectorfft_vs_mkl_selected
+build/benchmark_scripts/vectorfft_vs_mkl_selected
+```
+
+| Target | What it runs | Time |
+|---|---|---|
+| `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 3 minutes |
+
+Each program times through the gauntlet's own bench (`gauntlet/bench_1d_vs_mkl`), as
+`gauntlet/gauntlet.py` does: one process per transform and engine order, the timed thread
+pinned to one core at high priority, paced, a control transform before and after. Building
+the target builds the bench. It needs Intel MKL where CMake finds it (`MKLROOT`); without
+MKL the targets are not configured. It prints a table, MKL's time over VectorFFT's for each
+transform (the worse of the two engine orders), and writes it with the bench's own rows to a
+run directory under `vectorfft_results/` in the current directory (`--out DIR` names
+another). Nothing is written into `src/wisdom/`.
+
 ## What you need
 
 | You need | Notes |
@@ -261,3 +285,4 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 - `build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `.config.json`
 - `run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `.config.json` -- the record of the last build (per machine, not tracked)
+- `CMakeLists.txt`, `vectorfft_vs_mkl_selected.c`, `vectorfft_vs_mkl.h` -- the build targets above: the programs' cell lists and the machinery they share
