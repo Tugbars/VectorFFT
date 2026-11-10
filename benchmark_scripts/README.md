@@ -45,8 +45,8 @@ build/benchmark_scripts/vectorfft_vs_mkl_selected
 | Target | What it runs | Time |
 |---|---|---|
 | `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 2 minutes |
-| `vectorfft_vs_mkl_selected_planned` | the same 18 transforms with the plans of the library's default planner, which measures: each transform is planned first into this machine's wisdom folder (`src/wisdom/<CPU>/`), where a transform planned on this machine before is read back at once | 2 minutes, plus the planning of the transforms new to this machine (up to about 15 minutes when all are new) |
-| `vectorfft_vs_mkl_pow2` | the 1D transform at every power of two from 64 to 4,194,304 (17 lengths), the lengths MKL is tuned for most; the estimate's plans | about 2 minutes |
+| `vectorfft_vs_mkl_selected_planned` | the same 18 transforms with the plans of the library's default planner, which measures: each transform is planned first into this machine's wisdom folder (`src/wisdom/<CPU>/`), where a transform planned on this machine before is read back at once | 2 minutes, plus the planning of the transforms new to this machine (up to about 20 minutes when all are new) |
+| `vectorfft_vs_mkl_pow2` | the 1D transform at every power of two from 64 to 4,194,304 (17 lengths), the lengths MKL is tuned for most; the estimate's plans | under a minute |
 
 Each program times through the gauntlet's own bench (`gauntlet/bench_1d_vs_mkl`), as
 `gauntlet/gauntlet.py` does: one process per transform and engine order, the timed thread

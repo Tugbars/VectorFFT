@@ -492,21 +492,19 @@ static void vs_time_text(double ns, char *out, size_t len)
         snprintf(out, len, "%.2f ms", ns / 1e6);
 }
 
-/* gauntlet.py estimate_seconds' bench model (the 14900KF's pace), plus two control cells per dimension */
+/* the timing's length, both engine orders of a cell: about 1 s plus 1 s per 500,000 points (these programs'
+ * runs on the i9-14900KF 2026-11-10: the powers of two 33 s, the selection 111-138 s), plus two control cells per
+ * dimension */
 static double vs_expected_seconds(const vs_cell_t *cells, int n)
 {
     double s = 0;
     int dims[4] = { 0 };
     for (int i = 0; i < n; i++)
     {
-        const double p = vs_points(&cells[i]);
         dims[cells[i].d] = 1;
-        if (cells[i].d == 1)
-            s += p <= 4096 ? 1.5 : p <= 262144 ? 5 : 30;
-        else
-            s += 1.5 + p / 300000.0;
+        s += 1.0 + vs_points(&cells[i]) / 500000.0;
     }
-    return s + 2 * 1.5 * (dims[1] + dims[2] + dims[3]) + 5;
+    return s + 2 * 1.5 * (dims[1] + dims[2] + dims[3]);
 }
 
 /* gauntlet.py estimate_seconds' planning model when every cell is new (a race), the control cells included */
@@ -764,8 +762,12 @@ static int vs_main(int argc, char **argv, const char *program, const char *title
     printf("%s -- %s\n", program, title);
     printf("VectorFFT (codelets %s) against Intel MKL, one thread; the gauntlet's bench, both engine orders per cell\n",
            VFFT_IL_VW == 8 ? "AVX-512" : "AVX2");
-    printf("%d transforms; timing them takes about %.0f minutes on a fast desktop; run directory %s\n", ncell,
-           ceil(vs_expected_seconds(cells, ncell) / 60.0), run);
+    const double secs = vs_expected_seconds(cells, ncell);
+    if (secs < 75)
+        printf("%d transforms; timing them takes about a minute on a fast desktop; run directory %s\n", ncell, run);
+    else
+        printf("%d transforms; timing them takes about %.0f minutes on a fast desktop; run directory %s\n", ncell,
+               floor(secs / 60.0 + 0.5), run);
     if (measured)
         printf("plans: the library's planner, which measures; this machine's wisdom folder %s\n"
                "a transform planned on this machine before is read back at once; a new one is measured first and saved\n"
