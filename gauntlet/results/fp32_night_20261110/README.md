@@ -9,13 +9,13 @@ plans come from the banked store `src/wisdom/14900KF/wisdom2f_oop.txt`.
 | file | what |
 | --- | --- |
 | `fp64_ab_summary.md`, `fp64_ab_rounds.csv` | FP64 regression A/B: main (fe0012c9) against the branch, 15 rounds, 27 cells, alternating arms (`gauntlet/ab_fp64.py`) |
-| `fp32_vs_mkl_final_k1.csv`, `fp32_vs_mkl_final_mt_batch.csv`, `fp32_vs_mkl_final.txt` | FP32 against MKL FP32 (DFTI_SINGLE) on the final build: median of 3 processes (flips 0, 1, 0), the canonical bench's `--f32` arm |
-| `fp32_vs_mkl_pass1.csv`, `fp32_vs_mkl_pass1.txt` | the same bench before the ceiling change and the FMA-port setting |
+| `fp32_vs_mkl_final_k1.csv`, `fp32_vs_mkl_final_mt_batch.csv` | FP32 against MKL FP32 (DFTI_SINGLE) on the final build: median of 3 processes (flips 0, 1, 0), the canonical bench's `--f32` arm |
+| `fp32_vs_mkl_pass1.csv` | the same bench before the ceiling change and the FMA-port setting |
 | `fp32_port_ab_all_kinds.md` | the FMA-port A/B: every FP32 cil kind at `--cil-port` 0, 50 and 100, 9 rounds |
 | `fp32_port_ab_adopted.md` | the adopted setting (the pair family at 50, every other kind at 0) against all-0, 9 rounds |
 | `fp32_accuracy_oop.csv`, `fp32_accuracy_ip.csv` | forward and roundtrip error against a long-double DFT, ours and MKL FP32, 2..262144 (`k1_fwd_ref_probe --f32`) |
-| `vfftf_gate.txt` | the FP32 gate (`src/tools/gates/vfftf_gate.c`) on a cold scratch store |
-| `experiment_ceiling_2p20_race.txt`, `experiment_ceiling_2p20_bench.csv` | NOT SHIPPED: the FP32 ZTURN-T ceiling at 2^20 instead of 2^19, raced and benched on a scratch store |
+| `vfftf_gate.md` | the FP32 gate (`src/tools/gates/vfftf_gate.c`) on a cold scratch store |
+| `experiment_ceiling_2p20_race.md`, `experiment_ceiling_2p20_bench.csv` | NOT SHIPPED: the FP32 ZTURN-T ceiling at 2^20 instead of 2^19, raced and benched on a scratch store |
 
 ## FP64
 
@@ -72,7 +72,8 @@ contiguous batch runs its K one-transform plans in turn).
   error 7.15e-7; ours is at most 1.40x MKL FP32's forward error (N = 16). The probe's reference is O(N^2),
   so it stops at 262144.
 - The gate (cold scratch store, 2..2^20, K = 1 and 3, T = 1 and 4, out of and in place, forward and
-  backward against a double FFT): see `vfftf_gate.txt`.
+  backward against a double FFT, each placement on its own): ALL PASS, 80 served cells and 5 refusals, the
+  largest error 2.01e-7 forward and 2.02e-7 backward (limit 1e-5); `vfftf_gate.md`.
 
 ## The 2^20 experiment (not shipped)
 
