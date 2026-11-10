@@ -295,6 +295,114 @@ static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
     return 1;
 }
 
+/* ------------------------------------------ SINGLE PRECISION (2026-11-10)
+ * fftwf_*, the FP32 cell's comparator (bench_1d_vs_mkl --f32 --cmp fftw): the
+ * same binder rules for libfftw3f, its own DLL. Resolution: $VFFT_FFTWF_DLL
+ * alone when set; else the repository's gauntlet/fftw/libfftw3f-3.dll baked in
+ * as VFFT_FFTWF_BUNDLED_DLL (Windows); else vcpkg's fftw3f.dll / the system's
+ * libfftw3f.so.3. The same genuineness check on fftwf_version. Only what the
+ * one-dimensional cell needs is bound; the threads API is the optional group. */
+typedef float fftwfx_complex[2];
+typedef fftwx_plan (*fftwfx_plan_dft_1d_f)(int, fftwfx_complex *, fftwfx_complex *, int, unsigned);
+
+typedef struct {
+    fftwfx_plan_dft_1d_f                plan_dft_1d;
+    fftwx_execute_f                     execute;
+    fftwx_destroy_plan_f                destroy_plan;
+    fftwx_export_wisdom_to_filename_f   export_wisdom_to_filename;
+    fftwx_import_wisdom_from_filename_f import_wisdom_from_filename;
+    fftwx_init_threads_f                init_threads;         /* optional */
+    fftwx_plan_with_nthreads_f          plan_with_nthreads;   /* optional */
+    const char *version;                /* the exported fftwf_version data symbol */
+    char dll_path[512];
+} fftwfx_api_t;
+
+#define FFTWFX__ENTRY(member, sym)    { sym, offsetof(fftwfx_api_t, member), 0 }
+#define FFTWFX__OPTIONAL(member, sym) { sym, offsetof(fftwfx_api_t, member), 1 }
+static const struct fftwx__sym fftwfx__tab[] = {
+    FFTWFX__ENTRY(plan_dft_1d,                 "fftwf_plan_dft_1d"),
+    FFTWFX__ENTRY(execute,                     "fftwf_execute"),
+    FFTWFX__ENTRY(destroy_plan,                "fftwf_destroy_plan"),
+    FFTWFX__ENTRY(export_wisdom_to_filename,   "fftwf_export_wisdom_to_filename"),
+    FFTWFX__ENTRY(import_wisdom_from_filename, "fftwf_import_wisdom_from_filename"),
+    FFTWFX__OPTIONAL(init_threads,             "fftwf_init_threads"),
+    FFTWFX__OPTIONAL(plan_with_nthreads,       "fftwf_plan_with_nthreads"),
+};
+
+#ifdef _WIN32
+#  define FFTWFX_DEFAULT_DLL "C:\\vcpkg\\installed\\x64-windows\\bin\\fftw3f.dll"
+#else
+#  define FFTWFX_DEFAULT_DLL "libfftw3f.so.3"
+#endif
+
+/* Bind libfftw3f. Returns 1 on success; on failure writes a reason into err and returns 0. */
+static inline int fftwfx_bind(fftwfx_api_t *api, char *err, size_t errcap)
+{
+    const char *path = getenv("VFFT_FFTWF_DLL"), *cand[2];
+    int nc = 0, c;
+    if (path && *path)
+        cand[nc++] = path;                       /* named: that DLL and no other */
+    else
+    {
+#ifdef VFFT_FFTWF_BUNDLED_DLL
+        cand[nc++] = VFFT_FFTWF_BUNDLED_DLL;     /* the repository's own single-precision FFTW */
+#endif
+        cand[nc++] = FFTWFX_DEFAULT_DLL;
+    }
+    memset(api, 0, sizeof *api);
+#ifdef _WIN32
+    HMODULE h = NULL;
+    for (c = 0; c < nc && !h; c++)
+        h = LoadLibraryA(path = cand[c]);
+    if (!h)
+    {
+        snprintf(err, errcap, "LoadLibraryA failed for \"%s\"%s%s%s, GetLastError=%lu", cand[0],
+                 nc > 1 ? " and \"" : "", nc > 1 ? cand[1] : "", nc > 1 ? "\"" : "", (unsigned long)GetLastError());
+        return 0;
+    }
+    GetModuleFileNameA(h, api->dll_path, (DWORD)sizeof api->dll_path);
+#define FFTWFX__SYM(name) ((void *)GetProcAddress(h, (name)))
+#else
+    void *h = NULL;
+    for (c = 0; c < nc && !h; c++)
+        h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL);
+    if (!h)
+    {
+        snprintf(err, errcap, "dlopen(\"%s\"): %s", path, dlerror());
+        return 0;
+    }
+    snprintf(api->dll_path, sizeof api->dll_path, "%s", path);
+#define FFTWFX__SYM(name) dlsym(h, (name))
+#endif
+    for (size_t i = 0; i < sizeof fftwfx__tab / sizeof fftwfx__tab[0]; i++)
+    {
+        void *p = FFTWFX__SYM(fftwfx__tab[i].name);
+        if (!p)
+        {
+            if (fftwfx__tab[i].optional)
+                continue;
+            snprintf(err, errcap, "symbol '%s' missing in %s", fftwfx__tab[i].name, api->dll_path);
+            return 0;
+        }
+        memcpy((char *)api + fftwfx__tab[i].off, &p, sizeof p);
+    }
+    api->version = (const char *)FFTWFX__SYM("fftwf_version");
+#undef FFTWFX__SYM
+    if (!api->version)
+    {
+        snprintf(err, errcap, "fftwf_version data symbol missing");
+        return 0;
+    }
+    if (strncmp(api->version, "fftw-", 5) != 0 || strstr(api->version, "MKL") || strstr(api->version, "Intel") ||
+        strstr(api->version, "oneMKL"))
+    {
+        snprintf(err, errcap, "NOT GENUINE FFTW: version=\"%s\" from %s; refuse to proceed", api->version,
+                 api->dll_path);
+        return 0;
+    }
+    return 1;
+}
+
 /* --------------------------------------------- deterministic planes (§3.1)
  * FFTW hashes the split-plane deltas (ii-ri)/(io-ro) into its WISDOM KEY, so
  * independently malloc'd planes miss the cache 6/6 and the plan drifts 9.4%

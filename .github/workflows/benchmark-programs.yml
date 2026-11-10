@@ -1,0 +1,141 @@
+# The vectorfft_vs_* benchmark programs as a download (benchmark_scripts/README.md, "The download").
+#
+# Builds them for any x86-64 CPU with AVX2 (an AVX2 and an AVX-512 version; the programs pick one by the CPU),
+# packs them with benchmark_scripts/scripts/package_release.py, checks the package (--check-only: the plans and
+# their checks, nothing timed -- GitHub's machines are shared, so no timing here) and publishes it:
+#
+#   a push to main      -> the release "benchmarks", its files replaced in place: one fixed link, no version number
+#   a pushed tag v*     -> that version's release, kept
+#   "Run workflow"      -> (the Actions tab) as a push, from main
+#
+# The packages hold the FFTW programs only: every program runs one bench, and a bench linked to Intel MKL does not
+# start on a machine without MKL. The comparison with MKL is built from source (benchmark_scripts/README.md).
+name: Benchmark programs
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: benchmark-programs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-python
+      - name: Configure (any x86-64 CPU, AVX2 + AVX-512, FP32, no MKL)
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DVFFT_NATIVE=OFF -DVFFT_ISA=avx2 -DVFFT_BENCH_BOTH_ISAS=ON -DVFFT_ENABLE_FLOAT=ON
+          -DVFFT_BUILD_EXAMPLES=OFF -DVFFT_INSTALL=OFF
+      - name: Build the programs
+        run: >-
+          cmake --build build --target vectorfft_vs_fftw_selected vectorfft_vs_fftw_selected_planned
+          vectorfft_vs_fftw_pow2 vectorfft_vs_fftw_pow2_fp32
+      - name: Package
+        run: python benchmark_scripts/scripts/package_release.py --build build --out dist
+      - name: Check the package (nothing timed)
+        run: |
+          cd dist/vectorfft-benchmarks-windows-x64
+          ./vectorfft_vs_fftw_selected.exe --check-only --cells 1920,2048,512x512,1080x1920,64x64x64 --out ../check
+          ./vectorfft_vs_fftw_selected.exe --check-only --avx2 --cells 1920,512x512,64x64x64 --out ../check
+          ./vectorfft_vs_fftw_pow2.exe --check-only --cells 64,4096,65536 --out ../check
+          ./vectorfft_vs_fftw_selected_planned.exe --help
+          ./vectorfft_vs_fftw_pow2_fp32.exe --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build python3
+      - name: Configure (any x86-64 CPU, AVX2 + AVX-512, FP32, no MKL)
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DVFFT_NATIVE=OFF -DVFFT_ISA=avx2 -DVFFT_BENCH_BOTH_ISAS=ON -DVFFT_ENABLE_FLOAT=ON
+          -DVFFT_BUILD_EXAMPLES=OFF -DVFFT_INSTALL=OFF
+      - name: Build the programs
+        run: >-
+          cmake --build build --target vectorfft_vs_fftw_selected vectorfft_vs_fftw_selected_planned
+          vectorfft_vs_fftw_pow2 vectorfft_vs_fftw_pow2_fp32
+      - name: Package
+        run: python3 benchmark_scripts/scripts/package_release.py --build build --out dist
+      - name: Check the package (nothing timed)
+        run: |
+          cd dist/vectorfft-benchmarks-linux-x64
+          ./vectorfft_vs_fftw_selected --check-only --cells 1920,2048,512x512,1080x1920,64x64x64 --out ../check
+          ./vectorfft_vs_fftw_selected --check-only --avx2 --cells 1920,512x512,64x64x64 --out ../check
+          ./vectorfft_vs_fftw_pow2 --check-only --cells 64,4096,65536 --out ../check
+          ./vectorfft_vs_fftw_selected_planned --help
+          ./vectorfft_vs_fftw_pow2_fp32 --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  publish:
+    needs: [windows, linux]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          ls -la dist
+          NOTES="Benchmark programs: VectorFFT against FFTW on your own machine, no compiler needed.
+          Windows: unzip, double-click run_benchmark.bat. Linux: extract, ./run.sh (install libfftw3 first).
+          README.txt inside says what each program does; BUILD.txt holds the source commit and every file's SHA-256.
+
+          Built from ${GITHUB_SHA} on $(date -u '+%Y-%m-%d %H:%M') UTC.
+          SHA-256 of the archives:
+          $(cat dist/*.sha256)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "VectorFFT $TAG" --notes "$NOTES"
+          else
+            TAG=benchmarks
+            git tag -f "$TAG" "$GITHUB_SHA"
+            git push -f origin "refs/tags/$TAG"
+            gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --prerelease --title "Benchmark programs (latest main)" --notes "$NOTES"
+            gh release edit "$TAG" --notes "$NOTES"
+          fi
+          gh release upload "$TAG" dist/*.zip dist/*.tar.gz dist/*.sha256 --clobber

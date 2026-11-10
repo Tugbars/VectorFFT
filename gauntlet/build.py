@@ -630,7 +630,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
              # from and saves into THIS CPU's folder under src/wisdom/;
              '-DVFFT_WISDOM_DIR_DEFAULT="%s"' % WISDOM.as_posix(),
              # the repository's own FFTW, the comparator's default (ref_fftw.h; Windows x64)
-             *(['-DVFFT_FFTW_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3-3.dll').as_posix()]
+             *(['-DVFFT_FFTW_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3-3.dll').as_posix(),
+                '-DVFFT_FFTWF_BUNDLED_DLL="%s"' % (HERE / 'fftw' / 'libfftw3f-3.dll').as_posix()]   # single precision (the FP32 cell)
                if tc['is_windows'] else []),
              # ── ISA FLAGS (DAG_ISA_FLAGS). registry.h and a dozen dispatch sites
              # (executor.h, oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__,

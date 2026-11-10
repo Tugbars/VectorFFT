@@ -33,7 +33,8 @@ target_compile_options(vfft_core PRIVATE ${VFFT_C_FLAGS})
 target_compile_definitions(vfft_core PUBLIC ${VFFT_WISDOM_DEFS} _CRT_SECURE_NO_WARNINGS)
 if(WIN32)   # the repository's own FFTW, the comparator's default (ref_fftw.h, fftw/README.md)
     target_compile_definitions(vfft_core PUBLIC
-        VFFT_FFTW_BUNDLED_DLL="${CMAKE_CURRENT_SOURCE_DIR}/fftw/libfftw3-3.dll")
+        VFFT_FFTW_BUNDLED_DLL="${CMAKE_CURRENT_SOURCE_DIR}/fftw/libfftw3-3.dll"
+        VFFT_FFTWF_BUNDLED_DLL="${CMAKE_CURRENT_SOURCE_DIR}/fftw/libfftw3f-3.dll")   # single precision: the FP32 cell
 endif()
 if(NOT VFFT_MSVC_STYLE)
     find_package(Threads REQUIRED)

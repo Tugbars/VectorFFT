@@ -74,3 +74,8 @@ src/tools/baseline/reference/*.o binary
 # permanent module (wisdom2.h, the reader, selftest, README) stays counted as
 # shipped library code.
 src/core/wisdom2/wisdom2_migrate.h linguist-vendored
+
+# The release package's menus (benchmark_scripts/release/): cmd needs CRLF in a batch file (goto and labels can
+# break on LF), sh needs LF, whatever the checkout's platform
+*.bat text eol=crlf
+*.sh text eol=lf

@@ -115,3 +115,6 @@ docs/roadmap/zil_avx512_prototypes/harness/*
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/
 !docs/roadmap/zil_avx512_prototypes/harness/tail_policy/**
 /gauntlet/results/2d_estimate_night_20261109
+
+# the benchmark programs' results, when one is run from the repository folder (benchmark_scripts/)
+vectorfft_results/

@@ -33,30 +33,78 @@ It is not one of the five pictures and the full runs never include it.
 
 ## Build targets: no Python, no shell
 
-The CMake build has programs that run a comparison with Intel MKL by themselves: pick the
-target in your editor (in VS Code, the CMake Tools build and launch targets in the status
+The CMake build has programs that run a comparison with FFTW or Intel MKL by themselves: pick
+the target in your editor (in VS Code, the CMake Tools build and launch targets in the status
 bar), build it and run it, or from a terminal:
 
 ```sh
-cmake --build build --target vectorfft_vs_mkl_selected
-build/benchmark_scripts/vectorfft_vs_mkl_selected
+cmake --build build --target vectorfft_vs_fftw_selected
+build/benchmark_scripts/vectorfft_vs_fftw_selected
 ```
 
 | Target | What it runs | Time |
 |---|---|---|
-| `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 2 minutes |
-| `vectorfft_vs_mkl_selected_planned` | the same 18 transforms with the plans of the library's default planner, which measures: each transform is planned first into this machine's wisdom folder (`src/wisdom/<CPU>/`), where a transform planned on this machine before is read back at once | 2 minutes, plus the planning of the transforms new to this machine (up to about 20 minutes when all are new) |
-| `vectorfft_vs_mkl_pow2` | the 1D transform at every power of two from 64 to 4,194,304 (17 lengths), the lengths MKL is tuned for most; the estimate's plans | under a minute |
+| `vectorfft_vs_fftw_selected`, `vectorfft_vs_mkl_selected` | 18 commonly used transforms: 1D lengths from 1,920 to 4M points, 2D planes from 512 x 512 to 2048 x 2048 and the 1920 x 1080 and 1280 x 720 frames, 3D volumes from 128³ to 256³; the library's estimate plans (`VFFT_FLAG_ESTIMATE`), so nothing is planned by measuring first | about 2 minutes |
+| `vectorfft_vs_fftw_selected_planned`, `vectorfft_vs_mkl_selected_planned` | the same 18 transforms with the plans of the library's default planner, which measures: each transform is planned first into this machine's wisdom folder (`src/wisdom/<CPU>/`), where a transform planned on this machine before is read back at once | 2 minutes, plus the planning of the transforms new to this machine (up to about 20 minutes when all are new) |
+| `vectorfft_vs_fftw_pow2`, `vectorfft_vs_mkl_pow2` | the 1D transform at every power of two from 64 to 4,194,304 (17 lengths), the lengths MKL and FFTW are tuned for most; the estimate's plans | about a minute |
+| `vectorfft_vs_fftw_pow2_fp32`, `vectorfft_vs_mkl_pow2_fp32` | the same 17 lengths in single precision (FP32), with the planner's plans (the FP32 library has no estimate); built with `-DVFFT_ENABLE_FLOAT=ON` | a minute, plus the planning of lengths new to this machine (about 7 minutes when all are new) |
+
+Every program takes the same options:
+
+| Option | What it does |
+|---|---|
+| `--cells LIST` | your own transforms instead of the program's, separated by commas: `N` (1D), `N1xN2` (2D, N1 rows of N2 points), `N1xN2xN3` (3D); the FP32 program takes 1D powers of two up to 16,777,216 |
+| `--avx2`, `--avx512` | the instruction set; by default AVX-512 when the CPU runs it, else AVX2 |
+| `--out DIR` | where the run directory is made (default: `vectorfft_results/` in the current directory) |
+| `--check-only` | plans and checks the transforms and shows the bench's commands, times nothing |
+
+A program checks the CPU before anything else: VectorFFT needs an x86-64 CPU with AVX2 and
+FMA (Intel from Haswell, 2013; AMD from Zen, 2017), and the program says so on an older one.
+The library is compiled for one instruction set per build, so the AVX-512 and AVX2 versions
+are two builds: on a CPU that runs AVX-512, CMake makes the second one too, in a folder named
+for it inside the build folder, `build/avx2/` beside an AVX-512 build
+(`-DVFFT_BENCH_BOTH_ISAS=AUTO`, the default; `ON` makes it on any CPU, `OFF` never, to save the
+build time).
 
 Each program times through the gauntlet's own bench (`gauntlet/bench_1d_vs_mkl`), as
 `gauntlet/gauntlet.py` does: one process per transform and engine order, the timed thread
 pinned to one core at high priority, paced, a control transform before and after. Building
-the target builds the bench. It needs Intel MKL where CMake finds it (`MKLROOT`); without
-MKL the targets are not configured. It prints a table, MKL's time over VectorFFT's for each
+the target builds the bench. FFTW is loaded when the program runs: the repository's own
+FFTW 3.3.10 on Windows (`gauntlet/fftw/`: `libfftw3-3.dll`, and `libfftw3f-3.dll` for single
+precision, with their license), the system's `libfftw3` / `libfftw3f` elsewhere. FFTW measures
+its own plans the first time (`FFTW_MEASURE`) and keeps them in `vectorfft_results/fftw.wis`
+(`fftwf.wis` for single precision), so the first run against FFTW takes longer than the next ones.
+The MKL programs need Intel MKL where CMake finds it (`MKLROOT`); without MKL they are not
+configured. A program prints a table, the comparator's time over VectorFFT's for each
 transform (the worse of the two engine orders), and writes it with the bench's own rows to a
-run directory under `vectorfft_results/` in the current directory (`--out DIR` names
-another). Only `vectorfft_vs_mkl_selected_planned` writes into `src/wisdom/`: the plans it
-measures, as the library itself does.
+run directory under `vectorfft_results/`. Only the planned programs write into
+`src/wisdom/`: the plans they measure, as the library itself does.
+
+## The download: no compiler at all
+
+The GitHub release **benchmarks** holds the programs ready to run, rebuilt from `main` on every
+push by GitHub Actions (`.github/workflows/benchmark-programs.yml`); its link never changes.
+A pushed version tag (`v*`) gets its own release the same way. Each release has
+`vectorfft-benchmarks-windows-x64.zip` and `vectorfft-benchmarks-linux-x64.tar.gz`, with
+their SHA-256 on the release page and in a `.sha256` file beside each.
+
+Unpack it and run `run_benchmark.bat` (Windows) or `./run.sh` (Linux, with FFTW installed:
+`libfftw3-3` and `libfftw3-single3` on Debian and Ubuntu). Inside are the FFTW programs above,
+built for any x86-64 CPU with AVX2 (an AVX2 and an AVX-512 version; the program picks one by
+the CPU), FFTW's DLLs on Windows with their license, the repository's wisdom (`src/wisdom/`,
+so a known CPU plans at once), a `README.txt` for the user and a `BUILD.txt` with the source
+commit and every file's SHA-256. The MKL programs are not in it: every program runs one bench,
+and a bench linked to MKL does not start on a machine without MKL, so the download is built
+without MKL; the comparison with MKL is built from source as above.
+
+To make the package yourself, from a build of this repository for other machines with both
+instruction sets and without MKL:
+
+```sh
+cmake -B build -DVFFT_NATIVE=OFF -DVFFT_ISA=avx2 -DVFFT_BENCH_BOTH_ISAS=ON -DVFFT_ENABLE_FLOAT=ON
+cmake --build build --target vectorfft_vs_fftw_selected vectorfft_vs_fftw_selected_planned vectorfft_vs_fftw_pow2 vectorfft_vs_fftw_pow2_fp32
+python benchmark_scripts/scripts/package_release.py --build build
+```
 
 ## What you need
 
@@ -288,4 +336,5 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 - `scripts/build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `scripts/.config.json`
 - `scripts/run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `scripts/.config.json` -- the record of the last build (per machine, not tracked)
-- `CMakeLists.txt`, `vectorfft_vs_mkl_selected.c`, `vectorfft_vs_mkl_selected_planned.c`, `vectorfft_vs_mkl_pow2.c`, `vectorfft_vs_mkl.h` -- the build targets above: the programs, and the machinery and selection they share
+- `release/` -- what the download holds beside the programs: `run_benchmark.bat`, `run.sh`, `README.txt`; `scripts/package_release.py` -- makes the download (above)
+- `CMakeLists.txt` and `vectorfft_vs_*.c` -- the build targets above, one file per program; `vectorfft_launcher.h` -- what a program does first (the CPU check, the instruction set, the options) and the programs' transforms; `vectorfft_bench.h`, `vectorfft_bench_worker.c` -- the work, one build per instruction set (the plans, their checks, the bench runs, the table)

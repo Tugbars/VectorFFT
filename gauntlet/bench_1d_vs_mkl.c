@@ -35,8 +35,9 @@
  *             batches (the contiguous queue timed beside them); --ilmt the threaded
  *             transform-contiguous batch
  *   FP32      --f32 (a build with VFFT_HAS_FLOAT: build.py --float) beside --k1noop [--mt] or --k1nat:
- *             the K=1 natural cell on float data through vfftf.h, MKL DFTI_SINGLE; K > 1 in the K slot
- *             is the contiguous batch; plan z:ilp-f32, path nat-oop-f32 / nat-ip-f32 (run_k1z_cell_f32)
+ *             the K=1 natural cell on float data through vfftf.h, MKL DFTI_SINGLE (or, with --cmp fftw,
+ *             single-precision FFTW, one transform); K > 1 in the K slot is the contiguous batch (MKL);
+ *             plan z:ilp-f32, path nat-oop-f32 / nat-ip-f32 (run_k1z_cell_f32)
  * Build: python gauntlet/build.py --compile --mkl --vfft, or the CMake target vfft-gauntlet.
  *   MKL is linked LP64 through mkl_rt: ILP64 corrupts the DFTI strides array ("Inconsistent
  *   configuration parameters" at DftiCommit).
@@ -1017,6 +1018,176 @@ static double k1z_time_vfft_f32(vfftf_plan h, const float *z0, float *S, size_t 
     return best;
 }
 
+/* THE FP32 CELL'S FFTW ARM (--f32 --cmp fftw, 2026-11-10): single-precision FFTW
+ * (libfftw3f, ref_fftw.h fftwfx_bind: $VFFT_FFTWF_DLL, else the repository's
+ * gauntlet/fftw/libfftw3f-3.dll, else the system's), the FP64 arm's twin.
+ * $VFFT_FFTWF_WIS is ITS wisdom file (FFTW's float wisdom is its own: a shared
+ * file with the double arm would be overwritten), imported at bind and
+ * re-exported after every plan. One transform (K = 1); the threaded cell needs
+ * the DLL's threads API, as the FP64 arm does. */
+static fftwfx_api_t g_fxf_arm;
+static int g_fxf_arm_ok = -1;   /* -1 = not yet bound */
+static const char *fftwf_wis_path(void)
+{
+    const char *e = getenv("VFFT_FFTWF_WIS");
+    return (e && *e) ? e : NULL;
+}
+static void fftwf_wis_export(void)
+{
+    if (fftwf_wis_path())
+        g_fxf_arm.export_wisdom_to_filename(fftwf_wis_path());
+}
+static int fftwf_arm_bind(void)
+{
+    char err[512];
+    if (g_fxf_arm_ok < 0)
+    {
+        g_fxf_arm_ok = fftwfx_bind(&g_fxf_arm, err, sizeof err) ? 1 : 0;
+        if (!g_fxf_arm_ok)
+            fprintf(stderr, "--f32 --cmp fftw: %s\n", err);
+        else
+        {
+            const int wis = fftwf_wis_path() ? g_fxf_arm.import_wisdom_from_filename(fftwf_wis_path()) : 0;
+            printf("# comparator: %s single precision (%s) wisdom %s\n", g_fxf_arm.version, g_fxf_arm.dll_path,
+                   fftwf_wis_path() ? (wis ? "replayed" : "cold") : "per process");
+        }
+    }
+    return g_fxf_arm_ok;
+}
+/* fftw_arm_threads' twin: T > 1 needs the DLL's threads API (fftwf_init_threads once, then
+ * fftwf_plan_with_nthreads(T)); 0 with the reason on stderr when T > 1 and the DLL cannot thread */
+static int fftwf_arm_threads(int T)
+{
+    static int inited = 0;
+    if (!fftwf_arm_bind())
+        return 0;
+    if (T <= 1)
+    {   /* only after fftwf_init_threads (as fftw_arm_threads): called before it, plan_with_nthreads changes the
+         * planner's state between the wisdom import at bind and the export, and no process replays the file */
+        if (inited)
+            g_fxf_arm.plan_with_nthreads(1);
+        return 1;
+    }
+    if (!g_fxf_arm.init_threads || !g_fxf_arm.plan_with_nthreads)
+    {
+        fprintf(stderr, "--f32 --cmp fftw: %s has no threads API (fftwf_init_threads): a threaded cell needs an FFTW "
+                        "built with its threads (--enable-threads --with-combined-threads)\n", g_fxf_arm.dll_path);
+        return 0;
+    }
+    if (!inited)
+    {
+        if (!g_fxf_arm.init_threads())
+        {
+            fprintf(stderr, "--f32 --cmp fftw: fftwf_init_threads failed\n");
+            return 0;
+        }
+        inited = 1;
+    }
+    g_fxf_arm.plan_with_nthreads(T);
+    return 1;
+}
+/* k1z_time_fftw's shape on single-precision FFTW, window for window: the plan built once (FFTW_MEASURE)
+ * outside every timed window, the input copied after planning (MEASURE scribbles), 10 warm-ups (the threaded
+ * cell: >= 5 ms untimed), two windows of best-of-5 with the idle + re-warm gap; in place under --k1nat */
+static double k1z_time_fftw_f32(int N, const float *z0, size_t total)
+{
+    if (!fftwf_arm_threads(g_k1noop_mt ? g_mt : 1))
+        return 0;
+    float *zi = alloc_f(2 * total), *zo = alloc_f(2 * total);
+    fftwx_plan p = g_k1zip
+        ? g_fxf_arm.plan_dft_1d(N, (fftwfx_complex *)zi, (fftwfx_complex *)zi, FFTWX_FORWARD, FFTWX_MEASURE)
+        : g_fxf_arm.plan_dft_1d(N, (fftwfx_complex *)zi, (fftwfx_complex *)zo, FFTWX_FORWARD, FFTWX_MEASURE);
+    if (!p)
+    {
+        free_f(zi);
+        free_f(zo);
+        return 0;
+    }
+    fftwf_wis_export();
+    memcpy(zi, z0, 2 * total * sizeof(float));   /* AFTER planning: MEASURE scribbles */
+    if (g_k1noop_mt)
+    {
+        const double tw = vfft_now_ns();
+        do
+            g_fxf_arm.execute(p);
+        while (vfft_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            g_fxf_arm.execute(p);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int win = 0; win < 2; win++)
+    {
+        if (win)
+        {
+            const double tw0 = vfft_now_ns();
+            pace(K1Z_WINDOW_IDLE_MS);
+            do
+                g_fxf_arm.execute(p);
+            while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
+        }
+        for (int t = 0; t < 5; t++)
+        {
+            if (t)
+                pace(g_trial_pace_ms);
+            double t0 = vfft_now_ns();
+            for (int i = 0; i < reps; i++)
+                g_fxf_arm.execute(p);
+            double ns = (vfft_now_ns() - t0) / reps;
+            if (ns < best)
+                best = ns;
+        }
+    }
+    g_fxf_arm.destroy_plan(p);
+    free_f(zi);
+    free_f(zo);
+    return best;
+}
+
+/* the rt_err column against single-precision FFTW: both engines natural, the same float input, the
+ * elementwise max error over the reference's max magnitude (the FP64 FFTW arm's cross-engine gate); FFTW's
+ * plan has the cell's placement, so the one MEASURE search serves this and the timed arm. -1 = no plan */
+static double k1z_xerr_fftw_f32(vfftf_plan h, int N, const float *z0, size_t total)
+{
+    if (!fftwf_arm_threads(g_k1noop_mt ? g_mt : 1))
+        return -1.0;
+    float *zf = alloc_f(2 * total), *zv = alloc_f(2 * total);
+    float *zo = g_k1zip ? zf : alloc_f(2 * total);
+    double rel = -1.0;
+    fftwx_plan p = g_fxf_arm.plan_dft_1d(N, (fftwfx_complex *)zf, (fftwfx_complex *)zo, FFTWX_FORWARD, FFTWX_MEASURE);
+    if (p)
+    {
+        fftwf_wis_export();
+        memcpy(zf, z0, 2 * total * sizeof(float));   /* after planning */
+        memcpy(zv, z0, 2 * total * sizeof(float));
+        g_fxf_arm.execute(p);
+        if (g_k1zip)
+            vfftf_execute(h, VFFT_FORWARD, zv, zv);
+        else
+            vfftf_execute(h, VFFT_FORWARD, z0, zv);
+        double xe = 0.0, xm = 0.0;
+        for (size_t i = 0; i < 2 * total; i++)
+        {
+            const double e = fabs((double)zv[i] - (double)zo[i]), m = fabs((double)zo[i]);
+            if (e != e)
+            {
+                xe = NAN;
+                break;
+            }
+            if (e > xe) xe = e;
+            if (m > xm) xm = m;
+        }
+        rel = xe != xe ? NAN : (xm > 0 ? xe / xm : xe);
+        g_fxf_arm.destroy_plan(p);
+    }
+    free_f(zf);
+    free_f(zv);
+    if (!g_k1zip)
+        free_f(zo);
+    return rel;
+}
+
 #ifdef VFFT_HAS_MKL
 /* the cell's MKL descriptor at precision prec: K transforms at distance N (K = 1: one), in place or not */
 static DFTI_DESCRIPTOR_HANDLE k1z_dfti_f32(enum DFTI_CONFIG_VALUE prec, int N, size_t K, int inplace)
@@ -1138,9 +1309,12 @@ static double k1z_xerr_f32(vfftf_plan h, int N, size_t K, const float *z0, size_
 }
 #endif
 
-/* the comparator of the FP32 cell: MKL DFTI_SINGLE (0 = none in this build) */
+/* the comparator of the FP32 cell: single-precision FFTW under --cmp fftw (one transform), else MKL
+ * DFTI_SINGLE (0 = none in this build) */
 static double k1z_time_cmp_f32(int N, size_t K, const float *z0, size_t total)
 {
+    if (g_cmp_fftw)
+        return K == 1 ? k1z_time_fftw_f32(N, z0, total) : 0;
 #ifdef VFFT_HAS_MKL
     return k1z_time_mkl_f32(N, K, z0, total);
 #else
@@ -1217,7 +1391,15 @@ static void run_k1z_cell_f32(int N, size_t K, FILE *out, int cool_ms, int flip)
         if (rel == 0.0)
             rel = m > 0 ? e / m : e;
     }
+    if (g_cmp_fftw)
+    {   /* the cross-engine column against the comparator, single-precision FFTW (overwrites the roundtrip,
+         * as the FP64 cell's FFTW compare does) */
+        const double x = k1z_xerr_fftw_f32(h, N, z0, total);
+        if (!(x < 0))
+            rel = x;
+    }
 #ifdef VFFT_HAS_MKL
+    else
     {   /* the cross-engine column against the double-precision reference (overwrites the roundtrip,
          * as the FP64 cell's MKL compare does) */
         const double x = k1z_xerr_f32(h, N, K, z0, total);
@@ -5289,7 +5471,8 @@ int main(int argc, char **argv)
         "  2D / 3D   --2dilnat / --3dilnat; --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt\n"
 #ifdef VFFT_HAS_FLOAT
-        "  FP32      --f32 with --k1noop [--mt] / --k1nat: the cell on float data (K > 1: a contiguous batch), MKL DFTI_SINGLE\n"
+        "  FP32      --f32 with --k1noop [--mt] / --k1nat: the cell on float data (K > 1: a contiguous batch), MKL DFTI_SINGLE;\n"
+        "            with --cmp fftw single-precision FFTW (libfftw3f: $VFFT_FFTWF_DLL, $VFFT_FFTWF_WIS), one transform\n"
 #endif
         "  wisdom = a file inside the wisdom directory (names the directory); the header of bench_1d_vs_mkl.c has the rest\n";
     /* --mt: the threaded cells (both engines at T), pinned core 0. Detect + strip
@@ -5466,9 +5649,14 @@ int main(int argc, char **argv)
         return 2;
     }
 #ifdef VFFT_HAS_FLOAT
-    /* --f32 serves the K=1 natural cell and its contiguous batch, MKL as the comparator: --k1noop
-     * (with --mt the threaded cell) or --k1nat, nothing else */
-    if (g_f32 && (!g_k1nat || g_k1dir || (mt && g_k1zip) || g_cmp_fftw || il2d || il3d || real2d || g_k3nat ||
+    /* --f32 serves the K=1 natural cell and its contiguous batch, MKL or (one transform) single-precision
+     * FFTW as the comparator: --k1noop (with --mt the threaded cell) or --k1nat, nothing else */
+    if (g_f32 && g_cmp_fftw && argc >= 6 && atoi(argv[5]) > 1)
+    {
+        fprintf(stderr, "--f32 --cmp fftw: the FP32 cell against FFTW is one transform (K = 1)\n");
+        return 2;
+    }
+    if (g_f32 && (!g_k1nat || g_k1dir || (mt && g_k1zip) || il2d || il3d || real2d || g_k3nat ||
                   g_k2nat || g_zr2c || g_kzb || g_kzbr || g_lm2d || g_lm2dr || g_lm3dr || g_real || g_k2real ||
                   g_k3real || g_real_ip || g_ilmt
 #ifdef VFFT_HAS_KFR
@@ -5507,7 +5695,13 @@ int main(int argc, char **argv)
          * this thread is pinned to core 0 below (trap c: threads inherit
          * the creator's affinity). */
         ilmt_pin_pcores();
+#ifdef VFFT_HAS_FLOAT
+        if (g_cmp_fftw && g_f32 && !fftwf_arm_threads(g_mt))
+            return 2;   /* the FP32 cell's FFTW team: libfftw3f's own threads API, as below */
+        if (g_cmp_fftw && !g_f32 && !fftw_arm_threads(g_mt))
+#else
         if (g_cmp_fftw && !fftw_arm_threads(g_mt))
+#endif
             return 2;   /* FFTW's team: the threads API bound and initialised here, under the
                          * P-core mask and before the caller's pin; its workers are spawned at
                          * the first threaded execute, inside each arm's untimed warm. A DLL
