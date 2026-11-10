@@ -43,10 +43,6 @@ static inline int vfft_k1fs_has_side_pair(int N)
  * answers for itself) */
 static inline int vfft_k1fs_band(int N)
 {
-#ifdef VFFT_FLOAT
-    (void)N;
-    return 0;   /* the FP32 unit has no four-step (its 2D tier is FP64's): the band is empty there */
-#endif
     if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N) return 0;
     if ((N & (N - 1)) == 0) return 1;
     return vfft_k1fs_has_side_pair(N);

@@ -47,6 +47,11 @@ option(VFFT_BUILD_GAUNTLET "Build the gauntlet's tools (gauntlet/), MKL discover
 option(VFFT_BUILD_EXAMPLES "Build the examples (how-to-use/examples/)" ${VFFT_IS_TOP_LEVEL})
 option(VFFT_INSTALL        "Install rules, the CMake package and the pkg-config file" ${VFFT_IS_TOP_LEVEL})
 option(VFFT_NATIVE         "Compile for this machine's CPU (-march=native): the binaries may not run on another" ON)
+# THE FP32 LIBRARY (2026-11-10, owner: FP64 by default, full features at FP64): the core compiled a second
+# time for float (src/core/vfftf.c, include/vfftf.h: 1D C2C interleaved, power-of-two N) with its own
+# kernels (codelets/zil/<isa>_f32/...) and ZTURN-T drivers. Off by default: it adds a second core
+# translation unit and the FP32 corpus to the build.
+option(VFFT_ENABLE_FLOAT   "Also build the FP32 library (vfftf_*, include/vfftf.h): 1D C2C power-of-two" OFF)
 
 # A subproject never sets its parent's (cache-wide) build type.
 if(VFFT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -442,6 +447,14 @@ if(VFFT_ISA STREQUAL "avx2")
 elseif(VFFT_ISA STREQUAL "avx512")
     vfft_add_codelet_dir("fused_codelets/avx512" "${DAG_GEN}/fused_codelets/avx512")
 endif()
+# THE FP32 TREE (VFFT_ENABLE_FLOAT): the same folders under zil/<isa>_f32, power-of-two 1D C2C kinds only,
+# and the FP32 ZTURN-T drivers (gauntlet/build.py carries the same list under VFFT_FLOAT=1)
+if(VFFT_ENABLE_FLOAT)
+    foreach(_zdir shared shared/col shared/col/blocked mono pair2p pair2p/blocked chain3)
+        vfft_add_codelet_dir("zil_f32/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}_f32/${_zdir}")
+    endforeach()
+    vfft_add_codelet_dir("fused_codelets/${VFFT_ISA}_f32" "${DAG_GEN}/fused_codelets/${VFFT_ISA}_f32")
+endif()
 
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)
 if(_ncodelets EQUAL 0)
@@ -504,7 +517,8 @@ function(vfft_align_kernel_stacks _target)
         add_custom_command(TARGET ${_target} POST_BUILD
             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/src/tools/build/align_kernel_stacks.py"
                     "$<TARGET_FILE:${_target}>" ${VFFT_ALIGN_TOOLS}
-                    --keep vfft.c.obj --keep vfft.c.o --cache "${PROJECT_BINARY_DIR}/kernel_stack_align"
+                    --keep vfft.c.obj --keep vfft.c.o --keep vfftf.c.obj --keep vfftf.c.o
+                    --cache "${PROJECT_BINARY_DIR}/kernel_stack_align"
             VERBATIM)
     endif()
 endfunction()
@@ -551,7 +565,11 @@ if(VFFT_INSTALL)
     endif()
 endif()
 
-add_library(vectorfft_vfft STATIC "${DAG_CORE}/vfft.c" $<TARGET_OBJECTS:dagcodelets>)
+set(VFFT_CORE_SRCS "${DAG_CORE}/vfft.c")
+if(VFFT_ENABLE_FLOAT)
+    list(APPEND VFFT_CORE_SRCS "${DAG_CORE}/vfftf.c")   # the FP32 unit (vfftf_*)
+endif()
+add_library(vectorfft_vfft STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)
 add_library(VectorFFT::vfft ALIAS vectorfft_vfft)
 # a target name of its own (a consumer may own a target called vfft); the file is
 # libvfft.a and the exported name VectorFFT::vfft
@@ -611,6 +629,9 @@ if(VFFT_INSTALL)
     install(TARGETS vectorfft_vfft EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
     install(FILES "${PROJECT_SOURCE_DIR}/include/vfft.h" "${PROJECT_SOURCE_DIR}/include/vfft_diagnostics.h"
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    if(VFFT_ENABLE_FLOAT)
+        install(FILES "${PROJECT_SOURCE_DIR}/include/vfftf.h" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    endif()
 
     # pkg-config: the prefix relative to the .pc file's own folder; the system
     # libraries go in Libs, as the library is a static archive only
@@ -687,7 +708,7 @@ check_required_components(VectorFFT)
     # runtime data: the shipped store (the live shards of every CPU folder, new/
     # included; no backup, no lock, no README)
     install(DIRECTORY "${PROJECT_SOURCE_DIR}/src/wisdom/" DESTINATION ${VFFT_DATA_DIR}/wisdom
-            FILES_MATCHING PATTERN "wisdom2_*.txt")
+            FILES_MATCHING PATTERN "wisdom2_*.txt" PATTERN "wisdom2f_*.txt")
 endif()
 
 # ── The gauntlet's tools (the test tool; top-level builds) ───────────────────

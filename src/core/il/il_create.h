@@ -110,6 +110,15 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
     }
     if (K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm_il(cfg, W, N, K);   /* the LANE-MAJOR batch: the column pass (lm_batch_il.h) */
+#else
+    /* FP32 (vfftf.c): the 2D c2c plan the four-step builds as its child (K = 1, internal: the front door
+     * refuses every rank-2 request) and the 1D lane-major batch on the same column pass */
+    if (cfg->dims == 2 && K == 1 && cfg->transform == VFFT_C2C)
+        return _vfft_create_2d_il(cfg, W, K);
+    if (cfg->dims >= 2)
+        return NULL;
+    if (K > 1 && cfg->transform == VFFT_C2C && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
+        return _vfft_create_lm_il(cfg, W, N, K);   /* the LANE-MAJOR batch: the column pass (lm_batch_il.h) */
 #endif
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
         return _c2c_ip_create_il(cfg, W, N, K);   /* config.batch + IL is refused before the fork */

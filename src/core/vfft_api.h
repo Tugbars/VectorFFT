@@ -160,7 +160,7 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     }
 #ifdef VFFT_FLOAT
     {   /* THE FP32 SCOPE (include/vfftf.h): 1D C2C, INTERLEAVED, natural order, a power-of-two N up to
-         * ZTURN-T's ceiling, one transform or a contiguous batch, any nthreads, planned by measuring.
+         * 2^24, one transform or a batch (contiguous or lane-major), any nthreads, planned by measuring.
          * Everything else is refused here, before any engine sees it. */
         const int n0 = p->n[0];
         const char *why = NULL;
@@ -172,14 +172,12 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
             why = "VFFT_LAYOUT_INTERLEAVED only";
         else if (p->order != VFFT_ORDER_NATURAL)
             why = "VFFT_ORDER_NATURAL only";
-        else if (p->howmany > 1 && p->batch == VFFT_BATCH_LANE_MAJOR)
-            why = "batches are contiguous only (VFFT_BATCH_LANE_MAJOR is not served at FP32)";
         else if (p->flags & (VFFT_FLAG_ESTIMATE | VFFT_FLAG_OWN_PITCH))
             why = "planned by measuring only (VFFT_FLAG_ESTIMATE and VFFT_FLAG_OWN_PITCH are not served at FP32)";
         else if (n0 < 2 || (n0 & (n0 - 1)) != 0)
             why = "a power-of-two n[0] of 2 or more only";
-        else if (n0 > VFFT_ZTT_MAX_N)
-            why = "n[0] up to 262144 (the FP32 four-step above it is not built)";
+        else if (n0 > VFFT_K1FS_MAX_N)
+            why = "n[0] up to 16777216";
         if (why)
         {
             _vfft_warn("vfftf_create: n[0] = %d: the FP32 library serves %s", n0, why);

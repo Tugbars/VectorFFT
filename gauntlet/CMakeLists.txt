@@ -26,7 +26,7 @@
 # library, never installed: the clone's store (VFFT_WISDOM_DEFS) and the
 # internal include walk PUBLIC, which the bench tools need; the user's
 # library is VectorFFT::vfft.
-add_library(vfft_core STATIC "${DAG_CORE}/vfft.c" $<TARGET_OBJECTS:dagcodelets>)
+add_library(vfft_core STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)   # vfft.c (+ vfftf.c under VFFT_ENABLE_FLOAT)
 vfft_align_kernel_stacks(vfft_core)   # the codelets' 64-byte frames, as in the library (root CMakeLists.txt)
 target_include_directories(vfft_core PUBLIC ${VFFT_INCLUDE_DIRS})
 target_compile_options(vfft_core PRIVATE ${VFFT_C_FLAGS})
@@ -46,6 +46,9 @@ foreach(_tool ${VFFT_GAUNTLET_TOOLS})
     target_include_directories(${_tool} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_options(${_tool} PRIVATE ${VFFT_C_FLAGS})
     target_link_libraries(${_tool} PRIVATE vfft_core)
+    if(VFFT_ENABLE_FLOAT)
+        target_compile_definitions(${_tool} PRIVATE VFFT_HAS_FLOAT)   # the tools' FP32 arms (include/vfftf.h)
+    endif()
 endforeach()
 
 # the MKL comparator arms (the bench and the forward reference check)

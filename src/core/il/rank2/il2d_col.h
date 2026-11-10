@@ -26,7 +26,7 @@ typedef struct {
     int nst;
     int R[8], L[8];
     vfft_il2p_fn f[8], b[8];
-    double *tf[8], *tb[8];
+    vfft_real *tf[8], *tb[8];
     /* a RADER STAGE at stage 0 (il_rader_stage.h; docs/roadmap/rader_leaf_design.md
      * section 13): R[0] a prime above the kernel pool, f[0] = b[0] = NULL, and tf[0] /
      * tb[0] the engine's two direction tags, so every walker finds the engine in the
@@ -42,7 +42,7 @@ typedef struct {
      * (a skew that kills the 4KB set-group aliasing), suffix + rows there,
      * copy back. Requires wl > 0. c2c only. */
     int staged, pitch;
-    double *bandscr;          /* 2 * wl * pitch doubles */
+    vfft_real *bandscr;          /* 2 * wl * pitch doubles */
     int colmt;                /* the RACED column-MT verdict for this cell at the plan's T */
     /* NATURAL n1: the leaf call for block b writes its R rows at
      * out-base natperm[b*R] with OLs = (N/R)*rn — natural order as a driver
@@ -55,15 +55,15 @@ typedef struct {
     int msw;                  /* the threaded strips' sub-strip width in columns (0 = the
                                * worker's whole range); banked msw= beside cmt on the plan's row (v1.3) */
     int *natperm;             /* N entries, scr row -> natural row */
-    double *natscr;           /* 2*N*rn: the pre-leaf plane */
+    vfft_real *natscr;           /* 2*N*rn: the pre-leaf plane */
     int natst;                /* the leaf STAGED (1) or at its natural stride (0): the serial
                                * walk's form is staged (dominant) unless its row names nls= (the
                                * estimate's LEAF rule, estimate_nd_il.h); the threaded arms race both,
                                * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
-    double *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
+    vfft_real *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
                                * aligned (il2d_natural_leaf_design.md);
                                * NULL = the leaf stores at its natural stride */
-    double **natsscr;         /* the threaded strips' DENSE per-worker scratch:
+    vfft_real **natsscr;         /* the threaded strips' DENSE per-worker scratch:
                                * nnatsscr blocks of N x natswcap complexes, pitch = the strip
                                * width (the 3D tier's strip form, _il2d_col_pass_nat_strip); the
                                * lane-major batches build it for the scrambled chain too (_lm_sscr_build:
@@ -74,9 +74,9 @@ typedef struct {
      * an M x rn scratch plane; blu = M (0 = off); R/L/f/b/tf/tb hold the
      * M-chain */
     int blu;
-    double *bluchf, *bluchb;  /* chirp, 2*N each, fwd/bwd */
-    double *blukf, *blukb;    /* comb-order kernels, 2*M */
-    double *bluscr;           /* the M x rn plane, 2*M*rn */
+    vfft_real *bluchf, *bluchb;  /* chirp, 2*N each, fwd/bwd */
+    vfft_real *blukf, *blukb;    /* comb-order kernels, 2*M */
+    vfft_real *bluscr;           /* the M x rn plane, 2*M*rn */
     /* THE TURNED PRIME COLUMN PASS (tpc): at a prime N the axis
      * runs through the 1D prime route instead of the column Bluestein -- the
      * lanes transposed into tpcscr (pitch N + 8), the in-place natural K=1
@@ -87,7 +87,7 @@ typedef struct {
      * decline to split a tpc axis. */
     int tpc;
     struct vfft_plan_s *tpcplan;
-    double *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
+    vfft_real *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
     struct vfft_wisdom_s *tpcS;   /* the plan's private store: its recipe rides on the column row as tpc_* */
 } vfft_ilcol_t;
 

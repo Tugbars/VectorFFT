@@ -51,16 +51,16 @@
 static int *_il2d_nat_perm(const int *Rs, int nst, int N1);
 /* the tier's statics the super-band form calls (il2d_cols.h, il2d_tier.h,
  * both included after this header in the one-TU build) */
-static void _il2d_col_stages(const double *src, double *dst, int nrows, size_t rn, int s_lo, int s_hi,
-                             const int *Rst, const int *Lst, vfft_il2p_fn const *fns, double *const *tabs,
+static void _il2d_col_stages(const vfft_real *src, vfft_real *dst, int nrows, size_t rn, int s_lo, int s_hi,
+                             const int *Rst, const int *Lst, vfft_il2p_fn const *fns, vfft_real *const *tabs,
                              int reverse);
-static int _il2d_stage_digits_mt(const double *src, double *dst, int nrows, size_t pitch, size_t cnt,
-                                 int R, int L, vfft_il2p_fn fn, const double *tab, int T);
-static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid, vfft_dir_t dir, double *row, size_t rn, size_t p);
-static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir, double *base, size_t rn,
+static int _il2d_stage_digits_mt(const vfft_real *src, vfft_real *dst, int nrows, size_t pitch, size_t cnt,
+                                 int R, int L, vfft_il2p_fn fn, const vfft_real *tab, int T);
+static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid, vfft_dir_t dir, vfft_real *row, size_t rn, size_t p);
+static void _il2d_rows_exec(struct vfft_plan_s *h, int tid, vfft_dir_t dir, vfft_real *base, size_t rn,
                             size_t pitch, size_t p0, size_t pstep, size_t nrows); /* a run of rows, il2d_tier.h */
 static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff, vfft_il2p_fn *fb);
-static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls, double **tf, double **tb);
+static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls, vfft_real **tf, vfft_real **tb);
 static long _il2d_chain_prod(const int *Rs, int m);
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
 static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
@@ -165,21 +165,21 @@ typedef struct vfft_k1fs_s
     int inplace;                  /* the placement the child was created for */
     int nthreads;
     struct vfft_plan_s *c2d;      /* the 2D interleaved child at (N1, N2), DEFAULT order */
-    double *tw;                   /* N1 records of 2*(N2/B + B) doubles: per plane position */
+    vfft_real *tw;                   /* N1 records of 2*(N2/B + B) doubles: per plane position */
     int B;                        /* the fine period */
     int *k1_of_p;                 /* plane position p -> column output index k1 */
     int *p_of_k1;                 /* its inverse */
-    double *plane;                /* NATURAL: the transpose scratch, 2*N doubles (64-B aligned) */
+    vfft_real *plane;                /* NATURAL: the transpose scratch, 2*N doubles (64-B aligned) */
     /* the SUPER-BAND form (il2d_large_plane_design.md §3): form 1
      * of the natural class walks the child's plane itself with its own chain
      * and stores the k2-major output from the row pass — no transpose sweep */
     int form;                     /* natural class: 0 = the streaming transpose, 1 = the super-band */
     int sbnst, sbR[8], sbL[8];    /* the form's column chain and spans (the tier's builders) */
     vfft_il2p_fn sbf[8], sbb[8];
-    double *sbtf[8], *sbtb[8];
+    vfft_real *sbtf[8], *sbtb[8];
     int sbR0, sbwl, nsb;          /* R_0 blocks of wl rows per super-band; nsb super-bands */
     int *sbK;                     /* per (j, i): the run's first column R_0 * K(j, i) */
-    double *sbscr;                /* T x R_0 * wl x N2 complexes (64-B aligned) */
+    vfft_real *sbscr;                /* T x R_0 * wl x N2 complexes (64-B aligned) */
     struct vfft_wisdom_s *own;    /* the child's private store when the plan owns it (the c2c
                                    * four-step, _k1fs_build_own); NULL = the caller's (a race,
                                    * the real four-step) */
@@ -467,8 +467,8 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
                     { vfft_k1fs_destroy(p); return NULL; }
                 p->sbK[j * p->sbwl + i] = base;
             }
-        p->sbscr = (double *)vfft_aligned_alloc((size_t)p->nthreads * 2 * (size_t)p->sbR0 * (size_t)p->sbwl *
-                                           (size_t)N2 * sizeof(double));
+        p->sbscr = (vfft_real *)vfft_aligned_alloc((size_t)p->nthreads * 2 * (size_t)p->sbR0 * (size_t)p->sbwl *
+                                           (size_t)N2 * sizeof(vfft_real));
         if (!p->sbscr) { vfft_k1fs_destroy(p); return NULL; }
     }
     for (q = 0; q < N1; q++) p->p_of_k1[p->k1_of_p[q]] = q;
@@ -480,12 +480,12 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     p->B = B;
     na = (N2 + B - 1) / B;
     rec = 2 * ((size_t)na + (size_t)B);
-    p->tw = (double *)vfft_aligned_alloc((size_t)N1 * rec * sizeof(double));
+    p->tw = (vfft_real *)vfft_aligned_alloc((size_t)N1 * rec * sizeof(vfft_real));
     if (!p->tw) { vfft_k1fs_destroy(p); return NULL; }
     for (q = 0; q < N1; q++)
     {
         const long k1 = p->k1_of_p[q];
-        double *C = p->tw + (size_t)q * rec, *F = C + 2 * (size_t)na;
+        vfft_real *C = p->tw + (size_t)q * rec, *F = C + 2 * (size_t)na;
         for (a = 0; a < na; a++)
         {   /* W_N^(k1 * a * B) = cos/sin(-2*pi*e/N): tw_exact.h folds e/N in
              * integers and rounds once, so the record is the correctly
@@ -509,7 +509,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     p->c2d->il2d_fs_B = B;
     if (!scr)
     {
-        p->plane = (double *)vfft_aligned_alloc(2 * (size_t)N * sizeof(double));
+        p->plane = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N * sizeof(vfft_real));
         if (!p->plane) { vfft_k1fs_destroy(p); return NULL; }
     }
     return p;
@@ -672,7 +672,7 @@ static int _k1fs_row_put_child(vw2_store_t *st, const vw2_rec_t *row, const stru
  * destination's row pitch 32-B aligned, so it is used only at an even
  * row length (N1 forward, N2 backward). */
 #define VFFT_K1FS_TB 16
-static void _k1fs_transpose_tail(const vfft_k1fs_plan_t *p, const double *src, double *dst,
+static void _k1fs_transpose_tail(const vfft_k1fs_plan_t *p, const vfft_real *src, vfft_real *dst,
                                  int bwd, int k1b, int k2b, int h, int w)
 {
     const int N1 = p->N1, N2 = p->N2;
@@ -689,12 +689,16 @@ static void _k1fs_transpose_tail(const vfft_k1fs_plan_t *p, const double *src, d
         }
     }
 }
-static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const double *src, double *dst,
+static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const vfft_real *src, vfft_real *dst,
                                   int bwd, int k1lo, int k1hi)
 {
     const int N1 = p->N1, N2 = p->N2;
+#ifdef VFFT_FLOAT
+    const int stream = (((uintptr_t)dst & 31) == 0) && (((bwd ? N2 : N1) & 3) == 0);   /* 4 complex per 32 B */
+#else
     const int stream = (((uintptr_t)dst & 31) == 0) && (((bwd ? N2 : N1) & 1) == 0);
-    __attribute__((aligned(64))) double buf[VFFT_K1FS_TB * VFFT_K1FS_TB * 2];
+#endif
+    __attribute__((aligned(64))) vfft_real buf[VFFT_K1FS_TB * VFFT_K1FS_TB * 2];
     int k1b, k2b, i, j, q;
     for (k1b = k1lo; k1b < k1hi; k1b += VFFT_K1FS_TB)
         for (k2b = 0; k2b < N2; k2b += VFFT_K1FS_TB)
@@ -710,42 +714,60 @@ static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const double *src, 
             {   /* plane rows p(k1) in, output rows k2 out (k1 contiguous) */
                 for (j = 0; j < VFFT_K1FS_TB; j += 2)
                 {
-                    const double *r0 = src + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
-                    const double *r1 = src + 2 * ((size_t)p->p_of_k1[k1b + j + 1] * (size_t)N2 + (size_t)k2b);
+                    const vfft_real *r0 = src + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
+                    const vfft_real *r1 = src + 2 * ((size_t)p->p_of_k1[k1b + j + 1] * (size_t)N2 + (size_t)k2b);
                     for (i = 0; i < VFFT_K1FS_TB; i += 2)
                     {
+#ifdef VFFT_FLOAT
+                        vfftf__turn2(buf + 2 * (i * VFFT_K1FS_TB + j), buf + 2 * ((i + 1) * VFFT_K1FS_TB + j), r0 + 2 * i, r1 + 2 * i);
+#else
                         const __m256d a = _mm256_loadu_pd(r0 + 2 * i), c = _mm256_loadu_pd(r1 + 2 * i);
                         _mm256_store_pd(buf + 2 * (i * VFFT_K1FS_TB + j), _mm256_permute2f128_pd(a, c, 0x20));
                         _mm256_store_pd(buf + 2 * ((i + 1) * VFFT_K1FS_TB + j), _mm256_permute2f128_pd(a, c, 0x31));
+#endif
                     }
                 }
                 for (i = 0; i < VFFT_K1FS_TB; i++)
                 {
-                    double *o = dst + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
-                    const double *b = buf + 2 * i * VFFT_K1FS_TB;
+                    vfft_real *o = dst + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
+                    const vfft_real *b = buf + 2 * i * VFFT_K1FS_TB;
+#ifdef VFFT_FLOAT
+                    (void)q;
+                    vfftf__copy(o, b, 2 * VFFT_K1FS_TB, stream);
+#else
                     if (stream) for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_stream_pd(o + q, _mm256_load_pd(b + q));
                     else        for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
+#endif
                 }
             }
             else
             {   /* k2-major rows in (k1 contiguous), plane rows p(k1) out */
                 for (i = 0; i < VFFT_K1FS_TB; i += 2)
                 {
-                    const double *r0 = src + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
-                    const double *r1 = src + 2 * ((size_t)(k2b + i + 1) * (size_t)N1 + (size_t)k1b);
+                    const vfft_real *r0 = src + 2 * ((size_t)(k2b + i) * (size_t)N1 + (size_t)k1b);
+                    const vfft_real *r1 = src + 2 * ((size_t)(k2b + i + 1) * (size_t)N1 + (size_t)k1b);
                     for (j = 0; j < VFFT_K1FS_TB; j += 2)
                     {
+#ifdef VFFT_FLOAT
+                        vfftf__turn2(buf + 2 * (j * VFFT_K1FS_TB + i), buf + 2 * ((j + 1) * VFFT_K1FS_TB + i), r0 + 2 * j, r1 + 2 * j);
+#else
                         const __m256d a = _mm256_loadu_pd(r0 + 2 * j), c = _mm256_loadu_pd(r1 + 2 * j);
                         _mm256_store_pd(buf + 2 * (j * VFFT_K1FS_TB + i), _mm256_permute2f128_pd(a, c, 0x20));
                         _mm256_store_pd(buf + 2 * ((j + 1) * VFFT_K1FS_TB + i), _mm256_permute2f128_pd(a, c, 0x31));
+#endif
                     }
                 }
                 for (j = 0; j < VFFT_K1FS_TB; j++)
                 {
-                    double *o = dst + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
-                    const double *b = buf + 2 * j * VFFT_K1FS_TB;
+                    vfft_real *o = dst + 2 * ((size_t)p->p_of_k1[k1b + j] * (size_t)N2 + (size_t)k2b);
+                    const vfft_real *b = buf + 2 * j * VFFT_K1FS_TB;
+#ifdef VFFT_FLOAT
+                    (void)q;
+                    vfftf__copy(o, b, 2 * VFFT_K1FS_TB, stream);
+#else
                     if (stream) for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_stream_pd(o + q, _mm256_load_pd(b + q));
                     else        for (q = 0; q < 2 * VFFT_K1FS_TB; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
+#endif
                 }
             }
         }
@@ -754,8 +776,8 @@ static void _k1fs_transpose_range(const vfft_k1fs_plan_t *p, const double *src, 
 typedef struct
 {
     const vfft_k1fs_plan_t *p;
-    const double *src;
-    double *dst;
+    const vfft_real *src;
+    vfft_real *dst;
     int bwd, k1lo, k1hi;
 } _k1fs_tp_arg_t;
 static void _k1fs_tp_tramp(void *v)
@@ -764,7 +786,7 @@ static void _k1fs_tp_tramp(void *v)
     if (a->k1lo < a->k1hi)
         _k1fs_transpose_range(a->p, a->src, a->dst, a->bwd, a->k1lo, a->k1hi);
 }
-static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double *dst, int bwd)
+static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const vfft_real *src, vfft_real *dst, int bwd)
 {
     const int T = thread_pool_workers_for(p->nthreads);
     if (T <= 1)
@@ -792,9 +814,9 @@ static void _k1fs_transpose(const vfft_k1fs_plan_t *p, const double *src, double
  * columns R_0 * K(j, i) + m: the run store turns them into R_0 x 16 blocks
  * and writes 16 output rows a run each (lane permutes; streaming stores
  * when 32-B aligned); the run load is its inverse. */
-static void _k1fs_run_store(const double *const *rows, int R0, size_t rn, double *out, int N1, int c0)
+static void _k1fs_run_store(const vfft_real *const *rows, int R0, size_t rn, vfft_real *out, int N1, int c0)
 {
-    __attribute__((aligned(64))) double buf[16 * 16 * 2];
+    __attribute__((aligned(64))) vfft_real buf[16 * 16 * 2];
     const int stream = (((uintptr_t)out & 31) == 0);
     size_t k2b;
     int m, t, q;
@@ -802,65 +824,83 @@ static void _k1fs_run_store(const double *const *rows, int R0, size_t rn, double
     {
         for (m = 0; m < R0; m += 2)
         {
-            const double *a0 = rows[m] + 2 * k2b, *a1 = rows[m + 1] + 2 * k2b;
+            const vfft_real *a0 = rows[m] + 2 * k2b, *a1 = rows[m + 1] + 2 * k2b;
             for (t = 0; t < 16; t += 2)
             {
+#ifdef VFFT_FLOAT
+                vfftf__turn2(buf + 2 * (t * R0 + m), buf + 2 * ((t + 1) * R0 + m), a0 + 2 * t, a1 + 2 * t);
+#else
                 const __m256d a = _mm256_loadu_pd(a0 + 2 * t), c = _mm256_loadu_pd(a1 + 2 * t);
                 _mm256_store_pd(buf + 2 * (t * R0 + m), _mm256_permute2f128_pd(a, c, 0x20));
                 _mm256_store_pd(buf + 2 * ((t + 1) * R0 + m), _mm256_permute2f128_pd(a, c, 0x31));
+#endif
             }
         }
         for (t = 0; t < 16; t++)
         {
-            double *o = out + 2 * ((k2b + (size_t)t) * (size_t)N1 + (size_t)c0);
-            const double *b = buf + 2 * t * R0;
+            vfft_real *o = out + 2 * ((k2b + (size_t)t) * (size_t)N1 + (size_t)c0);
+            const vfft_real *b = buf + 2 * t * R0;
+#ifdef VFFT_FLOAT
+            (void)q;
+            vfftf__copy(o, b, 2 * (size_t)R0, stream);   /* streams where the row is 32-B aligned */
+#else
             if (stream) for (q = 0; q < 2 * R0; q += 4) _mm256_stream_pd(o + q, _mm256_load_pd(b + q));
             else        for (q = 0; q < 2 * R0; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
+#endif
         }
     }
     if (stream) _mm_sfence();
 }
-static void _k1fs_run_load(double *const *rows, int R0, size_t rn, const double *in, int N1, int c0)
+static void _k1fs_run_load(vfft_real *const *rows, int R0, size_t rn, const vfft_real *in, int N1, int c0)
 {
-    __attribute__((aligned(64))) double buf[16 * 16 * 2];
+    __attribute__((aligned(64))) vfft_real buf[16 * 16 * 2];
     size_t k2b;
     int m, t, q;
     for (k2b = 0; k2b < rn; k2b += 16)
     {
         for (t = 0; t < 16; t += 2)
         {
-            const double *s0 = in + 2 * ((k2b + (size_t)t) * (size_t)N1 + (size_t)c0);
-            const double *s1 = in + 2 * ((k2b + (size_t)t + 1) * (size_t)N1 + (size_t)c0);
+            const vfft_real *s0 = in + 2 * ((k2b + (size_t)t) * (size_t)N1 + (size_t)c0);
+            const vfft_real *s1 = in + 2 * ((k2b + (size_t)t + 1) * (size_t)N1 + (size_t)c0);
             for (m = 0; m < R0; m += 2)
             {
+#ifdef VFFT_FLOAT
+                vfftf__turn2(buf + 2 * (m * 16 + t), buf + 2 * ((m + 1) * 16 + t), s0 + 2 * m, s1 + 2 * m);
+#else
                 const __m256d a = _mm256_loadu_pd(s0 + 2 * m), c = _mm256_loadu_pd(s1 + 2 * m);
                 _mm256_store_pd(buf + 2 * (m * 16 + t), _mm256_permute2f128_pd(a, c, 0x20));
                 _mm256_store_pd(buf + 2 * ((m + 1) * 16 + t), _mm256_permute2f128_pd(a, c, 0x31));
+#endif
             }
         }
         for (m = 0; m < R0; m++)
         {
-            double *o = rows[m] + 2 * k2b;
-            const double *b = buf + 2 * m * 16;
+            vfft_real *o = rows[m] + 2 * k2b;
+            const vfft_real *b = buf + 2 * m * 16;
+#ifdef VFFT_FLOAT
+            (void)q;
+            vfftf__copy(o, b, 32, 0);
+#else
             for (q = 0; q < 32; q += 4) _mm256_storeu_pd(o + q, _mm256_load_pd(b + q));
+#endif
         }
     }
 }
 /* one super-band forward: the blocks into the worker's scratch, the last
  * column stage on each, the twiddled row plans on every row, the runs
  * stored; backward mirrors, rows first */
-static void _k1fs_sb_fwd(const vfft_k1fs_plan_t *p, int tid, int j, double *out)
+static void _k1fs_sb_fwd(const vfft_k1fs_plan_t *p, int tid, int j, vfft_real *out)
 {
     const int R0 = p->sbR0, wl = p->sbwl, N1 = p->N1;
     const size_t rn = (size_t)p->N2, bstride = (size_t)N1 / (size_t)R0;
-    double *scr = p->sbscr + (size_t)tid * 2 * (size_t)R0 * (size_t)wl * rn;
-    const double *rows[16];
+    vfft_real *scr = p->sbscr + (size_t)tid * 2 * (size_t)R0 * (size_t)wl * rn;
+    const vfft_real *rows[16];
     int m, i;
     for (m = 0; m < R0; m++)
     {
         const size_t r0 = (size_t)m * bstride + (size_t)j * (size_t)wl;
-        double *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
-        memcpy(blk, p->plane + 2 * r0 * rn, 2 * (size_t)wl * rn * sizeof(double));
+        vfft_real *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
+        memcpy(blk, p->plane + 2 * r0 * rn, 2 * (size_t)wl * rn * sizeof(vfft_real));
         _il2d_col_stages(blk, blk, wl, rn, p->sbnst - 1, p->sbnst, p->sbR, p->sbL, p->sbf, p->sbtf, 0);
         _il2d_rows_exec(p->c2d, tid, VFFT_FORWARD, blk, rn, rn, r0, 1, (size_t)wl);
     }
@@ -870,12 +910,12 @@ static void _k1fs_sb_fwd(const vfft_k1fs_plan_t *p, int tid, int j, double *out)
         _k1fs_run_store(rows, R0, rn, out, N1, p->sbK[j * wl + i]);
     }
 }
-static void _k1fs_sb_bwd(const vfft_k1fs_plan_t *p, int tid, int j, const double *in)
+static void _k1fs_sb_bwd(const vfft_k1fs_plan_t *p, int tid, int j, const vfft_real *in)
 {
     const int R0 = p->sbR0, wl = p->sbwl, N1 = p->N1;
     const size_t rn = (size_t)p->N2, bstride = (size_t)N1 / (size_t)R0;
-    double *scr = p->sbscr + (size_t)tid * 2 * (size_t)R0 * (size_t)wl * rn;
-    double *rows[16];
+    vfft_real *scr = p->sbscr + (size_t)tid * 2 * (size_t)R0 * (size_t)wl * rn;
+    vfft_real *rows[16];
     int m, i;
     for (i = 0; i < wl; i++)
     {
@@ -885,13 +925,13 @@ static void _k1fs_sb_bwd(const vfft_k1fs_plan_t *p, int tid, int j, const double
     for (m = 0; m < R0; m++)
     {
         const size_t r0 = (size_t)m * bstride + (size_t)j * (size_t)wl;
-        double *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
+        vfft_real *blk = scr + 2 * (size_t)m * (size_t)wl * rn;
         _il2d_rows_exec(p->c2d, tid, VFFT_BACKWARD, blk, rn, rn, r0, 1, (size_t)wl);
         _il2d_col_stages(blk, blk, wl, rn, p->sbnst - 1, p->sbnst, p->sbR, p->sbL, p->sbb, p->sbtb, 1);
-        memcpy(p->plane + 2 * r0 * rn, blk, 2 * (size_t)wl * rn * sizeof(double));
+        memcpy(p->plane + 2 * r0 * rn, blk, 2 * (size_t)wl * rn * sizeof(vfft_real));
     }
 }
-typedef struct { const vfft_k1fs_plan_t *p; int dir, tid, lo, hi; double *out; const double *in; } _k1fs_sb_arg_t;
+typedef struct { const vfft_k1fs_plan_t *p; int dir, tid, lo, hi; vfft_real *out; const vfft_real *in; } _k1fs_sb_arg_t;
 static void _k1fs_sb_tramp(void *v)
 {
     const _k1fs_sb_arg_t *a = (const _k1fs_sb_arg_t *)v;
@@ -900,7 +940,7 @@ static void _k1fs_sb_tramp(void *v)
         if (a->dir == VFFT_FORWARD) _k1fs_sb_fwd(a->p, a->tid, j, a->out);
         else _k1fs_sb_bwd(a->p, a->tid, j, a->in);
 }
-static void _k1fs_sb_phase(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const double *in, double *out, int T)
+static void _k1fs_sb_phase(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const vfft_real *in, vfft_real *out, int T)
 {
     _k1fs_sb_arg_t a[THREAD_POOL_MAX_DISPATCH];
     const int Ts = p->nsb < T ? p->nsb : T;
@@ -924,7 +964,7 @@ static void _k1fs_sb_phase(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const doub
  * the reversed prefix ending in the destination. In place the caller's
  * array is read by the prefix before any run lands (forward) and written
  * by stage 0 after every run was read (backward): one plane. */
-static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const double *zin, double *zout)
+static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const int N1 = p->N1, nst = p->sbnst;
     const size_t rn = (size_t)p->N2;
@@ -935,7 +975,7 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
     {
         for (s = 0; s < nst - 1; s++)
         {
-            const double *src = (s == 0) ? zin : p->plane;
+            const vfft_real *src = (s == 0) ? zin : p->plane;
             if (T < 2 || !_il2d_stage_digits_mt(src, p->plane, N1, rn, rn, p->sbR[s], p->sbL[s], p->sbf[s], p->sbtf[s], T))
                 _il2d_col_stages(src, p->plane, N1, rn, s, s + 1, p->sbR, p->sbL, p->sbf, p->sbtf, 0);
         }
@@ -945,7 +985,7 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const do
     _k1fs_sb_phase(p, dir, zin, NULL, T);
     for (s = nst - 2; s >= 0; s--)
     {
-        double *dst = (s == 0) ? zout : p->plane;
+        vfft_real *dst = (s == 0) ? zout : p->plane;
         if (T < 2 || !_il2d_stage_digits_mt(p->plane, dst, N1, rn, rn, p->sbR[s], p->sbL[s], p->sbb[s], p->sbtb[s], T))
             _il2d_col_stages(p->plane, dst, N1, rn, s, s + 1, p->sbR, p->sbL, p->sbb, p->sbtb, 0);
     }
@@ -979,12 +1019,12 @@ static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
 }
 
 /* both directions, both placements (zin == zout in place), both classes */
-static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const double *zin, double *zout)
+static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
-    const size_t bytes = 2 * (size_t)p->N * sizeof(double);
+    const size_t bytes = 2 * (size_t)p->N * sizeof(vfft_real);
     if (p->scr)
     {
-        _vfft_exec6((vfft_plan)p->c2d, dir, (double *)zin, NULL, zout, NULL);
+        _vfft_exec6((vfft_plan)p->c2d, dir, (vfft_real *)zin, NULL, zout, NULL);
         return;
     }
     if (p->form == 1)
@@ -996,7 +1036,7 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
     {
         if (zin != zout)
         {
-            _vfft_exec6((vfft_plan)p->c2d, dir, (double *)zin, NULL, p->plane, NULL);
+            _vfft_exec6((vfft_plan)p->c2d, dir, (vfft_real *)zin, NULL, p->plane, NULL);
             _k1fs_transpose(p, p->plane, zout, 0);
         }
         else
@@ -1019,9 +1059,9 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const d
         _vfft_exec6((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
     }
 }
-static inline void vfft_k1fs_execute_fwd(const vfft_k1fs_plan_t *p, const double *zin, double *zout)
+static inline void vfft_k1fs_execute_fwd(const vfft_k1fs_plan_t *p, const vfft_real *zin, vfft_real *zout)
 { vfft_k1fs_execute(p, VFFT_FORWARD, zin, zout); }
-static inline void vfft_k1fs_execute_bwd(const vfft_k1fs_plan_t *p, const double *zin, double *zout)
+static inline void vfft_k1fs_execute_bwd(const vfft_k1fs_plan_t *p, const vfft_real *zin, vfft_real *zout)
 { vfft_k1fs_execute(p, VFFT_BACKWARD, zin, zout); }
 
 #endif /* VFFT_OOP_K1_FOURSTEP_H */

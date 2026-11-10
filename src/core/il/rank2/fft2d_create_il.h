@@ -19,29 +19,29 @@
  * re-laid from the seed and run in == out, as the queue runs it (an in-place
  * real plan refuses a distinct destination at the execute door, 2026-10-18) */
 static void _pq_probe_run(struct vfft_plan_s *p, vfft_dir_t dir, int ip,
-                          const double *seed, double *buf, size_t sn)
+                          const vfft_real *seed, vfft_real *buf, size_t sn)
 {
     if (ip)
     {
-        memcpy(buf, seed, sn * sizeof(double));
+        memcpy(buf, seed, sn * sizeof(vfft_real));
         _vfft_exec6((vfft_plan)p, dir, buf, NULL, buf, NULL);
     }
     else
-        _vfft_exec6((vfft_plan)p, dir, (double *)seed, NULL, buf, NULL);
+        _vfft_exec6((vfft_plan)p, dir, (vfft_real *)seed, NULL, buf, NULL);
 }
 /* the probe's compare over its region -- rows of cols doubles at pitch (one row
  * of the whole block, or an in-place c2r's real columns: the pad after a row's
  * reals is nobody's contract, and two plans leave it differently): the largest
  * magnitude, the largest difference, and whether the region is bitwise */
-static void _pq_probe_cmp(const double *a, const double *b, size_t rows, size_t pitch,
-                          size_t cols, double *mx, double *md, int *same)
+static void _pq_probe_cmp(const vfft_real *a, const vfft_real *b, size_t rows, size_t pitch,
+                          size_t cols, vfft_real *mx, vfft_real *md, int *same)
 {
     size_t r, i;
     *mx = 0.0; *md = 0.0; *same = 1;
     for (r = 0; r < rows; r++)
     {
-        const double *pa = a + r * pitch, *pb = b + r * pitch;
-        if (memcmp(pa, pb, cols * sizeof(double)) != 0) *same = 0;
+        const vfft_real *pa = a + r * pitch, *pb = b + r * pitch;
+        if (memcmp(pa, pb, cols * sizeof(vfft_real)) != 0) *same = 0;
         for (i = 0; i < cols; i++)
         {
             const double m = pa[i] < 0 ? -pa[i] : pa[i];
@@ -150,7 +150,7 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
         const vfft_dir_t pd = (cfg->transform == VFFT_C2R)
                                   ? VFFT_BACKWARD
                                   : VFFT_FORWARD;
-        double *ps, *p0, *p1;
+        vfft_real *ps, *p0, *p1;
         int t, ok = 1;
         /* the probe's compare region: the whole block, or an in-place c2r's real
          * columns (leadq rows of lastq reals at the padded pitch) */
@@ -168,9 +168,9 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                                * the same cell T more times, against the
                                * clones' law above ("wisdom-served from
                                * the verdicts the primary just banked") */
-        ps = (double *)vfft_aligned_alloc(h->pq_sdist * sizeof(double));
-        p0 = (double *)vfft_aligned_alloc(h->pq_ddist * sizeof(double));
-        p1 = (double *)vfft_aligned_alloc(h->pq_ddist * sizeof(double));
+        ps = (vfft_real *)vfft_aligned_alloc(h->pq_sdist * sizeof(vfft_real));
+        p0 = (vfft_real *)vfft_aligned_alloc(h->pq_ddist * sizeof(vfft_real));
+        p1 = (vfft_real *)vfft_aligned_alloc(h->pq_ddist * sizeof(vfft_real));
         h->pq_w = (struct vfft_plan_s **)calloc(
             (size_t)T, sizeof *h->pq_w);
         if (ps && p0 && p1 && h->pq_w && T >= 2)
@@ -353,10 +353,10 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                                 ? (cfg->owned_buffers ? vfft_policy_il2d_ip_pitch(il2d_hp) : il2d_hp) : 0;
     const int il2d_ip = il2d_ipP ? (il2d_ipP != il2d_hp ? 2 : 1) : 0;
     int il2d_staged = 0, il2d_pitch = 0;
-    double *il2d_bandscr = NULL;
-    double *il2d_rscr = NULL;
+    vfft_real *il2d_bandscr = NULL;
+    vfft_real *il2d_rscr = NULL;
     int il2d_oddn2 = 0;        /* odd-N2 real: c2c row child */
-    double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
+    vfft_real *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
     int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
     int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
     int il2d_rowb = 0;         /* row route 2: the BATCHED rows */
@@ -364,35 +364,35 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     vfft_il2p_fn il2d_rowt_f = NULL, il2d_rowt_b = NULL; /* the turn route's n1ccs pair at N2 (turned stores) */
     int il2d_rowb2 = 0;        /* row route 3: the batched TWO-PASS rows */
     vfft_il2p_fn il2d_rowb2_leaf_f = NULL, il2d_rowb2_mid_f = NULL, il2d_rowb2_t2t_b = NULL, il2d_rowb2_n1_b = NULL;
-    double *il2d_rowb2_scr = NULL;
+    vfft_real *il2d_rowb2_scr = NULL;
     int il2d_rowb2_ch = 0;     /* its tile in rows, from the banked rbk= / the env pin */
     int il2d_turn = 0;         /* the TURN route: the whole plane through the 1D engine */
     int il2d_csk = 0;          /* the SKEWED column pass */
-    double *il2d_csk_scr = NULL;
+    vfft_real *il2d_csk_scr = NULL;
     struct vfft_plan_s *il2d_csk_row = NULL;
     vfft_il2p_fn il2d_csk_f = NULL, il2d_csk_b = NULL;
     struct vfft_plan_s *il2d_turn_plan = NULL;
-    double *il2d_turn_scr = NULL;
+    vfft_real *il2d_turn_scr = NULL;
     int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
     int *il2d_natperm = NULL;
-    double *il2d_natscr = NULL;
+    vfft_real *il2d_natscr = NULL;
     /* the wisdom ORDER axis of this cell: natural cells race their
      * chain under the natural pass and bank on their own ord=nat row
      * — never sharing the scr row's chain. */
     const int il2d_ord = vfft_policy_ord_rankn(cfg);
     int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
-    double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
-    double *il2d_blukf = NULL, *il2d_blukb = NULL;
-    double *il2d_bluscr = NULL;
+    vfft_real *il2d_bluchf = NULL, *il2d_bluchb = NULL;
+    vfft_real *il2d_blukf = NULL, *il2d_blukb = NULL;
+    vfft_real *il2d_bluscr = NULL;
     int il2d_tpc = 0;                     /* the turned prime pass */
     struct vfft_plan_s *il2d_tpcplan = NULL;
     void *il2d_rd0 = NULL;                /* the Rader stage at stage 0 (il2d_col.h rd0) */
-    double *il2d_tpcscr = NULL;
+    vfft_real *il2d_tpcscr = NULL;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                           * and the T it was raced at */
     int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
     vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
-    double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
+    vfft_real *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
     if (cfg->transform == VFFT_C2C &&
         cfg->layout == VFI_LAYOUT_IL)
     {
@@ -522,7 +522,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                 if (il2d_rowb2_leaf_f && il2d_rowb2_mid_f && il2d_rowb2_t2t_b && il2d_rowb2_n1_b)
                 {
                     const int Tn = _vfft_plan_threads(cfg) > 0 ? _vfft_plan_threads(cfg) : 1;
-                    il2d_rowb2_scr = (double *)vfft_aligned_alloc((size_t)Tn * 2 * (size_t)VFFT_IL2D_RB2_CHUNK
+                    il2d_rowb2_scr = (vfft_real *)vfft_aligned_alloc((size_t)Tn * 2 * (size_t)VFFT_IL2D_RB2_CHUNK
                                                             * (size_t)N2 * sizeof(double));
                 }
                 if (!il2d_rowb2_scr)
@@ -566,7 +566,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                 il2d_turn_plan = il2d_turnS ? (struct vfft_plan_s *)_vfft_create_cfg(&tc) : NULL;
                 if (il2d_turn_plan)
                 {
-                    il2d_turn_scr = (double *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(double));
+                    il2d_turn_scr = (vfft_real *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(vfft_real));
                     if (!il2d_turn_scr)
                     {
                         vfft_destroy(il2d_turn_plan);
@@ -594,7 +594,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             {   /* its own single column stage (the n1c pair at radix N1, natural
                  * by construction): the route stands beside the banked chain
                  * whatever the chain race picked */
-                il2d_csk_scr = (double *)vfft_aligned_alloc(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(double));
+                il2d_csk_scr = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * ((size_t)N2 + 8) * sizeof(vfft_real));
                 if (il2d_csk_scr)
                 {
                     vfft_cfg_t oc;
@@ -719,7 +719,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                     }
                     if (il2d_pitch > 0)
                     {
-                        il2d_bandscr = (double *)vfft_aligned_alloc(
+                        il2d_bandscr = (vfft_real *)vfft_aligned_alloc(
                             2 * (size_t)il2d_wl * il2d_pitch
                             * sizeof(double));
                         if (il2d_bandscr)
@@ -850,8 +850,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
             if (il2d_row)
             {
-                il2d_orbuf = (double *)vfft_aligned_alloc(
-                    4 * (size_t)N2 * sizeof(double));
+                il2d_orbuf = (vfft_real *)vfft_aligned_alloc(
+                    4 * (size_t)N2 * sizeof(vfft_real));
                 if (!il2d_orbuf)
                 {
                     vfft_destroy(il2d_row);
@@ -870,7 +870,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             }
             if (cfg->transform == VFFT_C2R)
             {
-                il2d_rscr = (double *)vfft_aligned_alloc(
+                il2d_rscr = (vfft_real *)vfft_aligned_alloc(
                     (2 * (size_t)N1 * ((il2d_ip ? il2d_ipP : il2d_hp) + 3) + 8)   /* the plane's pitch (door 2 past hp1), room for the raced pitch + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
@@ -936,7 +936,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                  * and write the caller's real dst. */
                 /* +8 dbl pad: the fused c2r unzip reads full 4-wide
                  * e-blocks past the last row's tail (benign lanes). */
-                il2d_rscr = (double *)vfft_aligned_alloc(
+                il2d_rscr = (vfft_real *)vfft_aligned_alloc(
                     (2 * (size_t)N1 * ((il2d_ip ? il2d_ipP : il2d_hp) + 3) + 8)   /* the plane's pitch (door 2 past hp1), room for the raced pitch + 3 (il2d_real_pitch.h) */
                     * sizeof(double));
                 if (!il2d_rscr)
@@ -1080,7 +1080,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     {   /* the leaf's staging, one block per worker (il2d_natural_leaf_design.md) */
         const int Rl = il2d_R[il2d_nst - 1];
         const int T = h->nthreads > 0 ? h->nthreads : 1;
-        h->il2d_col.natstage = (double *)vfft_aligned_alloc((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(double));
+        h->il2d_col.natstage = (vfft_real *)vfft_aligned_alloc((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(vfft_real));
     }
     h->il2d_col.blu = il2d_blu;
     h->il2d_col.bluchf = il2d_bluchf;

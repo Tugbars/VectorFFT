@@ -61,8 +61,8 @@
  * matched fwd/bwd pair like ZTURN-T's */
 struct vfft_k1fs_s;
 static void vfft_k1fs_destroy(struct vfft_k1fs_s *p);
-static inline void vfft_k1fs_execute_fwd(const struct vfft_k1fs_s *p, const double *zin, double *zout);
-static inline void vfft_k1fs_execute_bwd(const struct vfft_k1fs_s *p, const double *zin, double *zout);
+static inline void vfft_k1fs_execute_fwd(const struct vfft_k1fs_s *p, const vfft_real *zin, vfft_real *zout);
+static inline void vfft_k1fs_execute_bwd(const struct vfft_k1fs_s *p, const vfft_real *zin, vfft_real *zout);
 typedef struct {
     vfft_il2p_plan_t *p2;
     vfft_il3p_plan_t *p3;
@@ -147,7 +147,7 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
 #endif
 }
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
-                                      const double *zi, double *zo)
+                                      const vfft_real *zi, vfft_real *zo)
 {
     if (in->fs) { vfft_k1fs_execute_fwd(in->fs, zi, zo); return; }   /* za -> zb, distinct */
     if (in->fd) { vfft_ilfd_execute_fwd(in->fd, zi, zo); return; }   /* za -> zb, distinct */
@@ -158,7 +158,7 @@ static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
     else        vfft_il3p_execute_fwd(in->p3, zi, zo);
 }
 static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
-                                      const double *zi, double *zo)
+                                      const vfft_real *zi, vfft_real *zo)
 {
     if (in->fs) { vfft_k1fs_execute_bwd(in->fs, zi, zo); return; }
     if (in->fd) { vfft_ilfd_execute_bwd(in->fd, zi, zo); return; }
@@ -170,7 +170,7 @@ static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
 }
 
 /* packed complex a[i] *= b[i], i in [0, cnt) — cnt EVEN (Bluestein's M even by construction / N-1 even) */
-static inline void _ilprime_cmul_vec(double *a, const double *b, size_t cnt)
+static inline void _ilprime_cmul_vec(vfft_real *a, const vfft_real *b, size_t cnt)
 {
 #if defined(__AVX2__)
     /* (a·b: real = ar·br − ai·bi, imag = ai·br + ar·bi. The mask negates
@@ -207,13 +207,13 @@ typedef struct {
     /* Bluestein: chirp c (2N doubles, packed) per direction — used for BOTH
      * modulate and demodulate (X[k] = c[k]·conv[k]); kernels (2M) carry the
      * unnormalized-inverse 1/M. */
-    double *chf, *chb;         /* e^{∓i·pi·n^2/N} */
-    double *kf, *kb;           /* FFT_M(b)/M, fwd/bwd */
+    vfft_real *chf, *chb;         /* e^{∓i·pi·n^2/N} */
+    vfft_real *kf, *kb;           /* FFT_M(b)/M, fwd/bwd */
     /* Rader */
     int *gpow, *ginvpow;       /* N-1 each */
-    double *omf, *omb;         /* 2(N-1): FFT kernels, 1/(N-1) baked */
+    vfft_real *omf, *omb;         /* 2(N-1): FFT kernels, 1/(N-1) baked */
     /* scratch: two packed planes of the inner size */
-    double *za, *zb;
+    vfft_real *za, *zb;
     /* the threaded form (il_prime_mt.h): 0 = serial, 1 = BLOCKS, 2 = TILES
      * -- the inner ZTURN-T's walk -- bound for mt_t threads; plan input,
      * raced per thread count */
@@ -232,9 +232,9 @@ static inline void vfft_ilprime_destroy(vfft_ilprime_plan_t *p)
     free(p);
 }
 
-static inline double *_ilprime_alloc(size_t doubles)
+static inline vfft_real *_ilprime_alloc(size_t doubles)
 {
-    return (double *)vfft_aligned_alloc(doubles * sizeof(double));
+    return (vfft_real *)vfft_aligned_alloc(doubles * sizeof(vfft_real));
 }
 
 /* Bluestein plan at convolution size M: any EVEN M >= 2N-1 (the packed
@@ -272,9 +272,9 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein_m(int N, int M)
     }
     /* kernels: b_f = conj(c_f) wrapped symmetric; kern = FFT_M(b)/M */
     for (int d = 0; d < 2; d++) {
-        const double *c = d ? p->chb : p->chf;
-        double *kern = d ? p->kb : p->kf;
-        memset(p->za, 0, (size_t)2 * M * sizeof(double));
+        const vfft_real *c = d ? p->chb : p->chf;
+        vfft_real *kern = d ? p->kb : p->kf;
+        memset(p->za, 0, (size_t)2 * M * sizeof(vfft_real));
         p->za[0] = c[0]; p->za[1] = -c[1];
         for (int n = 1; n < N; n++) {
             double br = c[2 * n], bi = -c[2 * n + 1];
@@ -359,7 +359,7 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
     for (int d = 0; !exact && d < 2; d++) {
         const int *perm = d ? p->gpow : p->ginvpow;
         double sign = d ? 1.0 : -1.0;
-        double *om = d ? p->omb : p->omf;
+        vfft_real *om = d ? p->omb : p->omf;
         for (int m = 0; m < nm1; m++) {
             double c, s;   /* a = sign*2*pi*perm/N: sin(a) = sign*s */
             vfft_cs2pi_exact((long long)perm[m], (long long)N, &c, &s);
@@ -377,7 +377,7 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
  * takes the whole range, the threaded form (il_prime_mt.h) cuts it -- the
  * same code for every element either way */
 /* Bluestein's modulate: za[n] = zin[n] c[n] below N, 0 above, n in [lo, hi) */
-static inline void _ilprime_bs_in(const double *zin, const double *c, double *za, size_t N,
+static inline void _ilprime_bs_in(const vfft_real *zin, const vfft_real *c, vfft_real *za, size_t N,
                                   size_t lo, size_t hi)
 {
     const size_t e = hi < N ? hi : N;
@@ -390,11 +390,11 @@ static inline void _ilprime_bs_in(const double *zin, const double *c, double *za
     if (hi > N)
     {
         const size_t z0 = lo > N ? lo : N;
-        memset(za + 2 * z0, 0, 2 * (hi - z0) * sizeof(double));
+        memset(za + 2 * z0, 0, 2 * (hi - z0) * sizeof(vfft_real));
     }
 }
 /* Bluestein's demodulate: zout[k] = za[k] c[k], k in [lo, hi) */
-static inline void _ilprime_bs_out(const double *za, const double *c, double *zout, size_t lo, size_t hi)
+static inline void _ilprime_bs_out(const vfft_real *za, const vfft_real *c, vfft_real *zout, size_t lo, size_t hi)
 {
     for (size_t k = lo; k < hi; k++) {
         double vr = za[2 * k], vi = za[2 * k + 1];
@@ -404,7 +404,7 @@ static inline void _ilprime_bs_out(const double *za, const double *c, double *zo
     }
 }
 /* Rader's gather: za[q] = zin[gat[q]], q in [lo, hi) */
-static inline void _ilprime_rd_in(const double *zin, const int *gat, double *za, size_t lo, size_t hi)
+static inline void _ilprime_rd_in(const vfft_real *zin, const int *gat, vfft_real *za, size_t lo, size_t hi)
 {
     for (size_t q = lo; q < hi; q++) {
         int s = gat[q];
@@ -413,7 +413,7 @@ static inline void _ilprime_rd_in(const double *zin, const int *gat, double *za,
     }
 }
 /* Rader's scatter: zout[sct[q]] = x0 + za[q], q in [lo, hi) */
-static inline void _ilprime_rd_out(const double *za, const int *sct, double *zout, double x0r, double x0i,
+static inline void _ilprime_rd_out(const vfft_real *za, const int *sct, vfft_real *zout, double x0r, double x0i,
                                    size_t lo, size_t hi)
 {
     for (size_t q = lo; q < hi; q++) {
@@ -424,12 +424,12 @@ static inline void _ilprime_rd_out(const double *za, const int *sct, double *zou
 }
 
 static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
-                                           const double *zin, double *zout,
+                                           const vfft_real *zin, vfft_real *zout,
                                            int bwd)
 {
     const int N = p->N, M = p->M;
-    const double *c = bwd ? p->chb : p->chf;
-    const double *kern = bwd ? p->kb : p->kf;
+    const vfft_real *c = bwd ? p->chb : p->chf;
+    const vfft_real *kern = bwd ? p->kb : p->kf;
     _ilprime_bs_in(zin, c, p->za, (size_t)N, 0, (size_t)M);
     _ilprime_inner_fwd(&p->inner, p->za, p->zb);
     _ilprime_cmul_vec(p->zb, kern, (size_t)M);
@@ -438,13 +438,13 @@ static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
 }
 
 static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
-                                       const double *zin, double *zout,
+                                       const vfft_real *zin, vfft_real *zout,
                                        int bwd)
 {
     const int N = p->N, nm1 = p->M;
     const int *gat = bwd ? p->ginvpow : p->gpow;      /* gather perm  */
     const int *sct = bwd ? p->gpow : p->ginvpow;      /* scatter perm */
-    const double *om = bwd ? p->omb : p->omf;
+    const vfft_real *om = bwd ? p->omb : p->omf;
     double dcr = 0.0, dci = 0.0;
     const double x0r = zin[0], x0i = zin[1];
     for (int n = 0; n < N; n++) {
@@ -464,14 +464,14 @@ static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
  * modulate; Rader's x0 capture + DC sum + gather) completes before the
  * first zout write. */
 static inline void vfft_ilprime_execute_fwd(const vfft_ilprime_plan_t *p,
-                                            const double *zin, double *zout)
+                                            const vfft_real *zin, vfft_real *zout)
 {
     if (p->method) _ilprime_exec_rader(p, zin, zout, 0);
     else           _ilprime_exec_bluestein(p, zin, zout, 0);
 }
 /* unnormalized inverse (N·x), matching every IL bwd in the tree */
 static inline void vfft_ilprime_execute_bwd(const vfft_ilprime_plan_t *p,
-                                            const double *zin, double *zout)
+                                            const vfft_real *zin, vfft_real *zout)
 {
     if (p->method) _ilprime_exec_rader(p, zin, zout, 1);
     else           _ilprime_exec_bluestein(p, zin, zout, 1);
