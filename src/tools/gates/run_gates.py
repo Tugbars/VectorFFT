@@ -206,6 +206,10 @@ ARGSTYLE = {
     "real_door_gate":          ("bare", False),  # COLD: the real door's pick (raced, replayed) against the pinned incumbent at every real cell
     # every zil kernel and ZTURN-T fused driver both ISAs list, avx512 against avx2 (twin_gate.c): no store
     "twin_gate":               ("none", False),
+    # COLD: the FP32 library (include/vfftf.h, 2026-11-10): every served pow2 cell to 2^20 races and banks
+    # into the scratch dir's wisdom2f_oop.txt; built with VFFT_HAS_FLOAT only (VFFT_FLOAT=1 in this
+    # script's environment reaches build.py), else it prints SKIP and passes
+    "vfftf_gate":              ("flag", False),
 }
 
 TEXTUAL = {"form_slot_gate"}            # #includes vfft.c; must NOT add --vfft
@@ -263,6 +267,7 @@ BUDGET_OVERRIDE = {
     "flatdit_gate":            1800,   # cold flat-chain races at 8 odd N x 2 classes x 2 placements + T=8: 636-1000 s measured 2026-09-23; 900 killed it mid-cell
     "rader_gate":              1800,   # cold: the column cells under the pin (every create races the engine), the planner's picks, and section M's six cold T=8 creates at 2^17..2^18 points; 900 killed it in section M (2026-10-14)
     "twin_gate":               1800,   # under SDE on the i9: the whole gate (720 kernels, 618 drivers to N = 262144, the finite-fill second runs) 382 s with its build (2026-10-21)
+    "vfftf_gate":              3600,   # cold races at 20 N x 2 placements x 2 K x 2 T = 160 creates to 2^20: an ESTIMATE from FP64's race costs (gauntlet.py's pace model, ~40 min), not yet measured at FP32
 }
 
 
