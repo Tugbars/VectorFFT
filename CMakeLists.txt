@@ -450,7 +450,7 @@ endif()
 # THE FP32 TREE (VFFT_ENABLE_FLOAT): the same folders under zil/<isa>_f32, power-of-two 1D C2C kinds only,
 # and the FP32 ZTURN-T drivers (gauntlet/build.py carries the same list under VFFT_FLOAT=1)
 if(VFFT_ENABLE_FLOAT)
-    foreach(_zdir shared shared/col shared/col/blocked mono pair2p pair2p/blocked chain3 ztt)
+    foreach(_zdir shared shared/col shared/col/blocked pair2p pair2p/blocked chain3 ztt)   # no mono: the 64-point mono is FP64's
         vfft_add_codelet_dir("zil_f32/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}_f32/${_zdir}")
     endforeach()
     vfft_add_codelet_dir("fused_codelets/${VFFT_ISA}_f32" "${DAG_GEN}/fused_codelets/${VFFT_ISA}_f32")

@@ -102,7 +102,7 @@ def dag_codelet_srcs() -> list[str]:
     ]
     if DAG_FLOAT:   # the FP32 tree: power-of-two 1D C2C only (include/vfftf.h)
         dirs += [DAG / 'codelets' / 'zil' / DAG_ISA_F32 / f for f in
-                 ('shared', 'shared/col', 'shared/col/blocked', 'mono', 'pair2p', 'pair2p/blocked', 'chain3', 'ztt')]
+                 ('shared', 'shared/col', 'shared/col/blocked', 'pair2p', 'pair2p/blocked', 'chain3', 'ztt')]
         dirs.append(DAG / 'generator' / 'generated' / 'fused_codelets' / DAG_ISA_F32)
     srcs: list[str] = []
     for d in dirs:
