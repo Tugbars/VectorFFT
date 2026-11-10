@@ -56,6 +56,7 @@
  */
 #ifndef VFFT_MEMORY_H
 #define VFFT_MEMORY_H
+#ifndef VFFT_FLOAT   /* vfft_malloc / vfft_free serve both precisions: the FP64 unit's alone */
 
 /* ── the bytes ──────────────────────────────────────────────────────────── */
 
@@ -78,4 +79,5 @@ void vfft_free(void *p)
 }
 
 
+#endif /* !VFFT_FLOAT */
 #endif /* VFFT_MEMORY_H */

@@ -64,8 +64,8 @@
  * Returns 1 (and prints an actionable stderr line) when the call must be
  * REFUSED — the caller returns without computing ANYTHING, so a mismatch can
  * never silently reinterpret buffers or produce garbage. */
-static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
-                         double *sim, double *dre, double *dim)
+static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, vfft_real *sre,
+                         vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     const int il = (h->layout == (int)VFI_LAYOUT_IL);
     const char *tn = _vfft_tname(h->transform);
@@ -254,7 +254,7 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
  * the general dispatch for the rest. Out of line, so the fast path keeps no
  * frame of its own. */
 static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t dir,
-                                                         double *sre, double *sim, double *dre, double *dim)
+                                                         vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     if (!h)
     {
@@ -276,7 +276,7 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
          * the engines read their input while they write the output, so the input is copied aside into
          * the plan's own buffer (allocated at create, the input's size) and the transform runs from the
          * copy into the caller's buffer, which must hold the larger of the input and the output */
-        memcpy(h->alias_scr, sre, h->alias_doubles * sizeof(double));
+        memcpy(h->alias_scr, sre, h->alias_doubles * sizeof(vfft_real));
         sre = h->alias_scr;
     }
     if (h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
@@ -301,7 +301,7 @@ static __attribute__((noinline)) void _vfft_execute_full(vfft_plan h, vfft_dir_t
  * executor is its one direction's math and never reads dir, so a call in the
  * other direction is not tried: the full door refuses it and says why. */
 static __attribute__((noinline)) void _vfft_execute_try(vfft_plan h, vfft_dir_t dir,
-                                                        double *sre, double *sim, double *dre, double *dim)
+                                                        vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     const int wrong_dir = (h->transform == VFFT_R2C && dir != VFFT_FORWARD) ||
                           (h->transform == VFFT_C2R && dir != VFFT_BACKWARD);
@@ -311,7 +311,7 @@ static __attribute__((noinline)) void _vfft_execute_try(vfft_plan h, vfft_dir_t 
 }
 
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
-                                      double *sre, double *sim, double *dre, double *dim);
+                                      vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim);
 
 /* THE FP MODE (owner, 2026-10-13): the kernels run FTZ|DAZ; the create set
  * it on the calling thread and left it so, the workers keep it for life, and
@@ -319,12 +319,12 @@ static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
  * caller's pin is the pool's, at the first fork-join of an execute the public
  * entries arm (threads.h, thread_pool_caller_arm; vfft_api.h). */
 static void _vfft_exec6(vfft_plan h, vfft_dir_t dir,
-                        double *sre, double *sim, double *dre, double *dim)
+                        vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     _vfft_execute_door(h, dir, sre, sim, dre, dim);
 }
 static inline void _vfft_execute_door(vfft_plan h, vfft_dir_t dir,
-                                      double *sre, double *sim, double *dre, double *dim)
+                                      vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     /* THE BOUND K=1 FAST PATH (2026-09-21). A plan that carries a bound
      * executor (k1_exec, set at create) can be wrong in exactly four ways at

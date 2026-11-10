@@ -60,7 +60,9 @@
  * the 8-lane laws (ztt.h) admit no chain below 64 = 8.8, and 16 and 32 are
  * not ZTURN-T's sizes there -- the solo kernels and the pairs serve them, in
  * both order classes. The band map below asks this, never vfft_ztt_band. */
-#if VFFT_IL_VW == 8
+#if VFFT_ZTT_VW >= 16
+#define VFFT_POLICY_ZTT_MIN_N 256   /* 16 lanes: R0 = 16 and (N / R0) % 16 == 0 */
+#elif VFFT_ZTT_VW == 8
 #define VFFT_POLICY_ZTT_MIN_N 64
 #else
 #define VFFT_POLICY_ZTT_MIN_N 16

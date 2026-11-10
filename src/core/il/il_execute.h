@@ -12,6 +12,7 @@
  */
 #ifndef VFFT_IL_EXECUTE_H
 #define VFFT_IL_EXECUTE_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 /* TRANSFORM-CONTIGUOUS batch MT: worker t runs transforms [t0, t0+tc) of
  * the batch on its OWN clone handle (tcbw comment on the struct) — full
@@ -24,7 +25,7 @@
  * N = 16 (10% of the transform) and with the bridge's engine walk 2-3 ns at
  * 32..1024 (measured 2026-10-01). An unbound or declining inner takes the
  * public execute. */
-static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d)
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, vfft_real *s, vfft_real *d)
 {
     if (!in->k1_exec || in->k1_exec(in, dir, s, d) != 0)
         _vfft_exec6(in, dir, s, NULL, d, NULL);
@@ -33,7 +34,7 @@ typedef struct
 {
     struct vfft_plan_s *p;
     vfft_dir_t dir;
-    double *s, *d;
+    vfft_real *s, *d;
     size_t t0, tc, sn, dn; /* sn/dn: source and destination block strides --
                             * EQUAL for C2C, DIFFERENT for r2c/c2r (see
                             * h->tcb_sn/tcb_dn at create) */
@@ -49,7 +50,7 @@ static void _tc_mt_tramp(void *v)
  * engages (il_flatdit_mt.h), the bound serial lists otherwise. Both
  * directions, both order classes, z -> z legal in both. */
 static void _ilfd_serve(struct vfft_plan_s *h, vfft_dir_t dir,
-                        const double *zin, double *zout)
+                        const vfft_real *zin, vfft_real *zout)
 {
     const vfft_ilfd_plan_t *p = h->k1ilfd;
     if (p->mt > 0 && h->nthreads > 1)
@@ -70,38 +71,38 @@ static void _ilfd_serve(struct vfft_plan_s *h, vfft_dir_t dir,
  * _vfft_sig_bad). Bound once at create by _vfft_k1_bind_exec; the general
  * dispatch stays as the path for everything else and for a trampoline that
  * returns nonzero. */
-static int _k1x_mono(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_mono(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {   /* ONE LEG: Ls = OLs = 1, count = 1 (the solo kernels index zin[2*(r*Ls + k)]) */
     (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
 /* mono per direction, the lean door's entries (k1_go): the kernel call alone */
-static int _k1x_mono_f(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_mono_f(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     h->k1_mono_ilf(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
-static int _k1x_mono_b(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_mono_b(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     h->k1_mono_ilb(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
 /* bound only when the backward resolves (vfft_il2p_bwd_resolves, at the binder): never declines */
-static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     if (dir == VFFT_FORWARD) vfft_il2p_execute_fwd(h->k1il2p, zin, zout);
     else (void)vfft_il2p_execute_bwd(h->k1il2p, zin, zout);
     return 0;
 }
-static int _k1x_il3p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_il3p(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     if (dir == VFFT_FORWARD) vfft_il3p_execute_fwd(h->k1il3p, zin, zout);
     else vfft_il3p_execute_bwd(h->k1il3p, zin, zout);
     return 0;
 }
-static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     _ilfd_serve(h, dir, zin, zout);
     return 0;
@@ -110,7 +111,7 @@ static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * (ztt_mt.h: the staged walk sectioned), else the serial form — the fused
  * codelet at a pow2 cell, the staged walk at an odd cell. Both directions,
  * both order classes, both placements. */
-static void _ztt_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static void _ztt_serve(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const vfft_ztt_plan_t *p = h->k1ztt;
     if (p->mt > 0 && h->nthreads > 1)
@@ -122,12 +123,12 @@ static void _ztt_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin,
     if (dir == VFFT_FORWARD) vfft_ztt_execute_fwd(p, zin, zout);
     else vfft_ztt_execute_bwd(p, zin, zout);
 }
-static int _k1x_ztt(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_ztt(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     _ztt_serve(h, dir, zin, zout);
     return 0;
 }
-static int _k1x_fs(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_fs(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     if (h->nthreads > 1)
         _vfft_pool_arm(h->nthreads); /* the 2D child's threaded verdict runs on the snapshot pool */
@@ -137,7 +138,7 @@ static int _k1x_fs(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, dou
 /* the prime cell: its threaded form when the race bound one at this T
  * (il_prime_mt.h: the inner's walk + the passes cut), else the serial run.
  * Both directions, both placements (the convolution is alias-safe). */
-static void _ilpr_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static void _ilpr_serve(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const vfft_ilprime_plan_t *p = h->k1ilpr;
     if (p->mt > 0 && h->nthreads > 1)
@@ -149,7 +150,7 @@ static void _ilpr_serve(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin
     if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(p, zin, zout);
     else vfft_ilprime_execute_bwd(p, zin, zout);
 }
-static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     _ilpr_serve(h, dir, zin, zout);
     return 0;
@@ -174,7 +175,7 @@ static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, d
  * 🔴 The zr2c composite is pool-free and must stay so: its child re-asserts
  * the thread count itself, so a zr2c plan serves as a transform-contiguous
  * worker clone; nothing here arms the pool. */
-static void _vfft_real_execute_il(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim)
+static void _vfft_real_execute_il(vfft_plan h, vfft_dir_t dir, vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     (void)dir; (void)sim; (void)dim;
     if (h->zrm)      { _exec_zrm(h, sre, dre);  return; } /* the real mono: one kernel */
@@ -188,14 +189,14 @@ static void _vfft_real_execute_il(vfft_plan h, vfft_dir_t dir, double *sre, doub
     _vfft_warn("vfft_execute: %s N=%d: no interleaved real engine is bound to this plan (internal)",
                _vfft_tname(h->transform), h->N);
 }
-static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_real(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
-    _vfft_real_execute_il(h, dir, (double *)zin, NULL, zout, NULL);
+    _vfft_real_execute_il(h, dir, (vfft_real *)zin, NULL, zout, NULL);
     return 0;
 }
 /* the real mono (il/real/zrm.h): the kernel call itself, nothing between the
  * public execute and the transform */
-static int _k1x_zrm(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrm(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir; /* the kernel is the plan's direction */
     vfft_zrm_execute(h->zrm, zin, zout);
@@ -203,13 +204,13 @@ static int _k1x_zrm(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, do
 }
 /* the real flat DIT (il/real/zrf.h): the engine's execute, bound by the
  * plan's direction */
-static int _k1x_zrf_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrf_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     vfft_zrf_execute_fwd(h->zrf, zin, zout);
     return 0;
 }
-static int _k1x_zrf_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrf_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     vfft_zrf_execute_bwd(h->zrf, zin, zout);
@@ -217,13 +218,13 @@ static int _k1x_zrf_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin
 }
 /* the real Bluestein (il/real/zrb.h): the engine's execute, bound by the
  * plan's direction */
-static int _k1x_zrb_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrb_fwd(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     vfft_zrb_execute_fwd(h->zrb, zin, zout);
     return 0;
 }
-static int _k1x_zrb_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrb_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     vfft_zrb_execute_bwd(h->zrb, zin, zout);
@@ -233,25 +234,25 @@ static int _k1x_zrb_bwd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin
  * (il/real/zrp_build.h, zr2c_build.h): the engine's execute itself, the call
  * the bridge's engine walk ends in. Each arms the pool itself when its
  * threaded form is bound and takes either placement. */
-static int _k1x_zfsr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zfsr(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     _exec_zfsr(h, zin, zout);
     return 0;
 }
-static int _k1x_zttr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zttr(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     _exec_zttr(h, zin, zout);
     return 0;
 }
-static int _k1x_zrp(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zrp(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     _exec_zrp(h, zin, zout);
     return 0;
 }
-static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k1x_zr2c(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
     _exec_zr2c(h, zin, zout);
@@ -320,10 +321,10 @@ static vfft_plan _vfft_real_bind_exec(vfft_plan hp)
  * the whole story on tiny planes (2x4: 16 ns against the comparator's 9,
  * measured 2026-10-01). An aliased call (the plan is out of place) declines
  * to the general path, which says why. */
-static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir; /* r2c is the forward math, as in 1D */
-    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
+    if ((zin == (const vfft_real *)zout) != (h->il2d_ip != 0))
         return 1;   /* an aliased call on an out-of-place plan: the general path (the door refused the converse) */
     _il2d_real_rows_fwd(h, zin, zout);
     _il2d_real_cols(h, zout, zout, /*reverse=*/0);
@@ -334,20 +335,20 @@ static int _k2x_il2d_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zi
  * both stack-insensitive by their races (rxs = cxs = any). The calls are the
  * ones _il2d_rowx_body and _il2d_colx_body make for such a plan, argument for
  * argument, without the layers between. */
-static int _k2x_il2d_r2c_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_r2c_2k(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
     h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, rn2, 0, hp1, 0, (size_t)h->N);
     h->il2d_cx_leaf(zout, NULL, zout, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
     return 0;
 }
-static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir; /* c2r is the inverse math, unnormalized */
-    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
+    if ((zin == (const vfft_real *)zout) != (h->il2d_ip != 0))
         return 1;   /* the plan's placement, or the general path (which says why) */
     _il2d_real_cols(h, zin, h->il2d_rscr, /*reverse=*/1);   /* the private landing; in place the rows land on the plane */
     _il2d_real_rows_bwd(h, h->il2d_rscr, zout);
@@ -357,11 +358,11 @@ static int _k2x_il2d_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zi
  * place into the column-inverse plane, then the backward rows kernel; both
  * stack-insensitive by their races (rxs_c2r = cxs_c2r = any). The calls are
  * the ones _il2d_colx_body_bwd and _il2d_rowx_body_bwd make. */
-static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
     h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, h->il2d_rscr_P, 0, hp1);   /* the plane at its raced pitch */
     h->il2d_rx_lm(h->il2d_rscr, NULL, zout, NULL, NULL, NULL, h->il2d_rscr_P, 0, rn2, 0, (size_t)h->N);
@@ -372,24 +373,24 @@ static int _k2x_il2d_c2r_2k(struct vfft_plan_s *h, vfft_dir_t dir, const double 
  * kernel IN PLACE on the caller's plane, the row pass from it; the
  * column-inverse plane is not touched. The caller's z holds the
  * column-inverse plane afterwards. */
-static int _k2x_il2d_c2r_d(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r_d(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     (void)dir;
-    if ((zin == (const double *)zout) != (h->il2d_ip != 0))
+    if ((zin == (const vfft_real *)zout) != (h->il2d_ip != 0))
         return 1;
-    _il2d_cxd_cols(h, (double *)zin);
+    _il2d_cxd_cols(h, (vfft_real *)zin);
     _il2d_real_rows_bwd(h, zin, zout);   /* in place: the rows read the plane they write, row by row */
     return 0;
 }
 /* its two-kernel form: the in-place column kernel, then the backward rows
  * kernel, both stack-insensitive by their races */
-static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
-    h->il2d_cxd_leaf(zin, NULL, (double *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+    h->il2d_cxd_leaf(zin, NULL, (vfft_real *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
     h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
     return 0;
 }
@@ -401,11 +402,11 @@ static int _k2x_il2d_c2r_d2k(struct vfft_plan_s *h, vfft_dir_t dir, const double
  * ones the general path makes: bitwise. The forms above stay two direct calls with no state
  * test. Measured 2026-10-11: 4x4 r2c 16.4 ns through the general path's layers, 10.4 here,
  * 8.9 for its two kernels alone; 2x4 c2r 15.4, 8.2, 6.2. */
-static int _k2x_il2d_r2c_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_r2c_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
     if (h->il2d_rx_stk < 0)
         h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, rn2, 0, hp1, 0, (size_t)h->N);
@@ -417,11 +418,11 @@ static int _k2x_il2d_r2c_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double
         _il2d_rowx_call(_il2d_colx_body, h, zout, zout, h->il2d_cx_stk);
     return 0;
 }
-static int _k2x_il2d_c2r_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
     if (h->il2d_cx_stk < 0)
         h->il2d_cx_leaf(zin, NULL, h->il2d_rscr, NULL, NULL, NULL, hp1, 0, h->il2d_rscr_P, 0, hp1);
@@ -433,31 +434,31 @@ static int _k2x_il2d_c2r_2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double
         _il2d_rowx_call(_il2d_rowx_body_bwd, h, h->il2d_rscr, zout, h->il2d_rx_stk);
     return 0;
 }
-static int _k2x_il2d_c2r_d2ks(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2r_d2ks(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     const size_t rn2 = (size_t)h->N2, hp1 = rn2 / 2 + 1;
     (void)dir;
-    if (zin == (const double *)zout)
+    if (zin == (const vfft_real *)zout)
         return 1;
     if (h->il2d_cxd_stk < 0)
-        h->il2d_cxd_leaf(zin, NULL, (double *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
+        h->il2d_cxd_leaf(zin, NULL, (vfft_real *)zin, NULL, NULL, NULL, hp1, 0, hp1, 0, hp1);
     else
-        _il2d_rowx_call(_il2d_cxd_body, h, zin, (double *)zin, h->il2d_cxd_stk);
+        _il2d_rowx_call(_il2d_cxd_body, h, zin, (vfft_real *)zin, h->il2d_cxd_stk);
     if (h->il2d_rx_stk < 0)
         h->il2d_rx_lm(zin, NULL, zout, NULL, NULL, NULL, hp1, 0, rn2, 0, (size_t)h->N);
     else
         _il2d_rowx_call(_il2d_rowx_body_bwd, h, zin, zout, h->il2d_rx_stk);
     return 0;
 }
-static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);   /* il/rank1/lm_batch_il.h */
-static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout); /* il/rank2/lm_batch2d_il.h */
-static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir, double *sre, double *sim, double *dre, double *dim);   /* below */
+static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);   /* il/rank1/lm_batch_il.h */
+static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout); /* il/rank2/lm_batch2d_il.h */
+static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir, vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim);   /* below */
 /* THE ONE-THREAD 2D C2C PLAN (2026-10-29): the native tier's walk never declines, so the lean door
  * enters it past the full door's signature walk (6-8 ns of a 2x2..4x8 call, against 4-16 ns of
  * kernels). The walk is _vfft_il_execute's own, called as the full door calls it. */
-static int _k2x_il2d_c2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _k2x_il2d_c2c(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
-    _vfft_il_execute((vfft_plan)h, dir, (double *)zin, NULL, zout, NULL);
+    _vfft_il_execute((vfft_plan)h, dir, (vfft_real *)zin, NULL, zout, NULL);
     return 0;
 }
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
@@ -528,7 +529,7 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
 }
 
 static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
-                             double *sre, double *sim, double *dre, double *dim)
+                             vfft_real *sre, vfft_real *sim, vfft_real *dre, vfft_real *dim)
 {
     (void)sim;
     (void)dim;
@@ -542,7 +543,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
         { /* TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms. Block strides are h->tcb_sn/tcb_dn
      * (equal for C2C, different for r2c/c2r); the inner handle carries route, placement and order.
      * See docs/design/vfft_front_door.md. */
-        double *d = dre;
+        vfft_real *d = dre;
         const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
         /* The THREADING verdict (h->tc_mt): raced serial-vs-slabs at create
@@ -727,10 +728,10 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     const size_t wl = (size_t)h->il2d_col.wl;
                     const size_t nstride = (size_t)h->N / (size_t)Rl;
                     const int *perm = h->il2d_col.natperm;
-                    double *scr = h->il2d_col.natscr;
+                    vfft_real *scr = h->il2d_col.natscr;
                     vfft_il2p_fn const *fns = shape_fwd ? h->il2d_col.f
                                                         : h->il2d_col.b;
-                    double *const *tabs = shape_fwd ? h->il2d_col.tf
+                    vfft_real *const *tabs = shape_fwd ? h->il2d_col.tf
                                                     : h->il2d_col.tb;
                     size_t b0;
                     if (shape_fwd)
@@ -743,7 +744,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                         {
                             const size_t blo = b0 / (size_t)Rl;
                             const size_t bhi = (b0 + wl) / (size_t)Rl;
-                            const double *lf_from = (cut > 0) ? scr : sre;
+                            const vfft_real *lf_from = (cut > 0) ? scr : sre;
                             size_t b;
                             if (cut < nst - 1)
                             {
@@ -803,7 +804,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     const size_t wl = (size_t)h->il2d_col.wl;
                     vfft_il2p_fn const *fns = fwd ? h->il2d_col.f
                                                   : h->il2d_col.b;
-                    double *const *tabs = fwd ? h->il2d_col.tf
+                    vfft_real *const *tabs = fwd ? h->il2d_col.tf
                                               : h->il2d_col.tb;
                     size_t b0;
                     /* the four-step's backward (il2d_fs_tw): its rows carry
@@ -814,7 +815,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     if (hookb && !h->il2d_col.tfuse)
                     {
                         if (dre != sre)
-                            memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+                            memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(vfft_real));
                         _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                         sre = dre;
                     }
@@ -824,10 +825,10 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                                          tabs, 0);
                     for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
                     {
-                        const double *bs =
+                        const vfft_real *bs =
                             (fwd && cut > 0) ? dre + 2 * b0 * rn
                                              : sre + 2 * b0 * rn;
-                        double *bd = dre + 2 * b0 * rn;
+                        vfft_real *bd = dre + 2 * b0 * rn;
                         if (h->il2d_col.staged)
                         {
                             /* §10b staged: band -> skewed scratch
@@ -837,11 +838,11 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                              * rn: identical arithmetic (F0). */
                             const size_t pit =
                                 (size_t)h->il2d_col.pitch;
-                            double *sc = h->il2d_col.bandscr;
+                            vfft_real *sc = h->il2d_col.bandscr;
                             for (i = 0; i < wl; i++)
                                 memcpy(sc + 2 * i * pit,
                                        bs + 2 * i * rn,
-                                       2 * rn * sizeof(double));
+                                       2 * rn * sizeof(vfft_real));
                             if (hookb && h->il2d_col.tfuse)
                                 _il2d_rows_exec(h, 0, dir, sc, rn, pit, b0, 1, wl);
                             _il2d_col_stages2(sc, sc, (int)wl,
@@ -853,13 +854,13 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                             for (i = 0; i < wl; i++)
                                 memcpy(bd + 2 * i * rn,
                                        sc + 2 * i * pit,
-                                       2 * rn * sizeof(double));
+                                       2 * rn * sizeof(vfft_real));
                             continue;
                         }
                         if (hookb && h->il2d_col.tfuse)
                         {
                             if (bd != bs)
-                                memcpy(bd, bs, 2 * wl * rn * sizeof(double));
+                                memcpy(bd, bs, 2 * wl * rn * sizeof(vfft_real));
                             _il2d_rows_exec(h, 0, dir, bd, rn, rn, b0, 1, wl);
                             bs = bd;
                         }
@@ -881,7 +882,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                 {   /* the four-step's backward: the twiddled rows first,
                      * then the column pass reversed in place on dst */
                     if (dre != sre)
-                        memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(double));
+                        memcpy(dre, sre, 2 * (size_t)h->N * rn * sizeof(vfft_real));
                     _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                     _il2d_col_pass(dre, dre, h->N, rn, wc, h->il2d_col.nst,
                                    h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
@@ -895,7 +896,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                      * staging with the backward rows fused, scattered to the
                      * rows (N1 - i) mod N1 -- no row sweep */
                     const int nst = h->il2d_col.nst, Rl = h->il2d_col.R[nst - 1];
-                    double *scr = h->il2d_col.natscr;
+                    vfft_real *scr = h->il2d_col.natscr;
                     int s;
                     for (s = 0; s < nst - 1; s++)
                         _il2d_col_stages(s == 0 ? sre : scr, scr, h->N, rn, s, s + 1,
@@ -986,7 +987,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                  * column kernel in place on the caller's plane, the rows from it
                  * (never on an aliased call of an out-of-place plan: the rows would read
                  * what they write; an in-place plan's rows read and write row by row) */
-                _il2d_cxd_cols(h, (double *)sre);
+                _il2d_cxd_cols(h, (vfft_real *)sre);
                 _il2d_real_rows_bwd(h, sre, dre);
                 return;
             }
@@ -1003,7 +1004,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
         if (h->k1_mono_ilf)
         { /* MONO tier in place (2026-09-04): the alias-tolerant n1c solo,
            * one leg, z -> z legal by construction (no __restrict__). */
-            double *zo = dre ? dre : (double *)sre;
+            vfft_real *zo = dre ? dre : (vfft_real *)sre;
             (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)
                 (sre, 0, zo, 0, 0, 0, 1, 0, 1, 0, 1);
             return;
@@ -1016,7 +1017,7 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
            * Attach implies verdict (the ord=scr mode cell, mode=ILP);
            * all order spellings land here (identity under SCRAMBLED —
            * Phase A; primes/single-stage are natural = FREE). */
-            double *zo = dre ? dre : (double *)sre;
+            vfft_real *zo = dre ? dre : (vfft_real *)sre;
             if (h->k1il2p)
             {
                 if (dir == VFFT_FORWARD)

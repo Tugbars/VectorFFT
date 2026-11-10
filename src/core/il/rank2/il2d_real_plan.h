@@ -172,7 +172,7 @@ static void _il2d_rowx_body_bwd(const void *v, const double *zsrc, double *dre)
  * row, or the door batch's K = 1 inner per row. d = 0, D0 = 1, R0 = N1 is the whole pass
  * at pitch P. Shared by the fused walk (il2d_real_fuse.h) and the pitch forms
  * (il2d_real_pitch.h). */
-static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, vfft_real *s, vfft_real *d);   /* il/il_execute.h */
 static void _il2d_rows_fwd_set(struct vfft_plan_s *h, const double *x, size_t d, size_t D0, size_t R0,
                                double *out, size_t P)
 {

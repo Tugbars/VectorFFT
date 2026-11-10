@@ -71,7 +71,7 @@ static void _lm_cols(struct vfft_plan_s *h, const double *src, double *dst, int 
                    reverse ? c->b : c->f, reverse ? c->tb : c->tf, reverse);
 }
 /* the bound executor (the lean door: it never declines) */
-static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
     _lm_cols(h, zin, zout, dir == VFFT_BACKWARD);
     return 0;
@@ -133,7 +133,7 @@ static void _lm_sscr_settle(struct vfft_plan_s *h)
 }
 static int _lmr_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* below */
 static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
-static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);  /* rank2/lm_batch2d_il.h */
+static int _lm2d_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout);  /* rank2/lm_batch2d_il.h */
 static int _lm2dr_exec_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const double *xin, double *zout);   /* rank2/lm_batch2dr_il.h */
 static int _lm2dr_exec_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *xout);
 typedef struct { struct vfft_plan_s *h; double *z, *zo; int colmt, natarm, msw, wc, ok; char name[24]; } _lm_arm_t;

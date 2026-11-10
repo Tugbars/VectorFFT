@@ -142,7 +142,7 @@ static inline size_t _il2d_cpd(const struct vfft_plan_s *h)
 {
     return h->il2d_ip ? 2 * h->il2d_ipP : 2 * ((size_t)h->N2 / 2 + 1);
 }
-static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, double *s, double *d);   /* il/il_execute.h */
+static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, vfft_real *s, vfft_real *d);   /* il/il_execute.h */
 /* THE DOOR ROUTE IN PLACE: the K = 1 in-place inner on every row of the plane, a landing's row
  * (c2r from the column-inverse plane, at its pitch Pz) moved onto its own row first; at T > 1
  * the rows split across the batch's own clones (each a serial in-place plan: the slab role,

@@ -14,6 +14,7 @@
  */
 #ifndef VFFT_MEASURE_H
 #define VFFT_MEASURE_H
+#ifndef VFFT_FLOAT   /* the measurement scope for a caller: the FP64 unit's alone */
 
 void vfft_measure_configure(const vfft_measure_config_t *config)
 {
@@ -116,4 +117,5 @@ const char *vfft_measure_describe(char *buf, size_t n)
 
 long vfft_measure_scopes(void) { return _vfft_scope_count; }
 
+#endif /* !VFFT_FLOAT */
 #endif /* VFFT_MEASURE_H */

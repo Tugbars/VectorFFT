@@ -7,12 +7,13 @@
  * One definition, in the neutral zone (layout separation phase 4). */
 #ifndef VFFT_CODELET_ABI_H
 #define VFFT_CODELET_ABI_H
+#include "vfft_prec.h" /* vfft_real: the element type of this unit (FP32: vfftf.c) */
 
 #include <stddef.h>
 
-typedef void (*vfft_oop11_fn)(const double *, const double *,
-                              double *, double *,
-                              const double *, const double *,
+typedef void (*vfft_oop11_fn)(const vfft_real *, const vfft_real *,
+                              vfft_real *, vfft_real *,
+                              const vfft_real *, const vfft_real *,
                               size_t, size_t, size_t, size_t, size_t);
 
 #endif /* VFFT_CODELET_ABI_H */

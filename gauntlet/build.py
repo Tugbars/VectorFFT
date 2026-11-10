@@ -55,6 +55,12 @@ DAG_ISA_FLAGS = ['-mavx512f', '-mavx512dq'] if DAG_ISA == 'avx512' else ['-mno-a
 # with a shift and an lea per access: 14-30 % more instructions (measured 2026-11-08).
 # GCC only (CMakeLists.txt adds the same): clang and icx have no such parameter.
 GCC_IV_PARAM = '--param=iv-max-considered-uses=1000'
+# THE FP32 LIBRARY (2026-11-10): VFFT_FLOAT=1 adds the FP32 unit (src/core/vfftf.c, the core compiled again
+# for float; include/vfftf.h) to --vfft, its kernels (codelets/zil/<isa>_f32/...) and its ZTURN-T fused
+# drivers (generated/fused_codelets/<isa>_f32/) to the codelet archive, and -DVFFT_HAS_FLOAT to the drivers.
+# Off by default, as CMake's VFFT_ENABLE_FLOAT.
+DAG_FLOAT    = os.environ.get('VFFT_FLOAT', '') not in ('', '0')
+DAG_ISA_F32  = DAG_ISA + '_f32'
 
 
 def dag_codelet_srcs() -> list[str]:
@@ -90,6 +96,10 @@ def dag_codelet_srcs() -> list[str]:
         (DAG / 'generator' / 'generated' / 'fused_codelets' / 'avx512' if DAG_ISA == 'avx512'
          else DAG / 'generator' / 'generated' / 'fused_codelets'),  # ZTURN-T FUSED CODELETS: one whole-transform function per pow2 cell with the boundary_split stage kernels inlined — the pow2 solution's executable form ONLY (owner's ruling 2026-09-14, README.md there); one file per (family, N), DERIVED from the corpus cells by a promote rule (ztt_drivers.ml)
     ]
+    if DAG_FLOAT:   # the FP32 tree: power-of-two 1D C2C only (include/vfftf.h)
+        dirs += [DAG / 'codelets' / 'zil' / DAG_ISA_F32 / f for f in
+                 ('shared', 'shared/col', 'shared/col/blocked', 'mono', 'pair2p', 'pair2p/blocked', 'chain3')]
+        dirs.append(DAG / 'generator' / 'generated' / 'fused_codelets' / DAG_ISA_F32)
     srcs: list[str] = []
     for d in dirs:
         if d.is_dir():
@@ -676,6 +686,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
         # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
         # strides array -> "Inconsistent configuration parameters" at DftiCommit.
         flags += ['-DVFFT_HAS_MKL', f'-I{mkl_inc}']
+    if DAG_FLOAT:   # the drivers' FP32 arms (include/vfftf.h); the library units take no define
+        flags += ['-DVFFT_HAS_FLOAT']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
     if kfr:
@@ -892,6 +904,8 @@ def main():
     extra_srcs = []
     if args.vfft:
         extra_srcs.append(DAG_CORE / 'vfft.c')   # canonical src/core/vfft.c (old src/vfft.c retired)
+        if DAG_FLOAT:
+            extra_srcs.append(DAG_CORE / 'vfftf.c')   # the FP32 unit (vfftf_*)
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()
 

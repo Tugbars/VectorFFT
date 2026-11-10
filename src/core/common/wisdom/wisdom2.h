@@ -74,7 +74,14 @@
 
 /* ---------------------------------------------------------------- version */
 
+#ifdef VFFT_FLOAT
+/* THE FP32 STORE (vfftf.c, owner 2026-11-10): its own file beside the FP64 shards, whose first line
+ * names its precision; the FP64 loader refuses it ("@vw2 " does not match) and this one refuses the
+ * FP64 files, so neither precision reads the other's verdicts. */
+#define VW2_MAGIC        "@vw2f"
+#else
 #define VW2_MAGIC        "@vw2"
+#endif
 #define VW2_MAJOR        1
 #define VW2_MINOR        3   /* 1.1: role= key axis;
                                 1.2: lay= key axis;
@@ -213,19 +220,45 @@ typedef struct {
  * The reader consults exactly this shard table; the one-file collapse is a
  * one-table edit (the FORMAT needs no change) — README §2.1. */
 
+#ifdef VFFT_FLOAT
+/* FP32: every row routes to the first shard (vw2_shard_route), so wisdom2f_oop.txt is the one
+ * file the FP32 unit writes; the other entries keep the table's shape and are never created. */
+static const char *vw2_shard_name[VW2_NSHARDS] = {
+    "wisdom2f_oop.txt", "wisdom2f_scr.txt", "wisdom2f_real.txt",
+    "wisdom2f_prime.txt", "wisdom2f_2d.txt", "wisdom2f_3d.txt"
+};
+#else
 static const char *vw2_shard_name[VW2_NSHARDS] = {
     "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_real.txt",
     "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt"
 };
+#endif
+/* the FP64 shard names in both units: the CPU folder a store root picks is identified by these
+ * files' stamps (wisdom2_folders.h), so the FP32 unit lands in the FP64 unit's folder */
+static const char *vw2_shard_name_f64[VW2_NSHARDS] = {
+    "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_real.txt",
+    "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt"
+};
+#ifdef VFFT_FLOAT
+#define VW2_STAMP_NAMES vw2_shard_name_f64
+#else
+#define VW2_STAMP_NAMES vw2_shard_name
+#endif
 
 /* rename compat: wisdom2_scr.txt's legacy name is "wisdom2_stride.txt" (a
  * name collision with the stride ENGINE). The shard holds the 1D scrambled
  * chains and the trig inners (vw2_shard_route). An old-named file still
  * LOADS (notice below); saves always write the new name, so a store
  * upgrades on its first write and the legacy file simply goes stale. */
+#ifdef VFFT_FLOAT
+static const char *vw2_shard_name_legacy[VW2_NSHARDS] = {
+    NULL, NULL, NULL, NULL, NULL, NULL
+};
+#else
 static const char *vw2_shard_name_legacy[VW2_NSHARDS] = {
     NULL, "wisdom2_stride.txt", NULL, NULL, NULL, NULL
 };
+#endif
 
 typedef struct {
     char       dir[512];
@@ -694,6 +727,10 @@ static inline int vw2_ref_parse(const char *val, vw2_key_t *k)
  * (README §2.1). Save emits by RESIDENCY, never by re-routing. */
 static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
 {
+#ifdef VFFT_FLOAT
+    (void)k; (void)eng;
+    return VW2_SHARD_OOP;   /* FP32: one file, wisdom2f_oop.txt (both order classes, both placements) */
+#endif
     if (k->rank == 2) return VW2_SHARD_2D;
     if (k->rank >= 3) return VW2_SHARD_3D;
     if (eng && (!strcmp(eng, "bluestein") || !strcmp(eng, "rader"))) return VW2_SHARD_PRIME;
@@ -1705,7 +1742,11 @@ static inline int vw2_quarantine_append(vw2_store_t *s, const char *reason,
     memcpy(rawbuf, raw, n);
     rawbuf[n] = 0;
     { char *c; for (c = rawbuf; *c; c++) if (*c == '\n' || *c == '\r') *c = ' '; }
+#ifdef VFFT_FLOAT
+    snprintf(path, sizeof path, "%s/wisdom2f_quarantine.txt", s->dir);
+#else
     snprintf(path, sizeof path, "%s/wisdom2_quarantine.txt", s->dir);
+#endif
     f = fopen(path, "ab");
     if (!f) return VW2_EIO;
     if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0) { fclose(f); return VW2_EIO; }
