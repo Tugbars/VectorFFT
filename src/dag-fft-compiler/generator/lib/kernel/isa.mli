@@ -2,6 +2,10 @@
    MODULE CARD. ISA record + VALUE intrinsics (all width branches internal) — the model shared module.
    Generated from the inferred signature; trim = later per-module work. *)
 
+type prec =
+  | F64
+  | F32
+
 type t =
   { name : string
   ; vec_type : string
@@ -14,6 +18,7 @@ type t =
   ; set1_pd : string
   ; maskload_pd : string
   ; maskstore_pd : string
+  ; prec : prec
   }
 
 type ls_mode =
@@ -25,7 +30,21 @@ val avx2 : t
 val avx512vl256 : t
 val scalar : t
 val sse2 : t
+
+(* FP32 targets (2026-11-10): vec_width counts floats *)
+val avx2_f32 : t
+val avx512_f32 : t
+val sse_f32 : t
+val avx512vl256_f32 : t
 val of_name : string -> t
+val is_f32 : t -> bool
+val bits : t -> int
+val cpv : t -> int
+val sfx : t -> string
+val elem : t -> string
+val kmask_type : t -> string
+val flit : t -> float -> string
+val f32_todo : t -> string -> unit
 val intr : t -> string -> string
 val mul_pd : t -> string -> string -> string
 val add_pd : t -> string -> string -> string

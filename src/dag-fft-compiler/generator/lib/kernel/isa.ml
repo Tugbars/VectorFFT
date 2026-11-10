@@ -28,6 +28,16 @@
  * ------------------------------------------------------------------
  *)
 
+(* The element precision of a target (FP32 work, 2026-11-10). FP64 is every target that
+ * existed before; the FP32 targets are separate records (avx2_f32, avx512_f32 and their
+ * narrow tail records) whose vec_width counts FLOATS per vector, so every address, spill
+ * slot and twiddle offset (all in scalar units) keeps its meaning. A width TEST must use
+ * [bits] (the register width), never vec_width alone: FP32 AVX2 has 8 lanes, the number
+ * that means AVX-512 at FP64. *)
+type prec =
+  | F64
+  | F32
+
 type t =
   { name : string (* short identifier, "avx512" | "avx2" *)
   ; vec_type : string (* C type for one vector, "__m512d" | "__m256d" *)
@@ -44,6 +54,7 @@ type t =
   ; maskstore_pd : string
     (* masked store — avx2 "_mm256_maskstore_pd" (addr, mask, val),
      * avx512 "_mm512_mask_storeu_pd" (addr, mask, val). "" for scalar. *)
+  ; prec : prec (* F64 for every pre-2026-11-10 record *)
   }
 
 (* Load/store mode for the arbitrary-K tail (notebook section 53 / docs
@@ -81,6 +92,7 @@ let avx512 =
   ; set1_pd = "_mm512_set1_pd"
   ; maskload_pd = "_mm512_maskz_loadu_pd"
   ; maskstore_pd = "_mm512_mask_storeu_pd"
+  ; prec = F64
   }
 ;;
 
@@ -96,6 +108,7 @@ let avx2 =
   ; set1_pd = "_mm256_set1_pd"
   ; maskload_pd = "_mm256_maskload_pd"
   ; maskstore_pd = "_mm256_maskstore_pd"
+  ; prec = F64
   }
 ;;
 
@@ -121,6 +134,7 @@ let scalar =
   ; set1_pd = ""
   ; maskload_pd = ""
   ; maskstore_pd = ""
+  ; prec = F64
   }
 ;;
 
@@ -143,6 +157,7 @@ let sse2 =
   ; set1_pd = "_mm_set1_pd"
   ; maskload_pd = ""
   ; maskstore_pd = ""
+  ; prec = F64
   }
 ;;
 
@@ -155,6 +170,69 @@ let avx512vl256 =
   }
 ;;
 
+(* === FP32 TARGETS (2026-11-10) ===
+ * Interleaved complex float: one complex = 64 bits. AVX2 ymm = 8 floats = 4 complex,
+ * AVX-512 zmm = 16 floats = 8 complex. vec_width counts FLOATS (scalar units, as the FP64
+ * records count doubles), so per = vec_width / 2 complex per vector at both precisions.
+ * The field names keep their FP64 spelling (loadu_pd ...); the strings are the ps forms. *)
+let avx2_f32 =
+  { name = "avx2_f32"
+  ; vec_type = "__m256"
+  ; vec_width = 8
+  ; vec_regs = 16
+  ; intrinsic_prefix = "_mm256"
+  ; target_attr = "avx2,fma"
+  ; loadu_pd = "_mm256_loadu_ps"
+  ; storeu_pd = "_mm256_storeu_ps"
+  ; set1_pd = "_mm256_set1_ps"
+  ; maskload_pd = "_mm256_maskload_ps"
+  ; maskstore_pd = "_mm256_maskstore_ps"
+  ; prec = F32
+  }
+;;
+
+let avx512_f32 =
+  { name = "avx512_f32"
+  ; vec_type = "__m512"
+  ; vec_width = 16
+  ; vec_regs = 32
+  ; intrinsic_prefix = "_mm512"
+  ; target_attr = "avx512f"
+  ; loadu_pd = "_mm512_loadu_ps"
+  ; storeu_pd = "_mm512_storeu_ps"
+  ; set1_pd = "_mm512_set1_ps"
+  ; maskload_pd = "_mm512_maskz_loadu_ps"
+  ; maskstore_pd = "_mm512_mask_storeu_ps"
+  ; prec = F32
+  }
+;;
+
+(* 128-bit FP32 (4 floats = 2 complex): the narrow tail arm inside an avx2_f32 or
+ * avx512_f32 codelet (VEX-128), never emitted standalone, no masks. *)
+let sse_f32 =
+  { name = "sse_f32"
+  ; vec_type = "__m128"
+  ; vec_width = 4
+  ; vec_regs = 16
+  ; intrinsic_prefix = "_mm"
+  ; target_attr = "sse2,fma"
+  ; loadu_pd = "_mm_loadu_ps"
+  ; storeu_pd = "_mm_storeu_ps"
+  ; set1_pd = "_mm_set1_ps"
+  ; maskload_pd = ""
+  ; maskstore_pd = ""
+  ; prec = F32
+  }
+;;
+
+(* 256-bit FP32 ops under AVX-512VL k-masks, inline inside an avx512_f32 codelet. *)
+let avx512vl256_f32 =
+  { avx2_f32 with name = "avx512vl256_f32"
+  ; maskload_pd = "_mm256_maskz_loadu_ps"
+  ; maskstore_pd = "_mm256_mask_storeu_ps"
+  }
+;;
+
 (* Look up by name, for CLI. *)
 let of_name (s : string) : t =
   match s with
@@ -162,8 +240,46 @@ let of_name (s : string) : t =
   | "avx2" | "AVX2" -> avx2
   | "sse2" | "SSE2" -> sse2
   | "scalar" | "SCALAR" -> scalar
+  | "avx2_f32" -> avx2_f32
+  | "avx512_f32" -> avx512_f32
+  | "sse_f32" -> sse_f32
   | other ->
     failwith (Printf.sprintf "unknown ISA: %s (expected avx512, avx2, or scalar)" other)
+;;
+
+(* === PRECISION HELPERS (2026-11-10) === *)
+let is_f32 (isa : t) : bool = isa.prec = F32
+
+(* the register width in bits: the ONLY correct width test across precisions *)
+let bits (isa : t) : int = isa.vec_width * (if isa.prec = F32 then 32 else 64)
+
+(* complex numbers per vector (both precisions) *)
+let cpv (isa : t) : int = isa.vec_width / 2
+
+(* the intrinsic suffix of the element type: "pd" | "ps" *)
+let sfx (isa : t) : string = if isa.prec = F32 then "ps" else "pd"
+
+(* the C element type: "double" | "float" *)
+let elem (isa : t) : string = if isa.prec = F32 then "float" else "double"
+
+(* the AVX-512 k-mask type covering one vector's lanes *)
+let kmask_type (isa : t) : string = if isa.vec_width = 16 then "__mmask16" else "__mmask8"
+
+(* a C literal of x in this precision: FP64 "%.17g" (the existing format), FP32 the
+ * value rounded once to float and printed with 9 significant digits plus "f". *)
+let flit (isa : t) (x : float) : string =
+  if isa.prec = F32
+  then (
+    let f = Int32.float_of_bits (Int32.bits_of_float x) in
+    let s = Printf.sprintf "%.9g" f in
+    let s = if String.contains s '.' || String.contains s 'e' || String.contains s 'n' || String.contains s 'i' then s else s ^ ".0" in
+    s ^ "f")
+  else Printf.sprintf "%.17g" x
+;;
+
+(* a guard for the width-dispatching renderers whose FP32 form is not written yet *)
+let f32_todo (isa : t) (what : string) : unit =
+  if isa.prec = F32 then failwith (Printf.sprintf "Isa.%s: no FP32 form yet (target %s)" what isa.name)
 ;;
 
 (* === INTRINSIC HELPERS ===
@@ -178,26 +294,26 @@ let intr (isa : t) (op : string) : string = Printf.sprintf "%s_%s" isa.intrinsic
 let mul_pd (isa : t) (a : string) (b : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "(%s * %s)" a b
-  else Printf.sprintf "%s(%s, %s)" (intr isa "mul_pd") a b
+  else Printf.sprintf "%s(%s, %s)" (intr isa ("mul_" ^ sfx isa)) a b
 ;;
 
 let add_pd (isa : t) (a : string) (b : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "(%s + %s)" a b
-  else Printf.sprintf "%s(%s, %s)" (intr isa "add_pd") a b
+  else Printf.sprintf "%s(%s, %s)" (intr isa ("add_" ^ sfx isa)) a b
 ;;
 
 let sub_pd (isa : t) (a : string) (b : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "(%s - %s)" a b
-  else Printf.sprintf "%s(%s, %s)" (intr isa "sub_pd") a b
+  else Printf.sprintf "%s(%s, %s)" (intr isa ("sub_" ^ sfx isa)) a b
 ;;
 
 let addsub_pd (isa : t) (a : string) (b : string) : string =
   (* [a0-b0, a1+b1, ...] — exists only at SSE2/AVX2 widths; wider ISAs have
      no vaddsubpd and the render composes the mask form instead. *)
-  if isa.vec_width = 2 || isa.vec_width = 4
-  then Printf.sprintf "%s(%s, %s)" (intr isa "addsub_pd") a b
+  if bits isa = 128 || bits isa = 256
+  then Printf.sprintf "%s(%s, %s)" (intr isa ("addsub_" ^ sfx isa)) a b
   else failwith "Isa.addsub_pd: no addsub at this width (render must compose)"
 ;;
 
@@ -208,14 +324,14 @@ let addsub_pd (isa : t) (a : string) (b : string) : string =
 let xor_pd (isa : t) (a : string) (b : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "(-(%s))" a
-  else Printf.sprintf "%s(%s, %s)" (intr isa "xor_pd") a b
+  else Printf.sprintf "%s(%s, %s)" (intr isa ("xor_" ^ sfx isa)) a b
 ;;
 
 (* fmadd_pd(a, b, c) = a*b + c    -- standard FMA *)
 let fmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "__builtin_fma(%s, %s, %s)" a b c
-  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmadd_pd") a b c
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa ("fmadd_" ^ sfx isa)) a b c
 ;;
 
 (* fmaddsub_pd(a, b, c) = a*b -/+ c: even lanes subtract, odd lanes add. The
@@ -223,28 +339,28 @@ let fmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
 let fmaddsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width < 2
   then failwith "Isa.fmaddsub_pd: needs a packed-complex width"
-  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmaddsub_pd") a b c
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa ("fmaddsub_" ^ sfx isa)) a b c
 ;;
 
 (* fnmadd_pd(a, b, c) = -a*b + c  -- negated multiplicand, useful for cmul.re *)
 let fnmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "__builtin_fma(-(%s), %s, %s)" a b c
-  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmadd_pd") a b c
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa ("fnmadd_" ^ sfx isa)) a b c
 ;;
 
 (* fmsub_pd(a, b, c) = a*b - c    -- positive multiplicand, subtract *)
 let fmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "__builtin_fma(%s, %s, -(%s))" a b c
-  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmsub_pd") a b c
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa ("fmsub_" ^ sfx isa)) a b c
 ;;
 
 (* fnmsub_pd(a, b, c) = -a*b - c   -- negated multiplicand, subtract *)
 let fnmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "__builtin_fma(-(%s), %s, -(%s))" a b c
-  else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmsub_pd") a b c
+  else Printf.sprintf "%s(%s, %s, %s)" (intr isa ("fnmsub_" ^ sfx isa)) a b c
 ;;
 
 let set1_pd_str (isa : t) (literal : string) : string =
@@ -279,6 +395,12 @@ let set1_pd_str (isa : t) (literal : string) : string =
  * vpermilpd's control is one bit per DOUBLE, and we want the same
  * "swap within each 128-bit lane" pattern at every width. *)
 let cflip_pd (isa : t) (a : string) : string =
+  if isa.prec = F32
+  then (
+    match isa.vec_width with
+    | 16 | 8 | 4 -> Printf.sprintf "%s_permute_ps(%s, 0xB1)" isa.intrinsic_prefix a
+    | w -> failwith (Printf.sprintf "cflip_pd: no FP32 complex swap at vec_width %d" w))
+  else
   match isa.vec_width with
   | 8 -> Printf.sprintf "_mm512_permute_pd(%s, 0x55)" a
   | 4 -> Printf.sprintf "_mm256_permute_pd(%s, 0x5)" a
@@ -291,7 +413,7 @@ let cflip_pd (isa : t) (a : string) : string =
 let xor_mask_pd (isa : t) (a : string) (mask : string) : string =
   if isa.vec_width = 1
   then Printf.sprintf "(-(%s))" a
-  else Printf.sprintf "%s(%s, %s)" (intr isa "xor_pd") a mask
+  else Printf.sprintf "%s(%s, %s)" (intr isa ("xor_" ^ sfx isa)) a mask
 ;;
 
 (* The alternating sign mask that turns a cflip into ×(-i):
@@ -299,7 +421,8 @@ let xor_mask_pd (isa : t) (a : string) (mask : string) : string =
  * Declared once per emitted file by the IL backend's preamble. *)
 let im_mask_decl (isa : t) (name : string) : string =
   let lanes = isa.vec_width / 2 in
-  let body = String.concat ", " (List.init lanes (fun _ -> "0.0, -0.0") |> fun l -> l) in
+  let pair = if isa.prec = F32 then "0.0f, -0.0f" else "0.0, -0.0" in
+  let body = String.concat ", " (List.init lanes (fun _ -> pair) |> fun l -> l) in
   Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
 ;;
 
@@ -308,7 +431,8 @@ let im_mask_decl (isa : t) (name : string) : string =
  * Same shape as im_mask_decl with the two lanes swapped. *)
 let re_mask_decl (isa : t) (name : string) : string =
   let lanes = isa.vec_width / 2 in
-  let body = String.concat ", " (List.init lanes (fun _ -> "-0.0, 0.0")) in
+  let pair = if isa.prec = F32 then "-0.0f, 0.0f" else "-0.0, 0.0" in
+  let body = String.concat ", " (List.init lanes (fun _ -> pair)) in
   Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
 ;;
 
@@ -324,7 +448,7 @@ let loadu_pd ?(mode = LS_vector) (isa : t) (addr : string) : string =
     match mode with
     | LS_vector -> Printf.sprintf "%s(&%s)" isa.loadu_pd addr
     | LS_masked m ->
-      if isa.vec_width = 8 || isa.name = "avx512vl256"
+      if bits isa = 512 || isa.name = "avx512vl256" || isa.name = "avx512vl256_f32"
       then
         (* avx512: maskz_loadu(mask, addr) — zeroes inactive lanes *)
         Printf.sprintf "%s(%s, &%s)" isa.maskload_pd m addr
@@ -410,6 +534,7 @@ let forward_decl (isa : t) (names : string list) : string =
  *   reint_ordered re im : the inverse, -> (lo, hi) z vectors.
  *   transpose           : a VW x VW transpose of VW vectors. *)
 let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
+  f32_todo isa "deint_ordered";
   match isa.vec_width with
   | 8 ->
     ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_de, %s)" lo hi
@@ -428,12 +553,14 @@ let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
    caller (cascade_z keeps its _pr_/_qi_ temporaries), so this returns the
    PRE-permute (width 4: permute4x64 0xD8) and the final pair separately *)
 let reint_pre (isa : t) (v : string) : string =
+  f32_todo isa "reint_pre";
   match isa.vec_width with
   | 4 -> Printf.sprintf "%s(%s, 0xD8)" (intr isa "permute4x64_pd") v
   | _ -> v
 ;;
 
 let reint_ordered (isa : t) (re : string) (im : string) : string * string =
+  f32_todo isa "reint_ordered";
   match isa.vec_width with
   | 8 ->
     ( Printf.sprintf "_mm512_permutex2var_pd(%s, _zs_pe, %s)" re im
@@ -447,6 +574,7 @@ let reint_ordered (isa : t) (re : string) (im : string) : string * string =
 
 (* function-scope constants the width-8 renderings above name *)
 let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool) : string =
+  if isa.prec = F32 && (deint || reint || transpose) then f32_todo isa "shuffle_consts";
   if isa.vec_width <> 8
   then ""
   else
@@ -478,6 +606,7 @@ let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool)
    _u0_<qid>.. names); width 8 = Simd.load_transpose_8x8's 3-stage lattice
    (8 unpack + 8 permutex2var + 8 shuffle_f64x2). *)
 let transpose (isa : t) ~(qid : string) (srcs : string array) (dsts : string array) : string =
+  f32_todo isa "transpose";
   let cd n e = Printf.sprintf "        %s\n" (const_decl isa n e) in
   match isa.vec_width with
   | 4 ->
@@ -542,6 +671,7 @@ let const_splat_decl (isa : t) (name : string) (lit : string) : string =
  *   8 (avx512, 4 cplx)  : vshuff64x2 imm 0x88 / 0xDD  (1 uop, p5, 3c)
  * NOT unpacklo/hi or permute_pd: those act inside each 128-bit lane. *)
 let cx_deint_pd (isa : t) ~(odd : bool) (a : string) (b : string) : string =
+  f32_todo isa "cx_deint_pd";
   match isa.vec_width with
   | 2 -> if odd then b else a
   | 4 -> Printf.sprintf "_mm256_permute2f128_pd(%s, %s, 0x%x)" a b (if odd then 0x31 else 0x20)
@@ -554,6 +684,7 @@ let cx_deint_pd (isa : t) ~(odd : bool) (a : string) (b : string) : string =
  * store-form vextractf128 / vextractf64x2 m128 — store uops only, no
  * shuffle port. castpd*_pd128 is free. extractf64x2 is AVX512DQ. *)
 let cx_part_pd (isa : t) (v : string) (c : int) : string =
+  f32_todo isa "cx_part_pd";
   match isa.vec_width, c with
   | 2, 0 -> v
   | 4, 0 -> Printf.sprintf "_mm256_castpd256_pd128(%s)" v
@@ -569,6 +700,7 @@ let cx_part_pd (isa : t) (v : string) (c : int) : string =
  * half-width prefix is a narrower cast store (no mask), anything else a
  * k-masked store (AVX-512 fault-suppresses the masked-off lanes). *)
 let storeu_cx_prefix (isa : t) (addr : string) (v : string) (r : int) : string =
+  f32_todo isa "storeu_cx_prefix";
   let per = isa.vec_width / 2 in
   if r = per
   then storeu_pd isa addr v
@@ -587,5 +719,5 @@ let storeu_cx_prefix (isa : t) (addr : string) (v : string) (r : int) : string =
  * the VEX-128 odd-count tail's _mm_fmadd_pd (FMA — NOT implied by
  * target("avx512f") in gcc 13: measured). *)
 let cx_target_attr (isa : t) : string =
-  if isa.vec_width = 8 then "avx512f,avx512dq,avx512vl,fma" else isa.target_attr
+  if bits isa = 512 then "avx512f,avx512dq,avx512vl,fma" else isa.target_attr
 ;;
