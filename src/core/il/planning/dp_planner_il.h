@@ -839,6 +839,8 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
              * system). */
 #if VFFT_ZTT_VW >= 16
             static const long colat[16] = { 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15 };
+#elif VFFT_ZTT_VW == 8 && defined(VFFT_FLOAT)
+            static const long colat[8] = { 0, 1, 4, 5, 2, 3, 6, 7 };   /* FP32's 8-lane tld order (ztt.h) */
 #elif VFFT_ZTT_VW == 8
             static const long colat[8] = { 0, 2, 4, 6, 1, 3, 5, 7 };
 #else

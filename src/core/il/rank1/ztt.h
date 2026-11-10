@@ -475,7 +475,13 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
             {
                 const long ic = _ztt_digitrev(j, chain, nf);
                 const long col = ic / R, pp = ic % R, c = col & (VW - 1);
+#ifdef VFFT_FLOAT
+                /* FP32's 8-lane tld (vunpck{l,h}ps over 64-bit complex): column c at lane
+                 * (c & 1) + 2 (c >> 2) + 4 ((c >> 1) & 1) (the ZTT track's measured order) */
+                p->perm[j] = (size_t)(R * (col & ~(VW - 1)) + VW * pp + ((c & 1) + 2 * (c >> 2) + 4 * ((c >> 1) & 1)));
+#else
                 p->perm[j] = (size_t)(R * (col & ~(VW - 1)) + VW * pp + ((c >> 1) + (c & 1) * (VW / 2)));
+#endif
             }
         }
 #else
