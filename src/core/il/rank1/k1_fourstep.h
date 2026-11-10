@@ -13,19 +13,23 @@
  * The 2D child is created through the public create at (N1, N2), SCRAMBLED
  * order whatever the request asked (vfft_policy_k1fs_inner_order, policy_il.h:
  * its column chain leaves k1 digit-reversed; the twiddle is built per
- * POSITION so the plan never permutes at run time), the request's
- * placement and thread count, so every verdict of the child (chain, band
- * width, row route, threading) is the rank-2 cell's own, banked on its
- * own rows, and one 2D cell serves both 1D order classes.
+ * POSITION so the plan never permutes at run time), the request's thread
+ * count, and the placement it runs in (out of place wherever the natural
+ * class's transpose follows it, the request's otherwise), so every verdict
+ * of the child (chain, band width, row route, threading) is the rank-2
+ * cell's own, banked on its own rows, and one 2D cell serves both 1D order
+ * classes.
  *
  * ORDER CLASSES. After step 3, plane position p*N2 + k2 holds frequency
  * k1(p) + N1*k2: a fixed permutation of the plan — the SCRAMBLED class
  * serves it as is (no extra pass; the matched backward inverts it). The
  * NATURAL class transposes with the row permutation folded in (row p ->
- * output column k1(p), k2-major): a blocked permuting transpose, one sweep;
- * out of place through the plan's scratch plane, in place through the
- * scratch plane and a copy back (the price of natural order in place at
- * this size — a transposed-write row twin is the lever if the race asks).
+ * output column k1(p), k2-major): a blocked permuting transpose, one sweep,
+ * through the plan's scratch plane for either placement: the child runs out
+ * of place from the caller's array into the plane and the transpose writes
+ * the destination. In place the destination is the array the child read:
+ * the child has read it whole before the transpose's first store, so no
+ * copy back is needed.
  * Backward = the mirror: (natural: the inverse transpose first), the 2D
  * child backward with the conjugate twiddle applied AFTER each row plan and
  * every row BEFORE any column stage (the tier's rows-first backward walks,
@@ -162,7 +166,7 @@ typedef struct vfft_k1fs_s
 {
     int N, N1, N2;
     int scr;                      /* the order class: 1 = SCRAMBLED (the plane as is), 0 = NATURAL (transposed) */
-    int inplace;                  /* the placement the child was created for */
+    int inplace;                  /* the request's placement (the child's: vfft_k1fs_create) */
     int nthreads;
     struct vfft_plan_s *c2d;      /* the 2D interleaved child at (N1, N2), DEFAULT order */
     vfft_real *tw;                   /* N1 records of 2*(N2/B + B) doubles: per plane position */
@@ -393,7 +397,11 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     p->nthreads = nthreads > 0 ? nthreads : 1;
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
-    rc.placement = inplace ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    /* the child's placement is the one it runs in: the natural class's
+     * transpose form runs it out of place for either placement (the caller's
+     * array into the scratch plane, vfft_k1fs_execute); the scrambled class
+     * and the super-band form keep the request's */
+    rc.placement = (inplace && (scr || form == 1)) ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     rc.rigor = cfg ? cfg->rigor : VFFT_MEASURE;
     rc.dims = 2;
     rc.n[0] = N1;
@@ -1018,10 +1026,12 @@ static int _k1fs_sb_chains(int N1, int (*out)[8], int *lens, int max, int tight)
     return n;
 }
 
-/* both directions, both placements (zin == zout in place), both classes */
+/* both directions, both placements (zin == zout in place), both classes.
+ * The natural class's transpose form goes through the scratch plane whatever
+ * the placement: in place each pass has read the caller's array whole before
+ * the next one writes it. */
 static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
-    const size_t bytes = 2 * (size_t)p->N * sizeof(vfft_real);
     if (p->scr)
     {
         _vfft_exec6((vfft_plan)p->c2d, dir, (vfft_real *)zin, NULL, zout, NULL);
@@ -1034,30 +1044,12 @@ static void vfft_k1fs_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const v
     }
     if (dir == VFFT_FORWARD)
     {
-        if (zin != zout)
-        {
-            _vfft_exec6((vfft_plan)p->c2d, dir, (vfft_real *)zin, NULL, p->plane, NULL);
-            _k1fs_transpose(p, p->plane, zout, 0);
-        }
-        else
-        {
-            _vfft_exec6((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
-            _k1fs_transpose(p, zout, p->plane, 0);
-            memcpy(zout, p->plane, bytes);
-        }
+        _vfft_exec6((vfft_plan)p->c2d, dir, (vfft_real *)zin, NULL, p->plane, NULL);
+        _k1fs_transpose(p, p->plane, zout, 0);
         return;
     }
-    if (zin != zout)
-    {
-        _k1fs_transpose(p, zin, p->plane, 1);
-        _vfft_exec6((vfft_plan)p->c2d, dir, p->plane, NULL, zout, NULL);
-    }
-    else
-    {
-        _k1fs_transpose(p, zout, p->plane, 1);
-        memcpy(zout, p->plane, bytes);
-        _vfft_exec6((vfft_plan)p->c2d, dir, zout, NULL, zout, NULL);
-    }
+    _k1fs_transpose(p, zin, p->plane, 1);
+    _vfft_exec6((vfft_plan)p->c2d, dir, p->plane, NULL, zout, NULL);
 }
 static inline void vfft_k1fs_execute_fwd(const vfft_k1fs_plan_t *p, const vfft_real *zin, vfft_real *zout)
 { vfft_k1fs_execute(p, VFFT_FORWARD, zin, zout); }

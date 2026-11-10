@@ -79,12 +79,15 @@ else.
 
 NATURAL: the plane transposed with the row permutation folded in — row p
 of the plane becomes column k1(p) of the output (k2-major), a blocked
-transpose, one sweep of the array. Out of place it reads the 2D child's
-result and writes the destination; in place it goes through a plane of
-scratch (N complexes: 64 MB at 2^22, the price of natural order in place
-at this size, the same class of cost as the 3D natural forms). Backward
-mirrors: the (inverse) transpose first, then the 2D child backward with the
-conjugate twiddle. The 2D child threads by its own verdict.
+transpose, one sweep of the array. The 2D child runs out of place from the
+caller's array into a plane of scratch (N complexes: 64 MB at 2^22), and
+the transpose reads that plane and writes the destination, for either
+placement. In place the destination is the array the child read: the child
+has read it whole before the transpose's first store, so there is no copy
+back. Backward mirrors: the (inverse) transpose from the caller's array
+into the plane first, then the 2D child backward, out of place into the
+destination, with the conjugate twiddle. The 2D child threads by its own
+verdict.
 
 The transpose is the natural class's whole cost over the scrambled class,
 and it is bandwidth: 16 x 16 complexes per block through a 4 KB local
