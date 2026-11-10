@@ -1298,6 +1298,10 @@ let emit_rleaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : s
 ;;
 
 let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  if Isa.is_f32 isa
+  then
+    failwith
+      (Printf.sprintf "real_il: the real interleaved kinds have no FP32 form (target %s)" isa.Isa.name);
   if isa.Isa.vec_width <> 4 && kind <> R1c
   then failwith "real_il: the real pair's and real rows' kinds are emitted for the 256-bit ISA only";
   match kind with

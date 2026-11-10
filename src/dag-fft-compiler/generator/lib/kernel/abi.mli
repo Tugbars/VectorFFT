@@ -68,6 +68,7 @@ val signature : t -> string
 val z11_signature
   :  ?alias_tolerant:bool
   -> ?static_inline:bool
+  -> ?elem:string (* the element type, default "double"; "float" for the FP32 kinds *)
   -> symbol:string
   -> target_attr:string
   -> unit
