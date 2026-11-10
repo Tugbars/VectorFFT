@@ -4,7 +4,7 @@ STOPGAP: the same 8-lane (ymm) drivers as `../avx2_f32/`, emitted under the
 `avx512_f32` name by
 `emit_ztt_drivers.exe --isa avx512_f32 --uarch sapphire_rapids_avx512 --split .`
 and compiled for `avx512f,avx512vl,fma`, so the compiler has the 32 ymm registers
-(the stack spills of the 16-register build mostly disappear). Same 159 cells
+(the stack spills of the 16-register build mostly disappear). Same 179 cells (N = 16..524288, 32 files)
 (`../../ztt_registry_avx512_f32.h`), same tables, results bitwise those of avx2_f32.
 
 Why not 16 lanes: the ingest writes each column's R0-run as whole VW-column blocks

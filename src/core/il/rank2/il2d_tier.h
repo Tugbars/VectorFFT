@@ -1937,7 +1937,7 @@ static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
     {
         const int w = SW[i];
         if (w > N2 || (T > 1 ? w > N2 / T : N2 % w != 0)) continue;
-        if (!vfft_policy_fits_l2((long)N1 * w * 16)) continue;
+        if (!vfft_policy_fits_l2((long)N1 * w * VFFT_CX_BYTES)) continue;
         out[n++] = w;
     }
     return n;
@@ -2066,7 +2066,7 @@ static int _il2d_race_widths(int N1, int N2, int nst, const int *Ls, int *wlc, i
         int dup = 0, p2;
         if (!vfft_policy_il2d_band_ok(N1, nst, Ls, w))
             continue;
-        if (!vfft_policy_fits_l2((long)w * N2 * 16))
+        if (!vfft_policy_fits_l2((long)w * N2 * VFFT_CX_BYTES))
             continue;
         for (p2 = 0; p2 < nwl; p2++)
             if (wlc[p2] == w)
@@ -2970,7 +2970,7 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
          * widest is N2 / T rounded up (100 columns on 8 workers: 13; sized down, those workers left
          * the dense scratch for the in-place walk, 2-4x slower) */
         const int wmax = (N2 + T - 1) / T;
-        if (wmax >= 2 && vfft_policy_fits_l2((long)N1 * wmax * 16) && wmax > swcap)
+        if (wmax >= 2 && vfft_policy_fits_l2((long)N1 * wmax * VFFT_CX_BYTES) && wmax > swcap)
             swcap = wmax;
     }
     if (swcap < 2)
@@ -3006,7 +3006,7 @@ static int _il2d_real_sw_ladder(int N1, size_t rn, int T, int *out, int max)
     const size_t per = rn / (size_t)(T > 1 ? T : 1);
     int i, n = 0;
     for (i = 0; i < 6 && n < max; i++)
-        if ((size_t)SW[i] < per && vfft_policy_fits_l2((long)N1 * SW[i] * 16))
+        if ((size_t)SW[i] < per && vfft_policy_fits_l2((long)N1 * SW[i] * VFFT_CX_BYTES))
             out[n++] = SW[i];
     return n;
 }
@@ -3021,7 +3021,7 @@ static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T)
     nl = _il2d_real_sw_ladder(N1, rn, T, lad, 6);
     for (k = 0; k < nl; k++)
         if (lad[k] > swcap) swcap = lad[k];
-    if (per >= 2 && vfft_policy_fits_l2((long)N1 * (long)per * 16) && (int)per > swcap)
+    if (per >= 2 && vfft_policy_fits_l2((long)N1 * (long)per * VFFT_CX_BYTES) && (int)per > swcap)
         swcap = (int)per;
     if (swcap < 2)
         return 0;
@@ -4110,7 +4110,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             int dup = 0, p2;
             if (!vfft_policy_il2d_band_ok(N1, h->il2d_col.nst, h->il2d_col.L, w))
                 continue;
-            if (!vfft_policy_fits_l2((long)w * N2 * 16))
+            if (!vfft_policy_fits_l2((long)w * N2 * VFFT_CX_BYTES))
                 continue;
             for (p2 = 0; p2 < nwl; p2++)
                 if (wlc[p2] == w)

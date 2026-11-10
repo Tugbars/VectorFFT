@@ -996,7 +996,7 @@ static void _k1fs_sb_execute(const vfft_k1fs_plan_t *p, vfft_dir_t dir, const vf
  * length its run store walks (16-wide k2 blocks: N2 a multiple of 16) */
 static int _k1fs_sb_admit(int N, int N2)
 {
-    return (N2 % 16) == 0 && vfft_policy_exceeds_l3((long)N * 16L);
+    return (N2 % 16) == 0 && vfft_policy_exceeds_l3((long)N * VFFT_CX_BYTES);
 }
 /* the super-band chains of N1 for a race: the tier's enumeration with R_0
  * and the last radix admitted by the run law and the block law; `tight`

@@ -1,5 +1,5 @@
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
- * 16 <= N <= 262144, route VFFT_K1_IL_ZTT.
+ * 16 <= N <= 262144 (FP32: 524288, the same plane bytes), route VFFT_K1_IL_ZTT.
  *
  *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
  *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md),
@@ -47,7 +47,8 @@
  * TWO-LEVEL product: the angle 2*pi*pw/RL splits as pw = a*2^u + b
  * (u = log2 RL - 14, b < 2^u <= 16 at 262144), w = table(a) * fine(b) with
  * fine(b) = exp(-2*pi*i*b/RL) — one 2^u-entry cos/sin table per stage at
- * create, one complex product per record, ~1 ulp. The ceiling is 262144.
+ * create, one complex product per record, ~1 ulp. The ceiling is 262144
+ * (FP32: 524288, b < 32; the fine table holds 64).
  * The validator is the law: an illegal
  * chain, a size out of range, or a cell without a registry driver returns
  * NULL loudly — no fallback, no default chain (the planner is the only
@@ -125,8 +126,14 @@ _ZTT_KFN2(_ztt_kfn_t0d,  t0d,  VFFT_IL_T0D_FWD_RADICES,  _ZTT_NONE)
 _ZTT_KFN2(_ztt_kfn_tmgd, tmgd, VFFT_IL_TMGD_FWD_RADICES, _ZTT_NONE)
 
 #define VFFT_ZTT_MAX_NF 7        /* == the registry's chain[7]                    */
+#ifdef VFFT_FLOAT
+#define VFFT_ZTT_MAX_N 524288    /* FP32: the same 4 MB plane as FP64's ceiling, in floats (ztt_drivers.ml max_n_f32) */
+#define VFFT_ZTT_MAX_N_STR "524288"
+#else
 #define VFFT_ZTT_MAX_N 262144    /* the ceiling; above the octave the streams are
                                   * the TWO-LEVEL product (below)                 */
+#define VFFT_ZTT_MAX_N_STR "262144"
+#endif
 #define VFFT_ZTT_QW_M 16384
 #define VFFT_ZTT_QW_LGM 14       /* log2 M */
 #define VFFT_ZTT_QW_Q 4096       /* M / 4 */
@@ -349,7 +356,7 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     size_t off;
     const char *why = NULL;
     if (nf < 2 || nf > VFFT_ZTT_MAX_NF) why = "nf outside 2..7";
-    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16..262144";
+    else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16.." VFFT_ZTT_MAX_N_STR;
     for (s = 0; !why && s < nf; s++)
     {
         if (!_ztt_radix_ok(chain[s], s > 0 && s < nf - 1))

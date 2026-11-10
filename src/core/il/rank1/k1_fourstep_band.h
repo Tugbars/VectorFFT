@@ -5,7 +5,11 @@
 #ifndef VFFT_K1_FOURSTEP_BAND_H
 #define VFFT_K1_FOURSTEP_BAND_H
 
+#ifdef VFFT_FLOAT
+#define VFFT_K1FS_MIN_N 524288   /* FP32: raced beside ZTURN-T at ITS ceiling (the same 4 MB plane, ztt.h) */
+#else
 #define VFFT_K1FS_MIN_N 262144   /* raced beside ZTURN-T at its ceiling */
+#endif
 #define VFFT_K1FS_MAX_N 16777216 /* 2^24 = 4096 x 4096: the pow2 side ladder's reach (both
                                   * sides <= 4096); the non-pow2 ladder stops at the same
                                   * N (its sides reach 16384, see below) */
@@ -36,7 +40,7 @@ static inline int vfft_k1fs_has_side_pair(int N)
     return 0;
 }
 
-/* THE BAND: every power of two in [262144, 2^24], and every other N in
+/* THE BAND: every power of two in [262144, 2^24] (FP32: [524288, 2^24]), and every other N in
  * (262144, 2^24] with a divisor pair in the side range (the engine's splits
  * may still all refuse -- a side with no chain or no row cell -- and then
  * the cell has no four-step arm; policy admits the family, the family

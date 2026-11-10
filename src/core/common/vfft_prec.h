@@ -48,4 +48,7 @@ typedef double vfft_real;
 #define VFFT_PREC_TAG "f64"
 #endif
 
+/* the bytes of one complex number: 16 at FP64, 8 at FP32 (the planning laws written in bytes) */
+#define VFFT_CX_BYTES ((long)(2 * sizeof(vfft_real)))
+
 #endif /* VFFT_PREC_H */

@@ -52,6 +52,11 @@
  * refusal"). *)
 
 let max_n = 262144
+(* FP32's ceiling (2026-11-10): the same 4 MB plane in floats -- 524288 complex at 8 B (MKL switches its
+ * engine at the same plane BYTES in both precisions: FP64 262144, FP32 524288); 2^19 = 8^5 * 4 * 4 fits
+ * max_nf. FP64's list is unchanged. *)
+let max_n_f32 = 524288
+let ceiling (isa : Isa.t) : int = if Isa.is_f32 isa then max_n_f32 else max_n
 let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
 
 (* FP32 (2026-11-10): THE ZTURN-T TARGET of an ISA record. The VW laws below are
@@ -98,8 +103,8 @@ let plain_ok ~(vw : int) (n : int) (ch : int list) : bool =
   rl mod vw = 0 && n / rl mod vw = 0 && n / r0 mod vw = 0
 ;;
 
-let cells ?(vw = 4) () : (int * int list) list =
-  let rec pow2 n acc = if n > max_n then List.rev acc else pow2 (2 * n) (n :: acc) in
+let cells ?(vw = 4) ?(max = max_n) () : (int * int list) list =
+  let rec pow2 n acc = if n > max then List.rev acc else pow2 (2 * n) (n :: acc) in
   List.concat_map
     (fun n ->
        List.filter_map
@@ -441,8 +446,8 @@ let emit_plain_driver ~(isa : Isa.t) (n : int) (ch : int list) ~(bwd : bool) : s
    objects of sources that are gone). Each file re-emits the bodies its
    drivers inline (static, byte-identical to the per-kind codelets); the
    natural file also carries the s0t masks its ingest bodies need. ═══ *)
-let sizes () : int list =
-  let rec pow2 n acc = if n > max_n then List.rev acc else pow2 (2 * n) (n :: acc) in
+let sizes ?(max = max_n) () : int list =
+  let rec pow2 n acc = if n > max then List.rev acc else pow2 (2 * n) (n :: acc) in
   pow2 16 []
 ;;
 
@@ -479,7 +484,7 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
   let cells =
     List.filter
       (fun (m, ch) -> m = n && (if scr then plain_ok ~vw m ch else natural_ok ~vw m ch))
-      (cells ~vw ())
+      (cells ~vw ~max:(ceiling isa) ())
   in
   add
     (Printf.sprintf
@@ -575,6 +580,6 @@ let emit_all ~(isa : Isa.t) ~(uarch : Uarch.t) ~(dir : string) : unit =
             let oc = open_out_bin path in
             output_string oc (emit_file ~isa ~uarch ~scr n);
             close_out oc)
-         (sizes ()))
+         (sizes ~max:(ceiling isa) ()))
     [ false; true ]
 ;;

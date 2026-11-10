@@ -97,9 +97,9 @@ static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
     nl = _il2d_sw_ladder(M, K, T, lad, 6);
     for (k = 0; k < nl; k++)
         if (lad[k] > swcap) swcap = lad[k];
-    if (T > 1 && K / T >= 8 && vfft_policy_fits_l2((long)M * (K / T + 8) * 16) && K / T + 8 > swcap)
+    if (T > 1 && K / T >= 8 && vfft_policy_fits_l2((long)M * (K / T + 8) * VFFT_CX_BYTES) && K / T + 8 > swcap)
         swcap = K / T + 8;   /* a worker's whole range, its bounds cut at 8 lanes */
-    if (T <= 1 && K >= 2 && vfft_policy_fits_l2((long)M * K * 16) && K > swcap)
+    if (T <= 1 && K >= 2 && vfft_policy_fits_l2((long)M * K * VFFT_CX_BYTES) && K > swcap)
         swcap = K;           /* the whole plane as one tile */
     if (swcap < 2)
         return 0;
