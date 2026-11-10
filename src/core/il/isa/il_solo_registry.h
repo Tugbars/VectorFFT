@@ -14,8 +14,10 @@
  * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —
  * call the split fwd with re/im pointer pairs swapped. */
 #include "il_isa.h"   /* the IL registry and kernel names at the build's ISA */
+#ifndef VFFT_FLOAT   /* the 64-point mono is FP64's: the FP32 corpus has no form 1 */
 VFFT_IL_DECL(VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd))
 VFFT_IL_DECL(VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd))
+#endif
 
 /* ── MONO tier (sub-128, K=1 interleaved): the SOLO kernels ──
  * A solo kernel is the whole N-point transform in one call: natural order
@@ -37,17 +39,23 @@ static inline int vfft_k1_mono_il_nforms(int N)
 #define C(R) case R:
     VFFT_IL_N1_PAIR_RADICES(C)
 #undef C
+#ifdef VFFT_FLOAT
+        return 1;
+#else
         return N == 64 ? 2 : 1;
+#endif
     default: return 0;
     }
 }
 
 static inline vfft_oop11_fn vfft_k1_mono_il_form_fn(int N, int form, int bwd)
 {
+#ifndef VFFT_FLOAT
     if (form == 1)
         return N == 64 ? (bwd ? VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd)
                               : VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd))
                        : 0;
+#endif
     if (form != 0) return 0;
     switch (N)
     {

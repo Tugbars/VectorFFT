@@ -925,7 +925,7 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
     if (!f) return 0;
 #ifdef VFFT_FLOAT
     return 0;   /* the row-loop twins are FP64's: the FP32 corpus carries none */
-#endif
+#else
 #define T_(a, b) if (f == (vfft_il2p_fn)a) return b;
     T_(VFFT_IL_SYM(radix4_z_n1t_fwd), VFFT_IL_SYM(radix4_z_n1tr_fwd))
     T_(VFFT_IL_SYM(radix8_z_n1t_fwd), VFFT_IL_SYM(radix8_z_n1tr_fwd))
@@ -949,6 +949,7 @@ static vfft_il2p_fn _il2d_rowloop_twin(vfft_il2p_fn f)
     T_(VFFT_IL_SYM(radix16_z_n1tan_bwd), VFFT_IL_SYM(radix16_z_n1rtan_bwd))
 #undef T_
     return 0;
+#endif
 }
 
 /* the row pass over a RUN of rows: nrows rows, row i at
