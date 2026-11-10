@@ -18,7 +18,12 @@
  *      are filled with NaN before each execute, so an element the plan never
  *      writes fails too;
  *   3. the in-place plan's forward and backward, each on a fresh copy of the
- *      input: BITWISE the out-of-place results.
+ *      input, against the same references and limit (an element the plan never
+ *      writes keeps the input's value and fails). Whether they are bitwise the
+ *      out-of-place results is printed, never asserted: each placement is raced
+ *      and banked as its own row, so the two may run different chains (cold,
+ *      1024 raced 2p 32.32 out of place and ZTURN-T 8.8.4.4 in place); where
+ *      the two rows hold the same plan the results were bitwise at every N.
  * REFUSED (vfftf.h: every other configuration): N = 3, N = 12, rank 2, a real
  * transform (R2C), the split layout -- vfftf_create returns NULL and
  * vfft_error() is not empty.
@@ -189,7 +194,7 @@ int main(int argc, char **argv)
     }
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("=== FP32 gate (vfftf.h): 1D C2C pow2 N = 2..%d, K = 1 and %d (contiguous), T = 1 and 4, oop + ip, "
-           "fwd + bwd vs a double FFT, limit %.0e, ip bitwise oop; store %s ===\n", nmax, KB, LIMIT, W);
+           "fwd + bwd vs a double FFT, limit %.0e, oop and ip each; store %s ===\n", nmax, KB, LIMIT, W);
 
     /* ── the refusals ── */
     {
@@ -212,8 +217,8 @@ int main(int argc, char **argv)
 
     /* ── the served scope ── */
     tw_init(nmax);
-    printf("served:\n %-8s %-2s %-2s | %-14s %-14s | %-9s %-9s | %s\n",
-           "N", "K", "T", "route oop", "route ip", "fwd err", "bwd err", "ip vs oop");
+    printf("served:\n %-8s %-2s %-2s | %-14s %-14s | %-9s %-9s | %-9s %-9s | %s\n",
+           "N", "K", "T", "route oop", "route ip", "fwd err", "bwd err", "ip fwd", "ip bwd", "ip vs oop");
     for (int N = 2; N <= nmax; N <<= 1)
     {
         const size_t tot = 2 * (size_t)N * KB;          /* floats of the K = 3 batch */
@@ -259,15 +264,19 @@ int main(int argc, char **argv)
                 const double ef = relerr(yf, rf, n), eb = relerr(yb, rb, n);
                 memcpy(z, x, n * sizeof(float));
                 vfftf_execute(pi, VFFT_FORWARD, z, z);
+                const double eif = relerr(z, rf, n);
                 const int bit_f = memcmp(z, yf, n * sizeof(float)) == 0;
                 memcpy(z, x, n * sizeof(float));
                 vfftf_execute(pi, VFFT_BACKWARD, z, z);
+                const double eib = relerr(z, rb, n);
                 const int bit_b = memcmp(z, yb, n * sizeof(float)) == 0;
-                const int ok = ef < LIMIT && eb < LIMIT && bit_f && bit_b;
+                const int ok = ef < LIMIT && eb < LIMIT && eif < LIMIT && eib < LIMIT;
                 if (maxf == maxf && !(ef <= maxf)) { maxf = ef; maxf_n = N; }   /* a NaN is the largest, and stays */
                 if (maxb == maxb && !(eb <= maxb)) { maxb = eb; maxb_n = N; }
-                printf(" %-8d %-2d %-2d | %-14s %-14s | %.2e  %.2e | %s%s\n", N, K, T, route_of(po), route_of(pi),
-                       ef, eb, bit_f && bit_b ? "bitwise" : bit_f ? "bwd DIFFERS" : bit_b ? "fwd DIFFERS" : "fwd+bwd DIFFER",
+                if (maxf == maxf && !(eif <= maxf)) { maxf = eif; maxf_n = N; }
+                if (maxb == maxb && !(eib <= maxb)) { maxb = eib; maxb_n = N; }
+                printf(" %-8d %-2d %-2d | %-14s %-14s | %.2e  %.2e | %.2e  %.2e | %s%s\n", N, K, T, route_of(po), route_of(pi),
+                       ef, eb, eif, eib, bit_f && bit_b ? "bitwise" : "own plan",
                        ok ? "" : "   *** FAIL ***");
                 if (!ok) fails++;
                 vfftf_destroy(po);
