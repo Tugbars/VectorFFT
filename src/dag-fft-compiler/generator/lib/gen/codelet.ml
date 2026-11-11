@@ -157,6 +157,9 @@ type kind =
   | Cil of
       { form : cil_form
       ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
+      ; conj : bool
+        (* --cil-conj (2026-11-11): the DFT body as cosine and sine parts, the outputs made in
+           conjugate pairs with one swap each (Cx_conj; tag conj) *)
       ; blocked : bool (* --cil-blocked *)
       ; oddct : bool
         (* --cil-oddct: dft_small FACTORS an odd COMPOSITE radix (9->3x3,
@@ -423,6 +426,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and term_k = ref None
   and term_ls_r = ref 0 in
   let cil_tangent = ref false
+  and cil_conj = ref false
   and cil_form_tag = ref false in
   let blocked = ref false
   and oddct = ref false
@@ -664,6 +668,9 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-tangent" :: tl ->
       cil_tangent := true;
       go tl
+    | "--cil-conj" :: tl ->
+      cil_conj := true;
+      go tl
     | "--cil-form-tag" :: tl ->
       cil_form_tag := true;
       go tl
@@ -816,6 +823,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
              then Cil_rowswap
              else Cil_t2)
         ; tangent = !cil_tangent
+        ; conj = !cil_conj
         ; blocked = !blocked
         ; oddct = !oddct
         ; split = !split
@@ -985,7 +993,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; split3; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag; port } ->
+  | Cil { form; tangent; conj; blocked; oddct; split; split3; turn; pre_tw; colstride; gen2; grouploop; transposed; herm; st128; rowloop; form_tag; port } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -1012,6 +1020,7 @@ let to_argv (c : t) : string list =
            else "--cil-t2")
       ]
     @ g tangent "--cil-tangent"
+    @ g conj "--cil-conj"
     @ g rowloop "--cil-rowloop"
     @ g blocked "--cil-blocked"
     @ g oddct "--cil-oddct"

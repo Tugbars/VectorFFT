@@ -239,6 +239,7 @@ let emit
       ~(st128 : bool)
       ~(rowloop : bool)
       ~(tangent : bool)
+      ~(conj : bool)
       ~(form_tag : bool)
       ~(turnst : bool)
       ~(turnst_gs : bool)
@@ -296,6 +297,32 @@ let emit
             n1t / t2 kinds (plain and blocked) and the backward t2's turned stores t2t / t2tg"
            w
            isa.Isa.name)
+    | None -> ());
+  (* THE COSINE AND SINE PARTS (--cil-conj, 2026-11-11, Cx_conj): the body of the monolithic column
+     leaf n1c at a power-of-two radix, FP64, built so that every output pair shares one swap. Every
+     other combination refuses here (the twiddled, blocked and row kinds follow one at a time,
+     docs/design/il_avx512_kernel_operations.md). *)
+  if conj
+  then (
+    let why =
+      if f32
+      then Some "FP32"
+      else if kind <> N1C
+      then Some (Printf.sprintf "the %s kind (n1c only so far)" (kind_name kind))
+      else if radix < 4 || radix land (radix - 1) <> 0
+      then Some (Printf.sprintf "radix %d (a power of two >= 4)" radix)
+      else if blocked || split <> None || split3 <> None
+      then Some "the blocked forms"
+      else if tangent
+      then Some "--cil-tangent"
+      else if colstride || gen2 || grouploop || transposed || herm || st128 || rowloop || log3 || pretw
+      then Some "a column-stride, flat, half-store, row-loop or twiddle-sourcing form"
+      else if turnst || turnst_gs
+      then Some "a turned store"
+      else None
+    in
+    match why with
+    | Some w -> failwith ("codelet_cil: --cil-conj does not take " ^ w)
     | None -> ());
   if port < 0 || port > 100 then failwith "codelet_cil: --cil-port takes a percentage 0..100";
   if port > 0 && not f32
@@ -605,7 +632,7 @@ let emit
              untwiddled (w^0 = 1), which is why records start at leg 1. *)
           if pre_tw && i > 0 then ctwl i (cload (laddr i)) else cload (laddr i))
       in
-      dft_small ~sign ~ctx radix inputs)
+      if conj then Cx_conj.dft ~sign radix inputs else dft_small ~sign ~ctx radix inputs)
   in
   (* T2 bwd POST-twiddles: conj(w) (.) IDFT(y). Same BYTW2 apply, same table
      slots, just after the butterfly — see the `dir` note above. *)
@@ -2230,6 +2257,7 @@ let emit
              ^ (match split3 with
                 | Some (m, m2, q) when form_tag -> Printf.sprintf "%d%d%d" m m2 q
                 | _ -> form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split)
+             ^ (if conj then "conj" else "")
              ^ (if st128 then "h" else "")
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")

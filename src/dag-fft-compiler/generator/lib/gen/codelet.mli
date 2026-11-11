@@ -142,6 +142,7 @@ type kind =
   | Cil of
       { form : cil_form
       ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
+      ; conj : bool (* --cil-conj: the cosine and sine parts (Cx_conj) *)
       ; blocked : bool
       ; oddct : bool
       ; split : (int * int) option
