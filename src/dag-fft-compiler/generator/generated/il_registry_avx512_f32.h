@@ -511,6 +511,11 @@ VFFT_IL_DECL(radix64_z_n1cb88_bwd_avx512_f32)
 /* ── n1cb88h ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CB88H_FWD_RADICES(X)
 
+/* ── n1cconj ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_N1CCONJ_FWD_RADICES(X)
+#define VFFT_IL_N1CCONJ_BWD_RADICES(X)
+#define VFFT_IL_N1CCONJ_PAIR_RADICES(X)
+
 /* ── n1ccs ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CCS_FWD_RADICES(X)
 #define VFFT_IL_N1CCS_BWD_RADICES(X)
@@ -846,6 +851,6 @@ VFFT_IL_DECL(radix8_z_tmg_bwd_avx512_f32)
  *   2  codelet_zsplit: t0tp/tld radix 8 is not a whole number of 16-lane blocks (law: R % VW == 0)
  *   8  codelet_zsplit: the kind has no 16-lane FP32 form (16 lanes = the natural class: t0tp, tmg, tlf, tlfi)
  */
-/* 202 declarations over 136 kinds */
+/* 202 declarations over 137 kinds */
 
 #endif

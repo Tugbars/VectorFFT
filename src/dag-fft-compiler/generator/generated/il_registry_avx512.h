@@ -145,7 +145,7 @@ VFFT_IL_DECL(radix32_z_n1b48_bwd_avx512)
 VFFT_IL_DECL(radix64_z_n1b88_bwd_avx512)
 #define VFFT_IL_N1B88_BWD_RADICES(X) X(64)
 
-/* ── n1c ── fwd 31 · bwd 31 · pair 31 */
+/* ── n1c ── fwd 30 · bwd 30 · pair 30 */
 VFFT_IL_DECL(radix2_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix3_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix4_z_n1c_fwd_avx512)
@@ -160,7 +160,6 @@ VFFT_IL_DECL(radix12_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix13_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix14_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix15_z_n1c_fwd_avx512)
-VFFT_IL_DECL(radix16_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix17_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix19_z_n1c_fwd_avx512)
 VFFT_IL_DECL(radix21_z_n1c_fwd_avx512)
@@ -191,7 +190,6 @@ VFFT_IL_DECL(radix12_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix13_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix14_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix15_z_n1c_bwd_avx512)
-VFFT_IL_DECL(radix16_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix17_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix19_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix21_z_n1c_bwd_avx512)
@@ -208,9 +206,9 @@ VFFT_IL_DECL(radix41_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix43_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix47_z_n1c_bwd_avx512)
 VFFT_IL_DECL(radix64_z_n1c_bwd_avx512)
-#define VFFT_IL_N1C_FWD_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(16) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
-#define VFFT_IL_N1C_BWD_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(16) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
-#define VFFT_IL_N1C_PAIR_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(16) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
+#define VFFT_IL_N1C_FWD_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
+#define VFFT_IL_N1C_BWD_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
+#define VFFT_IL_N1C_PAIR_RADICES(X) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15) X(17) X(19) X(21) X(22) X(23) X(25) X(26) X(27) X(29) X(31) X(32) X(37) X(41) X(43) X(47) X(64)
 
 /* ── n1cb448 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix128_z_n1cb448_fwd_avx512)
@@ -255,6 +253,13 @@ VFFT_IL_DECL(radix64_z_n1cb88_bwd_avx512)
 
 /* ── n1cb88h ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CB88H_FWD_RADICES(X)
+
+/* ── n1cconj ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix16_z_n1cconj_fwd_avx512)
+VFFT_IL_DECL(radix16_z_n1cconj_bwd_avx512)
+#define VFFT_IL_N1CCONJ_FWD_RADICES(X) X(16)
+#define VFFT_IL_N1CCONJ_BWD_RADICES(X) X(16)
+#define VFFT_IL_N1CCONJ_PAIR_RADICES(X) X(16)
 
 /* ── n1ccs ── fwd 31 · bwd 31 · pair 31 */
 VFFT_IL_DECL(radix2_z_n1ccs_fwd_avx512)
@@ -1229,6 +1234,6 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
  *   62  no 512-bit edge yet: real_il emits the real pair and real rows kinds for the 256-bit ISA only
  *   12  the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there
  */
-/* 883 declarations over 74 kinds */
+/* 883 declarations over 75 kinds */
 
 #endif

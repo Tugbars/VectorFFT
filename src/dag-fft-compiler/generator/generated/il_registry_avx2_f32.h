@@ -481,6 +481,11 @@ VFFT_IL_DECL(radix64_z_n1cb88_bwd_avx2_f32)
 /* ── n1cb88h ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CB88H_FWD_RADICES(X)
 
+/* ── n1cconj ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_N1CCONJ_FWD_RADICES(X)
+#define VFFT_IL_N1CCONJ_BWD_RADICES(X)
+#define VFFT_IL_N1CCONJ_PAIR_RADICES(X)
+
 /* ── n1ccs ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CCS_FWD_RADICES(X)
 #define VFFT_IL_N1CCS_BWD_RADICES(X)
@@ -820,6 +825,6 @@ VFFT_IL_DECL(radix8_z_tmgd_fwd_avx2_f32)
 /* zil-f32-avx2: 4 cells DECLARED ABSENT at avx2_f32:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* 178 declarations over 136 kinds */
+/* 178 declarations over 137 kinds */
 
 #endif
