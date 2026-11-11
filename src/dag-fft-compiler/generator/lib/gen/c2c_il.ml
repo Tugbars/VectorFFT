@@ -2669,67 +2669,86 @@ let emit
    while those landing on r16/r32 (256, 1024) sat at 0.85x of it. Emitters
    take the plan as INPUT. *)
 (* ═══════════════════════════════════════════════════════════════
- *  THE FP32 FUSED K=1 (2026-11-11) -- --cil-k1 --cil-chain A:M at avx2_f32
+ *  THE FP32 FUSED K=1 (2026-11-11) -- --cil-k1 --cil-chain A:M at avx2_f32 / avx512_f32
  *
- * The whole N = A x M transform in one call at 4 complex floats per 256-bit vector, built on
- * LAZY TERMS (cx_lazy.ml): the kernels of the FP32 mono study (2026-11-08), which beat the
- * two-call plans at N = 16 .. 1024. Input index n = M a + m (leg a < A, column m < M), output
- * index k = k1 + A k2.
+ * The whole N = A x M transform in one call, built on LAZY TERMS (cx_lazy.ml): the kernels of
+ * the FP32 mono study (2026-11-08), which beat the two-call plans at N = 16 .. 1024. per = the
+ * complex floats per vector: 4 (256 bits) or 8 (512 bits). Input index n = M a + m (leg a < A,
+ * column m < M), output index k = k1 + A k2.
  *
- *   N <= 128, FUSED: one scheduled DAG.
- *     pass 1, per column quad q (columns 4q .. 4q+3): leg a is ONE load, zin + 2 (M a + 4 q);
- *             DFT_A across the A registers; output k1 times W_N^(m k1) per lane (the lazy
- *             lane-varying twiddle: one FMA, the scale carried on); one 4 x 4 complex transpose
- *             per block of four k1 (Cx_math.transpose4_unpack: 8 shuffles) -> row m as A / 4
- *             vectors, its scales transposed with it.
- *     pass 2, per lane vector t (k1 = 4t .. 4t+3): DFT_M across the M rows; row k2 stored at
- *             zout + 2 (A k2 + 4 t). Natural order in and out.
+ *   FUSED (N / per vectors <= twice the registers: N <= 128 at 256 bits, N <= 512 at 512): one DAG.
+ *     pass 1, per column group q (columns per q .. per q + per - 1): leg a is ONE load,
+ *             zin + 2 (M a + per q); DFT_A across the A registers; output k1 times W_N^(m k1) per
+ *             lane (the lazy lane-varying twiddle: one FMA, the scale carried on); one per x per
+ *             complex transpose per block of per k1 (Cx_math.transpose4_unpack: 8 shuffles;
+ *             transpose8_unpack: 24) -> row m as A / per vectors, its scales transposed with it.
+ *     pass 2, per lane vector t (k1 = per t .. per t + per - 1): DFT_M across the M rows; row k2
+ *             stored at zout + 2 (A k2 + per t). Natural order in and out.
  *     Every output depends on every input, so every load precedes every store in any order of
  *     the DAG: zin == zout is legal (the signature carries no restrict).
  *
- *   N >= 256, BUFFERED: the same math, the data no longer fits the registers. Two loops in one
- *     function, constant strides and bounds, zout the buffer between them:
- *     level 1, loop over the column quads q: the A legs, DFT_A, then output k1 >= 1 times the
+ *   BUFFERED (larger N): the same math, the data no longer fits the registers. Two loops in one
+ *     function, constant strides and bounds, a plane of N complex between them:
+ *     level 1, loop over the column groups q: the A legs, DFT_A, then output k1 >= 1 times the
  *             twiddles LOADED from the kernel's rodata table (record (q, k1) = WR [c c] per
  *             lane, WI [s s] per lane; the DFT's own lazy factor of output k1, the same in every
- *             quad, is multiplied into the table), the unpack round of the transpose and the
- *             second round as 16-byte stores (store-form extracts: no shuffle): row m, A
- *             contiguous complex, at zout + 2 A m.
- *     level 2, loop over the lane vectors t: the M rows from zout + 2 A m + 8 t, DFT_M, row k2
- *             stored back at zout + 2 A k2 + 8 t.
- *     OUT OF PLACE ONLY (level 1 writes rows the later quads have not read).
+ *             group, is multiplied into the table), the unpack round of the transpose and the
+ *             rest as 16-byte stores (store-form extracts: no shuffle): row m, A contiguous
+ *             complex, at plane + 2 A m.
+ *     level 2, loop over the lane vectors t: the M rows from plane + 2 A m + 2 per t, DFT_M, row
+ *             k2 stored at zout + 2 A k2 + 2 per t.
+ *     The plane is zout (plane = false): OUT OF PLACE ONLY, level 1 writes rows the later groups
+ *     have not read. Or the kernel's own array on its stack (plane = true, the tag's i): level 1
+ *     has read all of zin before level 2 stores, so zin == zout is legal -- the in-place kernel
+ *     of the shape, the same operations.
  *
- * A, M powers of two, 4 .. 64. The 11-argument z ABI, every argument but zin and zout ignored:
- * one transform per call. --cil-port P as on the other FP32 kinds. *)
+ * A, M powers of two, per .. 64. The 256-bit construction is also emitted under the avx512_f32
+ * name (the tag's y: the AVX2 kernel with 32 registers to hold its values). The 11-argument z
+ * ABI, every argument but zin and zout ignored: one transform per call. --cil-port P as on the
+ * other FP32 kinds. *)
 let emit_k1_f32
       ~(dir : dir)
       ~(a : int)
       ~(m : int)
       ~(port : int)
+      ~(plane : bool)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
   =
-  if not (Isa.is_f32 isa && Isa.bits isa = 256)
+  if not (Isa.is_f32 isa && (Isa.bits isa = 256 || Isa.bits isa = 512))
   then
     failwith
       (Printf.sprintf
-         "codelet_cil: the FP32 fused K=1 kernel is written for 4 complex per 256-bit vector \
-          (avx2_f32); target %s has no form yet"
+         "codelet_cil: the FP32 fused K=1 kernel is written for 4 complex per 256-bit vector and 8 \
+          per 512-bit vector; target %s has no form"
          isa.Isa.name);
-  let per = 4 in
-  let ok x = x >= 4 && x <= 64 && x land (x - 1) = 0 in
+  let per = Isa.cpv isa in
+  let ok x = x >= per && x <= 64 && x land (x - 1) = 0 in
   if not (ok a && ok m)
   then
     failwith
       (Printf.sprintf
-         "codelet_cil: FP32 --cil-k1 --cil-chain A:M needs A and M powers of two in 4 .. 64 (%d:%d)"
+         "codelet_cil: FP32 --cil-k1 --cil-chain A:M needs A and M powers of two in %d .. 64 at %d \
+          complex per vector (%d:%d)"
+         per
+         per
          a
          m);
   if port < 0 || port > 100 then failwith "codelet_cil: --cil-port takes a percentage 0..100";
   let n = a * m in
   let bwd = dir = Bwd in
-  let buffered = n > 128 in
+  let buffered = n / per > 2 * isa.Isa.vec_regs in
+  if plane && not buffered
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: --cil-plane is the in-place form of a two-loop kernel; N = %d is one DAG here \
+          and legal in place as it is"
+         n);
+  (* the 256-bit construction under the avx512_f32 name: the tag's y *)
+  let ymm512 = isa.Isa.name = "avx512_f32" && Isa.bits isa = 256 in
+  Cx_lazy.addsub := Isa.bits isa <= 256;
   (* the constructions first: their dry runs reset the IR *)
   let st = Cx_lazy.strategies ~bwd ~per (max a m) in
   Cx_render.colstride := false;
@@ -2866,9 +2885,18 @@ let emit_k1_f32
   let body = Buffer.create 65536 in
   let table = Buffer.create 4096 in
   let sym =
-    Printf.sprintf "radix%d_z_mono%dx%d_%s_%s" n a m (if bwd then "bwd" else "fwd") isa.Isa.name
+    Printf.sprintf
+      "radix%d_z_mono%dx%d%s%s_%s_%s"
+      n
+      a
+      m
+      (if ymm512 then "y" else "")
+      (if plane then "i" else "")
+      (if bwd then "bwd" else "fwd")
+      isa.Isa.name
   in
-  let quads = m / 4 in
+  let quads = m / per in
+  let lanes = Array.init per (fun j -> j) in
   if not buffered
   then (
     reset ();
@@ -2879,7 +2907,7 @@ let emit_k1_f32
       let (_ : Cx_lazy.term array) =
         Cx_lazy.dft
           ~out:(fun k2 term ->
-            let ad = AZoutAbs (2 * ((a * k2) + (4 * t))) in
+            let ad = AZoutAbs (2 * ((a * k2) + (per * t))) in
             sinks := (Cx_lazy.mat term, fun z -> [ render_store isa ad z ]) :: !sinks)
           ~bwd
           ~st
@@ -2888,32 +2916,32 @@ let emit_k1_f32
       ()
     in
     for q = 0 to quads - 1 do
-      let xs = Array.init a (fun aa -> plain (cload (AZinAbs (2 * ((m * aa) + (4 * q)))))) in
+      let xs = Array.init a (fun aa -> plain (cload (AZinAbs (2 * ((m * aa) + (per * q)))))) in
       let y : Cx_lazy.term option array = Array.make a None in
-      (* pass-1 output k1 exists: once outputs 4t .. 4t+3 all do, twiddle and turn block t (and,
-         with a single quad, run its pass 2) right there, so the block's values die early *)
+      (* pass-1 output k1 exists: once the per outputs of its block t all do, twiddle and turn
+         the block (and, with a single column group, run its pass 2) right there, so the block's
+         values die early *)
       let block (k1 : int) (term : Cx_lazy.term) : unit =
         y.(k1) <- Some term;
-        let t = k1 / 4 in
-        if Array.for_all (fun j -> y.((4 * t) + j) <> None) [| 0; 1; 2; 3 |]
+        let t = k1 / per in
+        if Array.for_all (fun j -> y.((per * t) + j) <> None) lanes
         then (
           let ys =
-            Array.init 4 (fun j ->
-              let k = (4 * t) + j in
+            Array.init per (fun j ->
+              let k = (per * t) + j in
               let yk = Option.get y.(k) in
               if k = 0
               then plain (Cx_lazy.mat yk)
-              else Cx_lazy.twiddle ~bwd yk (Array.init 4 (fun i -> ((4 * q) + i) * k)) n)
+              else Cx_lazy.twiddle ~bwd yk (Array.init per (fun i -> ((per * q) + i) * k)) n)
           in
-          let cols =
-            Cx_math.transpose4_unpack (Array.map (fun (y : Cx_lazy.term) -> y.Cx_lazy.z) ys)
-          in
-          for i = 0 to 3 do
-            (* row 4q+i, lane j = k1 4t+j: the scales transpose with the values *)
+          let zs = Array.map (fun (y : Cx_lazy.term) -> y.Cx_lazy.z) ys in
+          let cols = if per = 4 then Cx_math.transpose4_unpack zs else Cx_math.transpose8_unpack zs in
+          for i = 0 to per - 1 do
+            (* row per q + i, lane j = k1 per t + j: the scales transpose with the values *)
             Hashtbl.replace
               c
-              ((4 * q) + i, t)
-              { Cx_lazy.z = cols.(i); s = Array.init 4 (fun j -> ys.(j).Cx_lazy.s.(i)); r = 0 }
+              ((per * q) + i, t)
+              { Cx_lazy.z = cols.(i); s = Array.init per (fun j -> ys.(j).Cx_lazy.s.(i)); r = 0 }
           done;
           if quads = 1 then pass2 t)
       in
@@ -2922,7 +2950,7 @@ let emit_k1_f32
     done;
     if quads > 1
     then
-      for t = 0 to (a / 4) - 1 do
+      for t = 0 to (a / per) - 1 do
         pass2 t
       done;
     emit_dag
@@ -2930,24 +2958,22 @@ let emit_k1_f32
       ~label:(Printf.sprintf "N = %d = %d x %d, fused" n a m)
       ~ind:"    "
       (List.rev !sinks);
-    if !nstores <> n / 4 then failwith "codelet_cil: emit_k1_f32: store count")
+    if !nstores <> n / per then failwith "codelet_cil: emit_k1_f32: store count")
   else (
     (* ── level 1 ── *)
     reset ();
+    let rec_f = 4 * per in
+    (* a twiddle record in floats: WR, then WI *)
     let xs = Array.init a (fun aa -> plain (cload (ANamed ("pi", 2 * m * aa)))) in
     let fac = Array.make a (1.0, 0) in
     let yp : t option array = Array.make a None in
-    let st128 ~(hi : bool) (off : int) (z : string) : string =
-      Printf.sprintf
-        "_mm_storeu_ps(&po[%d], %s)"
-        off
-        (if hi
-         then Printf.sprintf "_mm256_extractf128_ps(%s, 1)" z
-         else Printf.sprintf "_mm256_castps256_ps128(%s)" z)
+    (* the 128-bit unit u of z (complex lanes 2u, 2u+1) stored at po + off *)
+    let st128 (u : int) (off : int) (z : string) : string =
+      Isa.storeu_cx_unit isa (Printf.sprintf "po[%d]" off) z u
     in
     let sinks = ref [] in
-    (* leg output k1 exists: its table twiddle at once; once 4t .. 4t+3 all exist, the block's
-       unpack round and its eight half stores *)
+    (* leg output k1 exists: its table twiddle at once; once the per outputs of its block t all
+       exist, the block's unpack round and its 16-byte stores *)
     let block (k1 : int) (term : Cx_lazy.term) : unit =
       if not (Cx_lazy.all_eq term.Cx_lazy.s.(0) term.Cx_lazy.s)
       then failwith "codelet_cil: emit_k1_f32: a lane-varying factor out of the leg DFT";
@@ -2958,65 +2984,94 @@ let emit_k1_f32
             then Cx_lazy.mat term
             else
               ctwa
-                (ANamed ("pt", (k1 - 1) * 16))
-                (ANamed ("pt", ((k1 - 1) * 16) + 8))
+                (ANamed ("pt", (k1 - 1) * rec_f))
+                (ANamed ("pt", ((k1 - 1) * rec_f) + (2 * per)))
                 term.Cx_lazy.z);
-      let t = k1 / 4 in
-      if Array.for_all (fun j -> yp.((4 * t) + j) <> None) [| 0; 1; 2; 3 |]
+      let t = k1 / per in
+      if Array.for_all (fun j -> yp.((per * t) + j) <> None) lanes
       then (
-      let g j = Option.get yp.((4 * t) + j) in
+      let g j = Option.get yp.((per * t) + j) in
+      (* row i of the group, A contiguous complex at po + 2 A i; this block is its floats
+         2 per t .. 2 per t + 2 per - 1 *)
+      let row i = (2 * a * i) + (2 * per * t) in
+      if per = 4
+      then (
       let u0 = cunpack (g 0) (g 1) false
       and u1 = cunpack (g 0) (g 1) true
       and u2 = cunpack (g 2) (g 3) false
       and u3 = cunpack (g 2) (g 3) true in
-      (* row i of the quad, A contiguous complex at po + 2 A i; this block is its floats 8t .. 8t+7 *)
-      let row i = (2 * a * i) + (8 * t) in
-      sinks := (u0, fun z -> [ st128 ~hi:false (row 0) z; st128 ~hi:true (row 2) z ]) :: !sinks;
-      sinks
-      := (u2, fun z -> [ st128 ~hi:false (row 0 + 4) z; st128 ~hi:true (row 2 + 4) z ]) :: !sinks;
-      sinks := (u1, fun z -> [ st128 ~hi:false (row 1) z; st128 ~hi:true (row 3) z ]) :: !sinks;
-      sinks
-      := (u3, fun z -> [ st128 ~hi:false (row 1 + 4) z; st128 ~hi:true (row 3 + 4) z ]) :: !sinks)
+      sinks := (u0, fun z -> [ st128 0 (row 0) z; st128 1 (row 2) z ]) :: !sinks;
+      sinks := (u2, fun z -> [ st128 0 (row 0 + 4) z; st128 1 (row 2 + 4) z ]) :: !sinks;
+      sinks := (u1, fun z -> [ st128 0 (row 1) z; st128 1 (row 3) z ]) :: !sinks;
+      sinks := (u3, fun z -> [ st128 0 (row 1 + 4) z; st128 1 (row 3 + 4) z ]) :: !sinks)
+      else
+        (* the pair (g 2j, g 2j+1): unit u of its low unpack = (g 2j [2u], g 2j+1 [2u]) = the
+           complex 2j, 2j+1 of row 2u in this block; of its high unpack, of row 2u+1 *)
+        for j = 0 to (per / 2) - 1 do
+          let lo = cunpack (g (2 * j)) (g ((2 * j) + 1)) false in
+          sinks
+          := ( lo
+             , fun z -> List.init (per / 2) (fun u -> st128 u (row (2 * u) + (4 * j)) z) )
+             :: !sinks;
+          let hi = cunpack (g (2 * j)) (g ((2 * j) + 1)) true in
+          sinks
+          := ( hi
+             , fun z -> List.init (per / 2) (fun u -> st128 u (row ((2 * u) + 1) + (4 * j)) z) )
+             :: !sinks
+        done)
     in
     let (_ : Cx_lazy.term array) = Cx_lazy.dft ~out:block ~bwd ~st xs in
     Buffer.add_string
       body
       (Printf.sprintf
          "    for (size_t q = 0; q < %d; ++q) {\n\
-         \        const float *pi = zin + 8 * q;\n\
+         \        const float *pi = zin + %d * q;\n\
          \        const float *pt = TW_%s + q * %d;\n\
-         \        float *po = zout + q * %d;\n"
+         \        float *po = %s + q * %d;\n"
          quads
+         (2 * per)
          sym
-         ((a - 1) * 16)
-         (8 * a));
+         ((a - 1) * rec_f)
+         (if plane then "P" else "zout")
+         (2 * per * a));
     emit_dag
       ~buf:body
       ~label:
         (Printf.sprintf
-           "level 1: columns 4q .. 4q+3: DFT_%d of the legs, the table twiddles, rows 4q .. 4q+3 into zout"
-           a)
+           "level 1: columns %dq .. %dq+%d: DFT_%d of the legs, the table twiddles, rows %dq .. %dq+%d into %s"
+           per
+           per
+           (per - 1)
+           a
+           per
+           per
+           (per - 1)
+           (if plane then "the plane" else "zout"))
       ~ind:"        "
       (List.rev !sinks);
     Buffer.add_string body "    }\n";
-    if !nstores <> 2 * a then failwith "codelet_cil: emit_k1_f32: level-1 store count";
-    (* the table: record (q, k1) at float (q (A-1) + k1-1) 16: WR, then WI *)
+    if !nstores <> a * per / 2 then failwith "codelet_cil: emit_k1_f32: level-1 store count";
+    (* the table: record (q, k1) at float (q (A-1) + k1-1) rec_f: WR, then WI *)
     Buffer.add_string
       table
       (Printf.sprintf
-         "/* W_%d^(m k1) for m = 4q .. 4q+3 (the lanes), times the leg DFT's pending factor of output k1:\n\
-         \ * record (q, k1 >= 1) at float (q * %d + k1 - 1) * 16 = WR [c c] per lane, then WI [s s] per lane */\n\
+         "/* W_%d^(m k1) for m = %dq .. %dq+%d (the lanes), times the leg DFT's pending factor of output k1:\n\
+         \ * record (q, k1 >= 1) at float (q * %d + k1 - 1) * %d = WR [c c] per lane, then WI [s s] per lane */\n\
           static const float TW_%s[%d] __attribute__((aligned(64))) = {\n"
          n
+         per
+         per
+         (per - 1)
          (a - 1)
+         rec_f
          sym
-         (quads * (a - 1) * 16));
+         (quads * (a - 1) * rec_f));
     for q = 0 to quads - 1 do
       for k1 = 1 to a - 1 do
         let s0, r = fac.(k1) in
         let ws =
-          Array.init 4 (fun i ->
-            let c, s = Cx_lazy.cs ~bwd (((4 * q) + i) * k1) n in
+          Array.init per (fun i ->
+            let c, s = Cx_lazy.cs ~bwd (((per * q) + i) * k1) n in
             let c, s = c *. s0, s *. s0 in
             if r <> 0 then -.s, c else c, s)
         in
@@ -3042,7 +3097,7 @@ let emit_k1_f32
     let (_ : Cx_lazy.term array) =
       Cx_lazy.dft
         ~out:(fun k2 term ->
-          let ad = ANamed ("pr", 2 * a * k2) in
+          let ad = ANamed ((if plane then "pw" else "pr"), 2 * a * k2) in
           sinks2 := (Cx_lazy.mat term, fun z -> [ render_store isa ad z ]) :: !sinks2)
         ~bwd
         ~st
@@ -3051,13 +3106,30 @@ let emit_k1_f32
     let sinks = List.rev !sinks2 in
     Buffer.add_string
       body
-      (Printf.sprintf
-         "    for (size_t t = 0; t < %d; ++t) {\n        float *pr = zout + 8 * t;\n"
-         (a / 4));
+      (if plane
+       then
+         Printf.sprintf
+           "    for (size_t t = 0; t < %d; ++t) {\n\
+           \        const float *pr = P + %d * t;\n\
+           \        float *pw = zout + %d * t;\n"
+           (a / per)
+           (2 * per)
+           (2 * per)
+       else
+         Printf.sprintf
+           "    for (size_t t = 0; t < %d; ++t) {\n        float *pr = zout + %d * t;\n"
+           (a / per)
+           (2 * per));
     emit_dag
       ~buf:body
       ~label:
-        (Printf.sprintf "level 2: lanes k1 = 4t .. 4t+3: DFT_%d of the rows, in place in zout" m)
+        (Printf.sprintf
+           "level 2: lanes k1 = %dt .. %dt+%d: DFT_%d of the rows, %s"
+           per
+           per
+           (per - 1)
+           m
+           (if plane then "from the plane into zout" else "in place in zout"))
       ~ind:"        "
       sinks;
     Buffer.add_string body "    }\n";
@@ -3082,7 +3154,7 @@ let emit_k1_f32
             n
             a
             m
-            (if buffered then "buffered" else "fused")
+            (if not buffered then "fused" else if plane then "buffered, its own plane" else "buffered")
             (if bwd then "bwd" else "fwd"))
        ([ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
         ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
@@ -3102,14 +3174,18 @@ let emit_k1_f32
        n
        a
        m
-       (if buffered
+       (if not buffered
         then
-          "two loops through zout (level 1: the leg DFTs, the table twiddles, rows into zout; \
-           level 2: the row DFTs in zout)"
-        else
           "both stages in one scheduled DAG, the stage boundary a register transpose, every \
-           twiddle a compile-time constant")
-       (if buffered then "OUT OF PLACE ONLY (zin != zout)" else "zin == zout is legal")
+           twiddle a compile-time constant"
+        else if plane
+        then
+          "two loops through the kernel's own plane (level 1: the leg DFTs, the table twiddles, \
+           rows into the plane; level 2: the row DFTs from the plane into zout)"
+        else
+          "two loops through zout (level 1: the leg DFTs, the table twiddles, rows into zout; \
+           level 2: the row DFTs in zout)")
+       (if buffered && not plane then "OUT OF PLACE ONLY (zin != zout)" else "zin == zout is legal")
        (if bwd then "Backward: the conjugate roots (unnormalised)." else "Forward."));
   Buffer.add_string buf (emit_const_decls isa tbl);
   Buffer.add_buffer buf table;
@@ -3126,13 +3202,148 @@ let emit_k1_f32
     buf
     "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im;\n\
     \    (void)Ls; (void)Gs; (void)OLs; (void)OGs; (void)count;\n";
+  if plane
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    float P[%d] __attribute__((aligned(64)));   /* the plane between the two loops: N complex */\n"
+         (2 * n));
   Buffer.add_buffer buf body;
+  Buffer.add_string buf "}\n";
+  Buffer.contents buf
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+ *  THE FP32 SMALL K=1 (2026-11-11) -- --cil-k1 --cil-chain 1:2 / 1:4 / 2:4
+ *
+ * N = 2, 4, 8 in one call with the points in the LANES of one or two vectors (4 complex floats
+ * per 256 bits): too few points for a DFT across registers, so the stages run inside the vector
+ * through half exchanges and unpacks, and every sign and quarter turn is the constant of an FMA.
+ *   N = 2 (1:2)  one 128-bit vector [x0 x1]: its halves exchanged, one FMA.
+ *   N = 4 (1:4)  two 128-bit vectors [x0 x1] [x2 x3]: sum and difference, the two interleaves,
+ *                one swap, two FMAs.
+ *   N = 8 (2:4)  two 256-bit vectors: a = x + y (the even outputs' inputs), b = (x - y) W_8^lane
+ *                (the odd ones'); both four-point transforms at once in the interleaved pairs
+ *                [a b]: 15 operations.
+ * Every load precedes every store: zin == zout is legal. The same 256-bit text under both FP32
+ * ISA names. The 11-argument z ABI, every argument but zin and zout ignored. *)
+let emit_k1_f32_small ~(dir : dir) ~(a : int) ~(m : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  if not (Isa.is_f32 isa && Isa.bits isa = 256)
+  then failwith "codelet_cil: the FP32 small K=1 kernels are 256-bit text (emit_k1 passes that form)";
+  let n = a * m in
+  if not (List.mem (a, m) [ 1, 2; 1, 4; 2, 4 ])
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: FP32 --cil-k1 below 16 points takes --cil-chain 1:2, 1:4 or 2:4 (%d:%d)"
+         a
+         m);
+  let bwd = dir = Bwd in
+  let f = Isa.flit isa in
+  let sym =
+    Printf.sprintf "radix%d_z_mono%dx%d_%s_%s" n a m (if bwd then "bwd" else "fwd") isa.Isa.name
+  in
+  let consts, body =
+    match n with
+    | 2 ->
+      ( Printf.sprintf "static const __m128 _K2 = { %s, %s, %s, %s };\n" (f 1.0) (f 1.0) (f (-1.0)) (f (-1.0))
+      , "    const __m128 x = _mm_loadu_ps(zin);              /* x0 x1 */\n\
+        \    const __m128 t = _mm_shuffle_ps(x, x, 0x4E);     /* x1 x0 */\n\
+        \    _mm_storeu_ps(zout, _mm_fmadd_ps(x, _K2, t));    /* x0 + x1, x0 - x1 */\n" )
+    | 4 ->
+      (* X1 = d0 -+ i d1, X3 = d0 +- i d1 (forward: -, +): i d1 through the swap, its signs in _K4 *)
+      let k = if bwd then [ 1.0; 1.0; -1.0; 1.0 ] else [ 1.0; 1.0; 1.0; -1.0 ] in
+      ( Printf.sprintf "static const __m128 _K4 = { %s };\n" (String.concat ", " (List.map f k))
+      , "    const __m128 lo = _mm_loadu_ps(zin);             /* x0 x1 */\n\
+        \    const __m128 hi = _mm_loadu_ps(zin + 4);         /* x2 x3 */\n\
+        \    const __m128 s = _mm_add_ps(lo, hi);             /* s0 = x0 + x2, s1 = x1 + x3 */\n\
+        \    const __m128 d = _mm_sub_ps(lo, hi);             /* d0 = x0 - x2, d1 = x1 - x3 */\n\
+        \    const __m128 p = _mm_movelh_ps(s, d);            /* s0 d0 */\n\
+        \    const __m128 q = _mm_permute_ps(_mm_movehl_ps(d, s), 0xB4);   /* s1, d1 with re and im swapped */\n\
+        \    _mm_storeu_ps(zout, _mm_fmadd_ps(q, _K4, p));        /* X0 = s0 + s1, X1 */\n\
+        \    _mm_storeu_ps(zout + 4, _mm_fnmadd_ps(q, _K4, p));   /* X2 = s0 - s1, X3 */\n" )
+    | _ ->
+      let w = Array.init 4 (fun j -> Cx_lazy.cs ~bwd j 8) in
+      let wc = String.concat ", " (Array.to_list (Array.map (fun (c, _) -> f c ^ ", " ^ f c) w)) in
+      let ws = String.concat ", " (Array.to_list (Array.map (fun (_, s) -> f (-.s) ^ ", " ^ f s) w)) in
+      let kf = if bwd then [ -1.0; 1.0; -1.0; 1.0 ] else [ 1.0; -1.0; 1.0; -1.0 ] in
+      ( Printf.sprintf
+          "static const __m256 _W8_c = { %s };   /* W_8^lane: [c c] per lane */\n\
+           static const __m256 _W8_s = { %s };   /* [-s s] per lane */\n\
+           static const __m256 _KH = { %s, %s, %s, %s, %s, %s, %s, %s };   /* + on the low half, - on the high */\n\
+           static const __m256 _KF = { %s, %s, %s, %s, %s };   /* the high half's quarter turn: its signs */\n"
+          wc
+          ws
+          (f 1.0) (f 1.0) (f 1.0) (f 1.0) (f (-1.0)) (f (-1.0)) (f (-1.0)) (f (-1.0))
+          (f 1.0) (f 1.0) (f 1.0) (f 1.0)
+          (String.concat ", " (List.map f kf))
+      , "    const __m256 x = _mm256_loadu_ps(zin);           /* x0 .. x3 */\n\
+        \    const __m256 y = _mm256_loadu_ps(zin + 8);       /* x4 .. x7 */\n\
+        \    const __m256 a = _mm256_add_ps(x, y);            /* a_j = x_j + x_j+4: X0 X2 X4 X6 = DFT_4(a) */\n\
+        \    const __m256 e = _mm256_sub_ps(x, y);\n\
+        \    const __m256 b = _mm256_fmadd_ps(e, _W8_c, _mm256_mul_ps(_mm256_permute_ps(e, 0xB1), _W8_s));   /* b_j = e_j W_8^j: X1 X3 X5 X7 = DFT_4(b) */\n\
+        \    const __m256 u0 = _mm256_castpd_ps(_mm256_unpacklo_pd(_mm256_castps_pd(a), _mm256_castps_pd(b)));   /* a0 b0 | a2 b2 */\n\
+        \    const __m256 u1 = _mm256_castpd_ps(_mm256_unpackhi_pd(_mm256_castps_pd(a), _mm256_castps_pd(b)));   /* a1 b1 | a3 b3 */\n\
+        \    const __m256 p = _mm256_fmadd_ps(u0, _KH, _mm256_permute2f128_ps(u0, u0, 0x01));   /* a0+a2 b0+b2 | a0-a2 b0-b2 */\n\
+        \    const __m256 g = _mm256_fmadd_ps(u1, _KH, _mm256_permute2f128_ps(u1, u1, 0x01));   /* a1+a3 b1+b3 | a1-a3 b1-b3 */\n\
+        \    const __m256 h = _mm256_permutevar_ps(g, _mm256_setr_epi32(0, 1, 2, 3, 1, 0, 3, 2));   /* the high half's re and im swapped */\n\
+        \    _mm256_storeu_ps(zout, _mm256_fmadd_ps(h, _KF, p));        /* X0 X1 X2 X3 */\n\
+        \    _mm256_storeu_ps(zout + 8, _mm256_fnmadd_ps(h, _KF, p));   /* X4 X5 X6 X7 */\n" )
+  in
+  let buf = Buffer.create 4096 in
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:
+         (Printf.sprintf
+            "full-IL fused K=1 mono (FP32, the points in the lanes), N=%d (%dx%d, %s)"
+            n
+            a
+            m
+            (if bwd then "bwd" else "fwd"))
+       [ Printf.sprintf "ISA: %s; 4 complex per 256-bit vector" isa.Isa.name
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ]);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 -- FULL-IL SMALL K=1, FP32 (c2c_il.ml emit_k1_f32_small).\n\
+       \ * The whole N = %d transform in ONE call, the points in the lanes of %s.\n\
+       \ * Natural order in and out, zin == zout is legal. One transform per call: zin, zout the\n\
+       \ * planes, every other argument of the 11-argument z ABI ignored.\n\
+       \ * %s */\n\
+        #include <immintrin.h>\n\
+        #include <stddef.h>\n\n"
+       n
+       (match n with
+        | 2 -> "one 128-bit vector"
+        | 4 -> "two 128-bit vectors"
+        | _ -> "two 256-bit vectors")
+       (if bwd then "Backward: the conjugate roots (unnormalised)." else "Forward."));
+  Buffer.add_string buf consts;
+  Buffer.add_string buf "\n";
+  Buffer.add_string
+    buf
+    (Abi.z11_signature
+       ~alias_tolerant:true
+       ~elem:(Isa.elem isa)
+       ~symbol:sym
+       ~target_attr:(Isa.cx_target_attr isa)
+       ());
+  Buffer.add_string
+    buf
+    "    (void)zin_unused; (void)zout_unused; (void)tw_re; (void)tw_im;\n\
+    \    (void)Ls; (void)Gs; (void)OLs; (void)OGs; (void)count;\n";
+  Buffer.add_string buf body;
   Buffer.add_string buf "}\n";
   Buffer.contents buf
 ;;
 
 let emit_k1
       ~(port : int)
+      ~(plane : bool)
+      ~(ymm : bool)
       ~(tangent : bool)
       ~(dir : dir)
       ~(chain_a : int list)
@@ -3146,10 +3357,27 @@ let emit_k1
     (* FP32: the lazy-term kernel above; one factor per pass (its DFT constructions are chosen
        per size by operation count, cx_lazy.ml) *)
     match chain_a, chain_b with
-    | [ a ], [ m ] -> emit_k1_f32 ~dir ~a ~m ~port ~isa ~uarch
+    | [ a ], [ m ] ->
+      (* the 256-bit text under this ISA's name: the small kernels always, and the --cil-ymm form
+         of the others at avx512_f32 (the AVX2 kernel with 32 registers to hold its values) *)
+      let isa256 =
+        if Isa.bits isa = 256
+        then isa
+        else { Isa.avx2_f32 with Isa.name = isa.Isa.name; target_attr = Isa.cx_target_attr isa }
+      in
+      if a < 4 || m < 4
+      then (
+        if port <> 0 || plane || ymm
+        then failwith "codelet_cil: the FP32 small K=1 kernels (below 16 points) take no setting";
+        emit_k1_f32_small ~dir ~a ~m ~isa:isa256 ~uarch)
+      else (
+        if ymm && Isa.bits isa = 256
+        then failwith "codelet_cil: --cil-ymm is the 256-bit form at avx512_f32; avx2_f32 is 256 bits already";
+        emit_k1_f32 ~dir ~a ~m ~port ~plane ~isa:(if ymm then isa256 else isa) ~uarch)
     | _ -> failwith "codelet_cil: FP32 --cil-k1 takes --cil-chain A:M, one factor per pass")
   else (
   if port <> 0 then failwith "codelet_cil: --cil-port is an FP32 setting";
+  if plane || ymm then failwith "codelet_cil: --cil-plane and --cil-ymm are FP32 settings";
   Cx_render.colstride := false;
   (* the mono path never column-strides *)
   let ctx =

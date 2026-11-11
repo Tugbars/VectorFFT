@@ -99,6 +99,10 @@ let run (argv : string array) : unit =
   (* --cil-chain r0.r1: the fused K=1 factorization, supplied by the PLANNER.
      No default: a missing chain is an error, not a heuristic. *)
   let cil_chain = ref "" in
+  (* FP32 --cil-k1 (2026-11-11). --cil-plane: the in-place form of a two-loop kernel (its plane on
+     its own stack). --cil-ymm: at avx512_f32, the 256-bit construction under that name. *)
+  let cil_plane = ref false in
+  let cil_ymm = ref false in
   let cil_blocked = ref false in
   let cil_tangent = ref false in
   let cil_rowloop = ref false in   (* --cil-rowloop: the in-kernel row loop (2026-09-23) *)
@@ -358,6 +362,10 @@ let run (argv : string array) : unit =
     then cil_bwd := true
     else if arg = "--cil-k1"
     then cil_k1 := true
+    else if arg = "--cil-plane"
+    then cil_plane := true
+    else if arg = "--cil-ymm"
+    then cil_ymm := true
     else if arg = "--cil-chain" && !i + 1 < Array.length arr
     then (
       cil_chain := arr.(!i + 1);
@@ -674,6 +682,8 @@ let run (argv : string array) : unit =
       print_string
         (C2c_il.emit_k1
            ~port:!cil_port
+           ~plane:!cil_plane
+           ~ymm:!cil_ymm
            ~tangent:!cil_tangent
            ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~chain_a

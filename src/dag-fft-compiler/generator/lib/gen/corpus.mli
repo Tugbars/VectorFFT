@@ -16,8 +16,17 @@ val quadrants : string list
    avx2_f32 / avx512_f32 *)
 val quadrants_f32 : string list
 val zil_f32_isas : string list
-(* the FP32 fused K=1 kernels: per N its shapes (A, M) in FORM order (form f >= 1 = the f-th) *)
-val zil_f32_mono_shapes : (int * (int * int) list) list
+(* the FP32 fused K=1 kernels of an ISA: per N its forms in FORM order (form f >= 1 = the f-th), each
+   form's kernel tag (radix<N>_z_<tag>) and the tag of its in-place kernel *)
+type mono_form =
+  { fa : int
+  ; fm : int
+  ; ymm : bool
+  }
+
+val zil_f32_mono_forms : isa:string -> (int * mono_form list) list
+val zil_f32_mono_tag : mono_form -> string
+val zil_f32_mono_ip_tag : isa:string -> mono_form -> string
 val dir_of_quadrant : string -> string
 val zil_folder : string -> string option   (* a zil file's folder by its kind (2026-09-24) *)
 val dir_of_file : string -> string -> string   (* quadrant -> file name -> the folder to write it in *)

@@ -1,0 +1,7 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+2,1,z:ilp-f32,nat-oop-f32,2,11,5.171,5.677,3.402e-08,mono,0
+2,1,z:ilp-f32,nat-oop-f32,2,11,5.171,5.693,3.402e-08,mono,1
+4,1,z:ilp-f32,nat-oop-f32,2,11,18.957,5.240,1.461e-08,mono,0
+4,1,z:ilp-f32,nat-oop-f32,2,11,18.957,5.280,1.461e-08,mono,1
+8,1,z:ilp-f32,nat-oop-f32,2,11,52.493,4.940,5.456e-08,mono,0
+8,1,z:ilp-f32,nat-oop-f32,2,11,52.493,4.956,5.456e-08,mono,1

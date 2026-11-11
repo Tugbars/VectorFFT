@@ -484,7 +484,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
     }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64; FP32: 1.. = the fused kernels) */
-        b->mono = inplace ? vfft_k1_mono_il_ip_own_fn(N, c->il_kv, 0)   /* in place: the form's own alias-safe kernel (form 0: the n1c solo; an FP32 fused form to 128 points), else no candidate */
+        b->mono = inplace ? vfft_k1_mono_il_ip_own_fn(N, c->il_kv, 0)   /* in place: the form's own alias-safe kernel (form 0: the n1c solo; an FP32 fused form: the kernel its registry entry names), else no candidate */
                           : vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
         b->monob = inplace ? vfft_k1_mono_il_ip_own_fn(N, c->il_kv, 1)
                            : vfft_k1_mono_il_form_fn(N, c->il_kv, 1);

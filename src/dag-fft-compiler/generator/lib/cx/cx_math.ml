@@ -840,6 +840,42 @@ let transpose4_unpack (legs : t array) : t array =
   [| chalf u0 u2 false; chalf u1 u3 false; chalf u0 u2 true; chalf u1 u3 true |]
 ;;
 
+(* The 8 x 8 complex transpose at 8 complex per 512-bit vector (FP32): 24 shuffles, one unpack
+   round and two rounds of the 128-bit unit exchange (CHalf at 512 bits: the even or the odd
+   units of a, then of b).
+     t(2p)   = unpacklo(L(2p), L(2p+1)) = [L2p_0 L2p+1_0 | L2p_2 L2p+1_2 | L2p_4 .. | L2p_6 ..]
+     t(2p+1) = unpackhi(L(2p), L(2p+1)) = the odd columns 1, 3, 5, 7 of the pair
+     u: the even / odd units of (t(q), t(q+2)) = columns c, c+4 / c+2, c+6 of four legs
+     col: the even / odd units of (u(q), u(q+4)) = one column of all eight legs *)
+let transpose8_unpack (legs : t array) : t array =
+  if Array.length legs <> 8 then failwith "transpose8_unpack: needs 8 legs";
+  let t = Array.make 8 legs.(0) in
+  for p = 0 to 3 do
+    t.(2 * p) <- cunpack legs.(2 * p) legs.((2 * p) + 1) false;
+    t.((2 * p) + 1) <- cunpack legs.(2 * p) legs.((2 * p) + 1) true
+  done;
+  (* u.(4h + 2e + o): legs 4h .. 4h+3; e = 0 the low unpacks (even columns), 1 the high (odd);
+     o = 0 the even units (columns e, e+4), 1 the odd units (columns e+2, e+6) *)
+  let u = Array.make 8 legs.(0) in
+  for h = 0 to 1 do
+    for e = 0 to 1 do
+      for o = 0 to 1 do
+        u.((4 * h) + (2 * e) + o) <- chalf t.((4 * h) + e) t.((4 * h) + 2 + e) (o = 1)
+      done
+    done
+  done;
+  (* column e + 2 o + 4 w: the even (w = 0) or odd (w = 1) units of the two halves' u *)
+  let col = Array.make 8 legs.(0) in
+  for e = 0 to 1 do
+    for o = 0 to 1 do
+      for w = 0 to 1 do
+        col.(e + (2 * o) + (4 * w)) <- chalf u.((2 * e) + o) u.(4 + (2 * e) + o) (w = 1)
+      done
+    done
+  done;
+  col
+;;
+
 let turn_transpose ~(per : int) (legs : t array) : t array * t list =
   let r = Array.length legs in
   if per < 1 || per land (per - 1) <> 0 then failwith "turn_transpose: per must be a power of 2";

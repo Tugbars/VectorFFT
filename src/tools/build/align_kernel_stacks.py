@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 WRAP_SUFFIX = '.stack.o'   # member X's wrappers are member X.stack.o; their presence marks a processed archive
@@ -75,6 +76,28 @@ def run(cmd, **kw):
         sys.exit('align_kernel_stacks: %s failed (exit %d):\n%s' % (os.path.basename(cmd[0]), r.returncode,
                                                                    (r.stderr or r.stdout)[-2000:]))
     return r.stdout
+
+
+def publish(tmp, dst):
+    """move a finished cache file into place. Two archives of one build are aligned at the same time (the
+    library's and the gauntlet's, under make -j) and share the cache: both write the entry of a new object, and
+    Windows refuses a rename onto a file the other process holds open (PermissionError). The name is the
+    content's hash, so the other writer's file is this one: a refused rename is retried, then dropped once the
+    entry exists."""
+    for attempt in range(40):
+        try:
+            os.replace(tmp, dst)
+            return
+        except PermissionError:
+            if attempt >= 3 and os.path.exists(dst):
+                break
+            time.sleep(0.05)
+    if not os.path.exists(dst):
+        sys.exit('align_kernel_stacks: cannot write the cache entry %s' % dst)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 
 
 def analyse(objdump, paths):
@@ -275,10 +298,10 @@ def main():
                 for src, dst in ((p, c + '.o'), (p + WRAP_SUFFIX, c + WRAP_SUFFIX)):
                     if os.path.exists(src):
                         shutil.copyfile(src, dst + '.%d' % os.getpid())
-                        os.replace(dst + '.%d' % os.getpid(), dst)
+                        publish(dst + '.%d' % os.getpid(), dst)
                 with open(c + '.json.%d' % os.getpid(), 'w') as f:
                     json.dump(specs[m], f)
-                os.replace(c + '.json.%d' % os.getpid(), c + '.json')
+                publish(c + '.json.%d' % os.getpid(), c + '.json')
 
         with ThreadPoolExecutor(min(16, os.cpu_count() or 4)) as ex:
             list(ex.map(rename, todo))

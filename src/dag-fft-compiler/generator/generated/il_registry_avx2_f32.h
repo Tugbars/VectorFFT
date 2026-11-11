@@ -38,12 +38,46 @@ VFFT_IL_DECL(radix256_z_mono16x16_bwd_avx2_f32)
 #define VFFT_IL_MONO16X16_BWD_RADICES(X) X(256)
 #define VFFT_IL_MONO16X16_PAIR_RADICES(X) X(256)
 
+/* ── mono16x16i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono16x16i_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono16x16i_bwd_avx2_f32)
+#define VFFT_IL_MONO16X16I_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO16X16I_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO16X16I_PAIR_RADICES(X) X(256)
+
+/* ── mono16x16y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X16Y_FWD_RADICES(X)
+#define VFFT_IL_MONO16X16Y_BWD_RADICES(X)
+#define VFFT_IL_MONO16X16Y_PAIR_RADICES(X)
+
+/* ── mono16x16yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X16YI_FWD_RADICES(X)
+#define VFFT_IL_MONO16X16YI_BWD_RADICES(X)
+#define VFFT_IL_MONO16X16YI_PAIR_RADICES(X)
+
 /* ── mono16x32 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix512_z_mono16x32_fwd_avx2_f32)
 VFFT_IL_DECL(radix512_z_mono16x32_bwd_avx2_f32)
 #define VFFT_IL_MONO16X32_FWD_RADICES(X) X(512)
 #define VFFT_IL_MONO16X32_BWD_RADICES(X) X(512)
 #define VFFT_IL_MONO16X32_PAIR_RADICES(X) X(512)
+
+/* ── mono16x32i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono16x32i_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono16x32i_bwd_avx2_f32)
+#define VFFT_IL_MONO16X32I_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO16X32I_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO16X32I_PAIR_RADICES(X) X(512)
+
+/* ── mono16x32y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X32Y_FWD_RADICES(X)
+#define VFFT_IL_MONO16X32Y_BWD_RADICES(X)
+#define VFFT_IL_MONO16X32Y_PAIR_RADICES(X)
+
+/* ── mono16x32yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X32YI_FWD_RADICES(X)
+#define VFFT_IL_MONO16X32YI_BWD_RADICES(X)
+#define VFFT_IL_MONO16X32YI_PAIR_RADICES(X)
 
 /* ── mono16x4 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix64_z_mono16x4_fwd_avx2_f32)
@@ -52,12 +86,34 @@ VFFT_IL_DECL(radix64_z_mono16x4_bwd_avx2_f32)
 #define VFFT_IL_MONO16X4_BWD_RADICES(X) X(64)
 #define VFFT_IL_MONO16X4_PAIR_RADICES(X) X(64)
 
+/* ── mono16x4y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X4Y_FWD_RADICES(X)
+#define VFFT_IL_MONO16X4Y_BWD_RADICES(X)
+#define VFFT_IL_MONO16X4Y_PAIR_RADICES(X)
+
 /* ── mono16x64 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix1024_z_mono16x64_fwd_avx2_f32)
 VFFT_IL_DECL(radix1024_z_mono16x64_bwd_avx2_f32)
 #define VFFT_IL_MONO16X64_FWD_RADICES(X) X(1024)
 #define VFFT_IL_MONO16X64_BWD_RADICES(X) X(1024)
 #define VFFT_IL_MONO16X64_PAIR_RADICES(X) X(1024)
+
+/* ── mono16x64i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono16x64i_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono16x64i_bwd_avx2_f32)
+#define VFFT_IL_MONO16X64I_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO16X64I_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO16X64I_PAIR_RADICES(X) X(1024)
+
+/* ── mono16x64y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X64Y_FWD_RADICES(X)
+#define VFFT_IL_MONO16X64Y_BWD_RADICES(X)
+#define VFFT_IL_MONO16X64Y_PAIR_RADICES(X)
+
+/* ── mono16x64yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X64YI_FWD_RADICES(X)
+#define VFFT_IL_MONO16X64YI_BWD_RADICES(X)
+#define VFFT_IL_MONO16X64YI_PAIR_RADICES(X)
 
 /* ── mono16x8 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix128_z_mono16x8_fwd_avx2_f32)
@@ -66,12 +122,55 @@ VFFT_IL_DECL(radix128_z_mono16x8_bwd_avx2_f32)
 #define VFFT_IL_MONO16X8_BWD_RADICES(X) X(128)
 #define VFFT_IL_MONO16X8_PAIR_RADICES(X) X(128)
 
+/* ── mono16x8y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO16X8Y_FWD_RADICES(X)
+#define VFFT_IL_MONO16X8Y_BWD_RADICES(X)
+#define VFFT_IL_MONO16X8Y_PAIR_RADICES(X)
+
+/* ── mono1x2 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix2_z_mono1x2_fwd_avx2_f32)
+VFFT_IL_DECL(radix2_z_mono1x2_bwd_avx2_f32)
+#define VFFT_IL_MONO1X2_FWD_RADICES(X) X(2)
+#define VFFT_IL_MONO1X2_BWD_RADICES(X) X(2)
+#define VFFT_IL_MONO1X2_PAIR_RADICES(X) X(2)
+
+/* ── mono1x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix4_z_mono1x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix4_z_mono1x4_bwd_avx2_f32)
+#define VFFT_IL_MONO1X4_FWD_RADICES(X) X(4)
+#define VFFT_IL_MONO1X4_BWD_RADICES(X) X(4)
+#define VFFT_IL_MONO1X4_PAIR_RADICES(X) X(4)
+
+/* ── mono2x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix8_z_mono2x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix8_z_mono2x4_bwd_avx2_f32)
+#define VFFT_IL_MONO2X4_FWD_RADICES(X) X(8)
+#define VFFT_IL_MONO2X4_BWD_RADICES(X) X(8)
+#define VFFT_IL_MONO2X4_PAIR_RADICES(X) X(8)
+
 /* ── mono32x16 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix512_z_mono32x16_fwd_avx2_f32)
 VFFT_IL_DECL(radix512_z_mono32x16_bwd_avx2_f32)
 #define VFFT_IL_MONO32X16_FWD_RADICES(X) X(512)
 #define VFFT_IL_MONO32X16_BWD_RADICES(X) X(512)
 #define VFFT_IL_MONO32X16_PAIR_RADICES(X) X(512)
+
+/* ── mono32x16i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono32x16i_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono32x16i_bwd_avx2_f32)
+#define VFFT_IL_MONO32X16I_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO32X16I_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO32X16I_PAIR_RADICES(X) X(512)
+
+/* ── mono32x16y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X16Y_FWD_RADICES(X)
+#define VFFT_IL_MONO32X16Y_BWD_RADICES(X)
+#define VFFT_IL_MONO32X16Y_PAIR_RADICES(X)
+
+/* ── mono32x16yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X16YI_FWD_RADICES(X)
+#define VFFT_IL_MONO32X16YI_BWD_RADICES(X)
+#define VFFT_IL_MONO32X16YI_PAIR_RADICES(X)
 
 /* ── mono32x32 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix1024_z_mono32x32_fwd_avx2_f32)
@@ -80,12 +179,34 @@ VFFT_IL_DECL(radix1024_z_mono32x32_bwd_avx2_f32)
 #define VFFT_IL_MONO32X32_BWD_RADICES(X) X(1024)
 #define VFFT_IL_MONO32X32_PAIR_RADICES(X) X(1024)
 
+/* ── mono32x32i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono32x32i_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono32x32i_bwd_avx2_f32)
+#define VFFT_IL_MONO32X32I_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO32X32I_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO32X32I_PAIR_RADICES(X) X(1024)
+
+/* ── mono32x32y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X32Y_FWD_RADICES(X)
+#define VFFT_IL_MONO32X32Y_BWD_RADICES(X)
+#define VFFT_IL_MONO32X32Y_PAIR_RADICES(X)
+
+/* ── mono32x32yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X32YI_FWD_RADICES(X)
+#define VFFT_IL_MONO32X32YI_BWD_RADICES(X)
+#define VFFT_IL_MONO32X32YI_PAIR_RADICES(X)
+
 /* ── mono32x4 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix128_z_mono32x4_fwd_avx2_f32)
 VFFT_IL_DECL(radix128_z_mono32x4_bwd_avx2_f32)
 #define VFFT_IL_MONO32X4_FWD_RADICES(X) X(128)
 #define VFFT_IL_MONO32X4_BWD_RADICES(X) X(128)
 #define VFFT_IL_MONO32X4_PAIR_RADICES(X) X(128)
+
+/* ── mono32x4y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X4Y_FWD_RADICES(X)
+#define VFFT_IL_MONO32X4Y_BWD_RADICES(X)
+#define VFFT_IL_MONO32X4Y_PAIR_RADICES(X)
 
 /* ── mono32x8 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix256_z_mono32x8_fwd_avx2_f32)
@@ -94,12 +215,34 @@ VFFT_IL_DECL(radix256_z_mono32x8_bwd_avx2_f32)
 #define VFFT_IL_MONO32X8_BWD_RADICES(X) X(256)
 #define VFFT_IL_MONO32X8_PAIR_RADICES(X) X(256)
 
+/* ── mono32x8i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono32x8i_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono32x8i_bwd_avx2_f32)
+#define VFFT_IL_MONO32X8I_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO32X8I_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO32X8I_PAIR_RADICES(X) X(256)
+
+/* ── mono32x8y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X8Y_FWD_RADICES(X)
+#define VFFT_IL_MONO32X8Y_BWD_RADICES(X)
+#define VFFT_IL_MONO32X8Y_PAIR_RADICES(X)
+
+/* ── mono32x8yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO32X8YI_FWD_RADICES(X)
+#define VFFT_IL_MONO32X8YI_BWD_RADICES(X)
+#define VFFT_IL_MONO32X8YI_PAIR_RADICES(X)
+
 /* ── mono4x16 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix64_z_mono4x16_fwd_avx2_f32)
 VFFT_IL_DECL(radix64_z_mono4x16_bwd_avx2_f32)
 #define VFFT_IL_MONO4X16_FWD_RADICES(X) X(64)
 #define VFFT_IL_MONO4X16_BWD_RADICES(X) X(64)
 #define VFFT_IL_MONO4X16_PAIR_RADICES(X) X(64)
+
+/* ── mono4x16y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO4X16Y_FWD_RADICES(X)
+#define VFFT_IL_MONO4X16Y_BWD_RADICES(X)
+#define VFFT_IL_MONO4X16Y_PAIR_RADICES(X)
 
 /* ── mono4x4 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix16_z_mono4x4_fwd_avx2_f32)
@@ -108,12 +251,22 @@ VFFT_IL_DECL(radix16_z_mono4x4_bwd_avx2_f32)
 #define VFFT_IL_MONO4X4_BWD_RADICES(X) X(16)
 #define VFFT_IL_MONO4X4_PAIR_RADICES(X) X(16)
 
+/* ── mono4x4y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO4X4Y_FWD_RADICES(X)
+#define VFFT_IL_MONO4X4Y_BWD_RADICES(X)
+#define VFFT_IL_MONO4X4Y_PAIR_RADICES(X)
+
 /* ── mono4x8 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix32_z_mono4x8_fwd_avx2_f32)
 VFFT_IL_DECL(radix32_z_mono4x8_bwd_avx2_f32)
 #define VFFT_IL_MONO4X8_FWD_RADICES(X) X(32)
 #define VFFT_IL_MONO4X8_BWD_RADICES(X) X(32)
 #define VFFT_IL_MONO4X8_PAIR_RADICES(X) X(32)
+
+/* ── mono4x8y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO4X8Y_FWD_RADICES(X)
+#define VFFT_IL_MONO4X8Y_BWD_RADICES(X)
+#define VFFT_IL_MONO4X8Y_PAIR_RADICES(X)
 
 /* ── mono64x16 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix1024_z_mono64x16_fwd_avx2_f32)
@@ -122,12 +275,46 @@ VFFT_IL_DECL(radix1024_z_mono64x16_bwd_avx2_f32)
 #define VFFT_IL_MONO64X16_BWD_RADICES(X) X(1024)
 #define VFFT_IL_MONO64X16_PAIR_RADICES(X) X(1024)
 
+/* ── mono64x16i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono64x16i_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono64x16i_bwd_avx2_f32)
+#define VFFT_IL_MONO64X16I_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO64X16I_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO64X16I_PAIR_RADICES(X) X(1024)
+
+/* ── mono64x16y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO64X16Y_FWD_RADICES(X)
+#define VFFT_IL_MONO64X16Y_BWD_RADICES(X)
+#define VFFT_IL_MONO64X16Y_PAIR_RADICES(X)
+
+/* ── mono64x16yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO64X16YI_FWD_RADICES(X)
+#define VFFT_IL_MONO64X16YI_BWD_RADICES(X)
+#define VFFT_IL_MONO64X16YI_PAIR_RADICES(X)
+
 /* ── mono64x8 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix512_z_mono64x8_fwd_avx2_f32)
 VFFT_IL_DECL(radix512_z_mono64x8_bwd_avx2_f32)
 #define VFFT_IL_MONO64X8_FWD_RADICES(X) X(512)
 #define VFFT_IL_MONO64X8_BWD_RADICES(X) X(512)
 #define VFFT_IL_MONO64X8_PAIR_RADICES(X) X(512)
+
+/* ── mono64x8i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono64x8i_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono64x8i_bwd_avx2_f32)
+#define VFFT_IL_MONO64X8I_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO64X8I_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO64X8I_PAIR_RADICES(X) X(512)
+
+/* ── mono64x8y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO64X8Y_FWD_RADICES(X)
+#define VFFT_IL_MONO64X8Y_BWD_RADICES(X)
+#define VFFT_IL_MONO64X8Y_PAIR_RADICES(X)
+
+/* ── mono64x8yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO64X8YI_FWD_RADICES(X)
+#define VFFT_IL_MONO64X8YI_BWD_RADICES(X)
+#define VFFT_IL_MONO64X8YI_PAIR_RADICES(X)
 
 /* ── mono8x16 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix128_z_mono8x16_fwd_avx2_f32)
@@ -136,12 +323,34 @@ VFFT_IL_DECL(radix128_z_mono8x16_bwd_avx2_f32)
 #define VFFT_IL_MONO8X16_BWD_RADICES(X) X(128)
 #define VFFT_IL_MONO8X16_PAIR_RADICES(X) X(128)
 
+/* ── mono8x16y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO8X16Y_FWD_RADICES(X)
+#define VFFT_IL_MONO8X16Y_BWD_RADICES(X)
+#define VFFT_IL_MONO8X16Y_PAIR_RADICES(X)
+
 /* ── mono8x32 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix256_z_mono8x32_fwd_avx2_f32)
 VFFT_IL_DECL(radix256_z_mono8x32_bwd_avx2_f32)
 #define VFFT_IL_MONO8X32_FWD_RADICES(X) X(256)
 #define VFFT_IL_MONO8X32_BWD_RADICES(X) X(256)
 #define VFFT_IL_MONO8X32_PAIR_RADICES(X) X(256)
+
+/* ── mono8x32i ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono8x32i_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono8x32i_bwd_avx2_f32)
+#define VFFT_IL_MONO8X32I_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO8X32I_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO8X32I_PAIR_RADICES(X) X(256)
+
+/* ── mono8x32y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO8X32Y_FWD_RADICES(X)
+#define VFFT_IL_MONO8X32Y_BWD_RADICES(X)
+#define VFFT_IL_MONO8X32Y_PAIR_RADICES(X)
+
+/* ── mono8x32yi ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO8X32YI_FWD_RADICES(X)
+#define VFFT_IL_MONO8X32YI_BWD_RADICES(X)
+#define VFFT_IL_MONO8X32YI_PAIR_RADICES(X)
 
 /* ── mono8x4 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix32_z_mono8x4_fwd_avx2_f32)
@@ -150,12 +359,22 @@ VFFT_IL_DECL(radix32_z_mono8x4_bwd_avx2_f32)
 #define VFFT_IL_MONO8X4_BWD_RADICES(X) X(32)
 #define VFFT_IL_MONO8X4_PAIR_RADICES(X) X(32)
 
+/* ── mono8x4y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO8X4Y_FWD_RADICES(X)
+#define VFFT_IL_MONO8X4Y_BWD_RADICES(X)
+#define VFFT_IL_MONO8X4Y_PAIR_RADICES(X)
+
 /* ── mono8x8 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix64_z_mono8x8_fwd_avx2_f32)
 VFFT_IL_DECL(radix64_z_mono8x8_bwd_avx2_f32)
 #define VFFT_IL_MONO8X8_FWD_RADICES(X) X(64)
 #define VFFT_IL_MONO8X8_BWD_RADICES(X) X(64)
 #define VFFT_IL_MONO8X8_PAIR_RADICES(X) X(64)
+
+/* ── mono8x8y ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_MONO8X8Y_FWD_RADICES(X)
+#define VFFT_IL_MONO8X8Y_BWD_RADICES(X)
+#define VFFT_IL_MONO8X8Y_PAIR_RADICES(X)
 
 /* ── msz ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_MSZ_FWD_RADICES(X)
@@ -593,12 +812,14 @@ VFFT_IL_DECL(radix8_z_tmgd_fwd_avx2_f32)
 #define VFFT_IL_ROW_CHOICE(X)
 #define VFFT_IL_ROWT_CHOICE(X)
 
-/* ── the fused K=1 forms: X(N, form, tag) = the mono route's form at N (form 0 = the solo n1) ── */
-#define VFFT_IL_MONO_FUSED(X) X(16, 1, mono4x4) X(32, 1, mono4x8) X(32, 2, mono8x4) X(64, 1, mono16x4) X(64, 2, mono8x8) X(64, 3, mono4x16) X(128, 1, mono16x8) X(128, 2, mono32x4) X(128, 3, mono8x16) X(256, 1, mono8x32) X(256, 2, mono32x8) X(256, 3, mono16x16) X(512, 1, mono32x16) X(512, 2, mono16x32) X(512, 3, mono64x8) X(1024, 1, mono32x32) X(1024, 2, mono64x16) X(1024, 3, mono16x64)
+/* ── the fused K=1 forms: X(N, form, tag) = the mono route's form at N (form 0 = the solo n1), and
+ * the kernel each form runs in place ── */
+#define VFFT_IL_MONO_FUSED(X) X(2, 1, mono1x2) X(4, 1, mono1x4) X(8, 1, mono2x4) X(16, 1, mono4x4) X(32, 1, mono4x8) X(32, 2, mono8x4) X(64, 1, mono16x4) X(64, 2, mono8x8) X(64, 3, mono4x16) X(128, 1, mono16x8) X(128, 2, mono32x4) X(128, 3, mono8x16) X(256, 1, mono8x32) X(256, 2, mono32x8) X(256, 3, mono16x16) X(512, 1, mono32x16) X(512, 2, mono16x32) X(512, 3, mono64x8) X(1024, 1, mono32x32) X(1024, 2, mono64x16) X(1024, 3, mono16x64)
+#define VFFT_IL_MONO_FUSED_IP(X) X(2, 1, mono1x2) X(4, 1, mono1x4) X(8, 1, mono2x4) X(16, 1, mono4x4) X(32, 1, mono4x8) X(32, 2, mono8x4) X(64, 1, mono16x4) X(64, 2, mono8x8) X(64, 3, mono4x16) X(128, 1, mono16x8) X(128, 2, mono32x4) X(128, 3, mono8x16) X(256, 1, mono8x32i) X(256, 2, mono32x8i) X(256, 3, mono16x16i) X(512, 1, mono32x16i) X(512, 2, mono16x32i) X(512, 3, mono64x8i) X(1024, 1, mono32x32i) X(1024, 2, mono64x16i) X(1024, 3, mono16x64i)
 
 /* zil-f32-avx2: 4 cells DECLARED ABSENT at avx2_f32:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* 154 declarations over 97 kinds */
+/* 178 declarations over 136 kinds */
 
 #endif

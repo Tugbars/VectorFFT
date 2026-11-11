@@ -167,6 +167,8 @@ type kind =
       { a : int (* --cil-k1 --cil-chain A:M (FP32): the fused K=1 kernel, N = A x M in one call *)
       ; m : int
       ; port : int (* --cil-port P, as on Cil *)
+      ; plane : bool (* --cil-plane: the in-place form of a two-loop kernel (the tag's i) *)
+      ; ymm : bool (* --cil-ymm: at avx512_f32, the 256-bit construction (the tag's y) *)
       }
   | K1_mono of
       { r1 : int option

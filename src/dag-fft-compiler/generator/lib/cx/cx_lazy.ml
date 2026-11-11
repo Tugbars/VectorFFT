@@ -47,6 +47,14 @@ let all_eq (v : float) (s : float array) : bool = Array.for_all (fun x -> x = v)
 let is_plain (t : term) : bool = t.r = 0 && all_eq 1.0 t.s
 let neg (s : float array) : float array = Array.map (fun x -> -.x) s
 
+(* p + i z. 256 bits: addsub through the swap (Cx_ir.CRotAdd: no constant). 512 bits has no addsub:
+   the same value as one FMA with the constant [-1 +1] (the emitter sets addsub before it builds). *)
+let addsub = ref true
+
+let rotadd ~(per : int) (p : t) (z : t) : t =
+  if !addsub then crotadd p z else clz LFmaR (Array.make per 1.0) z p
+;;
+
 (* W_n^e = exp(-2 pi i e / n) (backward: the conjugate) as (c, s), the value c + i s. Exact at the
    multiples of pi/4; elsewhere the angle is reduced to [0, pi/4] in integers before cos / sin. *)
 let cs ~(bwd : bool) (e : int) (n : int) : float * float =
@@ -120,7 +128,11 @@ let mulw ~(bwd : bool) (t : term) (e : int) (n : int) : term =
   | Gen (c, s) ->
     let c, s = if t.r <> 0 then -.s, c else c, s in
     let k = c /. s in
-    let zz = if k = 1.0 then crotadd t.z t.z else clz LKI (Array.make (Array.length t.s) k) t.z t.z in
+    let zz =
+      if k = 1.0
+      then rotadd ~per:(Array.length t.s) t.z t.z
+      else clz LKI (Array.make (Array.length t.s) k) t.z t.z
+    in
     { z = zz; s = Array.map (fun x -> x *. s) t.s; r = 0 }
 ;;
 
@@ -138,9 +150,9 @@ let pm (p : t) (x : term) (rev : bool) : t * t =
     then csub p z, cadd p z
     else clz LFma s z p, if rev then clz LFms s z p else clz LFnma s z p
   else if (not rev) && one
-  then crotadd p z, clz LFnmaR s z p
+  then rotadd ~per:(Array.length s) p z, clz LFnmaR s z p
   else if (not rev) && mone
-  then clz LFnmaR (neg s) z p, crotadd p z
+  then clz LFnmaR (neg s) z p, rotadd ~per:(Array.length s) p z
   else clz LFmaR s z p, if rev then clz LFmsR s z p else clz LFnmaR s z p
 ;;
 

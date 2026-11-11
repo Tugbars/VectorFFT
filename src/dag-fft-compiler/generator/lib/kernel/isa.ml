@@ -915,11 +915,16 @@ let storeu_cx_unit (isa : t) (addr : string) (v : string) (q : int) : string =
 
 (* FP32: the 64-bit (one complex) interleave inside each 128-bit lane, on cast vectors:
    lo = [a0 b0 | a2 b2 | ..], hi = [a1 b1 | a3 b3 | ..] in complex lanes (Cx_ir.CUnpack). *)
-(* The half exchange of two vectors (Cx_ir.CHalf): lo = [a.lo128 | b.lo128], hi = [a.hi128 |
-   b.hi128]. 256-bit FP32 (4 complex per vector) only: one vperm2f128. *)
+(* The half exchange of two vectors (Cx_ir.CHalf): the even (lo) or the odd (hi) 128-bit units of
+   a, then of b. 256-bit FP32 (4 complex per vector): lo = [a.lo128 | b.lo128], hi = [a.hi128 |
+   b.hi128], one vperm2f128. 512-bit FP32 (8 complex): lo = [a.u0 a.u2 b.u0 b.u2], hi = [a.u1
+   a.u3 b.u1 b.u3], one vshuff32x4 (0x88 / 0xDD). *)
 let cx_half (isa : t) ~(hi : bool) (a : string) (b : string) : string =
-  if isa.prec <> F32 || isa.vec_width <> 8
-  then failwith (Printf.sprintf "Isa.cx_half: 256-bit FP32 only (target %s)" isa.name);
+  if isa.prec <> F32 || (isa.vec_width <> 8 && isa.vec_width <> 16)
+  then failwith (Printf.sprintf "Isa.cx_half: 256-bit and 512-bit FP32 only (target %s)" isa.name);
+  if isa.vec_width = 16
+  then Printf.sprintf "_mm512_shuffle_f32x4(%s, %s, 0x%X)" a b (if hi then 0xDD else 0x88)
+  else
   Printf.sprintf "_mm256_permute2f128_ps(%s, %s, 0x%x)" a b (if hi then 0x31 else 0x20)
 ;;
 

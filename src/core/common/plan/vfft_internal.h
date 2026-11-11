@@ -281,6 +281,9 @@ struct vfft_plan_s
      * -- never re-derived at execute, and never assumed equal. */
     size_t tcb_sn, tcb_dn;
     vfft_oop11_fn k1_mono_ilf, k1_mono_ilb;
+    /* the kernels of a call with ONE buffer on an out-of-place solo plan (k1_alias, il/il_execute.h):
+     * the in-place twins of the two above, bound with them; NULL where the plan needs none */
+    vfft_oop11_fn k1_mono_aliasf, k1_mono_aliasb;
     /* §D2 zr2c (2026-08-13, DESIGN_interleaved_r2c.md Phase 2): 1D
      * INTERLEAVED-CCE real transforms as reinterpret + CHILD c2c(N/2) +
      * the zr2c.h fold. zr2c_kid != NULL selects this route over

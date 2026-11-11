@@ -2713,40 +2713,114 @@ let zil_f32_extra_cells : (string * string list) list =
   ]
 ;;
 
-(* THE FP32 FUSED K=1 KERNELS (2026-11-11): the whole N-point transform in ONE call, N = A x M
-   (c2c_il.ml emit_k1_f32) -- the mono route's forms at FP32. Per N the shapes that timed within
-   a few percent of that N's best on the 14900KF (the planner's race picks among them on each
-   machine). THE ORDER IS THE WISDOM'S FORM NUMBER: form f >= 1 of N is the f-th shape of its
-   row, banked as il_kv on the MONO row (form 0 = the solo n1 kind), so a row is appended to,
-   never reordered. Emitted at --cil-port 50 (16 points: 0, where the plain adds timed faster).
-   256-bit only: declared absent at avx512_f32 (zil_f32_gap) until that form is written. *)
-let zil_f32_mono_shapes : (int * (int * int) list) list =
-  [ 16, [ 4, 4 ]
-  ; 32, [ 4, 8; 8, 4 ]
-  ; 64, [ 16, 4; 8, 8; 4, 16 ]
-  ; 128, [ 16, 8; 32, 4; 8, 16 ]
-  ; 256, [ 8, 32; 32, 8; 16, 16 ]
-  ; 512, [ 32, 16; 16, 32; 64, 8 ]
-  ; 1024, [ 32, 32; 64, 16; 16, 64 ]
-  ]
+(* THE FP32 FUSED K=1 KERNELS (2026-11-11): the whole N-point transform in ONE call (c2c_il.ml
+   emit_k1_f32, emit_k1_f32_small) -- the mono route's forms at FP32, per ISA.
+   THE ORDER IS THE WISDOM'S FORM NUMBER: form f >= 1 of N at an ISA is the f-th entry of its row
+   there, banked as il_kv on the MONO row (form 0 = the solo n1 kind), so a row is appended to,
+   never reordered.
+     2, 4, 8     one kernel each, the points in the lanes of one or two vectors (256-bit text at
+                 both ISAs).
+     16 .. 1024  N = A x M. avx2_f32: per N the 256-bit shapes that timed within a few percent of
+                 that N's best on the 14900KF. avx512_f32: the same 256-bit kernels first (ymm:
+                 the tag's y, the same form numbers as at avx2_f32), then the 512-bit shapes
+                 (8 complex per vector, from 64 = 8 x 8 up) -- not timed, no AVX-512 machine has
+                 raced them; the planner's race picks among all of them on each machine.
+   A two-loop kernel (more vectors than twice the registers: N > 128 at 256 bits, N > 512 at
+   512) has two files per direction: the out-of-place kernel (zout its plane) and the in-place
+   one (--cil-plane, the tag's i: its plane on its own stack); a one-DAG kernel is its own
+   in-place kernel. 256-bit shapes are emitted at --cil-port 50 (16 points: 0, where the plain
+   adds timed faster); the 512-bit shapes and the small kernels at 0. *)
+type mono_form =
+  { fa : int
+  ; fm : int
+  ; ymm : bool (* at avx512_f32: the 256-bit construction *)
+  }
+
+let zil_f32_mono_forms ~(isa : string) : (int * mono_form list) list =
+  let f ymm (a, m) = { fa = a; fm = m; ymm } in
+  let small = [ 2, [ f false (1, 2) ]; 4, [ f false (1, 4) ]; 8, [ f false (2, 4) ] ] in
+  let s256 =
+    [ 16, [ 4, 4 ]
+    ; 32, [ 4, 8; 8, 4 ]
+    ; 64, [ 16, 4; 8, 8; 4, 16 ]
+    ; 128, [ 16, 8; 32, 4; 8, 16 ]
+    ; 256, [ 8, 32; 32, 8; 16, 16 ]
+    ; 512, [ 32, 16; 16, 32; 64, 8 ]
+    ; 1024, [ 32, 32; 64, 16; 16, 64 ]
+    ]
+  in
+  let s512 =
+    [ 64, [ 8, 8 ]
+    ; 128, [ 16, 8; 8, 16 ]
+    ; 256, [ 16, 16; 32, 8; 8, 32 ]
+    ; 512, [ 32, 16; 16, 32; 64, 8 ]
+    ; 1024, [ 32, 32; 64, 16; 16, 64 ]
+    ]
+  in
+  match isa with
+  | "avx2_f32" -> small @ List.map (fun (n, l) -> n, List.map (f false) l) s256
+  | "avx512_f32" ->
+    small
+    @ List.map
+        (fun (n, l) ->
+           ( n
+           , List.map (f true) l
+             @ List.map (f false) (Option.value ~default:[] (List.assoc_opt n s512)) ))
+        s256
+  | i -> failwith ("Corpus.zil_f32_mono_forms: not an FP32 isa: " ^ i)
 ;;
 
-let zil_f32_mono_cells : (string * string list) list =
+let zil_f32_mono_small (fo : mono_form) : bool = fo.fa < 4 || fo.fm < 4
+
+(* the two-loop construction (c2c_il.ml emit_k1_f32: N / per vectors past twice the registers) *)
+let zil_f32_mono_buffered ~(isa : string) (fo : mono_form) : bool =
+  let n = fo.fa * fo.fm in
+  (not (zil_f32_mono_small fo)) && if isa = "avx2_f32" || fo.ymm then n > 128 else n > 512
+;;
+
+(* the kernel tags of a form: radix<N>_z_<tag>; the in-place kernel is the form's own unless it
+   is a two-loop kernel *)
+let zil_f32_mono_tag (fo : mono_form) : string =
+  Printf.sprintf "mono%dx%d%s" fo.fa fo.fm (if fo.ymm then "y" else "")
+;;
+
+let zil_f32_mono_ip_tag ~(isa : string) (fo : mono_form) : string =
+  zil_f32_mono_tag fo ^ if zil_f32_mono_buffered ~isa fo then "i" else ""
+;;
+
+let zil_f32_mono_cells ~(isa : string) : (string * string list) list =
+  let uarch =
+    match isa with
+    | "avx2_f32" -> "raptor_lake_avx2"
+    | _ -> "sapphire_rapids_avx512"
+  in
   List.concat_map
-    (fun (n, shapes) ->
+    (fun (n, forms) ->
        List.concat_map
-         (fun (a, m) ->
-            let argv bwd =
-              [ string_of_int n; "--cil-k1"; "--cil-chain"; Printf.sprintf "%d:%d" a m ]
-              @ (if n = 16 then [] else [ "--cil-port"; "50" ])
-              @ (if bwd then [ "--cil-bwd" ] else [])
-              @ [ "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+         (fun (fo : mono_form) ->
+            let port =
+              if zil_f32_mono_small fo || n = 16 || (isa = "avx512_f32" && not fo.ymm) then 0 else 50
             in
-            [ Printf.sprintf "radix%d_z_mono%dx%d_avx2.c" n a m, argv false
-            ; Printf.sprintf "radix%d_z_mono%dx%d_bwd_avx2.c" n a m, argv true
-            ])
-         shapes)
-    zil_f32_mono_shapes
+            let files ~(plane : bool) (tag : string) =
+              let argv bwd =
+                [ string_of_int n; "--cil-k1"; "--cil-chain"; Printf.sprintf "%d:%d" fo.fa fo.fm ]
+                @ (if plane then [ "--cil-plane" ] else [])
+                @ (if fo.ymm then [ "--cil-ymm" ] else [])
+                @ (if port <> 0 then [ "--cil-port"; string_of_int port ] else [])
+                @ (if bwd then [ "--cil-bwd" ] else [])
+                @ [ "--isa"; isa; "--uarch"; uarch ]
+              in
+              [ Printf.sprintf "radix%d_z_%s_%s.c" n tag isa, argv false
+              ; Printf.sprintf "radix%d_z_%s_bwd_%s.c" n tag isa, argv true
+              ]
+            in
+            files ~plane:false (zil_f32_mono_tag fo)
+            @
+            if zil_f32_mono_buffered ~isa fo
+            then files ~plane:true (zil_f32_mono_ip_tag ~isa fo)
+            else [])
+         forms)
+    (zil_f32_mono_forms ~isa)
 ;;
 
 let zil_f32_in_scope (c : Codelet.t) : bool =
@@ -2788,8 +2862,7 @@ let zil_f32_base_cells : (string * string list) list Lazy.t =
      @ zil_f32_extra_cells
      @ List.filter
          (fun (_, tail) -> zil_f32_ztt_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
-         zil_boundary_cells
-     @ zil_f32_mono_cells)
+         zil_boundary_cells)
 ;;
 
 (* every FP32 cell the generator refuses at that width, with the refusal it restates. TWO
@@ -2804,10 +2877,6 @@ let zil_f32_base_cells : (string * string list) list Lazy.t =
 let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
   let per = if isa = "avx2_f32" then 4 else 8 in
   match c.Codelet.kind with
-  | Codelet.Cil_k1 _ when isa <> "avx2_f32" ->
-    Some
-      "no 512-bit form yet: the fused K=1 kernel is written for 4 complex per 256-bit vector \
-       (c2c_il.ml emit_k1_f32)"
   | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod 8 <> 0 ->
     Some
       (Printf.sprintf
@@ -2923,7 +2992,9 @@ let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
   | q when zil_f32_quadrant_isa q <> None ->
     (match zil_f32_quadrant_isa q with
-     | Some isa -> fst (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells))
+     | Some isa ->
+       (* the retargeted FP64-derived cells, then this ISA's own mono forms (literal per ISA) *)
+       fst (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells)) @ zil_f32_mono_cells ~isa
      | None -> assert false)
   | q when zil_quadrant_isa q <> None ->
     (match zil_quadrant_isa q with

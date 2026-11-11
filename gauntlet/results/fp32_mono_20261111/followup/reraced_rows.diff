@@ -1,0 +1,18 @@
+-@cell t=c2c n=2 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=2.8 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
+-@cell t=c2c n=2 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=3.0 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
+-@cell t=c2c n=4 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=2.7 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
+-@cell t=c2c n=4 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=3.2 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
+-@cell t=c2c n=8 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=4.6 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
+-@cell t=c2c n=8 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=0 | ran=1 ns=5.1 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
++@cell t=c2c n=2 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=3.1 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
++@cell t=c2c n=2 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=3.0 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
++@cell t=c2c n=4 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=3.3 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
++@cell t=c2c n=4 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=3.1 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
++@cell t=c2c n=8 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=3.5 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
++@cell t=c2c n=8 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=5.7 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
+-@cell t=c2c n=256 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=2p il_pair=8.32 il_kv=0 | ran=1 ns=85.1 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
++@cell t=c2c n=256 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=69.1 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
+-@cell t=c2c n=512 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.4.4.4 il_kv=0 | ran=1 ns=180.3 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
++@cell t=c2c n=512 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=148.9 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty
+-@cell t=c2c n=1024 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=ztt il_ztt=8.8.4.4 il_kv=0 | ran=1 ns=386.8 metric=fwd1 units=ns src=race date=2026-11-10 bld=0.1.0-5160c472
++@cell t=c2c n=1024 q=1 ord=nat place=ip role=comp lay=il | eng=k1 il_route=mono il_kv=1 | ran=1 ns=329.8 metric=fwd1 units=ns src=race date=2026-11-11 bld=0.1.0-0264073d-dirty

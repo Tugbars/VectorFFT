@@ -453,9 +453,7 @@ if(VFFT_ENABLE_FLOAT)
     foreach(_zdir shared shared/col shared/col/blocked pair2p pair2p/blocked chain3 ztt)
         vfft_add_codelet_dir("zil_f32/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}_f32/${_zdir}")
     endforeach()
-    if(VFFT_ISA STREQUAL "avx2")   # mono: the FP32 fused K=1 kernels (radixN_z_mono<A>x<M>), 256-bit only so far
-        vfft_add_codelet_dir("zil_f32/mono" "${DAG_CODELETS}/zil/${VFFT_ISA}_f32/mono")
-    endif()
+    vfft_add_codelet_dir("zil_f32/mono" "${DAG_CODELETS}/zil/${VFFT_ISA}_f32/mono")   # the FP32 fused K=1 kernels (radixN_z_mono<A>x<M>)
     vfft_add_codelet_dir("fused_codelets/${VFFT_ISA}_f32" "${DAG_GEN}/fused_codelets/${VFFT_ISA}_f32")
 endif()
 
