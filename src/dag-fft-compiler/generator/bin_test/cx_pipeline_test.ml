@@ -24,8 +24,9 @@ let rec eval (env : Complex.t array) (e : t) : Complex.t =
   | CFmaC (c, x, acc) -> add (mul { re = c; im = 0.0 } (eval env x)) (eval env acc)
   | CFnmaC (c, x, acc) -> add (mul { re = -.c; im = 0.0 } (eval env x)) (eval env acc)
   | CTwC (c, s, x) -> mul { re = c; im = s } (eval env x)
-  | CTwV _ | CTwL _ -> failwith "cx_pipeline_test: eval does not model table twiddles"
-  | CLoad _ | CStore _ | CTurn _ | CPart _ | CUnpack _ ->
+  | CTwV _ | CTwL _ | CTwA _ -> failwith "cx_pipeline_test: eval does not model table twiddles"
+  | CLz _ -> failwith "cx_pipeline_test: eval does not model the lazy (per-lane constant) operations"
+  | CLoad _ | CStore _ | CTurn _ | CPart _ | CUnpack _ | CHalf _ ->
     failwith "cx_pipeline_test: eval does not model memory/lane nodes"
 ;;
 
