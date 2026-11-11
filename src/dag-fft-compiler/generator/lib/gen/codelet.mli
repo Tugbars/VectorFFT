@@ -143,6 +143,7 @@ type kind =
       { form : cil_form
       ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
       ; conj : bool (* --cil-conj: the cosine and sine parts (Cx_conj) *)
+      ; lazy_ : bool (* --cil-lazy: the pending real scales (Cx_lazy) *)
       ; blocked : bool
       ; oddct : bool
       ; split : (int * int) option

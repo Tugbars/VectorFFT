@@ -629,7 +629,23 @@ let render
   | CLz (op, k, z, p) ->
     (* the constant entry (k, k) per lane: _c = [k, k], _s = [-k, +k] (the quarter turn's signs
        folded in: i z = [-1, +1] * cflip z) *)
-    let w = const_name_v tbl (Array.map (fun x -> x, x) k) in
+    let lanes = isa.Isa.vec_width / 2 in
+    let w =
+      if Array.length k = lanes
+      then const_name_v tbl (Array.map (fun x -> x, x) k)
+      else if Array.for_all (fun x -> x = k.(0)) k
+      then
+        (* a narrower render than the term was built for (a column leaf's ymm / xmm tail arm,
+           --cil-lazy): a lane-uniform constant takes this width's own entry, as CTwC does.
+           Every full-width render keeps the per-lane entry, so no existing kernel changes. *)
+        const_name tbl lanes k.(0) k.(0)
+      else
+        failwith
+          (Printf.sprintf
+             "cx_render: a lane-varying lazy constant (%d lanes) rendered at %d lanes"
+             (Array.length k)
+             lanes)
+    in
     let kc = w ^ "_c"
     and ks = w ^ "_s" in
     (match op with

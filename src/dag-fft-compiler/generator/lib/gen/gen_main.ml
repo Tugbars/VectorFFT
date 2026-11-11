@@ -106,6 +106,7 @@ let run (argv : string array) : unit =
   let cil_blocked = ref false in
   let cil_tangent = ref false in
   let cil_conj = ref false in      (* --cil-conj: the cosine and sine parts (Cx_conj, 2026-11-11) *)
+  let cil_lazy = ref false in      (* --cil-lazy: the pending real scales (Cx_lazy, 2026-11-11) *)
   let cil_rowloop = ref false in   (* --cil-rowloop: the in-kernel row loop (2026-09-23) *)
   let cil_form_tag = ref false in
   (* --cil-log3: source the T2 mid's VTW2 records sparsely (load the
@@ -388,6 +389,8 @@ let run (argv : string array) : unit =
     then cil_tangent := true
     else if arg = "--cil-conj"
     then cil_conj := true
+    else if arg = "--cil-lazy"
+    then cil_lazy := true
     else if arg = "--cil-rowloop"
     then cil_rowloop := true
     else if arg = "--cil-form-tag"
@@ -733,6 +736,7 @@ let run (argv : string array) : unit =
         (C2c_il.emit
            ~tangent:!cil_tangent
            ~conj:!cil_conj
+           ~lazy_:!cil_lazy
            ~form_tag:!cil_form_tag
            ~log3:!cil_log3
            ~pretw:!cil_pretw
