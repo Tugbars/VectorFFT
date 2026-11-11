@@ -179,6 +179,12 @@ typedef struct est_plan3d_s
 #ifndef EST_ND_2D_RULE_LEAF
 #define EST_ND_2D_RULE_LEAF 1
 #endif
+/* WIDE (2026-11-12, a HYPOTHESIS to be tested, the owner: "let this L2-size test be the hypothesis that will be
+ * tested", on Zen 4 next): est__wide_fit below. Unlike the rules above it also reaches the 3D plane child and the
+ * 3D axis-0 chain, where the wide stage was timed. */
+#ifndef EST_ND_2D_RULE_WIDE
+#define EST_ND_2D_RULE_WIDE 1
+#endif
 #define EST_ND_2D_R_ORDER 0x01u
 #define EST_ND_2D_R_CSK 0x02u
 #define EST_ND_2D_R_ROWS 0x04u
@@ -187,10 +193,13 @@ typedef struct est_plan3d_s
 #define EST_ND_2D_R_CSK32 0x20u
 #define EST_ND_2D_R_CSK21 0x40u
 #define EST_ND_2D_R_LEAF 0x80u
+#define EST_ND_R_WIDE 0x100u
+#define EST_ND_R_WIDE_ON (EST_ND_2D_RULE_WIDE ? EST_ND_R_WIDE : 0u)
 #define EST_ND_2D_RULES ((EST_ND_2D_RULE_ORDER ? EST_ND_2D_R_ORDER : 0u) | (EST_ND_2D_RULE_CSK ? EST_ND_2D_R_CSK : 0u) | \
                          (EST_ND_2D_RULE_ROWS ? EST_ND_2D_R_ROWS : 0u) | (EST_ND_2D_RULE_TURN ? EST_ND_2D_R_TURN : 0u) | \
                          (EST_ND_2D_RULE_BAND ? EST_ND_2D_R_BAND : 0u) | (EST_ND_2D_RULE_CSK32 ? EST_ND_2D_R_CSK32 : 0u) | \
-                         (EST_ND_2D_RULE_CSK21 ? EST_ND_2D_R_CSK21 : 0u) | (EST_ND_2D_RULE_LEAF ? EST_ND_2D_R_LEAF : 0u))
+                         (EST_ND_2D_RULE_CSK21 ? EST_ND_2D_R_CSK21 : 0u) | (EST_ND_2D_RULE_LEAF ? EST_ND_2D_R_LEAF : 0u) | \
+                         EST_ND_R_WIDE_ON)
 /* TURN: the turn's row bound in points (the planner turns rows of 4 and 9 at every column without one column kernel
  * the night raced; at rows of 10 it turns at 4096 rows and ties the chain below) */
 #define EST_ND_TURN_N2_R 10
@@ -523,6 +532,30 @@ static inline int est__single_ok(const est_machine_t *m, int N, long long w, int
         return 1;
     return plane <= ((nat || N <= 16) ? (long long)m->l1d : (long long)m->l1d / EST_ND_BLOCKED_L1_DIV);
 }
+/* THE WIDE STAGE WITHIN THE L2 (rule WIDE, 2026-11-12; a hypothesis to be tested: Zen 4 next, the 6980P's A/B;
+ * docs/design/il_avx512_kernel_operations.md §7). AVX-512 builds only: with 32 vector registers a radix-16 to
+ * radix-64 column stage holds its legs without the spills it has at 16, so one stage fewer saves a whole pass of
+ * the plane. On the Xeon 6980P (AVX-512, one thread, natural order, same session, alternating) the wide stage won
+ * wherever the plane fit the L2 -- 64x64 and 64x1024 8.8 -> 64 1.25 and 1.14x, 256x256 8.8.4 -> 16.16 1.12x, the
+ * 3D first axis of 16^3 and 16x32x64 4.4 -> 16 1.18 and 1.31x, the 3D plane chains 8.8 -> 64 1.02 and 1.08x, the
+ * 1 MiB planes 1024x64, 128x512, 512x128 at two wide stages 0.98-1.02x -- and lost on the two 4 MiB volumes, the 3D
+ * first axis of 64^3 and 32x64x128 -> 64 / 32 0.65 and 0.54x (2 MiB L2). The L1d set count does not separate them
+ * (every one of those stages crowds a 12-way set, the winners too); the L2 does. Past the L2 such a stage's legs are
+ * also 64-128 KiB apart, a few L2 sets: within this rule's reach the plane passes the L2 only at such strides, so
+ * the size test stands for both. 1 = the rule applies at N over rows of w complex: a power of two whose plane fits
+ * the L2. Then a power of two up to 64 runs as one stage, and the pick's stage count is the radix-16 regime's. */
+static inline int est__wide_fit(const est_machine_t *m, int N, long long w, unsigned rules)
+{
+#if VFFT_IL_VW == 8 && !defined(VFFT_FLOAT)
+    return (rules & EST_ND_R_WIDE) && est_is_pow2(N) && m->l2 > 0 && 16LL * N * w <= (long long)m->l2;
+#else
+    (void)m;
+    (void)N;
+    (void)w;
+    (void)rules;
+    return 0;
+#endif
+}
 static inline int est__ceil_lg(long long n) { return est_lg(n) + !est_is_pow2(n); }
 /* the balance of a chain: the sum of (log2 R)^2 over its stages (the smaller, the more balanced) */
 static inline double est__sumsq(const int *R, int n)
@@ -590,7 +623,9 @@ static inline int est__has15(const int *R, int n)
 static inline int est__pick_r(const est_pool_t *P, const int *pre, int np, int Nrest, const est_machine_t *m,
                               long long w, int nat, int wide, int single, unsigned rules, int *R)
 {
-    const int narrow = !wide && est__narrow(m, w);
+    /* the radix-16 regime's stage count on a narrow row, or (rule WIDE, AVX-512) wherever the plane fits the L2 */
+    const long long Nall = (long long)Nrest * (np > 0 ? est_prod(pre, np) : 1);
+    const int narrow = !wide && (est__narrow(m, w) || est__wide_fit(m, (int)Nall, w, rules));
     const int bits = est__ceil_lg(Nrest), asc = !(nat && !narrow);
     int kt = narrow ? (bits + 3) / 4 : (bits + 2) / 3, no15 = 0;
     int i, best = -1, one = -1, N = Nrest, odd;
@@ -691,8 +726,8 @@ static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, i
     for (i = 0; i < P.n; i++)
         if (P.len[i] == 1)
             one = 1;
-    if (one && est__single_ok(m, N, w, nat) && !est__spills_single(N))
-    {
+    if (one && (est__single_ok(m, N, w, nat) || (N <= 64 && est__wide_fit(m, N, w, rules))) && !est__spills_single(N))
+    {   /* one stage: within the L1d, or (rule WIDE, AVX-512) a power of two up to 64 whose plane fits the L2 */
         R[0] = N;
         return 1;
     }
@@ -1426,10 +1461,12 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
     out->N1 = N1;
     out->N2 = N2;
     out->N3 = N3;
-    if (est_plan_2d_r(m, N2, N3, 0u, &out->plane, why, whylen))   /* the plane child: the 2D rules before 2026-11-09 */
+    /* the plane child: the 2D rules before 2026-11-09, but WIDE (timed on the 3D plane chains, est__wide_fit) */
+    if (est_plan_2d_r(m, N2, N3, EST_ND_R_WIDE_ON, &out->plane, why, whylen))
         return -1;
     out->plane.col.wl = est_wl_2d(m, &out->plane.col, N3, out->plane.csk, out->plane.turn, EST_ND_3D_PLANE_DIV);
-    if (est_col_plan(m, N1, (long long)N2 * N3, 0, &out->col, why, whylen))
+    /* axis 0 over the whole volume: WIDE too (timed on the 3D first axis, est__wide_fit) */
+    if (est_col_plan_r(m, N1, (long long)N2 * N3, 0, EST_ND_R_WIDE_ON, &out->col, why, whylen))
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
