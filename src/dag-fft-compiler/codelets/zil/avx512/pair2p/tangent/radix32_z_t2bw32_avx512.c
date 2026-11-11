@@ -222,30 +222,23 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m512d z69 = _mm512_sub_pd(z60, _mm512_xor_pd(_mm512_permute_pd(z63, 0x55), _M_IM));
         const __m512d z61 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z58, z59);
         const __m512d z67 = _mm512_sub_pd(z61, _mm512_xor_pd(_mm512_permute_pd(z64, 0x55), _M_IM));
-        const __m512d z65 = _mm512_xor_pd(_mm512_permute_pd(z63, 0x55), _M_IM);
         const __m512d z66 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z63, 0x55), z60);
-        const __m512d z70 = _mm512_xor_pd(_mm512_permute_pd(z64, 0x55), _M_IM);
         const __m512d z71 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z64, 0x55), z61);
         const __m512d z76 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z75, z73);
         const __m512d z87 = _mm512_sub_pd(z76, _mm512_xor_pd(_mm512_permute_pd(z80, 0x55), _M_IM));
         const __m512d z77 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z75, z73);
         const __m512d z89 = _mm512_sub_pd(z77, _mm512_xor_pd(_mm512_permute_pd(z81, 0x55), _M_IM));
-        const __m512d z82 = _mm512_xor_pd(_mm512_permute_pd(z80, 0x55), _M_IM);
         const __m512d z83 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z80, 0x55), z76);
-        const __m512d z84 = _mm512_xor_pd(_mm512_permute_pd(z81, 0x55), _M_IM);
         const __m512d z85 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z81, 0x55), z77);
         const __m512d z93 = _mm512_add_pd(z46, z53);
         const __m512d z95 = _mm512_sub_pd(z91, z93);
         const __m512d z97 = _mm512_add_pd(z91, z93);
-        const __m512d z98 = _mm512_xor_pd(_mm512_permute_pd(z94, 0x55), _M_IM);
         const __m512d z99 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z94, 0x55), z92);
         const __m512d z100 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z90, z74);
         const __m512d z107 = _mm512_sub_pd(z100, _mm512_xor_pd(_mm512_permute_pd(z102, 0x55), _M_IM));
         const __m512d z101 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z90, z74);
         const __m512d z106 = _mm512_sub_pd(z101, _mm512_xor_pd(_mm512_permute_pd(z103, 0x55), _M_IM));
-        const __m512d z104 = _mm512_xor_pd(_mm512_permute_pd(z102, 0x55), _M_IM);
         const __m512d z105 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z102, 0x55), z100);
-        const __m512d z108 = _mm512_xor_pd(_mm512_permute_pd(z103, 0x55), _M_IM);
         const __m512d z109 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z103, 0x55), z101);
         _mm512_storeu_pd(&S[0], z97);
         _mm512_storeu_pd(&S[8], z109);
@@ -351,30 +344,23 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m512d z70 = _mm512_sub_pd(z61, _mm512_xor_pd(_mm512_permute_pd(z64, 0x55), _M_IM));
         const __m512d z62 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z59, z60);
         const __m512d z68 = _mm512_sub_pd(z62, _mm512_xor_pd(_mm512_permute_pd(z65, 0x55), _M_IM));
-        const __m512d z66 = _mm512_xor_pd(_mm512_permute_pd(z64, 0x55), _M_IM);
         const __m512d z67 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z64, 0x55), z61);
-        const __m512d z71 = _mm512_xor_pd(_mm512_permute_pd(z65, 0x55), _M_IM);
         const __m512d z72 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z65, 0x55), z62);
         const __m512d z77 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z76, z74);
         const __m512d z88 = _mm512_sub_pd(z77, _mm512_xor_pd(_mm512_permute_pd(z81, 0x55), _M_IM));
         const __m512d z78 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z76, z74);
         const __m512d z90 = _mm512_sub_pd(z78, _mm512_xor_pd(_mm512_permute_pd(z82, 0x55), _M_IM));
-        const __m512d z83 = _mm512_xor_pd(_mm512_permute_pd(z81, 0x55), _M_IM);
         const __m512d z84 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z81, 0x55), z77);
-        const __m512d z85 = _mm512_xor_pd(_mm512_permute_pd(z82, 0x55), _M_IM);
         const __m512d z86 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z82, 0x55), z78);
         const __m512d z94 = _mm512_add_pd(z47, z54);
         const __m512d z96 = _mm512_sub_pd(z92, z94);
         const __m512d z98 = _mm512_add_pd(z92, z94);
-        const __m512d z99 = _mm512_xor_pd(_mm512_permute_pd(z95, 0x55), _M_IM);
         const __m512d z100 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z95, 0x55), z93);
         const __m512d z101 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z91, z75);
         const __m512d z108 = _mm512_sub_pd(z101, _mm512_xor_pd(_mm512_permute_pd(z103, 0x55), _M_IM));
         const __m512d z102 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z91, z75);
         const __m512d z107 = _mm512_sub_pd(z102, _mm512_xor_pd(_mm512_permute_pd(z104, 0x55), _M_IM));
-        const __m512d z105 = _mm512_xor_pd(_mm512_permute_pd(z103, 0x55), _M_IM);
         const __m512d z106 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z103, 0x55), z101);
-        const __m512d z109 = _mm512_xor_pd(_mm512_permute_pd(z104, 0x55), _M_IM);
         const __m512d z110 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z104, 0x55), z102);
         _mm512_storeu_pd(&S[128], z98);
         _mm512_storeu_pd(&S[136], z110);
@@ -466,7 +452,6 @@ void radix32_z_t2bw32_fwd_avx512(
         }
         { /* PASS 2.8: S[i*16+8] -> X[8 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[192]);
-        const __m512d z2 = _mm512_xor_pd(_mm512_permute_pd(z1, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[64]);
         const __m512d z3 = _mm512_fmadd_pd(_ZW0_s, _mm512_permute_pd(z1, 0x55), z0);
         const __m512d z4 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z1, 0x55), z0);
@@ -476,7 +461,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.9: S[i*16+9] -> X[9 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[200]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW1_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[72]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW8_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW8_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -486,7 +470,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.10: S[i*16+10] -> X[10 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[208]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW2_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[80]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW9_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW9_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -496,7 +479,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.11: S[i*16+11] -> X[11 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[216]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW3_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[88]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW10_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW10_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -506,7 +488,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.12: S[i*16+12] -> X[12 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[224]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW4_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[96]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW11_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW11_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -516,7 +497,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.13: S[i*16+13] -> X[13 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[232]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW5_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[104]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW12_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW12_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -526,7 +506,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.14: S[i*16+14] -> X[14 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[240]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW6_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[112]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW13_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW13_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -536,7 +515,6 @@ void radix32_z_t2bw32_fwd_avx512(
         { /* PASS 2.15: S[i*16+15] -> X[15 + 16*k2] */
         const __m512d z1 = _mm512_loadu_pd(&S[248]);
         const __m512d z2 = _mm512_fmadd_pd(_ZW7_s, _mm512_permute_pd(z1, 0x55), z1);
-        const __m512d z3 = _mm512_xor_pd(_mm512_permute_pd(z2, 0x55), _M_IM);
         const __m512d z0 = _mm512_loadu_pd(&S[120]);
         const __m512d z4 = _mm512_fmadd_pd(_ZW14_s, _mm512_permute_pd(z2, 0x55), z0);
         const __m512d z5 = _mm512_fnmadd_pd(_ZW14_s, _mm512_permute_pd(z2, 0x55), z0);
@@ -690,18 +668,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m512d z135 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z118, z120);
         const __m512d z92 = _mm512_fnmadd_pd(_mm512_set1_pd(0.70710678118654757), z90, z91);
         const __m512d z93 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z90, z91);
-        const __m512d z97 = _mm512_xor_pd(_mm512_permute_pd(z95, 0x55), _M_IM);
-        const __m512d z102 = _mm512_xor_pd(_mm512_permute_pd(z96, 0x55), _M_IM);
         const __m512d z108 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z107, z105);
         const __m512d z109 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z107, z105);
-        const __m512d z114 = _mm512_xor_pd(_mm512_permute_pd(z112, 0x55), _M_IM);
-        const __m512d z116 = _mm512_xor_pd(_mm512_permute_pd(z113, 0x55), _M_IM);
         const __m512d z125 = _mm512_add_pd(z78, z85);
-        const __m512d z130 = _mm512_xor_pd(_mm512_permute_pd(z126, 0x55), _M_IM);
         const __m512d z132 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z122, z106);
         const __m512d z133 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z122, z106);
-        const __m512d z136 = _mm512_xor_pd(_mm512_permute_pd(z134, 0x55), _M_IM);
-        const __m512d z140 = _mm512_xor_pd(_mm512_permute_pd(z135, 0x55), _M_IM);
         const __m512d z98 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z95, 0x55), z92);
         const __m512d z99 = _mm512_sub_pd(z93, _mm512_xor_pd(_mm512_permute_pd(z96, 0x55), _M_IM));
         const __m512d z101 = _mm512_sub_pd(z92, _mm512_xor_pd(_mm512_permute_pd(z95, 0x55), _M_IM));
@@ -740,18 +711,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m512d z214 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z197, z199);
         const __m512d z171 = _mm512_fnmadd_pd(_mm512_set1_pd(0.70710678118654757), z169, z170);
         const __m512d z172 = _mm512_fmadd_pd(_mm512_set1_pd(0.70710678118654757), z169, z170);
-        const __m512d z176 = _mm512_xor_pd(_mm512_permute_pd(z174, 0x55), _M_IM);
-        const __m512d z181 = _mm512_xor_pd(_mm512_permute_pd(z175, 0x55), _M_IM);
         const __m512d z187 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z186, z184);
         const __m512d z188 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z186, z184);
-        const __m512d z193 = _mm512_xor_pd(_mm512_permute_pd(z191, 0x55), _M_IM);
-        const __m512d z195 = _mm512_xor_pd(_mm512_permute_pd(z192, 0x55), _M_IM);
         const __m512d z204 = _mm512_add_pd(z157, z164);
-        const __m512d z209 = _mm512_xor_pd(_mm512_permute_pd(z205, 0x55), _M_IM);
         const __m512d z211 = _mm512_fnmadd_pd(_mm512_set1_pd(0.92387953251128674), z201, z185);
         const __m512d z212 = _mm512_fmadd_pd(_mm512_set1_pd(0.92387953251128674), z201, z185);
-        const __m512d z215 = _mm512_xor_pd(_mm512_permute_pd(z213, 0x55), _M_IM);
-        const __m512d z219 = _mm512_xor_pd(_mm512_permute_pd(z214, 0x55), _M_IM);
         const __m512d z177 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z174, 0x55), z171);
         const __m512d z178 = _mm512_sub_pd(z172, _mm512_xor_pd(_mm512_permute_pd(z175, 0x55), _M_IM));
         const __m512d z180 = _mm512_sub_pd(z171, _mm512_xor_pd(_mm512_permute_pd(z174, 0x55), _M_IM));
@@ -791,7 +755,6 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m512d z241 = _mm512_fmadd_pd(_ZW7_s, _mm512_permute_pd(z218, 0x55), z218);
         const __m512d z242 = _mm512_fnmadd_pd(_mm512_set1_pd(0.19509032201612833), z241, z139);
         const __m512d z243 = _mm512_fmadd_pd(_mm512_set1_pd(0.19509032201612833), z241, z139);
-        const __m512d z244 = _mm512_xor_pd(_mm512_permute_pd(z206, 0x55), _M_IM);
         const __m512d z245 = _mm512_fmadd_pd(_ZW0_s, _mm512_permute_pd(z206, 0x55), z127);
         const __m512d z246 = _mm512_fnmadd_pd(_ZW0_s, _mm512_permute_pd(z206, 0x55), z127);
         const __m512d z247 = _mm512_fmadd_pd(_ZW43_s, _mm512_permute_pd(z216, 0x55), z216);
@@ -994,18 +957,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m256d z135 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z118, z120);
         const __m256d z92 = _mm256_fnmadd_pd(_mm256_set1_pd(0.70710678118654757), z90, z91);
         const __m256d z93 = _mm256_fmadd_pd(_mm256_set1_pd(0.70710678118654757), z90, z91);
-        const __m256d z97 = _mm256_xor_pd(_mm256_permute_pd(z95, 0x5), _M_IM_y);
-        const __m256d z102 = _mm256_xor_pd(_mm256_permute_pd(z96, 0x5), _M_IM_y);
         const __m256d z108 = _mm256_fnmadd_pd(_mm256_set1_pd(0.92387953251128674), z107, z105);
         const __m256d z109 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z107, z105);
-        const __m256d z114 = _mm256_xor_pd(_mm256_permute_pd(z112, 0x5), _M_IM_y);
-        const __m256d z116 = _mm256_xor_pd(_mm256_permute_pd(z113, 0x5), _M_IM_y);
         const __m256d z125 = _mm256_add_pd(z78, z85);
-        const __m256d z130 = _mm256_xor_pd(_mm256_permute_pd(z126, 0x5), _M_IM_y);
         const __m256d z132 = _mm256_fnmadd_pd(_mm256_set1_pd(0.92387953251128674), z122, z106);
         const __m256d z133 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z122, z106);
-        const __m256d z136 = _mm256_xor_pd(_mm256_permute_pd(z134, 0x5), _M_IM_y);
-        const __m256d z140 = _mm256_xor_pd(_mm256_permute_pd(z135, 0x5), _M_IM_y);
         const __m256d z98 = _mm256_fnmadd_pd(_ZW15_s, _mm256_permute_pd(z95, 0x5), z92);
         const __m256d z99 = _mm256_addsub_pd(z93, _mm256_permute_pd(z96, 0x5));
         const __m256d z101 = _mm256_addsub_pd(z92, _mm256_permute_pd(z95, 0x5));
@@ -1044,18 +1000,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m256d z214 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z197, z199);
         const __m256d z171 = _mm256_fnmadd_pd(_mm256_set1_pd(0.70710678118654757), z169, z170);
         const __m256d z172 = _mm256_fmadd_pd(_mm256_set1_pd(0.70710678118654757), z169, z170);
-        const __m256d z176 = _mm256_xor_pd(_mm256_permute_pd(z174, 0x5), _M_IM_y);
-        const __m256d z181 = _mm256_xor_pd(_mm256_permute_pd(z175, 0x5), _M_IM_y);
         const __m256d z187 = _mm256_fnmadd_pd(_mm256_set1_pd(0.92387953251128674), z186, z184);
         const __m256d z188 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z186, z184);
-        const __m256d z193 = _mm256_xor_pd(_mm256_permute_pd(z191, 0x5), _M_IM_y);
-        const __m256d z195 = _mm256_xor_pd(_mm256_permute_pd(z192, 0x5), _M_IM_y);
         const __m256d z204 = _mm256_add_pd(z157, z164);
-        const __m256d z209 = _mm256_xor_pd(_mm256_permute_pd(z205, 0x5), _M_IM_y);
         const __m256d z211 = _mm256_fnmadd_pd(_mm256_set1_pd(0.92387953251128674), z201, z185);
         const __m256d z212 = _mm256_fmadd_pd(_mm256_set1_pd(0.92387953251128674), z201, z185);
-        const __m256d z215 = _mm256_xor_pd(_mm256_permute_pd(z213, 0x5), _M_IM_y);
-        const __m256d z219 = _mm256_xor_pd(_mm256_permute_pd(z214, 0x5), _M_IM_y);
         const __m256d z177 = _mm256_fnmadd_pd(_ZW15_s, _mm256_permute_pd(z174, 0x5), z171);
         const __m256d z178 = _mm256_addsub_pd(z172, _mm256_permute_pd(z175, 0x5));
         const __m256d z180 = _mm256_addsub_pd(z171, _mm256_permute_pd(z174, 0x5));
@@ -1095,7 +1044,6 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m256d z241 = _mm256_fmadd_pd(_ZW22_s, _mm256_permute_pd(z218, 0x5), z218);
         const __m256d z242 = _mm256_fnmadd_pd(_mm256_set1_pd(0.19509032201612833), z241, z139);
         const __m256d z243 = _mm256_fmadd_pd(_mm256_set1_pd(0.19509032201612833), z241, z139);
-        const __m256d z244 = _mm256_xor_pd(_mm256_permute_pd(z206, 0x5), _M_IM_y);
         const __m256d z245 = _mm256_fmadd_pd(_ZW15_s, _mm256_permute_pd(z206, 0x5), z127);
         const __m256d z246 = _mm256_fnmadd_pd(_ZW15_s, _mm256_permute_pd(z206, 0x5), z127);
         const __m256d z247 = _mm256_fmadd_pd(_ZW23_s, _mm256_permute_pd(z216, 0x5), z216);
@@ -1298,18 +1246,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m128d z135 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z118, z120);
         const __m128d z92 = _mm_fnmadd_pd(_mm_set1_pd(0.70710678118654757), z90, z91);
         const __m128d z93 = _mm_fmadd_pd(_mm_set1_pd(0.70710678118654757), z90, z91);
-        const __m128d z97 = _mm_xor_pd(_mm_permute_pd(z95, 0x1), _M_IM_n);
-        const __m128d z102 = _mm_xor_pd(_mm_permute_pd(z96, 0x1), _M_IM_n);
         const __m128d z108 = _mm_fnmadd_pd(_mm_set1_pd(0.92387953251128674), z107, z105);
         const __m128d z109 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z107, z105);
-        const __m128d z114 = _mm_xor_pd(_mm_permute_pd(z112, 0x1), _M_IM_n);
-        const __m128d z116 = _mm_xor_pd(_mm_permute_pd(z113, 0x1), _M_IM_n);
         const __m128d z125 = _mm_add_pd(z78, z85);
-        const __m128d z130 = _mm_xor_pd(_mm_permute_pd(z126, 0x1), _M_IM_n);
         const __m128d z132 = _mm_fnmadd_pd(_mm_set1_pd(0.92387953251128674), z122, z106);
         const __m128d z133 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z122, z106);
-        const __m128d z136 = _mm_xor_pd(_mm_permute_pd(z134, 0x1), _M_IM_n);
-        const __m128d z140 = _mm_xor_pd(_mm_permute_pd(z135, 0x1), _M_IM_n);
         const __m128d z98 = _mm_fnmadd_pd(_ZW29_s, _mm_permute_pd(z95, 0x1), z92);
         const __m128d z99 = _mm_addsub_pd(z93, _mm_permute_pd(z96, 0x1));
         const __m128d z101 = _mm_addsub_pd(z92, _mm_permute_pd(z95, 0x1));
@@ -1348,18 +1289,11 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m128d z214 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z197, z199);
         const __m128d z171 = _mm_fnmadd_pd(_mm_set1_pd(0.70710678118654757), z169, z170);
         const __m128d z172 = _mm_fmadd_pd(_mm_set1_pd(0.70710678118654757), z169, z170);
-        const __m128d z176 = _mm_xor_pd(_mm_permute_pd(z174, 0x1), _M_IM_n);
-        const __m128d z181 = _mm_xor_pd(_mm_permute_pd(z175, 0x1), _M_IM_n);
         const __m128d z187 = _mm_fnmadd_pd(_mm_set1_pd(0.92387953251128674), z186, z184);
         const __m128d z188 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z186, z184);
-        const __m128d z193 = _mm_xor_pd(_mm_permute_pd(z191, 0x1), _M_IM_n);
-        const __m128d z195 = _mm_xor_pd(_mm_permute_pd(z192, 0x1), _M_IM_n);
         const __m128d z204 = _mm_add_pd(z157, z164);
-        const __m128d z209 = _mm_xor_pd(_mm_permute_pd(z205, 0x1), _M_IM_n);
         const __m128d z211 = _mm_fnmadd_pd(_mm_set1_pd(0.92387953251128674), z201, z185);
         const __m128d z212 = _mm_fmadd_pd(_mm_set1_pd(0.92387953251128674), z201, z185);
-        const __m128d z215 = _mm_xor_pd(_mm_permute_pd(z213, 0x1), _M_IM_n);
-        const __m128d z219 = _mm_xor_pd(_mm_permute_pd(z214, 0x1), _M_IM_n);
         const __m128d z177 = _mm_fnmadd_pd(_ZW29_s, _mm_permute_pd(z174, 0x1), z171);
         const __m128d z178 = _mm_addsub_pd(z172, _mm_permute_pd(z175, 0x1));
         const __m128d z180 = _mm_addsub_pd(z171, _mm_permute_pd(z174, 0x1));
@@ -1399,7 +1333,6 @@ void radix32_z_t2bw32_fwd_avx512(
         const __m128d z241 = _mm_fmadd_pd(_ZW36_s, _mm_permute_pd(z218, 0x1), z218);
         const __m128d z242 = _mm_fnmadd_pd(_mm_set1_pd(0.19509032201612833), z241, z139);
         const __m128d z243 = _mm_fmadd_pd(_mm_set1_pd(0.19509032201612833), z241, z139);
-        const __m128d z244 = _mm_xor_pd(_mm_permute_pd(z206, 0x1), _M_IM_n);
         const __m128d z245 = _mm_fmadd_pd(_ZW29_s, _mm_permute_pd(z206, 0x1), z127);
         const __m128d z246 = _mm_fnmadd_pd(_ZW29_s, _mm_permute_pd(z206, 0x1), z127);
         const __m128d z247 = _mm_fmadd_pd(_ZW37_s, _mm_permute_pd(z216, 0x1), z216);
