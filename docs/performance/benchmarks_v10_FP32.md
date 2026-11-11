@@ -1,16 +1,18 @@
 # VectorFFT v1.0 — FP32 results, **AVX-512 hosts**
 
 Single precision, 1D complex-to-complex, powers of two from 64 to 4M points, interleaved, natural order, out of
-place, one thread. Speedup = the other library's time / VectorFFT's time: above 1 means VectorFFT is faster. Each
-pass takes the worse of the two engine orders. Two hosts, each in its own section, and **not comparable** with
-each other:
+place, one thread. Speedup = the other library's time / VectorFFT's time: above 1 means VectorFFT is faster. Two
+hosts, each in its own section, which says how its figures are formed, and **not comparable** with each other:
 
 - [Emerald Rapids](#emerald-rapids): against FFTW and MKL.
 - [Granite Rapids (6980P)](#granite-rapids-6980p): against MKL.
 
 ## Emerald Rapids
 
-Each figure is the median of 3 passes.
+Each figure is the median of 3 passes; each pass takes the worse of the two engine orders.
+
+Build: before commit `3b1925ff`, so ZTURN-T ran 256-bit vectors at FP32 on this host. The Granite Rapids section
+is measured with its 512-bit form.
 
 Comparators:
 
@@ -75,10 +77,17 @@ VectorFFT is faster on 15 of 17 lengths against each library. The two it loses a
 
 ## Granite Rapids (6980P)
 
-Comparator: **Intel oneMKL 2026.0.1** (conda-forge), sequential, through `mkl_rt`. Built with GCC 16.2 on Linux.
+Comparator: **Intel oneMKL 2026.0.1** (conda-forge), sequential, through `mkl_rt`. Built with GCC 16.2 on Linux,
+at commit `3b1925ff`.
 
-Plans: the library recognised this CPU as the 6980P and served from its wisdom folder, `src/wisdom/6980P/`. Its
-planner had saved all 17 FP32 plans there in an earlier run; this run read them back and planned nothing. One run.
+Plans: the library recognised this CPU as the 6980P and its planner ran on it. The 12 lengths from 2048 up were
+planned at this commit: ZTURN-T on 512-bit vectors (16 floats per register) from 2048 to 512K, for example
+`16.4.8.4` at 2048 and `16.4.8.8` at 4096, and the four-step route (`fs`) from 1M to 4M. The five lengths from 64
+to 1024 keep the plans of an earlier run (the fused `mono` kernels). Every timed pass read the plans back and
+planned nothing.
+
+Each figure is the median over every timed sample of that length: 14 samples from 64 to 4096, 4 samples above.
+The speedup is the median MKL time over the median VectorFFT time.
 
 ### The machine
 
@@ -89,34 +98,36 @@ planner had saved all 17 FP32 plans there in an earlier run; this run read them 
 
 ### 1D C2C, single precision
 
-| N | Speedup vs MKL |
-|---:|---:|
-| 64 | 1.20× |
-| 128 | 1.09× |
-| 256 | **1.33×** |
-| 512 | 1.13× |
-| 1024 | 0.61× |
-| 2048 | 0.91× |
-| 4096 | 0.92× |
-| 8192 | 1.13× |
-| 16K | 0.98× |
-| 32K | 1.01× |
-| 64K | 1.24× |
-| 128K | 1.23× |
-| 256K | **1.49×** |
-| 512K | **1.51×** |
-| 1M | **1.69×** |
-| 2M | **1.62×** |
-| 4M | **1.63×** |
-| **Geometric mean** | **1.18×** |
+| N | VectorFFT | vs MKL |
+|---:|---:|---:|
+| 64 | 0.019 µs | 1.24× |
+| 128 | 0.039 µs | 1.10× |
+| 256 | 0.083 µs | **1.37×** |
+| 512 | 0.198 µs | 1.12× |
+| 1024 | 0.431 µs | 1.11× |
+| 2048 | 1.12 µs | 1.09× |
+| 4096 | 2.44 µs | 1.16× |
+| 8192 | 5.29 µs | **1.37×** |
+| 16K | 12.5 µs | 1.20× |
+| 32K | 27.3 µs | **1.33×** |
+| 64K | 62.3 µs | **1.79×** |
+| 128K | 192 µs | **1.80×** |
+| 256K | 609 µs | **1.72×** |
+| 512K | 1.80 ms | **1.45×** |
+| 1M | 3.85 ms | **1.91×** |
+| 2M | 7.74 ms | **1.88×** |
+| 4M | 11.8 ms | **1.75×** |
+| **Geometric mean** | | **1.41×** |
 
-VectorFFT is faster on 13 of 17 lengths.
+VectorFFT is faster on all 17 lengths.
 
 ### Reading the numbers
 
-- **Large lengths:** from 256K points up VectorFFT leads by 1.5× to 1.7×.
-- **2048 and 4096** lose in every run on this machine (about 0.9×), as they do on the Emerald Rapids host.
-- **Noise:** the control cell drifted to 0.90×–0.91× during the run, so a difference under about 10 % is a tie.
-  The 1024 reading (0.61×) is one engine order where VectorFFT ran 761 ns against 437 ns in the other order on
-  the same plan; in the run before this one, 1024 read 1.13×. Likewise 16K read 0.66× in that earlier run and
-  0.98× here.
+- **2048 and 4096** read 1.09× and 1.16×. With ZTURN-T on 256-bit vectors they read 0.90× and 0.95× on this
+  machine, and VectorFFT's own times from 2048 to 512K were 1.13× to 1.41× longer.
+- **Large lengths:** from 64K points up VectorFFT leads by 1.45× to 1.9×.
+- **Worse engine order:** taking the worse of the two engine orders in each pass, as the Emerald Rapids section
+  does, the geometric mean of the two full passes was 1.29× and 1.26×.
+- **Noise:** the control cell read 1.14× to 1.20× during these runs, so a single pass can move by that much:
+  2048 timed 1.40 µs in one pass against its 1.12 µs median. The leads below about 1.2× (128, 512, 1024, 2048
+  and 4096) rest on the medians, not on any single pass.
