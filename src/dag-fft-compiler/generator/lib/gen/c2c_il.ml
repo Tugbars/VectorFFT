@@ -341,6 +341,13 @@ let emit
       then Some (Printf.sprintf "the %s kind (n1c only so far)" (kind_name kind))
       else if radix < 4 || radix land (radix - 1) <> 0
       then Some (Printf.sprintf "radix %d (a power of two >= 4)" radix)
+      else if radix > 16 && not blocked
+      then
+        Some
+          (Printf.sprintf
+             "a monolithic radix %d (above 16 the column leaf is blocked: b48 / b84 / b88, \
+              vfft_il2p_col_forms; a monolithic body spills)"
+             radix)
       else if split3 <> None
       then Some "the three-pass blocked form (--cil-split3)"
       else if blocked && (match split with Some (m, _) -> m < 4 | None -> true)
