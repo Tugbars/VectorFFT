@@ -155,6 +155,9 @@ EXE="$GEN/_build/default/bin/gen_radix.exe"
 # Coverage.quadrants is the single source of truth; one warm process, 1478 files.
 "$GEN/_build/default/bin/gen_set.exe" --root "$WORK/tree" all > "$WORK/genset.log" 2>&1 \
   || { echo "FATAL: gen_set failed"; sed -n '1,20p' "$WORK/genset.log"; exit 2; }
+# the FP32 quadrants (zil-f32-avx2 / zil-f32-avx512, 2026-11-10) are not in `all`: the same tree
+"$GEN/_build/default/bin/gen_set.exe" --root "$WORK/tree" f32 >> "$WORK/genset.log" 2>&1 \
+  || { echo "FATAL: gen_set f32 failed"; sed -n '1,20p' "$WORK/genset.log"; exit 2; }
 
 # -------------------------------- 3. arms B-E: one fork per non-gen_set file
 # replay = the file's own recorded argv (argv[0] reproduced via exec -a)
