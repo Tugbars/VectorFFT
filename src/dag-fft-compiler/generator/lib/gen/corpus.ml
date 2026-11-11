@@ -1239,10 +1239,14 @@ let zil_pure_cells : (string * string list) list =
     , [ "8"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_n1c_bwd_avx2.c"
     , [ "8"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix16_z_n1c_avx2.c"
-    , [ "16"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix16_z_n1c_bwd_avx2.c"
-    , [ "16"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  (* the radix-16 column leaf is the COSINE AND SINE PARTS form (--cil-conj, 2026-11-11): it
+     replaced the eager n1c16 at both FP64 ISAs (never worse: 6980P AVX-512 1.24-1.26x, i9-14900KF
+     AVX2 1.09-1.12x in L1, equal or better beyond; docs/design/il_avx512_kernel_operations.md).
+     The FP32 corpus keeps the eager form (zil_f32_eager below). *)
+  ; ( "radix16_z_n1cconj_avx2.c"
+    , [ "16"; "--cil-n1c"; "--cil-conj"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1cconj_bwd_avx2.c"
+    , [ "16"; "--cil-n1c"; "--cil-conj"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_n1c_avx2.c"
     , [ "32"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_n1c_bwd_avx2.c"
@@ -2856,11 +2860,33 @@ let zil_f32_ztt_in_scope (c : Codelet.t) : bool =
   | _ -> false
 ;;
 
+(* FP32 keeps the EAGER construction where FP64 moved to the cosine and sine parts (--cil-conj is
+   FP64 only, 2026-11-11): such a cell enters the FP32 corpus as its eager twin -- the flag off and
+   "conj" out of the file name -- so every FP32 kernel regenerates as it was. *)
+let zil_f32_eager ((file, tail) : string * string list) : string * string list =
+  if List.mem "--cil-conj" tail
+  then (
+    (* drop the "conj" that ends the kind: radix16_z_n1cconj_avx2.c -> radix16_z_n1c_avx2.c *)
+    let tag = "conj_" in
+    let n = String.length file
+    and lt = String.length tag in
+    let rec find i =
+      if i + lt > n
+      then failwith ("Corpus.zil_f32_eager: no conj tag in " ^ file)
+      else if String.sub file i lt = tag
+      then i
+      else find (i + 1)
+    in
+    let i = find 0 in
+    String.sub file 0 i ^ "_" ^ String.sub file (i + lt) (n - i - lt), List.filter (fun a -> a <> "--cil-conj") tail)
+  else file, tail
+;;
+
 let zil_f32_base_cells : (string * string list) list Lazy.t =
   lazy
     (List.filter
        (fun (_, tail) -> zil_f32_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
-       zil_pure_cells
+       (List.map zil_f32_eager zil_pure_cells)
      @ zil_f32_extra_cells
      @ List.filter
          (fun (_, tail) -> zil_f32_ztt_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
@@ -3116,7 +3142,7 @@ let zil_folder (name : string) : string option =
       in
       z
         (if base = "n1" then "shared"
-         else if base = "n1c" || base = "t2c" then "shared/col"
+         else if base = "n1c" || base = "n1cconj" || base = "t2c" then "shared/col"
          else if base = "n1ch"
                  || (starts_with base "n1cb" && ends_with base "h"
                      && is_digits (String.sub base 4 (String.length base - 5)))

@@ -411,6 +411,18 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
                         : VFFT_IL_SYM(radix64_z_n1cb88_fwd);
     default: break;
     }
+#ifdef VFFT_IL_N1CCONJ_PAIR_RADICES
+    /* THE COSINE AND SINE PARTS (2026-11-11): a radix the corpus emits in that form (n1cconj,
+     * radix 16 at both FP64 ISAs) is served by it; it replaced the eager kernel there (never
+     * worse; docs/design/il_avx512_kernel_operations.md). An ISA whose registry has no such
+     * list (FP32) keeps the eager kernel below. */
+    switch (R) {
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1cconj_bwd) : VFFT_IL_SYM(radix##R##_z_n1cconj_fwd);
+    VFFT_IL_N1CCONJ_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     /* EVERY OTHER RADIX FROM THE REGISTRY, never a hand-written list: a
      * kernel the registry declares and this switch omits ships and is never
      * selectable. The PAIR list (both directions exist) is the authority;

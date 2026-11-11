@@ -129,6 +129,17 @@ static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
 /* the IN-PLACE solo: alias-tolerant n1c, both directions */
 static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
 {
+#ifdef VFFT_IL_N1CCONJ_PAIR_RADICES
+    /* the cosine and sine parts form where the corpus emits it (n1cconj, radix 16 at both FP64
+     * ISAs, 2026-11-11): it replaced the eager kernel, here as in vfft_il2p_n1c_fn */
+    switch (N)
+    {
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1cconj_bwd) : VFFT_IL_SYM(radix##R##_z_n1cconj_fwd);
+    VFFT_IL_N1CCONJ_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     switch (N)
     {
 #define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_fwd);
