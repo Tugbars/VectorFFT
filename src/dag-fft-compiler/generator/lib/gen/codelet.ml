@@ -193,6 +193,14 @@ type kind =
            cell, and the FP32 corpus) prints nothing, so no recorded argv changes *)
       }
   | Zsplit of { k : zs_kind } (* --zp-<kind> *)
+  | Cil_k1 of
+      { a : int
+        (* --cil-k1 --cil-chain A:M (FP32, 2026-11-11): the fused K=1 kernel, the whole
+           N = A x M transform in one call -- pass 1 = DFT_A across the legs, pass 2 = DFT_M
+           (c2c_il.ml emit_k1_f32). The positional number is N. *)
+      ; m : int
+      ; port : int (* --cil-port P, as on Cil *)
+      }
   | K1_mono of
       { r1 : int option (* --k1-r1 N *)
       ; il : bool (* --k1-il *)
@@ -428,6 +436,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let k1_r1 = ref None
   and k1_il = ref false
   and k1_sw = ref false in
+  let k1_chain = ref None in
   let rec go = function
     | [] -> ()
     | n :: tl when !radix = 0 && int_of_string_opt n <> None ->
@@ -684,6 +693,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-pretw" :: tl ->
       pre_tw := true;
       go tl
+    | "--cil-k1" :: tl ->
+      push "cil-k1";
+      go tl
+    | "--cil-chain" :: v :: tl ->
+      k1_chain := Some v;
+      go tl
     | "--k1-mono" :: tl ->
       push "k1-mono";
       go tl
@@ -804,6 +819,15 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; form_tag = !cil_form_tag
         ; port = !port
         }
+    | [ "cil-k1" ] ->
+      (* one factor per pass: the form the FP32 fused kernel takes (the FP64 emitter's dotted
+         chains have no corpus cell) *)
+      (match !k1_chain with
+       | None -> fail "--cil-k1 requires --cil-chain A:M"
+       | Some v ->
+         (match List.map int_of_string_opt (String.split_on_char ':' v) with
+          | [ Some a; Some m ] when a * m = !radix -> Cil_k1 { a; m; port = !port }
+          | _ -> fail "--cil-k1 expects --cil-chain A:M with A x M = N (one factor per pass)"))
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
     | [ t ] when String.length t > 3 && String.sub t 0 3 = "zp:" ->
       Zsplit { k = zs_of_name (String.sub t 3 (String.length t - 3)) }
@@ -999,6 +1023,14 @@ let to_argv (c : t) : string list =
   | Zsplit { k } ->
     n
     @ [ "--zp-" ^ zs_name k ]
+    @ isa
+    @ uarch
+    @ emitc
+  | Cil_k1 { a; m = mm; port } ->
+    n
+    @ [ "--cil-k1"; "--cil-chain"; Printf.sprintf "%d:%d" a mm ]
+    @ (if port <> 0 then [ "--cil-port"; string_of_int port ] else [])
+    @ g (m.dir = Bwd) "--cil-bwd"
     @ isa
     @ uarch
     @ emitc

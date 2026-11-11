@@ -163,6 +163,11 @@ type kind =
            add/sub rendered as fmadd(b, 1, a) / fnmadd(b, 1, a); 0 = absent from the argv *)
       }
   | Zsplit of { k : zs_kind }
+  | Cil_k1 of
+      { a : int (* --cil-k1 --cil-chain A:M (FP32): the fused K=1 kernel, N = A x M in one call *)
+      ; m : int
+      ; port : int (* --cil-port P, as on Cil *)
+      }
   | K1_mono of
       { r1 : int option
       ; il : bool

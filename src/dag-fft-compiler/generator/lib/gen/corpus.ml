@@ -2713,6 +2713,42 @@ let zil_f32_extra_cells : (string * string list) list =
   ]
 ;;
 
+(* THE FP32 FUSED K=1 KERNELS (2026-11-11): the whole N-point transform in ONE call, N = A x M
+   (c2c_il.ml emit_k1_f32) -- the mono route's forms at FP32. Per N the shapes that timed within
+   a few percent of that N's best on the 14900KF (the planner's race picks among them on each
+   machine). THE ORDER IS THE WISDOM'S FORM NUMBER: form f >= 1 of N is the f-th shape of its
+   row, banked as il_kv on the MONO row (form 0 = the solo n1 kind), so a row is appended to,
+   never reordered. Emitted at --cil-port 50 (16 points: 0, where the plain adds timed faster).
+   256-bit only: declared absent at avx512_f32 (zil_f32_gap) until that form is written. *)
+let zil_f32_mono_shapes : (int * (int * int) list) list =
+  [ 16, [ 4, 4 ]
+  ; 32, [ 4, 8; 8, 4 ]
+  ; 64, [ 16, 4; 8, 8; 4, 16 ]
+  ; 128, [ 16, 8; 32, 4; 8, 16 ]
+  ; 256, [ 8, 32; 32, 8; 16, 16 ]
+  ; 512, [ 32, 16; 16, 32; 64, 8 ]
+  ; 1024, [ 32, 32; 64, 16; 16, 64 ]
+  ]
+;;
+
+let zil_f32_mono_cells : (string * string list) list =
+  List.concat_map
+    (fun (n, shapes) ->
+       List.concat_map
+         (fun (a, m) ->
+            let argv bwd =
+              [ string_of_int n; "--cil-k1"; "--cil-chain"; Printf.sprintf "%d:%d" a m ]
+              @ (if n = 16 then [] else [ "--cil-port"; "50" ])
+              @ (if bwd then [ "--cil-bwd" ] else [])
+              @ [ "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+            in
+            [ Printf.sprintf "radix%d_z_mono%dx%d_avx2.c" n a m, argv false
+            ; Printf.sprintf "radix%d_z_mono%dx%d_bwd_avx2.c" n a m, argv true
+            ])
+         shapes)
+    zil_f32_mono_shapes
+;;
+
 let zil_f32_in_scope (c : Codelet.t) : bool =
   let pow2 r = r >= 2 && r land (r - 1) = 0 in
   match c.Codelet.kind with
@@ -2752,7 +2788,8 @@ let zil_f32_base_cells : (string * string list) list Lazy.t =
      @ zil_f32_extra_cells
      @ List.filter
          (fun (_, tail) -> zil_f32_ztt_in_scope (Codelet.of_argv (tail @ [ "--emit-c" ])))
-         zil_boundary_cells)
+         zil_boundary_cells
+     @ zil_f32_mono_cells)
 ;;
 
 (* every FP32 cell the generator refuses at that width, with the refusal it restates. TWO
@@ -2767,6 +2804,10 @@ let zil_f32_base_cells : (string * string list) list Lazy.t =
 let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
   let per = if isa = "avx2_f32" then 4 else 8 in
   match c.Codelet.kind with
+  | Codelet.Cil_k1 _ when isa <> "avx2_f32" ->
+    Some
+      "no 512-bit form yet: the fused K=1 kernel is written for 4 complex per 256-bit vector \
+       (c2c_il.ml emit_k1_f32)"
   | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod 8 <> 0 ->
     Some
       (Printf.sprintf
@@ -2994,6 +3035,8 @@ let zil_folder (name : string) : string option =
          else if List.mem base [ "n1t"; "t2"; "t2t"; "n1_ct"; "n1t_ct"; "t2_ct"; "t2t_ct" ] then "pair2p"
          else if blocked "n1tb" || blocked "n1b" || blocked "t2bt" || blocked "t2b" then "pair2p/blocked"
          else if base = "t2tg" then "chain3"
+         (* the FP32 fused K=1 kernels mono<A>x<M> (2026-11-11) *)
+         else if starts_with base "mono" then "mono"
          else if List.mem base [ "t2cp"; "t2cs"; "t2csg"; "t2csgn"; "t2csgt"; "t2csgnt" ] then "flat"
          else if base = "msz" || base = "mszt" then "flat/odd_mid"
          else if List.mem base [ "t0tp"; "tmg"; "tlf"; "tlfi"; "t0d"; "tmgd"; "tld" ] then "ztt"

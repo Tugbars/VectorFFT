@@ -1016,7 +1016,8 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
      * here — the caller serves the mono door (the OOP block reads the form
      * itself; in place, _k1_il_mono_candidate). Without this return an
      * in-place create would replay a MONO row as the balanced pair. */
-    if (ke && ke->k1_il_route == VFFT_K1_IL_MONO && vfft_k1_mono_il_fn(N, 0))
+    if (ke && ke->k1_il_route == VFFT_K1_IL_MONO &&
+        (vfft_k1_mono_il_fn(N, 0) || vfft_k1_mono_il_form_fn(N, ke->il_kv, 0)))   /* a length whose only solo kernels are the fused forms (FP32, 128 and up) has no form 0 */
         return 0;
     /* PRIME verdict: the cell's plan is the prime cell. The race's warm plan
      * is handed over when the race just ran (never rebuilt: under
@@ -1752,9 +1753,10 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
 
 /* ── the IN-PLACE mono candidate ──
  * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
- * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
- * The row's form axis names the OOP kernel family (solo n1 vs mono64); in
- * place both forms map onto the ONE alias-safe solo, n1c(N). Returns 1 and
+ * race on a miss) says MONO: the row's form's in-place kernel, both
+ * directions (vfft_k1_mono_il_ip_fn: form 0 and mono64 map onto the ONE
+ * alias-safe solo, n1c(N); an FP32 fused form to 128 points is its own
+ * in-place kernel, the one the in-place race timed). Returns 1 and
  * fills the pair when served, 0 when the row is not a MONO verdict, -1 when
  * it is one and its kernel is missing (the row is empty); nothing is built
  * or left to free in either case. */
@@ -1771,8 +1773,8 @@ static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     if (!W || W->vw2_off_oop) return 0;
     ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, 1, _vfft_plan_threads(cfg), &keb) ? &keb : NULL;
     if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
-    *ilf = vfft_k1_mono_ilc_fn(N, 0);
-    *ilb = vfft_k1_mono_ilc_fn(N, 1);
+    *ilf = vfft_k1_mono_il_ip_fn(N, ke->il_kv, 0);
+    *ilb = vfft_k1_mono_il_ip_fn(N, ke->il_kv, 1);
     if (!*ilf || !*ilb) { *ilf = *ilb = 0; return -1; }
     return 1;
 }

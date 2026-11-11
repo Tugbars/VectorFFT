@@ -825,6 +825,21 @@ let rec dft_chain
  * built. per = 2, r = 2 is exactly today's permute2f128 0x20 / 0x31 pair.
  * Returns (columns, intermediates-in-creation-order) — the intermediates
  * are the non-final rounds, which the caller declares before the stores. *)
+(* The 4 x 4 complex transpose at 4 complex per 256-bit vector (FP32 AVX2) in 8 shuffles: one
+   unpack round within the 128-bit halves, one half exchange (the classic form; turn_transpose's
+   two CTurn rounds render as 16 shuffles there, and the shuffle port bounds a fused kernel).
+     u0 = unpacklo(L0, L1) = [L0_0 L1_0 | L0_2 L1_2]   u1 = unpackhi(L0, L1) = [L0_1 L1_1 | L0_3 L1_3]
+     u2 = unpacklo(L2, L3)                             u3 = unpackhi(L2, L3)
+     col0 = half_lo(u0, u2)  col1 = half_lo(u1, u3)  col2 = half_hi(u0, u2)  col3 = half_hi(u1, u3) *)
+let transpose4_unpack (legs : t array) : t array =
+  if Array.length legs <> 4 then failwith "transpose4_unpack: needs 4 legs";
+  let u0 = cunpack legs.(0) legs.(1) false
+  and u1 = cunpack legs.(0) legs.(1) true
+  and u2 = cunpack legs.(2) legs.(3) false
+  and u3 = cunpack legs.(2) legs.(3) true in
+  [| chalf u0 u2 false; chalf u1 u3 false; chalf u0 u2 true; chalf u1 u3 true |]
+;;
+
 let turn_transpose ~(per : int) (legs : t array) : t array * t list =
   let r = Array.length legs in
   if per < 1 || per land (per - 1) <> 0 then failwith "turn_transpose: per must be a power of 2";

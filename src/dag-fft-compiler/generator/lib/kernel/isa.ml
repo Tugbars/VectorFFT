@@ -915,6 +915,14 @@ let storeu_cx_unit (isa : t) (addr : string) (v : string) (q : int) : string =
 
 (* FP32: the 64-bit (one complex) interleave inside each 128-bit lane, on cast vectors:
    lo = [a0 b0 | a2 b2 | ..], hi = [a1 b1 | a3 b3 | ..] in complex lanes (Cx_ir.CUnpack). *)
+(* The half exchange of two vectors (Cx_ir.CHalf): lo = [a.lo128 | b.lo128], hi = [a.hi128 |
+   b.hi128]. 256-bit FP32 (4 complex per vector) only: one vperm2f128. *)
+let cx_half (isa : t) ~(hi : bool) (a : string) (b : string) : string =
+  if isa.prec <> F32 || isa.vec_width <> 8
+  then failwith (Printf.sprintf "Isa.cx_half: 256-bit FP32 only (target %s)" isa.name);
+  Printf.sprintf "_mm256_permute2f128_ps(%s, %s, 0x%x)" a b (if hi then 0x31 else 0x20)
+;;
+
 let cx_unpack (isa : t) ~(hi : bool) (a : string) (b : string) : string =
   if isa.prec <> F32 then failwith "Isa.cx_unpack: FP32 only (FP64 renders CUnpack per double)";
   if not (List.mem isa.vec_width [ 4; 8; 16 ])

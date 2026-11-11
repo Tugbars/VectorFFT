@@ -22,6 +22,25 @@
  * compile-time ints IS the address; rendering to a C string is cx_render's
  * job. `col` on the turned forms selects column k (0) or k+1 (1) — the
  * corner-turn writes two columns per iteration. *)
+(* The lazy operations (2026-11-11, cx_lazy.ml): one FMA-class instruction each, on a value z, a
+   per-lane REAL constant k (one float per complex lane) and, for the three-operand forms, an
+   addend p. "i z" is the quarter turn of z, read through the complex swap (cflip) with the
+   sign-folded constant [-k, +k], so no mask and no separate rotation.
+     LMul    k z            LMulR   k i z
+     LFma    p + k z        LFnma   p - k z        LFms    k z - p
+     LFmaR   p + k i z      LFnmaR  p - k i z      LFmsR   k i z - p
+     LKI     k z + i z      (fmaddsub: a twiddle c + i s as s (k z + i z), k = c / s) *)
+type lzop =
+  | LMul
+  | LMulR
+  | LFma
+  | LFnma
+  | LFms
+  | LFmaR
+  | LFnmaR
+  | LFmsR
+  | LKI
+
 type caddr =
   | AZinLeg of int (* zin [2*((size_t)l*Ls  + k)]                  *)
   | AZoutLeg of int (* zout[2*((size_t)l*OLs + k)]                  *)
@@ -88,6 +107,9 @@ type caddr =
      the split form's 128-bit scatter). ── *)
   | AZinRow of int * int (* (r, c): zin [2*(((size_t)k + r)*Gs  + c)] *)
   | AZoutRow of int * int (* (r, c): zout[2*(((size_t)k + r)*OGs + c)] *)
+  | ANamed of string * int
+    (* (base, i): base[i] -- a C pointer the emitter declares (the loop cursors of the buffered
+       FP32 fused kernel, 2026-11-11) and a constant element offset *)
   | AZoutRowT of int * int
     (* (r, l): the TURNED store of the row kinds (the 2D turn route, 2026-11-08): point l of row k+r at
        zout[2*((size_t)l*OLs + ((size_t)k + r)*OGs)] -- OLs = the point pitch of the turned scratch, OGs = 1,
@@ -114,6 +136,12 @@ type cx_kind =
      per x per complex block (Cx_math.turn_transpose). ISA-parametric via
      Isa.cx_deint_pd: avx2 permute2f128 0x20/0x31, avx512 shuffle_f64x2
      0x88/0xDD, sse2 identity. *)
+  | CHalf of t * t * bool
+  (* THE HALF EXCHANGE of two vectors (2026-11-11, the FP32 4x4 complex transpose): lo (false) =
+     [a.lo128 | b.lo128], hi (true) = [a.hi128 | b.hi128] -- one permute2f128 (0x20 / 0x31). After
+     one CUnpack round it finishes a 4 x 4 complex transpose at 4 complex per 256-bit vector in 8
+     shuffles (Cx_math.transpose4_unpack); two CTurn rounds cost 16 there. Built only by that
+     function, so every other emission is unchanged. *)
   | CPart of t * int
   (* complex lane c as a 128-bit value (Isa.cx_part_pd): avx2
      castpd256_pd128 / extractf128(.,1); avx512 castpd512_pd128 /
@@ -146,6 +174,12 @@ type cx_kind =
      k1 of the same transform, so their twiddles w_N^{k1*j2} differ. Still
      zero runtime cost — the whole [c,c,c',c'][-s,+s,-s',+s'] pair is a
      file-scope VLIT, exactly like CTwC's. Array length = vec_width/2. *)
+  | CLz of lzop * float array * t * t
+  (* a LAZY operation (lzop above): (op, k, z, p), k one real constant per complex lane; the
+     two-operand forms (LMul, LMulR, LKI) carry p = z. Built only by Cx_lazy. *)
+  | CTwA of caddr * caddr * t
+  (* x * w with w LOADED from two addresses: WR = [c c] per lane at the first, WI = [s s] per lane
+     at the second (the buffered FP32 fused kernel's rodata table): fmaddsub(x, WR, WI * cflip x) *)
   | CTwL of int * t
 (* x * w[leg], w LOADED from the streamed VTW2 table — the bailey2 t2
      mid. Same BYTW2 shape as CTwC, but cvec/svec come from the runtime
@@ -289,6 +323,7 @@ let cload a = mk (CLoad a)
 let cstore a v = mk (CStore (a, v))
 let cturn a b odd = mk (CTurn (a, b, odd))
 let cunpack a b hi = mk (CUnpack (a, b, hi))
+let chalf a b hi = mk (CHalf (a, b, hi))
 let cpart a c = mk (CPart (a, c))
 let clo a = cpart a 0
 let chi a = cpart a 1
@@ -303,3 +338,5 @@ let cfnma c x e = mk (CFnmaC (c, x, e))
 let ctw c s x = mk (CTwC (c, s, x))
 let ctwv w x = mk (CTwV (w, x))
 let ctwl leg x = mk (CTwL (leg, x))
+let clz op k z p = mk (CLz (op, k, z, p))
+let ctwa wr wi x = mk (CTwA (wr, wi, x))

@@ -39,9 +39,10 @@ let children (e : t) : t list =
   | CNeg a | CRotNI a | CRotPI a | CPart (a, _) -> [ a ]
   | CStore (_, v) -> [ v ]
   | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
-  | CTurn (a, b, _) | CUnpack (a, b, _) -> [ a; b ]
+  | CTurn (a, b, _) | CUnpack (a, b, _) | CHalf (a, b, _) -> [ a; b ]
   | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
-  | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
+  | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) | CTwA (_, _, x) -> [ x ]
+  | CLz (_, _, z, p) -> if z == p then [ z ] else [ z; p ]
 ;;
 
 (* Reachable nodes from the assign roots, each visited once. *)
@@ -106,6 +107,7 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
              | CStore (a, v) -> cstore a (rw v)
              | CTurn (a, b, odd) -> cturn (rw a) (rw b) odd
              | CUnpack (a, b, hi) -> cunpack (rw a) (rw b) hi
+             | CHalf (a, b, hi) -> chalf (rw a) (rw b) hi
              | CAdd (a, b) -> cadd (rw a) (rw b)
              | CSub (a, b) -> csub (rw a) (rw b)
              | CRotAdd (a, b) -> crotadd (rw a) (rw b)
@@ -113,7 +115,9 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
              | CFnmaC (c, x, acc) -> cfnma c (rw x) (rw acc)
              | CTwC (c, s, x) -> ctw c s (rw x)
              | CTwV (w, x) -> ctwv w (rw x)
-             | CTwL (l, x) -> ctwl l (rw x))
+             | CTwL (l, x) -> ctwl l (rw x)
+             | CLz (op, k, z, p) -> clz op k (rw z) (rw p)
+             | CTwA (wr, wi, x) -> ctwa wr wi (rw x))
         in
         Hashtbl.replace memo e.tag r;
         r
@@ -166,9 +170,9 @@ let print_stats
     | CAdd _ | CRotAdd _ -> incr n_add
     | CSub _ -> incr n_sub
     | CNeg _ -> incr n_neg
-    | CRotNI _ | CRotPI _ | CTurn _ | CPart _ | CUnpack _ -> incr n_rot
-    | CFmaC _ | CFnmaC _ -> incr n_fma
-    | CTwC _ | CTwV _ | CTwL _ -> incr n_tw);
+    | CRotNI _ | CRotPI _ | CTurn _ | CPart _ | CUnpack _ | CHalf _ -> incr n_rot
+    | CFmaC _ | CFnmaC _ | CLz _ -> incr n_fma
+    | CTwC _ | CTwV _ | CTwL _ | CTwA _ -> incr n_tw);
   let cp_str =
     match uarch with
     | Some u -> Printf.sprintf ", cp %dc" (critical_path u (List.map snd assigns))

@@ -214,9 +214,9 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
     switch (rc->k1_il_route)
     {
     case VFFT_K1_IL_MONO:
-        /* out of place the form-resolved solo (c2c_oop_create_il.h:332-339); in place the
-         * alias-tolerant solo, form ignored (_k1_il_mono_candidate, k1_commit.h:1750-1766) */
-        if (ip ? (!vfft_k1_mono_ilc_fn(N, 0) || !vfft_k1_mono_ilc_fn(N, 1))
+        /* out of place the form-resolved solo (c2c_oop_create_il.h); in place the form's in-place
+         * kernel, the alias-tolerant solo for form 0 (_k1_il_mono_candidate, k1_commit.h) */
+        if (ip ? (!vfft_k1_mono_il_ip_fn(N, rc->il_kv, 0) || !vfft_k1_mono_il_ip_fn(N, rc->il_kv, 1))
                : (!vfft_k1_mono_il_form_fn(N, rc->il_kv, 0) || !vfft_k1_mono_il_form_fn(N, rc->il_kv, 1)))
             return est_refuse(why, whylen, "no solo kernel at N = %d (form %d, %s)", N, rc->il_kv,
                               ip ? "in place" : "out of place");

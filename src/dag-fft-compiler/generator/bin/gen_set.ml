@@ -85,6 +85,7 @@ let with_port (port : int option) (tail : string list) : string list =
       List.filter (fun a -> a <> "--emit-c") (to_argv { c with kind = Cil { r with port } })
     | Zsplit _ when (match c.isa with Some i -> List.mem i Corpus.zil_f32_isas | None -> false) ->
       tail   (* the FP32 ZTURN-T stage kernels: no port setting, emitted unchanged *)
+    | Cil_k1 _ -> tail   (* the FP32 fused K=1 kernels carry their own setting in the cell *)
     | _ -> failwith "gen_set: --port applies to the cil kinds only")
 ;;
 

@@ -87,6 +87,7 @@ val cx_part_pd : t -> string -> int -> string
 (* FP32 corner-turn stores (2026-11-10): a complex lane is one 64-bit unit *)
 val storeu_cx_lane : t -> string -> string -> int -> string
 val storeu_cx_unit : t -> string -> string -> int -> string
+val cx_half : t -> hi:bool -> string -> string -> string
 val cx_unpack : t -> hi:bool -> string -> string -> string
 val storeu_cx_prefix : t -> string -> string -> int -> string
 val cx_target_attr : t -> string

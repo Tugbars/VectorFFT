@@ -31,6 +31,132 @@
                   const float *, const float *, \
                   size_t, size_t, size_t, size_t, size_t);
 
+/* ── mono16x16 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono16x16_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono16x16_bwd_avx2_f32)
+#define VFFT_IL_MONO16X16_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO16X16_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO16X16_PAIR_RADICES(X) X(256)
+
+/* ── mono16x32 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono16x32_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono16x32_bwd_avx2_f32)
+#define VFFT_IL_MONO16X32_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO16X32_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO16X32_PAIR_RADICES(X) X(512)
+
+/* ── mono16x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_mono16x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix64_z_mono16x4_bwd_avx2_f32)
+#define VFFT_IL_MONO16X4_FWD_RADICES(X) X(64)
+#define VFFT_IL_MONO16X4_BWD_RADICES(X) X(64)
+#define VFFT_IL_MONO16X4_PAIR_RADICES(X) X(64)
+
+/* ── mono16x64 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono16x64_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono16x64_bwd_avx2_f32)
+#define VFFT_IL_MONO16X64_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO16X64_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO16X64_PAIR_RADICES(X) X(1024)
+
+/* ── mono16x8 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix128_z_mono16x8_fwd_avx2_f32)
+VFFT_IL_DECL(radix128_z_mono16x8_bwd_avx2_f32)
+#define VFFT_IL_MONO16X8_FWD_RADICES(X) X(128)
+#define VFFT_IL_MONO16X8_BWD_RADICES(X) X(128)
+#define VFFT_IL_MONO16X8_PAIR_RADICES(X) X(128)
+
+/* ── mono32x16 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono32x16_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono32x16_bwd_avx2_f32)
+#define VFFT_IL_MONO32X16_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO32X16_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO32X16_PAIR_RADICES(X) X(512)
+
+/* ── mono32x32 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono32x32_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono32x32_bwd_avx2_f32)
+#define VFFT_IL_MONO32X32_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO32X32_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO32X32_PAIR_RADICES(X) X(1024)
+
+/* ── mono32x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix128_z_mono32x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix128_z_mono32x4_bwd_avx2_f32)
+#define VFFT_IL_MONO32X4_FWD_RADICES(X) X(128)
+#define VFFT_IL_MONO32X4_BWD_RADICES(X) X(128)
+#define VFFT_IL_MONO32X4_PAIR_RADICES(X) X(128)
+
+/* ── mono32x8 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono32x8_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono32x8_bwd_avx2_f32)
+#define VFFT_IL_MONO32X8_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO32X8_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO32X8_PAIR_RADICES(X) X(256)
+
+/* ── mono4x16 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_mono4x16_fwd_avx2_f32)
+VFFT_IL_DECL(radix64_z_mono4x16_bwd_avx2_f32)
+#define VFFT_IL_MONO4X16_FWD_RADICES(X) X(64)
+#define VFFT_IL_MONO4X16_BWD_RADICES(X) X(64)
+#define VFFT_IL_MONO4X16_PAIR_RADICES(X) X(64)
+
+/* ── mono4x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix16_z_mono4x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix16_z_mono4x4_bwd_avx2_f32)
+#define VFFT_IL_MONO4X4_FWD_RADICES(X) X(16)
+#define VFFT_IL_MONO4X4_BWD_RADICES(X) X(16)
+#define VFFT_IL_MONO4X4_PAIR_RADICES(X) X(16)
+
+/* ── mono4x8 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_mono4x8_fwd_avx2_f32)
+VFFT_IL_DECL(radix32_z_mono4x8_bwd_avx2_f32)
+#define VFFT_IL_MONO4X8_FWD_RADICES(X) X(32)
+#define VFFT_IL_MONO4X8_BWD_RADICES(X) X(32)
+#define VFFT_IL_MONO4X8_PAIR_RADICES(X) X(32)
+
+/* ── mono64x16 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix1024_z_mono64x16_fwd_avx2_f32)
+VFFT_IL_DECL(radix1024_z_mono64x16_bwd_avx2_f32)
+#define VFFT_IL_MONO64X16_FWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO64X16_BWD_RADICES(X) X(1024)
+#define VFFT_IL_MONO64X16_PAIR_RADICES(X) X(1024)
+
+/* ── mono64x8 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix512_z_mono64x8_fwd_avx2_f32)
+VFFT_IL_DECL(radix512_z_mono64x8_bwd_avx2_f32)
+#define VFFT_IL_MONO64X8_FWD_RADICES(X) X(512)
+#define VFFT_IL_MONO64X8_BWD_RADICES(X) X(512)
+#define VFFT_IL_MONO64X8_PAIR_RADICES(X) X(512)
+
+/* ── mono8x16 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix128_z_mono8x16_fwd_avx2_f32)
+VFFT_IL_DECL(radix128_z_mono8x16_bwd_avx2_f32)
+#define VFFT_IL_MONO8X16_FWD_RADICES(X) X(128)
+#define VFFT_IL_MONO8X16_BWD_RADICES(X) X(128)
+#define VFFT_IL_MONO8X16_PAIR_RADICES(X) X(128)
+
+/* ── mono8x32 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix256_z_mono8x32_fwd_avx2_f32)
+VFFT_IL_DECL(radix256_z_mono8x32_bwd_avx2_f32)
+#define VFFT_IL_MONO8X32_FWD_RADICES(X) X(256)
+#define VFFT_IL_MONO8X32_BWD_RADICES(X) X(256)
+#define VFFT_IL_MONO8X32_PAIR_RADICES(X) X(256)
+
+/* ── mono8x4 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_mono8x4_fwd_avx2_f32)
+VFFT_IL_DECL(radix32_z_mono8x4_bwd_avx2_f32)
+#define VFFT_IL_MONO8X4_FWD_RADICES(X) X(32)
+#define VFFT_IL_MONO8X4_BWD_RADICES(X) X(32)
+#define VFFT_IL_MONO8X4_PAIR_RADICES(X) X(32)
+
+/* ── mono8x8 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_mono8x8_fwd_avx2_f32)
+VFFT_IL_DECL(radix64_z_mono8x8_bwd_avx2_f32)
+#define VFFT_IL_MONO8X8_FWD_RADICES(X) X(64)
+#define VFFT_IL_MONO8X8_BWD_RADICES(X) X(64)
+#define VFFT_IL_MONO8X8_PAIR_RADICES(X) X(64)
+
 /* ── msz ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_MSZ_FWD_RADICES(X)
 #define VFFT_IL_MSZ_BWD_RADICES(X)
@@ -467,9 +593,12 @@ VFFT_IL_DECL(radix8_z_tmgd_fwd_avx2_f32)
 #define VFFT_IL_ROW_CHOICE(X)
 #define VFFT_IL_ROWT_CHOICE(X)
 
+/* ── the fused K=1 forms: X(N, form, tag) = the mono route's form at N (form 0 = the solo n1) ── */
+#define VFFT_IL_MONO_FUSED(X) X(16, 1, mono4x4) X(32, 1, mono4x8) X(32, 2, mono8x4) X(64, 1, mono16x4) X(64, 2, mono8x8) X(64, 3, mono4x16) X(128, 1, mono16x8) X(128, 2, mono32x4) X(128, 3, mono8x16) X(256, 1, mono8x32) X(256, 2, mono32x8) X(256, 3, mono16x16) X(512, 1, mono32x16) X(512, 2, mono16x32) X(512, 3, mono64x8) X(1024, 1, mono32x32) X(1024, 2, mono64x16) X(1024, 3, mono16x64)
+
 /* zil-f32-avx2: 4 cells DECLARED ABSENT at avx2_f32:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* 118 declarations over 79 kinds */
+/* 154 declarations over 97 kinds */
 
 #endif

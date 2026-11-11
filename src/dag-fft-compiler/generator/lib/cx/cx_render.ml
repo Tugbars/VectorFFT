@@ -164,6 +164,7 @@ let addr_str (a : caddr) : string =
   | AS i -> Printf.sprintf "S[%d]" i
   | AP i -> Printf.sprintf "P[%d]" i
   | AZinAbs i -> Printf.sprintf "zin[%d]" i
+  | ANamed (b, i) -> Printf.sprintf "%s[%d]" b i
   | AZoutAbs i -> Printf.sprintf "zout[%d]" i
   | ATw i -> Printf.sprintf "twp[%d]" i
   | AZoutSpec (q, 0) -> Printf.sprintf "zout[2*((size_t)%d*OLs)]" q
@@ -536,6 +537,7 @@ let render
   | CLoad a -> Isa.loadu_pd ~mode isa (addr_str a)
   | CStore _ -> failwith "codelet_cil.render: CStore is a statement — use render_store"
   | CTurn (a, b, odd) -> Isa.cx_deint_pd isa ~odd (v a) (v b)
+  | CHalf (a, b, hi) -> Isa.cx_half isa ~hi (v a) (v b)
   | CUnpack (a, b, hi) when Isa.is_f32 isa ->
     (* FP32: the 64-bit unit IS one complex -- the corner turn's first round *)
     Isa.cx_unpack isa ~hi (v a) (v b)
@@ -581,7 +583,7 @@ let render
   | CRotAdd (a, y) ->
     (* a + i*y fused: addsub(a, cflip y) — 2 uops, no mask. Wider ISAs
        compose the value-identical fwd-legal form a - (-i*y). *)
-    if isa.Isa.vec_width <= 4
+    if isa.Isa.vec_width <= 4 || (Isa.is_f32 isa && Isa.bits isa <= 256)
     then Isa.addsub_pd isa (v a) (Isa.cflip_pd isa (v y))
     else
       Isa.sub_pd isa (v a) (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v y)) ("_M_IM" ^ msuf))
@@ -624,6 +626,28 @@ let render
   | CTwV (ws, x) ->
     let w = const_name_v tbl ws in
     Isa.fmadd_pd isa (w ^ "_c") (v x) (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+  | CLz (op, k, z, p) ->
+    (* the constant entry (k, k) per lane: _c = [k, k], _s = [-k, +k] (the quarter turn's signs
+       folded in: i z = [-1, +1] * cflip z) *)
+    let w = const_name_v tbl (Array.map (fun x -> x, x) k) in
+    let kc = w ^ "_c"
+    and ks = w ^ "_s" in
+    (match op with
+     | LMul -> Isa.mul_pd isa kc (v z)
+     | LMulR -> Isa.mul_pd isa ks (Isa.cflip_pd isa (v z))
+     | LFma -> Isa.fmadd_pd isa kc (v z) (v p)
+     | LFnma -> Isa.fnmadd_pd isa kc (v z) (v p)
+     | LFms -> Isa.fmsub_pd isa kc (v z) (v p)
+     | LFmaR -> Isa.fmadd_pd isa ks (Isa.cflip_pd isa (v z)) (v p)
+     | LFnmaR -> Isa.fnmadd_pd isa ks (Isa.cflip_pd isa (v z)) (v p)
+     | LFmsR -> Isa.fmsub_pd isa ks (Isa.cflip_pd isa (v z)) (v p)
+     | LKI -> Isa.fmaddsub_pd isa (v z) kc (Isa.cflip_pd isa (v z)))
+  | CTwA (wr, wi, x) ->
+    Isa.fmaddsub_pd
+      isa
+      (v x)
+      (Isa.loadu_pd isa (addr_str wr))
+      (Isa.mul_pd isa (Isa.loadu_pd isa (addr_str wi)) (Isa.cflip_pd isa (v x)))
   | CTwL (leg, x) when ctx.tw_group ->
     (* t2c: the 16-byte record [c, s] of this leg, broadcast at the use (see
        Cx_ir.ctx.tw_group). The address does not depend on the render width,

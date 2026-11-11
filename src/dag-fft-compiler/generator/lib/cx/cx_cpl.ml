@@ -42,9 +42,9 @@ let port_class (e : t) =
   match e.node with
   | CIn _ | CLoad _ -> `LD
   | CStore _ -> `ST
-  | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ -> `P01
+  | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ | CLz _ | CTwA _ -> `P01
   | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CPart _
-  | CUnpack _ -> `P15
+  | CUnpack _ | CHalf _ -> `P15
 ;;
 
 let schedule_asis (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref option * t) list =

@@ -227,6 +227,22 @@ let () =
   choice "VFFT_IL_ROW_CHOICE" (fun t -> not (turned t));
   choice "VFFT_IL_ROWT_CHOICE" turned;
   Printf.printf "\n";
+  (* THE FUSED K=1 FORMS (FP32, 2026-11-11): X(N, form, tag) = the mono route's form `form` >= 1 at N is
+     the kernel pair radix<N>_z_<tag> (Corpus.zil_f32_mono_shapes: the order there IS the form number the
+     wisdom banks). Only the pairs this ISA has; an ISA with none defines the list empty. *)
+  if f32
+  then (
+    Printf.printf "/* ── the fused K=1 forms: X(N, form, tag) = the mono route's form at N (form 0 = the solo n1) ── */\n";
+    Printf.printf "#define VFFT_IL_MONO_FUSED(X)";
+    List.iter
+      (fun (n, shapes) ->
+         List.iteri
+           (fun i (a, m) ->
+              let tag = Printf.sprintf "mono%dx%d" a m in
+              if List.mem n (pair_of tag) then Printf.printf " X(%d, %d, %s)" n (i + 1) tag)
+           shapes)
+      Corpus.zil_f32_mono_shapes;
+    Printf.printf "\n\n");
   List.iter
     (fun q ->
        match Corpus.zil_absent q with

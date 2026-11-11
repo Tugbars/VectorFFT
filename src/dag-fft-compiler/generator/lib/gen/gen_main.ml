@@ -470,8 +470,8 @@ let run (argv : string array) : unit =
       "gen_main: --cil-port is an FP32 setting (--isa avx2_f32 / avx512_f32); an FP64 target \
        refuses it";
   if !cil_port <> 0
-     && (!cil_k1
-         || List.mem !cil_kind [ ""; "row"; "t2h"; "t2m"; "r2z"; "r1c"; "r2zr" ])
+     && (not !cil_k1)
+     && List.mem !cil_kind [ ""; "t2h"; "t2m"; "r2z"; "r1c"; "r2zr" ]
   then failwith "gen_main: --cil-port applies to the cil kinds (--cil-n1 / n1c / n1t / t2 / t2c)";
   (* Inform the picker about the target register budget so it can pick
    * ISA-appropriate factorizations (e.g. (4,16) over (8,8) for R=64
@@ -673,6 +673,7 @@ let run (argv : string array) : unit =
              n);
       print_string
         (C2c_il.emit_k1
+           ~port:!cil_port
            ~tangent:!cil_tangent
            ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~chain_a
@@ -683,6 +684,8 @@ let run (argv : string array) : unit =
     then
       print_string
         (C2c_il.emit_row
+           ~port:!cil_port
+           ~tangent:!cil_tangent
            ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~radix:n
            ~rows:!cil_rows

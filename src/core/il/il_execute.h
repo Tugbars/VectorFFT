@@ -105,6 +105,17 @@ static int _k1x_mono_alias(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_rea
     vfft_k1_mono_ilc_fn(h->N, dir != VFFT_FORWARD)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
     return 0;
 }
+#ifdef VFFT_FLOAT
+/* the same call on a plan bound to a fused kernel of two loops (FP32, 256 points and up: zout is its
+ * plane between the loops, so it is out of place only): the kernel runs from a copy of the input */
+static int _k1x_mono_alias_copy(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
+{
+    vfft_real tmp[2 * VFFT_K1_MONO_FUSED_MAX] __attribute__((aligned(64)));
+    memcpy(tmp, zin, 2 * (size_t)h->N * sizeof(vfft_real));
+    (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)(tmp, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
+    return 0;
+}
+#endif
 /* bound only when the backward resolves (vfft_il2p_bwd_resolves, at the binder): never declines */
 static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *zout)
 {
@@ -527,8 +538,14 @@ static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
             if (h->k1_mono_ilf && h->k1_mono_ilb)
             {
                 h->k1_exec = _k1x_mono;
-                if (vfft_k1_mono_ilc_fn(h->N, 0) && vfft_k1_mono_ilc_fn(h->N, 1))
-                    h->k1_alias = _k1x_mono_alias;   /* called with one buffer: the n1c twins, never the restrict kernels */
+                switch (vfft_k1_mono_il_alias_kind(h->N, h->k1_mono_ilf))
+                {
+                case 1: h->k1_alias = _k1x_mono_alias; break;   /* called with one buffer: the n1c twins, never the restrict kernels */
+#ifdef VFFT_FLOAT
+                case 2: h->k1_alias = _k1x_mono_alias_copy; break;   /* a fused kernel of two loops: from a copy of the input */
+#endif
+                default: break;   /* 0: the bound kernel takes one buffer as it is */
+                }
             }
             break;
         case VFFT_K1_IL_2P_PURE: if (h->k1il2p && vfft_il2p_bwd_resolves(h->k1il2p)) h->k1_exec = _k1x_il2p; break;

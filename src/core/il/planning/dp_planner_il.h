@@ -483,12 +483,12 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
-    {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
-        b->mono = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 0) : 0)   /* in place: the alias-tolerant n1c solo; only form 0 has one */
+    {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64; FP32: 1.. = the fused kernels) */
+        b->mono = inplace ? vfft_k1_mono_il_ip_own_fn(N, c->il_kv, 0)   /* in place: the form's own alias-safe kernel (form 0: the n1c solo; an FP32 fused form to 128 points), else no candidate */
                           : vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
-        b->monob = inplace ? (c->il_kv == 0 ? vfft_k1_mono_ilc_fn(N, 1) : 0)
+        b->monob = inplace ? vfft_k1_mono_il_ip_own_fn(N, c->il_kv, 1)
                            : vfft_k1_mono_il_form_fn(N, c->il_kv, 1);
-        return b->mono ? 0 : -1;
+        return (b->mono && b->monob) ? 0 : -1;
     }
     return -1; /* unknown/retired route (e.g. legacy 2P/3P) -> not a candidate */
 }
@@ -1581,7 +1581,8 @@ static void _il_dp_enumerate_mono(int N, vfft_il_cand_sink_t *s)
     vfft_il_cand_t c;
     /* MONO forms: every solo kernel the registry has enters
      * the pool as its own candidate — form 0 = the solo n1 kind at each
-     * N in VFFT_IL_N1_PAIR_RADICES, form 1 = mono64's fused 8x8 (N=64).
+     * N in VFFT_IL_N1_PAIR_RADICES, form 1 = mono64's fused 8x8 (N=64),
+     * at FP32 forms 1.. = the fused kernels of N (il_solo_registry.h).
      * The measurement decides between them and against the pairs. */
     for (int mf = 0; mf < vfft_k1_mono_il_nforms(N); mf++)
     {

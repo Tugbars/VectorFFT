@@ -28,12 +28,57 @@ VFFT_IL_DECL(VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd))
  *
  * FORMS (the planner's mono axis, banked as il_kv on the MONO row):
  *   form 0 = radixN_z_n1      the solo kind (every N in the set)
- *   form 1 = mono64_8x8_il    the fused 8x8 four-step (N = 64 only)
+ *   form 1 = mono64_8x8_il    the fused 8x8 four-step (N = 64 only; FP64)
+ *   FP32: forms 1.. = the FUSED kernels radixN_z_mono<A>x<M>, the whole
+ *             N = A x M transform in one call (N = 16 .. 1024; below)
  * Out-of-place serves the __restrict__ n1 kernels; IN-PLACE serves the
  * alias-tolerant n1c twins (vfft_k1_mono_ilc_fn), same math, no restrict,
  * so z -> z is legal by construction (n1c exists at every N in the set). */
+
+#ifdef VFFT_FLOAT
+/* ── THE FUSED FORMS (FP32) ── radixN_z_mono<A>x<M>: pass 1 = DFT_A across the
+ * legs, a register transpose, pass 2 = DFT_M, natural order in and out, no
+ * table to build (generator: c2c_il.ml emit_k1_f32). The generated
+ * VFFT_IL_MONO_FUSED lists X(N, form, tag) per ISA (empty where the ISA has
+ * none); the form number is the corpus's shape order and is what the wisdom
+ * banks. Two constructions:
+ *   N <= 128   both passes in registers, every load before every store:
+ *              zin == zout is legal, the kernel is its own in-place form;
+ *   N >= 256   two loops with zout as the plane between them: OUT OF PLACE
+ *              ONLY (no in-place form; a call with one buffer runs from a
+ *              copy of the input, il_execute.h). */
+#define VFFT_K1_MONO_FUSED_IP_MAX 128
+#define VFFT_K1_MONO_FUSED_MAX 1024   /* the longest fused kernel: the one-buffer call's copy is sized by it */
+#define C(R, F, tag) _Static_assert(R <= VFFT_K1_MONO_FUSED_MAX, "a fused mono kernel past VFFT_K1_MONO_FUSED_MAX");
+VFFT_IL_MONO_FUSED(C)
+#undef C
+static inline vfft_oop11_fn vfft_k1_mono_il_fused_fn(int N, int form, int bwd)
+{
+#define C(R, F, tag) \
+    if (N == R && form == F) return bwd ? VFFT_IL_SYM(radix##R##_z_##tag##_bwd) : VFFT_IL_SYM(radix##R##_z_##tag##_fwd);
+    VFFT_IL_MONO_FUSED(C)
+#undef C
+    (void)N; (void)form; (void)bwd;
+    return 0;
+}
+/* the highest fused form at N (0 = none) */
+static inline int vfft_k1_mono_il_nfused(int N)
+{
+    int n = 0;
+#define C(R, F, tag) if (N == R && F > n) n = F;
+    VFFT_IL_MONO_FUSED(C)
+#undef C
+    (void)N;
+    return n;
+}
+#endif
+
 static inline int vfft_k1_mono_il_nforms(int N)
 {
+#ifdef VFFT_FLOAT
+    if (vfft_k1_mono_il_nfused(N))
+        return 1 + vfft_k1_mono_il_nfused(N);   /* form 0 (the solo n1, where N has one) + the fused forms */
+#endif
     switch (N)
     {
 #define C(R) case R:
@@ -55,6 +100,9 @@ static inline vfft_oop11_fn vfft_k1_mono_il_form_fn(int N, int form, int bwd)
         return N == 64 ? (bwd ? VFFT_IL_SYM(vfft_k1_mono64_8x8_il_bwd)
                               : VFFT_IL_SYM(vfft_k1_mono64_8x8_il_fwd))
                        : 0;
+#else
+    if (form >= 1)
+        return vfft_k1_mono_il_fused_fn(N, form, bwd);
 #endif
     if (form != 0) return 0;
     switch (N)
@@ -82,6 +130,43 @@ static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
 #undef C
     default: return 0;
     }
+}
+
+/* a form's OWN in-place kernel (the planner's in-place candidates): form 0 =
+ * the alias-tolerant n1c; an FP32 fused form whose transform stays in
+ * registers is its own in-place kernel (N <= VFFT_K1_MONO_FUSED_IP_MAX);
+ * 0 = the form has none */
+static inline vfft_oop11_fn vfft_k1_mono_il_ip_own_fn(int N, int form, int bwd)
+{
+    if (form == 0) return vfft_k1_mono_ilc_fn(N, bwd);
+#ifdef VFFT_FLOAT
+    if (N <= VFFT_K1_MONO_FUSED_IP_MAX) return vfft_k1_mono_il_fused_fn(N, form, bwd);
+#endif
+    return 0;
+}
+
+/* the in-place kernel a banked MONO row resolves to: its form's own, else the
+ * one alias-safe solo n1c(N) (where every form resolved before the fused ones) */
+static inline vfft_oop11_fn vfft_k1_mono_il_ip_fn(int N, int form, int bwd)
+{
+    vfft_oop11_fn f = vfft_k1_mono_il_ip_own_fn(N, form, bwd);
+    return f ? f : vfft_k1_mono_ilc_fn(N, bwd);
+}
+
+/* how a bound OUT-OF-PLACE mono kernel serves a call with ONE buffer
+ * (il_execute.h binds k1_alias from it):
+ *   0  as it is (an FP32 fused kernel that loads everything before it stores)
+ *   1  through the alias-tolerant n1c twin (the restrict solo kinds)
+ *   2  from a copy of the input (an FP32 fused kernel of two loops)
+ *  -1  no one-buffer executor (no n1c at this length)                       */
+static inline int vfft_k1_mono_il_alias_kind(int N, vfft_oop11_fn bound_fwd)
+{
+#ifdef VFFT_FLOAT
+    if (bound_fwd && bound_fwd != vfft_k1_mono_il_form_fn(N, 0, 0) && vfft_k1_mono_il_nfused(N))
+        return N <= VFFT_K1_MONO_FUSED_IP_MAX ? 0 : 2;
+#endif
+    (void)bound_fwd;
+    return (vfft_k1_mono_ilc_fn(N, 0) && vfft_k1_mono_ilc_fn(N, 1)) ? 1 : -1;
 }
 
 /* the BATCHED solo: n1ccs = the n1c leaf with column-stride
