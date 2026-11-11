@@ -341,8 +341,12 @@ let emit
       then Some (Printf.sprintf "the %s kind (n1c only so far)" (kind_name kind))
       else if radix < 4 || radix land (radix - 1) <> 0
       then Some (Printf.sprintf "radix %d (a power of two >= 4)" radix)
-      else if blocked || split <> None || split3 <> None
-      then Some "the blocked forms"
+      else if split3 <> None
+      then Some "the three-pass blocked form (--cil-split3)"
+      else if blocked && (match split with Some (m, _) -> m < 4 | None -> true)
+      then Some "a blocked form whose pass-2 DFT is below radix 4 (or no --cil-split)"
+      else if (not blocked) && split <> None
+      then Some "--cil-split without --cil-blocked"
       else if tangent
       then Some "--cil-tangent"
       else if colstride || gen2 || grouploop || transposed || herm || st128 || rowloop || log3 || pretw
@@ -677,11 +681,23 @@ let emit
       else (
         match lazy_st with
         | Some st ->
-          (* plain terms in; every output materialized at the store (one multiply where a
-             scale is still pending) *)
+          (* plain terms in; each output materialized (one multiply where a scale is still
+             pending) THE MOMENT IT EXISTS, through dft's out callback: its node is built next
+             to the output's, so in construction order (the lazy kernels' schedule, below) it
+             is stored and dies early instead of living to the end of the body *)
+          let mats = Array.make radix None in
+          let (_ : Cx_lazy.term array) =
+            Cx_lazy.dft
+              ~out:(fun k t -> mats.(k) <- Some (Cx_lazy.mat t))
+              ~bwd:(dir = Bwd)
+              ~st
+              (Array.map (Cx_lazy.plain_of ~per) inputs)
+          in
           Array.map
-            Cx_lazy.mat
-            (Cx_lazy.dft ~bwd:(dir = Bwd) ~st (Array.map (Cx_lazy.plain_of ~per) inputs))
+            (function
+              | Some z -> z
+              | None -> failwith "codelet_cil: --cil-lazy: an output the DFT did not report")
+            mats
         | None -> dft_small ~sign ~ctx radix inputs))
   in
   (* T2 bwd POST-twiddles: conj(w) (.) IDFT(y). Same BYTW2 apply, same table
@@ -710,7 +726,15 @@ let emit
       ~uarch
       assigns
   in
-  let scheduled = cx_schedule uarch assigns in
+  (* --cil-lazy kernels keep their construction order (the asis schedule) unless VFFT_CX_SCHED
+     names another: measured on the 6980P, it spills the least of the three (radix 64: 692 zmm
+     spills against SR's 926 and CPL's 1211), and with the outputs materialized at the out callback
+     the order also stores each output early. *)
+  let scheduled =
+    if lazy_ && Sys.getenv_opt "VFFT_CX_SCHED" = None
+    then Cx_cpl.schedule_asis assigns
+    else cx_schedule uarch assigns
+  in
   let rot_dead_mono = rotfma_dead ~ctx ~roots:(List.map snd assigns) (List.map snd scheduled) in
   (* LEG-LOAD TAGS FOR THE NARROW TAIL, captured HERE and not at the tail.
      The tail body renders `scheduled` at VEX-128 and must name the same zN
@@ -1183,20 +1207,42 @@ let emit
             let a, b = butterfly_pair ~sign ~ctx ~n:radix ~k:jv ins.(0) ins.(1) in
             [| a; b |])
         else (
-          let tw =
-            Array.mapi
-              (fun i x ->
-                 let e = i * jv mod radix in
-                 if e = 0
-                 then x
-                 else if 4 * e = radix
-                 then if sign = `Fwd then crot x else crotp x
-                 else (
-                   let a = sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix in
-                   ctw (cos a) (sin a) x))
-              ins
-          in
-          dft_small ~sign ~ctx m tw)
+          match lazy_st with
+          | Some st ->
+            (* --cil-lazy, the blocked form's pass 2: the constant twiddle W_R^(i jv) of each
+               input becomes the term's pending scale (Cx_lazy.mulw: +-1 and +-i free, a
+               general one a swap and an FMA), the DFT_m's FMAs absorb the scales, and each
+               output is materialized the moment it exists (dft's out callback) *)
+            let mats = Array.make m None in
+            let (_ : Cx_lazy.term array) =
+              Cx_lazy.dft
+                ~out:(fun k t -> mats.(k) <- Some (Cx_lazy.mat t))
+                ~bwd:(dir = Bwd)
+                ~st
+                (Array.mapi
+                   (fun i x -> Cx_lazy.mulw ~bwd:(dir = Bwd) (Cx_lazy.plain_of ~per x) (i * jv) radix)
+                   ins)
+            in
+            Array.map
+              (function
+                | Some z -> z
+                | None -> failwith "codelet_cil: --cil-lazy: a pass-2 output the DFT did not report")
+              mats
+          | None ->
+            let tw =
+              Array.mapi
+                (fun i x ->
+                   let e = i * jv mod radix in
+                   if e = 0
+                   then x
+                   else if 4 * e = radix
+                   then if sign = `Fwd then crot x else crotp x
+                   else (
+                     let a = sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix in
+                     ctw (cos a) (sin a) x))
+                ins
+            in
+            dft_small ~sign ~ctx m tw)
       in
       if post_tw
       then
