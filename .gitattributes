@@ -46,6 +46,10 @@ src/dag-fft-compiler/generator/scripts/** linguist-vendored
 src/dag-fft-compiler/jit/**               linguist-vendored
 # the benchmark programs and their run scripts: tooling, not library code
 benchmark_scripts/**                      linguist-vendored
+# the other tools (baselines, plots, the VTune harness, build helpers) and the
+# user guides' examples, listings and figure scripts
+src/tools/**                              linguist-vendored
+how-to-use/**                             linguist-vendored
 
 # HTML anywhere in this repo is a project page or a rendered report, never
 # library code — without this the site markup shows up in the language bar as
