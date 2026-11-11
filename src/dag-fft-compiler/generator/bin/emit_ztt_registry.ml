@@ -7,7 +7,7 @@
  * FP32 (2026-11-10): --isa avx2_f32 | avx512_f32 write the FP32 registries
  * (float pointers in the typedefs and externs, the _F32 guard / count / array
  * names, the same struct fields); the cell list is the ZTURN-T target's
- * (Ztt_drivers.ztt_isa: 8 float lanes at both FP32 ISAs).
+ * (Ztt_drivers.ztt_isa: 8 float lanes at avx2_f32, 16 at avx512_f32).
  *
  * Usage:
  *   dune exec bin/emit_ztt_registry.exe > generated/ztt_registry_avx2.h
@@ -38,14 +38,14 @@ let () =
   if Isa.is_f32 zisa
   then
     Printf.printf
-      "/* FP32: %d float lanes per vector (ymm), the cells and laws of 8 lanes; every\n\
+      "/* FP32: %d float lanes per vector (%s), the cells and laws of %d lanes; every\n\
       \ * driver's tw stream holds [c x%d][s x%d] float records per (%d-column block, leg),\n\
       \ * 2*(R-1)*L floats per stage, the plane 2N floats; rb[] is size_t.%s */\n\n"
-      vw vw vw vw
-      (if isa = "avx512_f32"
+      vw (if vw >= 16 then "zmm" else "ymm") vw vw vw vw
+      (if vw >= 16
        then
-         "\n * avx512_f32 = the 8-lane drivers under the avx512_f32 name (stopgap: no\n\
-         \ * 16-lane ZTURN-T form; ztt_drivers.ml ztt_isa)."
+         "\n * 16 lanes: every chain starts with the radix-16 ingest and continues with radix 4 / 8\n\
+         \ * stages (N = 256 .. the FP32 ceiling); natural order only."
        else "");
   p "/* the fused driver ABI: zin (natural packed z), zout (natural packed z), plane\n";
   Printf.printf " * (2N %ss, 64-B; unused by the dest drivers), tw (ONE contiguous stream in\n" el;

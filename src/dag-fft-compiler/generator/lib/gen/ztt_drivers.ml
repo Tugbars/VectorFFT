@@ -62,19 +62,20 @@ let max_nf = 7 (* VFFT_ZSPLIT_MAX_NF *)
 (* FP32 (2026-11-10): THE ZTURN-T TARGET of an ISA record. The VW laws below are
    in SCALAR lanes, so FP32 AVX2 (8 floats per ymm) has FP64 AVX-512's lane count,
    laws and 159 cells, rendered with ymm float shuffles (Isa's 8-lane FP32 forms).
-   FP32 AVX-512 (16 floats per zmm): no {4,8} chain meets the 16-lane natural law
-   R0 % 16 = 0 (the ingest writes each column's R0-run as whole 16-column blocks;
-   the plain class needs R_last % 16 = 0), so a 16-lane form needs radix-16 ends
-   (a radix-16 ingest lattice with 16 x 16 transposes, a radix-16 tld) and the
-   core's chain grammar at 16. STOPGAP: the avx512_f32 ZTURN-T build runs the SAME
-   8-lane drivers under the avx512_f32 name (same cells, same tables), compiled for
-   avx512f,avx512vl so the compiler has the 32 ymm registers. FP64 records pass
-   through unchanged. *)
+   FP32 AVX-512 (16 floats per zmm, 2026-11-11): the 16-lane natural law R0 % 16 = 0
+   (the ingest writes each column's R0-run as whole 16-column blocks) admits no
+   radix-4 or radix-8 ingest, so the 16-lane chains start with a RADIX-16 ingest
+   (the t0tp of Cascade_z at 16: a 16 x 16 transpose per 8 columns) and continue with
+   radix 4 / 8 mids and terminators: N = 16 * {4,8}+, from 256 (N / R0 a multiple of
+   16) to the FP32 ceiling. Natural class only: the plain class would need a radix-16
+   terminator (R_last % 16 = 0), which is not built. FP64 records pass through
+   unchanged. *)
 let ztt_isa = Cascade_z.ztt_isa   (* one definition: the FP32 stage kernels share it *)
 
 (* every ordered {4,8} chain with product n, nf >= 2, (n / r0) mod 4 = 0;
-   the order is the enumeration order (4 before 8 at every position) *)
-let chains_of (n : int) : int list list =
+   the order is the enumeration order (4 before 8 at every position). At 16 lanes
+   (vw = 16): the chains 16 :: {4,8}+ instead. *)
+let chains_of ?(vw = 4) (n : int) : int list list =
   let rec go prod acc depth =
     if prod = n
     then if List.length acc >= 2 then [ List.rev acc ] else []
@@ -82,7 +83,9 @@ let chains_of (n : int) : int list list =
     then []
     else go (prod * 4) (4 :: acc) (depth + 1) @ go (prod * 8) (8 :: acc) (depth + 1)
   in
-  List.filter (fun ch -> n / List.hd ch mod 4 = 0) (go 1 [] 0)
+  List.filter
+    (fun ch -> n / List.hd ch mod 4 = 0)
+    (if vw >= 16 then go 16 [ 16 ] 1 else go 1 [] 0)
 ;;
 
 (* THE VW LAWS (wf1 proposal). natural: the ingest writes each column's
@@ -109,7 +112,7 @@ let cells ?(vw = 4) ?(max = max_n) () : (int * int list) list =
     (fun n ->
        List.filter_map
          (fun ch -> if natural_ok ~vw n ch || plain_ok ~vw n ch then Some (n, ch) else None)
-         (chains_of n))
+         (chains_of ~vw n))
     (pow2 16 [])
 ;;
 
@@ -459,6 +462,19 @@ let file_name ~(isa : string) ~(scr : bool) (n : int) : string =
    directions; plain = t0d / tmgd / tld forward, tld backward, and the natural
    tmg / tlf BACKWARD bodies its backward driver walks *)
 let bodies ?(vw = 4) ~(scr : bool) () : (string * int * bool) list =
+  if vw >= 16
+  then
+    (* 16 lanes: the radix-16 ingest, radix-4 / 8 mids and terminators; no plain class *)
+    if scr
+    then []
+    else
+      List.concat_map
+        (fun bwd ->
+           List.map
+             (fun (k, r) -> k, r, bwd)
+             [ "t0tp", 16; "tmg", 4; "tmg", 8; "tlf", 4; "tlf", 8; "tlfi", 4; "tlfi", 8 ])
+        [ false; true ]
+  else
   (* only the lattice kinds whose radix makes whole VW-lane blocks *)
   List.filter (fun (k, r, _) -> not ((k = "t0tp" || k = "tld") && r mod vw <> 0))
   @@
@@ -514,19 +530,19 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
   then
     add
       (Printf.sprintf
-         "/* FP32: interleaved complex float (8 B per complex); %d float lanes per ymm =\n\
-         \ * %d complex per z vector; the plane holds [re x%d][im x%d] float blocks (64 B) and\n\
+         "/* FP32: interleaved complex float (8 B per complex); %d float lanes per %s =\n\
+         \ * %d complex per z vector; the plane holds [re x%d][im x%d] float blocks (%d B) and\n\
          \ * every count is a multiple of %d columns. tw = per stage, for each %d-column\n\
          \ * block and leg r = 1..R-1, one record [c x%d][s x%d] of floats (lane i = column\n\
          \ * k+i; fwd s = -sin, bwd s = +sin), 2*(R-1)*L floats per stage; rb[] is size_t.%s */\n"
-         vw (vw / 2) vw vw vw vw vw vw
-         (if isa.Isa.name = "avx512_f32"
+         vw (if vw >= 16 then "zmm" else "ymm") (vw / 2) vw vw (8 * vw) vw vw vw vw
+         (if vw >= 16
           then
-            "\n * avx512_f32 = the 8-lane drivers under the avx512_f32 name (stopgap: no\n\
-            \ * 16-lane ZTURN-T form; ztt_drivers.ml ztt_isa), compiled for avx512f,avx512vl."
+            "\n * 16 lanes: the ingest is radix 16 (one [re x16][im x16] block pair per column run),\n\
+            \ * the mids and the terminator radix 4 or 8; natural order only."
           else ""));
   add "#include <immintrin.h>\n#include <stddef.h>\n\n";
-  if not scr
+  if (not scr) && vw < 16   (* the 16-lane ingest declares its own constants *)
   then (
     add (Isa.im_mask_decl isa "_zs0t_mim" ^ "   /* x(-i): the forward quarter-turn */\n");
     add (Isa.re_mask_decl isa "_zs0t_pim" ^ "   /* x(+i): the backward quarter-turn */\n");
@@ -569,17 +585,26 @@ let emit_file ~(isa : Isa.t) ~(uarch : Uarch.t) ~(scr : bool) (n : int) : string
   Buffer.contents b
 ;;
 
-(* write every file into dir (the dune promote rule's action runs in generated/) *)
+(* write every file into dir (the dune promote rule's action runs in generated/). At 16
+   lanes a (family, N) without a cell gets no file: the plain family has none, and the
+   natural cells start at N = 256. *)
 let emit_all ~(isa : Isa.t) ~(uarch : Uarch.t) ~(dir : string) : unit =
   let isa = ztt_isa isa in
+  let vw = isa.Isa.vec_width in
+  let all = cells ~vw ~max:(ceiling isa) () in
+  let has ~scr n =
+    List.exists (fun (m, ch) -> m = n && if scr then plain_ok ~vw m ch else natural_ok ~vw m ch) all
+  in
   List.iter
     (fun scr ->
        List.iter
          (fun n ->
-            let path = Filename.concat dir (file_name ~isa:isa.Isa.name ~scr n) in
-            let oc = open_out_bin path in
-            output_string oc (emit_file ~isa ~uarch ~scr n);
-            close_out oc)
+            if vw < 16 || has ~scr n
+            then (
+              let path = Filename.concat dir (file_name ~isa:isa.Isa.name ~scr n) in
+              let oc = open_out_bin path in
+              output_string oc (emit_file ~isa ~uarch ~scr n);
+              close_out oc))
          (sizes ~max:(ceiling isa) ()))
     [ false; true ]
 ;;

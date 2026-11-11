@@ -456,15 +456,17 @@ let rh_lit (isa : Isa.t) : string =
   if Isa.is_f32 isa then Isa.flit isa 0.70710678118654752440 else "0.70710678118654752440"
 ;;
 
-(* FP32 (2026-11-10): THE ZTURN-T TARGET of an ISA record, shared by the stage kernels
-   (emit_codelet below) and the fused drivers (ztt_drivers.ml, whose header states the
-   reason): FP32 AVX-512 has no 16-lane ZTURN-T form (no {4,8} chain meets the 16-lane
-   laws), so its ZTURN-T build is the 8-lane avx2_f32 form under the avx512_f32 name,
-   compiled for avx512f,avx512vl (the 32 ymm registers) -- a STOPGAP. Every other record
-   passes through unchanged (idempotent: the drivers retarget before calling here). *)
+(* FP32: THE ZTURN-T TARGET of an ISA record, shared by the stage kernels (emit_codelet
+   below) and the fused drivers (ztt_drivers.ml). FP32 AVX-512 runs the 16-LANE form
+   (2026-11-11): zmm plane blocks [re x16][im x16], a radix-16 ingest (the 16-lane law
+   R0 % 16 = 0 admits no radix-4 or radix-8 ingest) and radix-4 / radix-8 mids and
+   terminators; the natural class only. Its sign flips are vxorps on zmm, so the target
+   carries avx512dq. (Until that day it ran the 8-lane avx2_f32 form under the avx512_f32
+   name.) Every other record passes through unchanged (idempotent: the drivers retarget
+   before calling here). *)
 let ztt_isa (isa : Isa.t) : Isa.t =
   if isa.Isa.name = "avx512_f32"
-  then { Isa.avx2_f32 with Isa.name = "avx512_f32"; target_attr = "avx512f,avx512vl,fma" }
+  then { Isa.avx512_f32 with Isa.target_attr = "avx512f,avx512dq" }
   else isa
 ;;
 
@@ -491,13 +493,13 @@ let emit_codelet
   let cfg = ref { Emit_render.Cfg.default with Emit_render.Cfg.store_on_compute } in
   let k = kind_of_string kind in
   (* FP32 (2026-11-10): the ZTURN-T kinds on the block plane (t0tp/tmg/tlf/tlfi,
-     t0d/tmgd/tld/tldb), radix 4/8, at 8 float lanes (avx2_f32; the avx512_f32
-     ZTURN-T build runs the same 8-lane form, ztt_isa above), emitted both as the
-     fused drivers' bodies (body_only) and as the exported stage kernels the staged
-     executor and the threaded walk call (the frozen 11-arg z ABI with float pointers,
-     Abi.z11_signature ~elem). The split-body mids (msz, mszb, mszt), the zturn-ts
-     kinds and the odd radices are FP64 only. Element and pointer types come from
-     Isa.elem, so the FP64 text is unchanged. *)
+     t0d/tmgd/tld/tldb), radix 4/8, at 8 float lanes (avx2_f32), and at 16 float lanes
+     (avx512_f32, 2026-11-11) the NATURAL kinds only: t0tp at radix 16, tmg/tlf/tlfi at
+     radix 4/8. Emitted both as the fused drivers' bodies (body_only) and as the
+     exported stage kernels the staged executor and the threaded walk call (the frozen
+     11-arg z ABI with float pointers, Abi.z11_signature ~elem). The split-body mids
+     (msz, mszb, mszt), the zturn-ts kinds and the odd radices are FP64 only. Element
+     and pointer types come from Isa.elem, so the FP64 text is unchanged. *)
   let isa = ztt_isa isa in
   if Isa.is_f32 isa
   then begin
@@ -508,18 +510,30 @@ let emit_codelet
         (Printf.sprintf
            "codelet_zsplit: kind %s has no FP32 form (FP32 = the ZTURN-T block-plane kinds)"
            kind);
-    if radix <> 4 && radix <> 8
-    then failwith (Printf.sprintf "codelet_zsplit: FP32 radix %d (FP32 = radix 4 and 8, pow2 only)" radix);
-    if isa.Isa.vec_width <> 8
+    if isa.Isa.vec_width <> 8 && isa.Isa.vec_width <> 16
     then
       failwith
         (Printf.sprintf
-           "codelet_zsplit: no %d-lane FP32 ZTURN-T form (target %s; the FP32 form is 8-lane ymm)"
-           isa.Isa.vec_width isa.Isa.name)
+           "codelet_zsplit: no %d-lane FP32 ZTURN-T form (target %s; the FP32 forms are 8-lane ymm and 16-lane zmm)"
+           isa.Isa.vec_width isa.Isa.name);
+    if isa.Isa.vec_width = 16 && List.mem k.base [ "t0d"; "tmgd"; "tld" ]
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_zsplit: kind %s has no 16-lane FP32 form (16 lanes = the natural class: t0tp, tmg, tlf, tlfi)"
+           kind);
+    if radix <> 4 && radix <> 8 && not (isa.Isa.vec_width = 16 && k.base = "t0tp" && radix = 16)
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_zsplit: FP32 radix %d (FP32 = radix 4 and 8, and 16 for the 16-lane ingest; pow2 only)"
+           radix)
   end;
   let el = Isa.elem isa in
   zu_noperm := k.lanes_u;
   if radix <> 4 && radix <> 8
+     (* the 16-lane FP32 ingest is radix 16 (its law: R0 % 16 = 0) *)
+     && not (Isa.is_f32 isa && isa.Isa.vec_width = 16 && k.base = "t0tp" && radix = 16)
      && not
           ((k.base = "msz" || k.base = "mszt" || k.base = "tmg" || k.base = "tmgd"
             (* the LANE-MAJOR family (P_vec) has no lane lattice anywhere: its
@@ -535,7 +549,7 @@ let emit_codelet
        t0tp/tlf/tld are lane lattices and stay 4/8), which carry no lane geometry \
        and emit odd radices 3/5/7/9/15";
   let vw = isa.Isa.vec_width in
-  if vw <> 4 && vw <> 8
+  if vw <> 4 && vw <> 8 && not (vw = 16 && Isa.is_f32 isa)
   then failwith (Printf.sprintf "codelet_zsplit: no block geometry at vec_width %d" vw);
   (* the LANE-LATTICE kinds need whole blocks: t0tp writes one R0-run per
      column as R0/VW blocks, tld/tldb read/write R-runs as R/VW blocks. At
@@ -1666,6 +1680,131 @@ let emit_codelet
       [ "a", 0, 0; "b", vw, vw / 2 ];
     Buffer.add_string buf "    }\n"
   in
+  (* t0tp at VW=16 (R0 = 16 by the law above; FP32 avx512, 2026-11-11): a zmm z-vector
+     holds 8 columns of one leg as (re, im) pairs. The radix-16 DIF runs on those
+     interleaved vectors: b_m = a_m + a_{m+8}, c_m = (a_m - a_{m+8}) W16^m, the even
+     digits = DFT8(b), the odd digits = DFT8(c), each DFT8 the radix-8 form above
+     (b', c' then two radix-4 butterflies). A rotation by W = cos - i sin is a cflip,
+     one multiply and one FMA against a splat cos and a sign-patterned sin ([s, -s]
+     forward, [-s, s] backward: the conjugate); a quarter turn that only feeds a sum and
+     a difference is folded into them (cflip, then fmadd / fnmadd against the [1, -1]
+     pattern), so the body holds no sign flip. The TURN is one 16 x 16 transpose of the
+     16 digit vectors per half: T_2i = re of column i over digits 0..15, T_2i+1 its im
+     -- column i's whole run is ONE [re x16][im x16] block (128 B). Two halves (plus 0 /
+     plus VW) = VW columns per iteration: count % VW == 0. 16 legs + 16 digits live at
+     most, on 32 registers: no spill by construction. *)
+  let emit_t0tp16_vw16_body () =
+    let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
+    let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
+    let cline s = Buffer.add_string buf ("    " ^ s ^ "\n") in
+    let pi = 4.0 *. atan 1.0 in
+    let sg0, sg1 = if k.bwd then -1.0, 1.0 else 1.0, -1.0 in
+    let pat a b =
+      (* the (a, b) pair pattern over the 8 complex of a zmm *)
+      Printf.sprintf
+        "_mm512_setr_ps(%s)"
+        (String.concat ", " (List.init 16 (fun i -> Isa.flit isa (if i land 1 = 0 then a else b))))
+    in
+    (* cflip(x) * _zq = x(-i) forward, x(+i) backward *)
+    cline (Isa.const_decl isa "_zq" (pat sg0 sg1));
+    List.iter
+      (fun m ->
+         let th = 2.0 *. pi *. float_of_int m /. 16.0 in
+         cline (Isa.const_decl isa (Printf.sprintf "_zc%d" m) (Isa.set1_pd_str isa (Isa.flit isa (cos th))));
+         cline (Isa.const_decl isa (Printf.sprintf "_zs%d" m) (pat (sg0 *. sin th) (sg1 *. sin th))))
+      [ 1; 2; 3; 5; 6; 7 ];
+    Buffer.add_string buf (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
+    List.iter
+      (fun (p, plus, c0) ->
+         let v n = p ^ n in
+         let d name e = line (Isa.const_decl isa (v name) e) in
+         let add a b = Isa.add_pd isa (v a) (v b)
+         and sub a b = Isa.sub_pd isa (v a) (v b) in
+         (* dst = src W16^m *)
+         let rot dst src m =
+           d (dst ^ "f") (Isa.cflip_pd isa (v src));
+           d dst
+             (Isa.fmadd_pd isa (v (dst ^ "f")) (Printf.sprintf "_zs%d" m)
+                (Isa.mul_pd isa (v src) (Printf.sprintf "_zc%d" m)))
+         in
+         (* x + q(-i) and x - q(-i), qf = the flipped q *)
+         let qadd x qf = Isa.fmadd_pd isa (v qf) "_zq" (v x)
+         and qsub x qf = Isa.fnmadd_pd isa (v qf) "_zq" (v x) in
+         (* the radix-4 DIF butterfly; fold: i2 is a FLIPPED vector standing for i2(-i) *)
+         let r4 ~fold (i0, i1, i2, i3) (o0, o1, o2, o3) =
+           if fold
+           then (
+             d (o0 ^ "t0") (qadd i0 i2);
+             d (o0 ^ "t1") (qsub i0 i2))
+           else (
+             d (o0 ^ "t0") (add i0 i2);
+             d (o0 ^ "t1") (sub i0 i2));
+           d (o0 ^ "t2") (add i1 i3);
+           d (o0 ^ "t3") (sub i1 i3);
+           d (o0 ^ "r") (Isa.cflip_pd isa (v (o0 ^ "t3")));
+           d o0 (add (o0 ^ "t0") (o0 ^ "t2"));
+           d o2 (sub (o0 ^ "t0") (o0 ^ "t2"));
+           d o1 (qadd (o0 ^ "t1") (o0 ^ "r"));
+           d o3 (qsub (o0 ^ "t1") (o0 ^ "r"))
+         in
+         (* o = DFT8(x): b'_m = x_m + x_{m+4}, c'_m = (x_m - x_{m+4}) W8^m; the even
+            outputs = DFT4(b'), the odd = DFT4(c'). fold4: x.(4) is a FLIPPED vector
+            standing for x_4(-i) (the odd branch's c_4 = d_4 W16^4) *)
+         let dft8 ~fold4 tag (x : string array) (o : string array) =
+           for m = 0 to 3 do
+             let bb = Printf.sprintf "%sb%d" tag m
+             and dd = Printf.sprintf "%sd%d" tag m in
+             if fold4 && m = 0
+             then (
+               d bb (qadd x.(0) x.(4));
+               d dd (qsub x.(0) x.(4)))
+             else (
+               d bb (add x.(m) x.(m + 4));
+               d dd (sub x.(m) x.(m + 4)))
+           done;
+           rot (tag ^ "c1") (tag ^ "d1") 2;   (* W8^1 = W16^2 *)
+           d (tag ^ "c2") (Isa.cflip_pd isa (v (tag ^ "d2")));   (* d'_2(-i), folded into the butterfly *)
+           rot (tag ^ "c3") (tag ^ "d3") 6;   (* W8^3 = W16^6 *)
+           r4 ~fold:false (tag ^ "b0", tag ^ "b1", tag ^ "b2", tag ^ "b3") (o.(0), o.(2), o.(4), o.(6));
+           r4 ~fold:true (tag ^ "d0", tag ^ "c1", tag ^ "c2", tag ^ "c3") (o.(1), o.(3), o.(5), o.(7))
+         in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        /* ---- half %s: columns k+%d..k+%d -> runs rb[k+%d..k+%d] (1 block pair each) ---- */\n"
+              (String.uppercase_ascii p) c0 (c0 + 7) c0 (c0 + 7));
+         for l = 0 to 15 do
+           d (string_of_int l) (Isa.loadu_pd isa (leg_addr "zin" l "Ls" plus))
+         done;
+         for m = 0 to 7 do
+           d (Printf.sprintf "b%d" m) (add (string_of_int m) (string_of_int (m + 8)));
+           d (Printf.sprintf "d%d" m) (sub (string_of_int m) (string_of_int (m + 8)))
+         done;
+         (* c_m = d_m W16^m: c_0 = d_0; c_4 = d_4(-i) stays flipped and is folded *)
+         List.iter (fun m -> rot (Printf.sprintf "c%d" m) (Printf.sprintf "d%d" m) m) [ 1; 2; 3; 5; 6; 7 ];
+         d "c4" (Isa.cflip_pd isa (v "d4"));
+         dft8 ~fold4:false "e"
+           (Array.init 8 (fun m -> Printf.sprintf "b%d" m))
+           (Array.init 8 (fun e -> Printf.sprintf "B%d" e));
+         dft8 ~fold4:true "o"
+           (Array.init 8 (fun m -> if m = 0 then "d0" else Printf.sprintf "c%d" m))
+           (Array.init 8 (fun e -> Printf.sprintf "C%d" e));
+         (* digits Y_2e = B_e, Y_2e+1 = C_e -> the 16 x 16 turn *)
+         Buffer.add_string
+           buf
+           (Isa.transpose isa ~qid:p
+              (Array.init 16 (fun dg -> v (Printf.sprintf "%s%d" (if dg land 1 = 0 then "B" else "C") (dg / 2))))
+              (Array.init 16 (fun j -> v (Printf.sprintf "T%d" j))));
+         for i = 0 to 7 do
+           line
+             (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[k+%d];" el (v (Printf.sprintf "p%d" i)) (2 * radix) (c0 + i));
+           sline (Isa.storeu_pd isa (Printf.sprintf "%s[0]" (v (Printf.sprintf "p%d" i))) (v (Printf.sprintf "T%d" (2 * i))));
+           sline
+             (Isa.storeu_pd isa (Printf.sprintf "%s[%d]" (v (Printf.sprintf "p%d" i)) vw) (v (Printf.sprintf "T%d" ((2 * i) + 1))))
+         done)
+      [ "a", 0, 0; "b", vw, vw / 2 ];
+    Buffer.add_string buf "    }\n"
+  in
   if k.base = "t0tp" && k.plane = P_block
   then (
     (* -- t0tp: the turn lattice as an always_inline BODY (the fused driver
@@ -1681,7 +1820,8 @@ let emit_codelet
          \    const size_t * __restrict__ rb, size_t Ls, size_t count)\n\
           {\n"
          body_name el el);
-    if vw = 8 then emit_t0tp8_vw8_body ()
+    if vw = 16 then emit_t0tp16_vw16_body ()
+    else if vw = 8 then emit_t0tp8_vw8_body ()
     else if radix = 8 then emit_t0tp8_body () else emit_t0tp4_body ();
     Buffer.add_string buf "}\n\n";
     if not body_only

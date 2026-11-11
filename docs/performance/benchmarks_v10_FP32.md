@@ -1,8 +1,16 @@
-# VectorFFT v1.0 — FP32 results, **Emerald Rapids host (AVX-512)**
+# VectorFFT v1.0 — FP32 results, **AVX-512 hosts**
 
 Single precision, 1D complex-to-complex, powers of two from 64 to 4M points, interleaved, natural order, out of
 place, one thread. Speedup = the other library's time / VectorFFT's time: above 1 means VectorFFT is faster. Each
-figure is the median of 3 passes, and each pass takes the worse of the two engine orders.
+pass takes the worse of the two engine orders. Two hosts, each in its own section, and **not comparable** with
+each other:
+
+- [Emerald Rapids](#emerald-rapids): against FFTW and MKL.
+- [Granite Rapids (6980P)](#granite-rapids-6980p): against MKL.
+
+## Emerald Rapids
+
+Each figure is the median of 3 passes.
 
 Comparators:
 
@@ -13,10 +21,10 @@ Comparators:
 Plans: VectorFFT's planner ran once on this machine and saved all 17 FP32 plans in its wisdom; every timed pass
 read them back, with nothing planned during the timing.
 
-This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md) or the Zen 4 laptop of
+Neither host is the i9-14900KF of [v1_0_results.md](v1_0_results.md) or the Zen 4 laptop of
 [v1_0_Zen4_results.md](v1_0_Zen4_results.md): the numbers are **not comparable** across these pages.
 
-## The machine
+### The machine
 
 | Property | Value |
 |---|---|
@@ -30,7 +38,7 @@ This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md) or the Zen
 | RAM | 7.8 GiB, no swap |
 | Address sizes | 52-bit physical, 57-bit virtual (5-level paging) |
 
-## 1D C2C, single precision
+### 1D C2C, single precision
 
 | N | VectorFFT | FFTW | vs FFTW | MKL | vs MKL |
 |---:|---:|---:|---:|---:|---:|
@@ -56,7 +64,7 @@ This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md) or the Zen
 VectorFFT is faster on 15 of 17 lengths against each library. The two it loses against both are N = 2048 and
 4096.
 
-## Reading the numbers
+### Reading the numbers
 
 - **Large lengths:** from 512K points up VectorFFT leads by 2.1× to 4.3× against FFTW and 1.5× to 2.2× against
   MKL. From 1M points the planner uses the four-step route (`fs`).
@@ -64,3 +72,51 @@ VectorFFT is faster on 15 of 17 lengths against each library. The two it loses a
   (128 against MKL read 0.75× to 1.17×, 2048 read 0.60× to 0.92×), so a difference under about 10 % is a tie
   here. The losses at 2048 and 4096 appeared in every pass.
 - **Accuracy:** the worst round-trip error was 2.7e-7, as expected for single precision.
+
+## Granite Rapids (6980P)
+
+Comparator: **Intel oneMKL 2026.0.1** (conda-forge), sequential, through `mkl_rt`. Built with GCC 16.2 on Linux.
+
+Plans: the library recognised this CPU as the 6980P and served from its wisdom folder, `src/wisdom/6980P/`. Its
+planner had saved all 17 FP32 plans there in an earlier run; this run read them back and planned nothing. One run.
+
+### The machine
+
+| Property | Value |
+|---|---|
+| CPU | Intel Xeon 6980P (Granite Rapids) |
+| vCPUs | 2, a shared KVM slice; no turbo visible to the guest |
+
+### 1D C2C, single precision
+
+| N | Speedup vs MKL |
+|---:|---:|
+| 64 | 1.20× |
+| 128 | 1.09× |
+| 256 | **1.33×** |
+| 512 | 1.13× |
+| 1024 | 0.61× |
+| 2048 | 0.91× |
+| 4096 | 0.92× |
+| 8192 | 1.13× |
+| 16K | 0.98× |
+| 32K | 1.01× |
+| 64K | 1.24× |
+| 128K | 1.23× |
+| 256K | **1.49×** |
+| 512K | **1.51×** |
+| 1M | **1.69×** |
+| 2M | **1.62×** |
+| 4M | **1.63×** |
+| **Geometric mean** | **1.18×** |
+
+VectorFFT is faster on 13 of 17 lengths.
+
+### Reading the numbers
+
+- **Large lengths:** from 256K points up VectorFFT leads by 1.5× to 1.7×.
+- **2048 and 4096** lose in every run on this machine (about 0.9×), as they do on the Emerald Rapids host.
+- **Noise:** the control cell drifted to 0.90×–0.91× during the run, so a difference under about 10 % is a tie.
+  The 1024 reading (0.61×) is one engine order where VectorFFT ran 761 ns against 437 ns in the other order on
+  the same plan; in the run before this one, 1024 read 1.13×. Likewise 16K read 0.66× in that earlier run and
+  0.98× here.

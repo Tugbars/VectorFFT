@@ -567,16 +567,19 @@ let forward_decl (isa : t) (names : string list) : string =
  *                         lane c = column c.
  *   reint_ordered re im : the inverse, -> (lo, hi) z vectors.
  *   transpose           : a VW x VW transpose of VW vectors.
- * FP32 (2026-11-10): one complex = one 64-bit unit. The ZTURN-T forms exist at 8
- * lanes (ymm, avx2_f32: the FP64 AVX-512 lane count, laws and cell set); there is
- * no 16-lane form (the avx512_f32 ZTURN-T build runs the 8-lane drivers,
- * ztt_drivers.ml ztt_isa). At 8 lanes a z vector holds 4 complex, and the
+ * FP32 (2026-11-10): one complex = one 64-bit unit. At 8 lanes (ymm, avx2_f32: the
+ * FP64 AVX-512 lane count, laws and cell set) a z vector holds 4 complex, and the
  * renderings below use only immediates (no index constants): vshufps / vunpck*ps
- * (in-lane) and vpermpd / vperm2f128 (lane-crossing), the FP64 AVX2 counts. *)
+ * (in-lane) and vpermpd / vperm2f128 (lane-crossing), the FP64 AVX2 counts.
+ * At 16 lanes (zmm, avx512_f32, 2026-11-11: the natural class only) a z vector holds
+ * 8 complex: deint / reint are one vpermt2ps each against the index constants
+ * [shuffle_consts] declares, and the 16 x 16 transpose is four rounds of 16
+ * immediate shuffles (vunpck*ps, vshufps, vshuff32x4 twice). The plain class's
+ * column-run edge (zcol_reint, zcol_deint) has no 16-lane form. *)
 let f32_no_lanes (isa : t) (what : string) : 'a =
   failwith
     (Printf.sprintf
-       "Isa.%s: no %d-lane FP32 ZTURN-T form (target %s; the FP32 ZTT forms are 8-lane ymm)"
+       "Isa.%s: no %d-lane FP32 ZTURN-T form (target %s; the FP32 ZTT forms are 8-lane ymm and,         for the natural class, 16-lane zmm)"
        what isa.vec_width isa.name)
 ;;
 
@@ -594,6 +597,10 @@ let deint_ordered (isa : t) (lo : string) (hi : string) : string * string =
           lo hi imm
       in
       g "0x88", g "0xDD"
+    | 16 ->
+      (* lo = columns 0..7 as (re, im) pairs, hi = columns 8..15: one vpermt2ps each *)
+      ( Printf.sprintf "_mm512_permutex2var_ps(%s, _zs_de, %s)" lo hi
+      , Printf.sprintf "_mm512_permutex2var_ps(%s, _zs_do, %s)" lo hi )
     | _ -> f32_no_lanes isa "deint_ordered")
   else
   match isa.vec_width with
@@ -621,6 +628,7 @@ let reint_pre (isa : t) (v : string) : string =
       (* plane [x0 .. x7] -> [x0 x1 x4 x5 | x2 x3 x6 x7] (vpermpd 0xD8 on the
          64-bit pairs): unpacklo/hi_ps of two such planes are the z vectors *)
       Printf.sprintf "_mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(%s), 0xD8))" v
+    | 16 -> v   (* reint_ordered takes the planes as they are *)
     | _ -> f32_no_lanes isa "reint_pre")
   else
   match isa.vec_width with
@@ -636,6 +644,10 @@ let reint_ordered (isa : t) (re : string) (im : string) : string * string =
       (* re/im pre-permuted by reint_pre: unpacklo_ps = [r0 i0 r1 i1 | r2 i2 r3 i3]
          (columns 0..3), unpackhi_ps = columns 4..7 *)
       Printf.sprintf "_mm256_unpacklo_ps(%s, %s)" re im, Printf.sprintf "_mm256_unpackhi_ps(%s, %s)" re im
+    | 16 ->
+      (* planes [x0 .. x15] -> z vectors of columns 0..7 and 8..15: one vpermt2ps each *)
+      ( Printf.sprintf "_mm512_permutex2var_ps(%s, _zs_pe, %s)" re im
+      , Printf.sprintf "_mm512_permutex2var_ps(%s, _zs_po, %s)" re im )
     | _ -> f32_no_lanes isa "reint_ordered")
   else
   match isa.vec_width with
@@ -653,10 +665,30 @@ let reint_ordered (isa : t) (re : string) (im : string) : string * string =
 let shuffle_consts (isa : t) ~(deint : bool) ~(reint : bool) ~(transpose : bool) : string =
   if isa.prec = F32
   then (
-    (* the 8-lane FP32 forms are immediate-only: no index constants *)
-    if isa.vec_width <> 8 && (deint || reint || transpose)
-    then f32_no_lanes isa "shuffle_consts"
-    else "")
+    match isa.vec_width with
+    | 8 -> ""   (* the 8-lane FP32 forms are immediate-only: no index constants *)
+    | 16 ->
+      (* 16 lanes: deint / reint index 32 floats (two zmm); the transpose is immediate-only *)
+      String.concat
+        ""
+        ((if deint
+          then
+            [ "    const __m512i _zs_de = _mm512_setr_epi32(0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30);
+"
+            ; "    const __m512i _zs_do = _mm512_setr_epi32(1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31);
+"
+            ]
+          else [])
+         @
+         if reint
+         then
+           [ "    const __m512i _zs_pe = _mm512_setr_epi32(0,16,1,17,2,18,3,19,4,20,5,21,6,22,7,23);
+"
+           ; "    const __m512i _zs_po = _mm512_setr_epi32(8,24,9,25,10,26,11,27,12,28,13,29,14,30,15,31);
+"
+           ]
+         else [])
+    | _ -> if deint || reint || transpose then f32_no_lanes isa "shuffle_consts" else "")
   else
   if isa.vec_width <> 8
   then ""
@@ -721,6 +753,55 @@ let transpose (isa : t) ~(qid : string) (srcs : string array) (dsts : string arr
              (cd dsts.(j) (Printf.sprintf "_mm256_permute2f128_ps(_x%d_%s, _x%d_%s, %s)" a qid c qid imm)))
         [ 0, 4, "0x20"; 1, 5, "0x20"; 2, 6, "0x20"; 3, 7, "0x20"
         ; 0, 4, "0x31"; 1, 5, "0x31"; 2, 6, "0x31"; 3, 7, "0x31" ];
+      Buffer.contents b
+    | 16 ->
+      (* the 16 x 16 float transpose, dsts.(j)[i] = srcs.(i)[j], four rounds of 16
+         immediate shuffles (64 in all, every one on the shuffle port):
+           _t : vunpck{l,h}ps of the source pairs             (elements 0,1 / 2,3 per 128-bit unit)
+           _x : vshufps 0x44 / 0xEE inside each source quad   (_x_{4q+j} unit u = column 4u+j of
+                                                               sources 4q..4q+3)
+           _y : vshuff32x4 0x88 / 0xDD of the quad pairs      (units 0,2 / 1,3 of two quads)
+           dst: vshuff32x4 0x88 / 0xDD of the two halves      (column 4u+j of all 16 sources) *)
+      let b = Buffer.create 4096 in
+      for p = 0 to 7 do
+        Buffer.add_string b
+          (cd (Printf.sprintf "_t%d_%s" (2 * p) qid)
+             (Printf.sprintf "_mm512_unpacklo_ps(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)));
+        Buffer.add_string b
+          (cd (Printf.sprintf "_t%d_%s" ((2 * p) + 1) qid)
+             (Printf.sprintf "_mm512_unpackhi_ps(%s, %s)" srcs.(2 * p) srcs.((2 * p) + 1)))
+      done;
+      for q = 0 to 3 do
+        List.iter
+          (fun (j, a, imm) ->
+             Buffer.add_string b
+               (cd (Printf.sprintf "_x%d_%s" ((4 * q) + j) qid)
+                  (Printf.sprintf "_mm512_shuffle_ps(_t%d_%s, _t%d_%s, %s)"
+                     ((4 * q) + a) qid ((4 * q) + a + 2) qid imm)))
+          [ 0, 0, "0x44"; 1, 0, "0xEE"; 2, 1, "0x44"; 3, 1, "0xEE" ]
+      done;
+      (* _y_{8h+2j+v}: v = 0 units 0,2 (columns j, 8+j), v = 1 units 1,3 (columns 4+j, 12+j)
+         of the source octet h (quads 2h, 2h+1) *)
+      for h = 0 to 1 do
+        for j = 0 to 3 do
+          List.iter
+            (fun (v, imm) ->
+               Buffer.add_string b
+                 (cd (Printf.sprintf "_y%d_%s" ((8 * h) + (2 * j) + v) qid)
+                    (Printf.sprintf "_mm512_shuffle_f32x4(_x%d_%s, _x%d_%s, %s)"
+                       ((8 * h) + j) qid ((8 * h) + 4 + j) qid imm)))
+            [ 0, "0x88"; 1, "0xDD" ]
+        done
+      done;
+      (* column c = 4u + j: (u & 1) picks _y's v, (u >> 1) the final immediate *)
+      for c = 0 to 15 do
+        let u = c / 4 and j = c mod 4 in
+        let v = u land 1 and imm = if u lsr 1 = 0 then "0x88" else "0xDD" in
+        Buffer.add_string b
+          (cd dsts.(c)
+             (Printf.sprintf "_mm512_shuffle_f32x4(_y%d_%s, _y%d_%s, %s)"
+                ((2 * j) + v) qid (8 + (2 * j) + v) qid imm))
+      done;
       Buffer.contents b
     | _ -> f32_no_lanes isa "transpose")
   else
