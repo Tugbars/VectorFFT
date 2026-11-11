@@ -53,6 +53,7 @@ static void vs_clock_probe(void) { vs_clock_reads++; }
 #include <direct.h>
 #else
 #include <fcntl.h>
+#include <sched.h>     /* sched_getaffinity: vs_core */
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -62,9 +63,44 @@ static void vs_clock_probe(void) { vs_clock_reads++; }
 #endif
 
 #define VS_PACE_MS "300"     /* gauntlet.py PACE_MS: the bench's pacing and cool-down between its timing blocks */
-#define VS_CORE "2"          /* gauntlet.py: the logical CPU the bench pins its thread to */
 #define VS_MAXCELL 256
 #define VS_F32_MAXN (1 << 24) /* the FP32 front door: 1D C2C powers of two up to 2^24 */
+
+/* The logical CPU the bench pins its thread to (gauntlet.py's pin_cpu): 2, the second P-core of a
+ * hyperthreaded part, when this process may run there; else the last CPU it may run on (a small
+ * virtual machine has no CPU 2). */
+static const char *vs_core(void)
+{
+    static char buf[16];
+    int c = -1;
+#ifdef _WIN32
+    DWORD_PTR proc = 0, sys = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys) && proc)
+    {
+        if (proc & ((DWORD_PTR)1 << 2))
+            c = 2;
+        else
+            for (int i = (int)(8 * sizeof proc) - 1; i >= 0 && c < 0; i--)
+                if (proc & ((DWORD_PTR)1 << i))
+                    c = i;
+    }
+#elif defined(__linux__)
+    cpu_set_t s;
+    if (sched_getaffinity(0, sizeof s, &s) == 0)
+    {
+        if (CPU_ISSET(2, &s))
+            c = 2;
+        else
+            for (int i = CPU_SETSIZE - 1; i >= 0 && c < 0; i--)
+                if (CPU_ISSET(i, &s))
+                    c = i;
+    }
+#endif
+    if (c < 0)
+        c = 2;
+    snprintf(buf, sizeof buf, "%d", c);
+    return buf;
+}
 
 typedef struct {
     int d;                   /* 1, 2 or 3 */
@@ -478,7 +514,7 @@ static int vs_bench_cell(const vs_opts_t *o, const vs_cell_t *c, const char *sto
         argv[k++] = kstr;
         argv[k++] = (char *)VS_PACE_MS;
         argv[k++] = fl;
-        argv[k++] = (char *)VS_CORE;
+        argv[k++] = (char *)vs_core();
         argv[k] = NULL;
         if (o->check_only)
         {

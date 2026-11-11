@@ -226,6 +226,24 @@ static const struct fftwx__sym fftwx__tab[] = {
 #  define FFTWX_DEFAULT_DLL "libfftw3.so.3"   /* POSIX path untested; Windows is the target */
 #endif
 
+/* Linux: a bench linked to MKL carries MKL's FFTW3 wrappers (fftw_*, fftwf_*) in its global scope, and
+ * libfftw3's calls to its own exported functions resolve to them first (ELF interposition): plans half
+ * made by MKL, a crash in fftwf_execute, or MKL timed under FFTW's name. RTLD_DEEPBIND makes the loaded
+ * FFTW resolve its own symbols first. Windows binds each DLL's imports on their own: nothing to do.
+ * AddressSanitizer refuses RTLD_DEEPBIND, so a sanitized build loads FFTW without it. */
+#if defined(__SANITIZE_ADDRESS__)
+#  define FFTWX_ASAN 1
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define FFTWX_ASAN 1
+#  endif
+#endif
+#if !defined(_WIN32) && defined(RTLD_DEEPBIND) && !defined(FFTWX_ASAN)
+#  define FFTWX_DEEPBIND RTLD_DEEPBIND
+#else
+#  define FFTWX_DEEPBIND 0
+#endif
+
 /* Bind. Returns 1 on success; on failure writes a reason into err and returns 0.
  * GENUINENESS is asserted here, not left to the caller: the version string must
  * begin "fftw-" and must not mention MKL/Intel — the wrapper DLL announces
@@ -268,7 +286,7 @@ static inline int fftwx_bind(fftwx_api_t *api, char *err, size_t errcap)
     {
         void *h = NULL;
         for (c = 0; c < nc && !h; c++)
-            h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL);
+            h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL | FFTWX_DEEPBIND);
         if (!h) { snprintf(err, errcap, "dlopen(\"%s\"): %s", path, dlerror()); return 0; }
         snprintf(api->dll_path, sizeof api->dll_path, "%s", path);
         for (size_t i = 0; i < sizeof fftwx__tab / sizeof fftwx__tab[0]; i++) {
@@ -365,7 +383,7 @@ static inline int fftwfx_bind(fftwfx_api_t *api, char *err, size_t errcap)
 #else
     void *h = NULL;
     for (c = 0; c < nc && !h; c++)
-        h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL);
+        h = dlopen(path = cand[c], RTLD_NOW | RTLD_LOCAL | FFTWX_DEEPBIND);
     if (!h)
     {
         snprintf(err, errcap, "dlopen(\"%s\"): %s", path, dlerror());

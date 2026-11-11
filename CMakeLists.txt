@@ -60,6 +60,13 @@ endif()
 
 include(GNUInstallDirs)
 
+# glibc's extensions that the core and the tools use (CPU_SETSIZE, PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP,
+# RTLD_DEEPBIND) are declared only under _GNU_SOURCE, defined before the first system header; a source file
+# cannot promise that order, so every target in this tree gets it (the gauntlet and the benchmark programs too).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_compile_definitions(_GNU_SOURCE)
+endif()
+
 set(VFFT_ISA "auto" CACHE STRING "Codelet ISA (auto/avx2/avx512): auto = this machine's")
 
 # ── Front-end classification ────────────────────────────────────────────────

@@ -185,6 +185,16 @@ static void _vfs_lock_wait_note(int wait_ms)
                     "(up to %d s)\n", wait_ms / 1000);
 }
 
+#if defined(__linux__)
+/* The lock nests per thread, as the Windows mutex does: a thread that holds it takes it again at
+ * once, and every other thread, this process's included, waits. flock belongs to an open file
+ * description, so a second open() by the holder would wait on itself; the holder keeps its one fd
+ * and a depth instead. Thread-local and weak, so every file that includes this header (the
+ * library and a tool that holds its own scope around a create) shares the holder's pair. */
+__attribute__((weak)) _Thread_local int _vfs_lock_fd_held = -1;
+__attribute__((weak)) _Thread_local int _vfs_lock_depth = 0;
+#endif
+
 /* 1 = held; 0 = not obtained within wait_ms; -1 = this system gives no lock */
 static int _vfs_lock_take(int wait_ms)
 {
@@ -224,7 +234,14 @@ static int _vfs_lock_take(int wait_ms)
      * O_CREAT on another account's file). */
     static const char *path = "/tmp/vectorfft-measure.lock";
     struct timespec a, n;
-    int fd = open(path, O_RDWR);
+    int fd;
+    if (_vfs_lock_depth > 0)   /* this thread holds it already */
+    {
+        _vfs_lock_depth++;
+        _vfs.lock = _vfs_lock_fd_held;
+        return 1;
+    }
+    fd = open(path, O_RDWR);
     if (fd < 0) fd = open(path, O_RDONLY);
     if (fd < 0)
     {
@@ -238,7 +255,13 @@ static int _vfs_lock_take(int wait_ms)
     {
         struct timespec ts = { 0, 20 * 1000000L };
         int waited;
-        if (flock(fd, LOCK_EX | LOCK_NB) == 0) { _vfs.lock = fd; return 1; }
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0)
+        {
+            _vfs_lock_fd_held = fd;
+            _vfs_lock_depth = 1;
+            _vfs.lock = fd;
+            return 1;
+        }
         if (errno != EWOULDBLOCK && errno != EINTR) { close(fd); return -1; }
         clock_gettime(CLOCK_MONOTONIC, &n);
         waited = (int)((n.tv_sec - a.tv_sec) * 1000L + (n.tv_nsec - a.tv_nsec) / 1000000L);
@@ -258,7 +281,16 @@ static void _vfs_lock_release(void)
 #if defined(_WIN32)
     if (_vfs.lock) { ReleaseMutex(_vfs.lock); CloseHandle(_vfs.lock); _vfs.lock = NULL; }
 #elif defined(__linux__)
-    if (_vfs.lock >= 0) { flock(_vfs.lock, LOCK_UN); close(_vfs.lock); _vfs.lock = -1; }
+    if (_vfs.lock >= 0)
+    {
+        if (--_vfs_lock_depth == 0)   /* the outermost hold: give the lock back */
+        {
+            flock(_vfs_lock_fd_held, LOCK_UN);
+            close(_vfs_lock_fd_held);
+            _vfs_lock_fd_held = -1;
+        }
+        _vfs.lock = -1;
+    }
 #endif
 }
 

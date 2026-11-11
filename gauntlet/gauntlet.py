@@ -66,6 +66,16 @@ CONTROL_EVERY = 100
 PACE_MS = 300
 
 
+def pin_cpu():
+    """the logical CPU the bench pins its thread to: 2, the second P-core of a hyperthreaded part, when this
+    process may run there; else the last CPU it may run on (a small virtual machine has no CPU 2)"""
+    try:
+        allowed = os.sched_getaffinity(0)
+    except AttributeError:   # Windows: every CPU of the machine
+        allowed = set(range(os.cpu_count() or 1))
+    return "2" if 2 in allowed or not allowed else str(max(allowed))
+
+
 # ── cells ──────────────────────────────────────────────────────────────────
 
 def fac(n):
@@ -459,7 +469,7 @@ def bench_cell(run, n, csv_path):
         # the bench's wisdom slot: a file inside the store (the bench opens it and serves
         # the front door from its directory; spike_wisdom.txt went with the stride engine)
         r = subprocess.run([bench] + flag + [os.path.join(run.store, "wisdom2_oop.txt"), csv_path,
-                           str(PACE_MS), nstr, kstr, str(PACE_MS), flip, "2"],
+                           str(PACE_MS), nstr, kstr, str(PACE_MS), flip, pin_cpu()],
                            capture_output=True, text=True, errors="replace", env=run.env())
         if r.returncode != 0:
             ok = False

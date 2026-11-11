@@ -626,6 +626,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None,
     # warnings — they spam thousands of lines and bury real errors.
     flags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive',
              '-D_CRT_SECURE_NO_WARNINGS',
+             # glibc's extensions (CPU_SETSIZE, PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP, RTLD_DEEPBIND) need
+             # _GNU_SOURCE before the first system header, which a driver's own includes come before
+             *(['-D_GNU_SOURCE'] if sys.platform.startswith('linux') else []),
              # the store's root and the frozen bundle's home: with no directory
              # named (NULL wisdom dir, VFFT_WISDOM_DIR unset) the library serves
              # from and saves into THIS CPU's folder under src/wisdom/;
