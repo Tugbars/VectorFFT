@@ -1,6 +1,0 @@
-2026-11-10 21:09:19 run: 5 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
-2026-11-10 21:09:19 calibrate: 5 cells (0 already done)
-2026-11-10 21:09:19   calibrated 5/5 (256x256x256), 0 s elapsed
-2026-11-10 21:09:19 bench: 5 cells (0 already benched, 0 not banked -> not benched)
-2026-11-10 21:10:36   benched 5/5 (256x256x256), 62 s elapsed
-2026-11-10 21:10:37 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\sortie_3d_est_20261110\report_3d.md

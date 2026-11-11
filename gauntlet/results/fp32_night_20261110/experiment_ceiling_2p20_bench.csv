@@ -1,3 +1,0 @@
-cell,N,K,kind,n,ratio,rmin,rmax,ours,mkl,err,route,fail
-oop:1048576:1,1048576,1,oop,3,1.28,1.28,1.33,1390338.0,1792963.0,1.16e-06,ztt,False
-ip:1048576:1,1048576,1,ip,3,1.13,1.09,1.23,1509150.0,1714025.0,1.16e-06,ztt,False
