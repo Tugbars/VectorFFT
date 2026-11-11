@@ -621,17 +621,15 @@ VFFT_IL_DECL(radix64_z_n1tb88_fwd_avx512_f32)
 #define VFFT_IL_ROWSWAP_BWD_RADICES(X)
 #define VFFT_IL_ROWSWAP_PAIR_RADICES(X)
 
-/* ── t0d ── fwd 2 · bwd 0 · pair 0 */
-VFFT_IL_DECL(radix4_z_t0d_fwd_avx512_f32)
-VFFT_IL_DECL(radix8_z_t0d_fwd_avx512_f32)
-#define VFFT_IL_T0D_FWD_RADICES(X) X(4) X(8)
+/* ── t0d ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_T0D_FWD_RADICES(X)
 
 /* ── t0tp ── fwd 1 · bwd 1 · pair 1 */
-VFFT_IL_DECL(radix8_z_t0tp_fwd_avx512_f32)
-VFFT_IL_DECL(radix8_z_t0tp_bwd_avx512_f32)
-#define VFFT_IL_T0TP_FWD_RADICES(X) X(8)
-#define VFFT_IL_T0TP_BWD_RADICES(X) X(8)
-#define VFFT_IL_T0TP_PAIR_RADICES(X) X(8)
+VFFT_IL_DECL(radix16_z_t0tp_fwd_avx512_f32)
+VFFT_IL_DECL(radix16_z_t0tp_bwd_avx512_f32)
+#define VFFT_IL_T0TP_FWD_RADICES(X) X(16)
+#define VFFT_IL_T0TP_BWD_RADICES(X) X(16)
+#define VFFT_IL_T0TP_PAIR_RADICES(X) X(16)
 
 /* ── t2 ── fwd 5 · bwd 5 · pair 5 */
 VFFT_IL_DECL(radix4_z_t2_fwd_avx512_f32)
@@ -798,12 +796,10 @@ VFFT_IL_DECL(radix64_z_t2tg_bwd_avx512_f32)
 /* ── t2trtan ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_T2TRTAN_BWD_RADICES(X)
 
-/* ── tld ── fwd 1 · bwd 1 · pair 1 */
-VFFT_IL_DECL(radix8_z_tld_fwd_avx512_f32)
-VFFT_IL_DECL(radix8_z_tld_bwd_avx512_f32)
-#define VFFT_IL_TLD_FWD_RADICES(X) X(8)
-#define VFFT_IL_TLD_BWD_RADICES(X) X(8)
-#define VFFT_IL_TLD_PAIR_RADICES(X) X(8)
+/* ── tld ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_TLD_FWD_RADICES(X)
+#define VFFT_IL_TLD_BWD_RADICES(X)
+#define VFFT_IL_TLD_PAIR_RADICES(X)
 
 /* ── tlf ── fwd 2 · bwd 2 · pair 2 */
 VFFT_IL_DECL(radix4_z_tlf_fwd_avx512_f32)
@@ -832,10 +828,8 @@ VFFT_IL_DECL(radix8_z_tmg_bwd_avx512_f32)
 #define VFFT_IL_TMG_BWD_RADICES(X) X(4) X(8)
 #define VFFT_IL_TMG_PAIR_RADICES(X) X(4) X(8)
 
-/* ── tmgd ── fwd 2 · bwd 0 · pair 0 */
-VFFT_IL_DECL(radix4_z_tmgd_fwd_avx512_f32)
-VFFT_IL_DECL(radix8_z_tmgd_fwd_avx512_f32)
-#define VFFT_IL_TMGD_FWD_RADICES(X) X(4) X(8)
+/* ── tmgd ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_TMGD_FWD_RADICES(X)
 
 /* ── the row family: X(radix, tag) = the batched row kernel of the plain row passes, and the
  * turned-store twin for the 2D turn route ── */
@@ -847,9 +841,11 @@ VFFT_IL_DECL(radix8_z_tmgd_fwd_avx512_f32)
 #define VFFT_IL_MONO_FUSED(X) X(2, 1, mono1x2) X(4, 1, mono1x4) X(8, 1, mono2x4) X(16, 1, mono4x4y) X(32, 1, mono4x8y) X(32, 2, mono8x4y) X(64, 1, mono16x4y) X(64, 2, mono8x8y) X(64, 3, mono4x16y) X(64, 4, mono8x8) X(128, 1, mono16x8y) X(128, 2, mono32x4y) X(128, 3, mono8x16y) X(128, 4, mono16x8) X(128, 5, mono8x16) X(256, 1, mono8x32y) X(256, 2, mono32x8y) X(256, 3, mono16x16y) X(256, 4, mono16x16) X(256, 5, mono32x8) X(256, 6, mono8x32) X(512, 1, mono32x16y) X(512, 2, mono16x32y) X(512, 3, mono64x8y) X(512, 4, mono32x16) X(512, 5, mono16x32) X(512, 6, mono64x8) X(1024, 1, mono32x32y) X(1024, 2, mono64x16y) X(1024, 3, mono16x64y) X(1024, 4, mono32x32) X(1024, 5, mono64x16) X(1024, 6, mono16x64)
 #define VFFT_IL_MONO_FUSED_IP(X) X(2, 1, mono1x2) X(4, 1, mono1x4) X(8, 1, mono2x4) X(16, 1, mono4x4y) X(32, 1, mono4x8y) X(32, 2, mono8x4y) X(64, 1, mono16x4y) X(64, 2, mono8x8y) X(64, 3, mono4x16y) X(64, 4, mono8x8) X(128, 1, mono16x8y) X(128, 2, mono32x4y) X(128, 3, mono8x16y) X(128, 4, mono16x8) X(128, 5, mono8x16) X(256, 1, mono8x32yi) X(256, 2, mono32x8yi) X(256, 3, mono16x16yi) X(256, 4, mono16x16) X(256, 5, mono32x8) X(256, 6, mono8x32) X(512, 1, mono32x16yi) X(512, 2, mono16x32yi) X(512, 3, mono64x8yi) X(512, 4, mono32x16) X(512, 5, mono16x32) X(512, 6, mono64x8) X(1024, 1, mono32x32yi) X(1024, 2, mono64x16yi) X(1024, 3, mono16x64yi) X(1024, 4, mono32x32i) X(1024, 5, mono64x16i) X(1024, 6, mono16x64i)
 
-/* zil-f32-avx512: 4 cells DECLARED ABSENT at avx512_f32:
- *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
+/* zil-f32-avx512: 12 cells DECLARED ABSENT at avx512_f32:
+ *   2  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 16-lane blocks (law: R % VW == 0)
+ *   2  codelet_zsplit: t0tp/tld radix 8 is not a whole number of 16-lane blocks (law: R % VW == 0)
+ *   8  codelet_zsplit: the kind has no 16-lane FP32 form (16 lanes = the natural class: t0tp, tmg, tlf, tlfi)
  */
-/* 208 declarations over 136 kinds */
+/* 202 declarations over 136 kinds */
 
 #endif

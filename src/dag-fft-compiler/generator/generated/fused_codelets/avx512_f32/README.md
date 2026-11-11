@@ -1,16 +1,20 @@
 # ZTURN-T fused drivers, avx512_f32 (FP32)
 
-STOPGAP: the same 8-lane (ymm) drivers as `../avx2_f32/`, emitted under the
-`avx512_f32` name by
+The 13 whole-transform drivers (N = 256..1048576) for interleaved complex float at
+16 lanes per zmm (117 cells: `../../ztt_registry_avx512_f32.h`), emitted by
 `emit_ztt_drivers.exe --isa avx512_f32 --uarch sapphire_rapids_avx512 --split .`
-and compiled for `avx512f,avx512vl,fma`, so the compiler has the 32 ymm registers
-(the stack spills of the 16-register build mostly disappear). Same 186 cells (N = 16..1048576, 34 files)
-(`../../ztt_registry_avx512_f32.h`), same tables, results bitwise those of avx2_f32.
+and compiled for `avx512f,avx512dq`.
 
-Why not 16 lanes: the ingest writes each column's R0-run as whole VW-column blocks
-and the plain terminator reads R_last-runs the same way, so 16 lanes need
-R0 % 16 = 0 (and R_last % 16 = 0); no {4,8} chain qualifies. A 16-lane form needs
-radix-16 ends (a radix-16 ingest lattice with 16 x 16 transposes, a radix-16 tld)
-and the core's chain grammar at 16: the follow-up, not built.
+The 16-lane form is the natural order class only. A chain is a radix-16 ingest
+followed by radix-4 and radix-8 stages: the ingest writes each column's R0-run as
+whole 16-column blocks, so R0 % 16 = 0 and (N / R0) % 16 = 0, which makes 256 the
+smallest length. The ingest turns 16 digits per column through a 16 x 16 float
+transpose; the mids and the terminators are the radix-4 and radix-8 bodies at 16
+lanes. Per stage, for each 16-column block and leg r = 1..R-1, one record
+`[c x16][s x16]` (128 B); the plane holds `[re x16][im x16]` blocks; `rb[]` is
+`size_t`. The plain (scrambled) class has no cell here: its last stage would need
+R_last % 16 = 0.
 
-Own folder, so no AVX2 or FP64 build compiles it.
+They live in their own folder so no AVX2 or FP64 build compiles them; an FP32
+AVX-512 build compiles this folder.
+Registry: `emit_ztt_registry.exe --isa avx512_f32 > ../../ztt_registry_avx512_f32.h`.

@@ -2842,10 +2842,12 @@ let zil_f32_in_scope (c : Codelet.t) : bool =
 (* THE FP32 ZTURN-T STAGE KERNELS (2026-11-10): the block-plane kinds of the pow2 chains --
    natural t0tp / tmg / tlf / tlfi and plain t0d / tmgd / tld / tldb, each direction FP64 has
    -- at radix 4 and 8, taken from the FP64 avx2 list (zil_boundary_cells) by kind so the
-   two cannot drift. Both FP32 ISAs run them at 8 float lanes (avx512_f32 = the 8-lane form
-   under its own name, Cascade_z.ztt_isa), so the radix-4 lane lattices t0tp / tld are
-   DECLARED absent by the R % VW law (zil_f32_gap): exactly FP64 avx512's cell set. They
-   land in zil/<isa>/ztt through zil_folder. *)
+   two cannot drift. avx2_f32 runs them at 8 float lanes, so the radix-4 lane lattices
+   t0tp / tld are DECLARED absent by the R % VW law (zil_f32_gap): exactly FP64 avx512's
+   cell set. avx512_f32 runs 16 float lanes (2026-11-11, Cascade_z.ztt_isa): the natural
+   class only -- tmg / tlf / tlfi at radix 4 and 8 from this list, the ingest at RADIX 16
+   from zil_f32_ztt16_cells below, and t0tp at 4 / 8 and every plain kind declared absent.
+   They land in zil/<isa>/ztt through zil_folder. *)
 let zil_f32_ztt_in_scope (c : Codelet.t) : bool =
   match c.Codelet.kind with
   | Codelet.Zsplit
@@ -2871,17 +2873,23 @@ let zil_f32_base_cells : (string * string list) list Lazy.t =
    tuple of all the groups) divide it with the radix a multiple of it (c2c_il.ml
    emit_blocked). Every FP32 cell of the corpus satisfies it at both widths (the 4.4 split
    of radix16_z_n1tb44 at 512 bits takes the all-groups tuple); the law stays declared. And
-   the ZTURN-T lane lattices t0tp / tld write or read R-runs as whole 8-lane blocks (the
-   FP32 ZTURN-T form is 8 float lanes at both ISAs), so R % 8 == 0: radix 4 is absent, as
-   at FP64 avx512 (cascade_z.ml refuses it). *)
+   the ZTURN-T lane lattices t0tp / tld write or read R-runs as whole VW-lane blocks (8
+   float lanes at avx2_f32, 16 at avx512_f32), so R % VW == 0: at 8 lanes radix 4 is
+   absent, as at FP64 avx512; at 16 lanes radix 4 and 8 are, and the plain kinds (t0d,
+   tmgd, tld, tldb) have no 16-lane form at all (cascade_z.ml refuses each). *)
 let zil_f32_gap ~(isa : string) (c : Codelet.t) : string option =
   let per = if isa = "avx2_f32" then 4 else 8 in
+  let vw = 2 * per in
   match c.Codelet.kind with
-  | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod 8 <> 0 ->
+  | Codelet.Zsplit { k = Codelet.(T0d | Tmgd | Tld | Tldb) } when vw = 16 ->
+    Some
+      "codelet_zsplit: the kind has no 16-lane FP32 form (16 lanes = the natural class: t0tp, \
+       tmg, tlf, tlfi)"
+  | Codelet.Zsplit { k = Codelet.(T0tp | T0tpb | Tld | Tldb) } when c.Codelet.radix mod vw <> 0 ->
     Some
       (Printf.sprintf
-         "codelet_zsplit: t0tp/tld radix %d is not a whole number of 8-lane blocks (law: R %% VW == 0)"
-         c.Codelet.radix)
+         "codelet_zsplit: t0tp/tld radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)"
+         c.Codelet.radix vw)
   | Codelet.Cil { form; blocked = true; split; turn; _ }
     when form = Codelet.Cil_n1t || turn = Some Codelet.Turnst ->
     let r = c.Codelet.radix in
@@ -2928,6 +2936,23 @@ let zil_f32_with_port (c : Codelet.t) : Codelet.t =
     in
     if pair then { c with kind = Cil { r with port = zil_f32_port } } else c
   | _ -> c
+;;
+
+(* THE 16-LANE ZTURN-T INGEST (2026-11-11): avx512_f32 only, radix 16, both directions --
+   the one FP32 stage kernel with no FP64 cell to derive from (FP64's lanes stop at 8, so
+   its ingests are radix 4 and 8). The argv is the canonical form of the cell. *)
+let zil_f32_ztt16_cells ~(isa : string) : (string * string list) list =
+  if isa <> "avx512_f32"
+  then []
+  else
+    List.map
+      (fun (file, kind) ->
+         let c =
+           Codelet.of_argv
+             [ "16"; "--zp-" ^ kind; "--isa"; isa; "--uarch"; "sapphire_rapids_avx512"; "--emit-c" ]
+         in
+         file, List.filter (fun a -> a <> "--emit-c") (Codelet.to_argv c))
+      [ "radix16_z_t0tp_avx512_f32.c", "t0tp"; "radix16_z_t0tp_bwd_avx512_f32.c", "t0tpb" ]
 ;;
 
 (* (cells emitted, cells declared absent with the reason) at an FP32 isa *)
@@ -2994,7 +3019,9 @@ let matrix_files (quadrant : string) : (string * string list) list =
     (match zil_f32_quadrant_isa q with
      | Some isa ->
        (* the retargeted FP64-derived cells, then this ISA's own mono forms (literal per ISA) *)
-       fst (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells)) @ zil_f32_mono_cells ~isa
+       fst (zil_f32_retarget ~isa (Lazy.force zil_f32_base_cells))
+       @ zil_f32_mono_cells ~isa
+       @ zil_f32_ztt16_cells ~isa
      | None -> assert false)
   | q when zil_quadrant_isa q <> None ->
     (match zil_quadrant_isa q with

@@ -118,11 +118,8 @@ static inline void vfft_il_t2c_fill(vfft_real *tw, size_t nb, int R, size_t L,
 }
 
 /* ZTURN-T's lane count (2026-11-10): the columns one vector of its plane holds, which its laws,
- * column cuts and stage records follow. It is VFFT_IL_VW unless the build's ZTT drivers run
- * narrower vectors than the cil kernels (none does at FP64). */
-#if defined(VFFT_FLOAT) && defined(VFFT_BUILD_ISA_AVX512) && !defined(VFFT_ZTT_VW)
-#define VFFT_ZTT_VW 8   /* FP32 avx512: the ZTURN-T drivers run 8-lane (ymm) plane blocks, the cil kernels zmm */
-#endif
+ * column cuts and stage records follow. It is VFFT_IL_VW at every ISA; FP32 avx512 runs 16-lane
+ * (zmm) plane blocks: a radix-16 ingest, radix-4 / 8 mids and terminators (2026-11-11). */
 #ifndef VFFT_ZTT_VW
 #define VFFT_ZTT_VW VFFT_IL_VW
 #endif

@@ -333,11 +333,20 @@ static inline size_t _ztt_fill_stage(vfft_real *tw, long L, int R, long RL, int 
 
 /* the chain grammar (ztt_odd_design.md): the ends are 4 or 8 (the ingest's
  * turn lattice and the terminators' lane transposes), a mid is 4, 8 or an odd
- * 3/5/7/9/15 (its edges are radix-agnostic) */
+ * 3/5/7/9/15 (its edges are radix-agnostic). At 16 lanes (FP32 avx512) the
+ * INGEST is radix 16: its law R0 % 16 == 0 admits no smaller one, and the
+ * 16-lane ingest kernel turns 16 digits per column. */
 static inline int _ztt_radix_ok(int R, int mid)
 {
     if (R == 4 || R == 8) return 1;
     return mid && (R == 3 || R == 5 || R == 7 || R == 9 || R == 15);
+}
+static inline int _ztt_ingest_ok(int R)
+{
+#if VFFT_ZTT_VW >= 16
+    if (R == 16) return 1;
+#endif
+    return _ztt_radix_ok(R, 0);
 }
 
 /* create: the validator is the law (NULL = not a ZTURN-T cell, loudly under
@@ -359,23 +368,24 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16.." VFFT_ZTT_MAX_N_STR;
     for (s = 0; !why && s < nf; s++)
     {
-        if (!_ztt_radix_ok(chain[s], s > 0 && s < nf - 1))
-            why = "radix not in {4, 8} at an end, or not in {4, 8, 3, 5, 7, 9, 15} in a mid";
+        if (!(s == 0 ? _ztt_ingest_ok(chain[s]) : _ztt_radix_ok(chain[s], s < nf - 1)))
+            why = "radix not in {4, 8} at an end (16 for a 16-lane ingest), or not in {4, 8, 3, 5, 7, 9, 15} in a mid";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
     if (!why && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";
 #if VFFT_ZTT_VW >= 8
-    /* THE AVX-512 LAWS (8 columns per vector; zil_avx512_design.md §11): the
-     * natural class's ingest writes R0-runs as whole 8-column blocks; the
-     * plain (scrambled) class's last stage runs whole 8-column iterations of
-     * R_last-runs. Fused and staged plans alike. (At 4 lanes every chain the
-     * grammar admits meets them, so AVX2 has no such checks.) */
-    if (!why && (N / chain[0]) % VFFT_ZTT_VW) why = "(N / R0) % 8 != 0";
+    /* THE WIDE-LANE LAWS (VW = 8 or 16 columns per vector; zil_avx512_design.md
+     * §11): the natural class's ingest writes R0-runs as whole VW-column blocks;
+     * the plain (scrambled) class's last stage runs whole VW-column iterations
+     * of R_last-runs. Fused and staged plans alike. (At 4 lanes every chain the
+     * grammar admits meets them, so AVX2 has no such checks. At 16 lanes no
+     * terminator radix meets the plain law: the natural class only.) */
+    if (!why && (N / chain[0]) % VFFT_ZTT_VW) why = "(N / R0) is not a multiple of the lane count";
     if (!why && !scr && chain[0] % VFFT_ZTT_VW)
-        why = "natural: R0 % 8 != 0 (the ingest's runs are not whole 8-column blocks)";
+        why = "natural: R0 is not a multiple of the lane count (the ingest's runs are not whole blocks)";
     if (!why && scr && (chain[nf - 1] % VFFT_ZTT_VW || (N / chain[nf - 1]) % VFFT_ZTT_VW))
-        why = "scrambled: R_last % 8 != 0 or (N / R_last) % 8 != 0";
+        why = "scrambled: R_last or (N / R_last) is not a multiple of the lane count";
 #endif
     cell = why ? NULL : vfft_ztt_lookup(N, chain, nf);
 #if VFFT_ZTT_VW >= 8
