@@ -71,20 +71,10 @@ Thumbs.db
 # can't leak into production.
 /src/dag-fft-compiler/experiments/
 /docs/research
-# owner 2026-11-11: the roadmap folder is local too, like docs/research
+# owner 2026-11-11: the roadmap and design folders are local too, like docs/research
 /docs/roadmap
+/docs/design
 /src/dag-fft-compiler/jit/generated
-
-# owner 2026-09-07: design comparison notes kept local
-docs/design/cascade_vs_mkl_method.md
-docs/design/cascade_zturn_t_plan.md
-docs/design/sub2048_campaign_article.md
-docs/design/zturn_t_ship_plan.md
-
-# owner design contracts (local, never committed)
-docs/design/design_contracts.md
-docs/design/pow2_race_pools.md
-docs/design/exact_trig_constants.md
 
 # owner 2026-11-06: the AVX-512 findings, kept local
 docs/performance/avx512_findings.md

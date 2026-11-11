@@ -72,8 +72,7 @@ equal vertical gaps).
 ![2D speedup matrix, VectorFFT vs MKL, every 2^a x 2^b plane](src/tools/plots/vectorfft-2d-pow2.svg)
 
 Every route is raced per plane by the planner and banked in
-wisdom; the design is in
-[`docs/design/il2d_c2c_strategy.md`](docs/design/il2d_c2c_strategy.md). The record is
+wisdom. The record is
 [`gauntlet_2d-pow2grid6_rowkernels_20261108b`](gauntlet/results/gauntlet_2d-pow2grid6_rowkernels_20261108b/).
 
 | Plane size | Cells | Median speedup | At or above parity | Best |
@@ -84,8 +83,7 @@ wisdom; the design is in
 | 65,537..4M | 45 | 1.50x | 100% | 2.23x (8192x512) |
 | **all, 159 planes** | **159** | **1.52x** | **99%** | 18.31x (2x4) |
 
-The same 159 planes at eight threads, MKL at eight threads too. The threaded design is in
-[`docs/design/il2d_c2c_mt.md`](docs/design/il2d_c2c_mt.md).
+The same 159 planes at eight threads, MKL at eight threads too.
 
 ![2D speedup, one thread against eight, by plane size](src/tools/plots/vectorfft-2d-mt-forest.svg)
 
@@ -144,7 +142,7 @@ Where the kernels come from: the DAG FFT compiler takes a DFT as an expression
 DAG and emits straight-line, register-allocated C per instruction set.
 
 The contracts in full: [`include/vfft.h`](include/vfft.h) (support matrix and
-buffer signatures) and [`docs/design/design_contracts.md`](docs/design/design_contracts.md);
+buffer signatures);
 every served configuration at work: the [user guide](how-to-use/VectorFFT-Guide.html).
 
 ---
