@@ -317,6 +317,9 @@ static inline int est_zrb(const est_machine_t *m, long long N, est_real_recipe_t
     return est_refuse(why, whylen, "real N = %lld: no zrb length up to 2^24 has an inner (sketch 6)", N);
 }
 
+static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, int ip, int T, est_real_recipe_t *o,
+                                 char *why, size_t whylen);
+
 /* section 6: the door picks by parity (il/real/real_create_il.h:34); a real N plans like complex N/2 */
 static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip, int T, est_real_recipe_t *o,
                            char *why, size_t whylen)
@@ -493,8 +496,17 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
             return 0;
         }
     }
-    /* 5. zr2c: the child is the library's c2c procedure at N/2, natural, one thread; route
-     * child_nat_ip in place and for c2r from N = 1024 (table 5.8), else child_oop_il */
+    /* 5. zr2c */
+    return est__real_zr2c(m, N, c2r, ip, T, o, why, whylen);
+}
+
+/* zr2c at even N: the child is the library's c2c procedure at N/2, natural, one thread; route child_nat_ip in place
+ * and for c2r from N = 1024 (table 5.8), else child_oop_il. est_real's last step, and the 2D real rows' engine where
+ * their batch needs copies the picked engine cannot give (est_plan_2d_real). Clears o. */
+static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, int ip, int T, est_real_recipe_t *o,
+                                 char *why, size_t whylen)
+{
+    memset(o, 0, sizeof *o);
     {
         const int route = ip || (c2r && N >= 1024);
         if (est_c2c(m, N / 2, 0, route, 1, &o->c, why, whylen) != 0) return -1;

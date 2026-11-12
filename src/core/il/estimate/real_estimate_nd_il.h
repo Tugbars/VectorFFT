@@ -347,10 +347,17 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     {
         if (est_real(m, N2, c2r, ip, p->T, &p->rp, why, whylen))
             return -1;
-        if (p->T > 1)   /* the rows threaded as the batch rule says, but serial where the plane itself is (the column
-                         * rule's bound: 8 x 256 and 48 x 48 at 8 threads 1.06 - 1.83 -> 0.52 - 0.88; above it the
-                         * serial rows 1.6 - 3.5 x slower) */
+        if (p->T > 1)
+        {   /* the rows threaded as the batch rule says, but serial where the plane itself is (the column rule's bound:
+             * 8 x 256 and 48 x 48 at 8 threads 1.06 - 1.83 -> 0.52 - 0.88; above it the serial rows 1.6 - 3.5 x slower) */
             p->tcmt = bytes <= m->l1d / 2 ? 0 : est_batch_whole(m, (size_t)(16 * hp1), (size_t)N1, p->T);
+            if (p->tcmt == 1 && !est__real_copies(&p->rp, ip) && est__real_zr2c(m, N2, c2r, ip, p->T, &p->rp, why, whylen))
+                /* whole rows per thread need the batch's copies; ZTT-r in place owns one scratch plane and gets none
+                 * (vfft.c _tc_inner_mt_safe), so its rows ran serially: zr2c, the planner's row engine there
+                 * (2026-11-12, C2R in place at 8 threads: 9 planes 64 x 1024 - 4099 x 2048 1.74 - 5.40 -> 0.95 - 1.27
+                 * against the planner, the 42 planes 1.433 -> 1.113; R2C unchanged) */
+                return -1;
+        }
     }
     else
     {

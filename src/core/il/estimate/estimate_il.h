@@ -734,10 +734,11 @@ static inline int est_flat_chain(long long N, int *c)
 /* THE RADER-STAGE CHAIN (the owner's rule, 2026-10-23): a composite N whose one prime factor p above
  * 47 appears once, whose p - 1 has no prime factor above 47, and whose rest N / p is at least the lanes
  * runs as a flat chain with the Rader stage p (il_rader_stage.h) at stage 0, or at stage 1 after a lone 2
- * when N = 2 (mod 4); the rest is the flat chain above. Natural class, out of place: a Rader stage
- * serves no scrambled walk (il_rader_stage.h:497), and in place the record banked none. Over the
- * 2,146 composites of the 2026-10-13 race record the planner chose the flat chain exactly where this
- * holds in 2,064. The stage vectorizes along its N / p columns, never along p - 1: it needs two vectors of
+ * when N = 2 (mod 4); the rest is the flat chain above. Natural class, either placement: a Rader stage
+ * serves no scrambled walk (il_rader_stage.h:497). Over the 2,146 composites of the 2026-10-13 race record
+ * the planner chose the flat chain exactly where this holds in 2,064; in place its races bank the same
+ * chain (2026-11-12, one thread: 32764 8191.4, 64576 1009.4.4.4, 4040 101.8.5, 54891 107.3.19.9), where
+ * the prime route lost by 1.36 - 3.69x. The stage vectorizes along its N / p columns, never along p - 1: it needs two vectors of
  * them, N / p >= VFFT_IL_VW (4 at AVX2, as fitted; 8 at AVX-512, where the Zen 4 store's 2,157 composite prime
  * cells agree 88.9 % against 81.6 % at 4, the peak of the scan over the bound). 0 = not this class. */
 static inline int est_rader_flat_chain(long long N, int *c)
@@ -1408,7 +1409,7 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
      * inner passes the ceiling has no engine (policy_il.h:299-302) */
     if (vfft_policy_prime_cell((int)N))
     {
-        if (!scr && !ip && N <= VFFT_ZTT_MAX_N && (k = est_rader_flat_chain(N, c)) > 0)
+        if (!scr && N <= VFFT_ZTT_MAX_N && (k = est_rader_flat_chain(N, c)) > 0)
             goto flat_chain;   /* the Rader-stage chain (est_rader_flat_chain) */
         if (vfft_policy_prime_cell_unservable((int)N))
             return est_refuse(why, whylen, "N = %lld has a prime factor above %d and is not prime: its Bluestein "
@@ -1451,10 +1452,9 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
     if (N > VFFT_ZTT_MAX_N)
     {
         if (vfft_k1fs_band((int)N) && est_fs_split(N, 0, &R1, &R2))
-        {
-            if (!scr && ip) goto flat;   /* in place and natural the four-step pays a plane copy */
-            return est_fs_route(m, N, scr, T, o, why, whylen);
-        }
+            return est_fs_route(m, N, scr, T, o, why, whylen);   /* either placement: in place the four-step pays
+                                                                   * a plane copy and still beats the flat chain by
+                                                                   * 1.07 - 2.21x (2026-11-12, 300000 - 1310720) */
         /* the door's unraced Bluestein (c2c_oop_create_il.h:292-320) */
         if (2 * N - 1 > VFFT_POLICY_INNER_MAX_N)
             return est_refuse(why, whylen, "N = %lld has no four-step split (no divisor pair with both sides in "
@@ -1484,7 +1484,6 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
         o->il_bkv = est_nib_bwd(c3[0], 1) << 8;
         return 0;
     }
-flat:
     /* 9. the flat DIT */
     k = est_flat_chain(N, c);
     if (!k) return est_refuse(why, whylen, "N = %lld: no flat chain of at most %d stages", N, VFFT_ILFD_MAX_K);
