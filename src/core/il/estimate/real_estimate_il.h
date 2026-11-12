@@ -636,8 +636,24 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
         return est_refuse(why, whylen, "a real plan is natural order only (vfft.c:1941-1957)");
     if (est_real(m, rq->N, rq->transform == VFFT_C2R, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen))
         return -1;
-    if (rq->howmany > 1 && T > 1 && est__real_copies(out, rq->placement == VFFT_PLACEMENT_IN))
-        out->tcmt = est__real_batch_whole(m, out, rq->N, rq->howmany);
+    if (rq->howmany > 1 && T > 1)
+    {
+        const int ip = rq->placement == VFFT_PLACEMENT_IN;
+        est_real_recipe_t zr;
+        if (ip && !strcmp(out->eng, "zttr") &&
+            !est__real_zr2c(m, rq->N, rq->transform == VFFT_C2R, 1, T, &zr, why, whylen) &&
+            est__real_batch_whole(m, &zr, rq->N, rq->howmany))
+        {   /* whole transforms per thread need the batch's copies; ZTT-r in place owns one scratch plane and gets none
+             * (vfft.c _tc_inner_mt_safe), so its batch ran serially: zr2c, the planner's engine there, as the 2D real
+             * rows take it (est_plan_2d_real). 2026-11-12, C2R 512 x 512 in place at 8 threads: 193.9 us against
+             * 38.8 out of place */
+            *out = zr;
+            out->tcmt = 1;
+        }
+        else if (est__real_copies(out, ip))
+            out->tcmt = est__real_batch_whole(m, out, rq->N, rq->howmany);
+        why[0] = 0;
+    }
     return 0;
 }
 
