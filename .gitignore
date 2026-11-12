@@ -41,6 +41,8 @@ Thumbs.db
 !/how-to-use/examples/CMakeLists.txt
 # ...and the benchmark programs' CMake file (benchmark_scripts/), which the root CMakeLists.txt adds
 !/benchmark_scripts/CMakeLists.txt
+# ...and the release package's README (benchmark_scripts/scripts/package_release.py ships it)
+!/benchmark_scripts/release/README.txt
 # the gauntlet's tools as build.py leaves them beside their sources on Linux
 # (no .exe suffix there)
 /gauntlet/bench_1d_vs_mkl

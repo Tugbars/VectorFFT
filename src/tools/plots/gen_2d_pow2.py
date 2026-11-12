@@ -11,7 +11,7 @@ usage:  python3 gen_2d_pow2.py <gauntlet_report.txt> [output_prefix] [--cmp NAME
 Reads the "every shape" table of the gauntlet report and plots the x column (the report's
 worse-of-two-flips speedup) of every benched plane, raced or replayed from wisdom, so a run
 needs no --calibrate. Needs only matplotlib, which ships the cmr10 fonts."""
-import re, math, sys
+import re, math, os, sys
 from collections import Counter
 import matplotlib
 matplotlib.use("Agg")
@@ -28,6 +28,8 @@ if not argv:
     sys.exit(__doc__)
 SRC = argv[0]
 OUT = argv[1] if len(argv) > 1 else "vectorfft-2d-pow2"
+# the placement from the report's file name: the gauntlet names an in-place run's files _ip (_ipo: the plan's own plane)
+PLACE = "in place" if re.search(r"_ipo?(?=[_.])", os.path.basename(SRC)) else "out of place"
 rows = {}
 XF = "c2c"
 for l in open(SRC):
@@ -157,9 +159,11 @@ bands = [("$\\leq 256$", 0, 256), ("$257$ - $4096$", 257, 4096), ("$> 4096$", 40
 parts = []
 for lab, lo, hi in bands:
     v = [x for (i, j), (r, x) in rows.items() if lo <= 2 ** (i + j) <= hi]
+    if not v:   # a band no plane of the run falls in (a short --cells list)
+        continue
     parts.append(f"{lab} pts: {sum(t >= 1 for t in v)}/{len(v)} won, gmean {gm(v):.2f}")
 fig.text(0.13, 0.035, "     ".join(parts), fontsize=9.2)
-fig.text(0.13, 0.008, f"2D {XF}, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 2D (out of place)", fontsize=9.5)
+fig.text(0.13, 0.008, f"2D {XF}, interleaved, natural order, {PLACE}, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 2D ({PLACE})", fontsize=9.5)
 
 fig.savefig(f"{OUT}.svg")
 fig.savefig(f"{OUT}.png", dpi=170)

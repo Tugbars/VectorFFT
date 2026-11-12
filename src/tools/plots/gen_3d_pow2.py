@@ -14,7 +14,7 @@ worse of its flips, the same convention as the 2D report. The grid is the data's
 range, the panels (one per N1 present) and the ticks follow the power-of-two volumes in the
 CSV; a volume with a side that is not a power of two is not drawn (counted in the caption).
 The transform comes from the plan column. Needs only matplotlib."""
-import csv, math, sys
+import csv, math, os, re, sys
 from collections import defaultdict
 import matplotlib
 matplotlib.use("Agg")
@@ -31,6 +31,8 @@ if not argv:
     sys.exit(__doc__)
 SRC = argv[0]
 OUT = argv[1] if len(argv) > 1 else "vectorfft-3d-pow2"
+# the placement from the csv's file name: the gauntlet names an in-place run's files _ip (_ipo: the plan's own plane)
+PLACE = "in place" if re.search(r"_ipo?(?=[_.])", os.path.basename(SRC)) else "out of place"
 
 lg2 = lambda n: int(round(math.log2(int(n))))
 pow2 = lambda n: int(n) > 0 and int(n) & (int(n) - 1) == 0
@@ -160,7 +162,7 @@ for n, (lo, hi) in enumerate(bands):
     fig.text(cx, 0.052, f"$2^{{{lo}}}$ - $2^{{{hi}}}$" if hi > lo else f"$2^{{{lo}}}$", fontsize=8.8, ha="center")
     fig.text(cx, 0.030, f"{sum(t >= 1 for t in v)}/{len(v)}", fontsize=8.8, ha="center")
     fig.text(cx, 0.008, f"{gm(v):.2f}", fontsize=8.8, ha="center")
-fig.text(0.13, 0.965, f"3D {XF}, interleaved, natural order, out of place, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
+fig.text(0.13, 0.965, f"3D {XF}, interleaved, natural order, {PLACE}, K = 1, against {'MKL DFTI' if CMP == 'MKL' else CMP} 3D:  "
                       f"{sum(t >= 1 for t in x.values())}/{len(x)} cells won, all volumes up to $2^{{{CAP}}}$ points",
          fontsize=9.2)
 if odd:
