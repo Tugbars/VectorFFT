@@ -17,7 +17,10 @@
  * the process, so no arm always goes first or last. The caller is inside the
  * library's measurement scope (bench_scope.h: pinned, high priority).
  *
- *   bench_estimate_vs_mkl <wisdom dir for B | -> <csv out> N [N ...]     ("-": no B arm; E and M alternate, 6 rounds)
+ *   bench_estimate_vs_mkl <wisdom dir for B | -> <csv out> [ip] N [N ...]     ("-": no B arm; E and M alternate, 6 rounds)
+ *
+ * With `ip` every arm runs in place (VFFT_PLACEMENT_IN; MKL DFTI_INPLACE): one buffer per arm, laid out from the
+ * input again (untimed) before each timed block of reps; the forward errors on each arm's own in-place copy.
  *
  * csv: N,order,arm,ns   (one row per arm per order) on stdout a summary, and
  * a header block with create times and the forward errors vs MKL.
@@ -50,7 +53,7 @@ static void pace(int ms)
 }
 static double *alloc_d(size_t n)
 {
-    double *p = aligned_alloc(64, ((n * sizeof(double) + 63) / 64) * 64);
+    double *p = (double *)vfft_malloc(((n * sizeof(double) + 63) / 64) * 64);   /* the library's aligned block: aligned_alloc is not in MinGW's C runtime */
     if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
     return p;
 }
@@ -62,7 +65,7 @@ static void cachebust(void)
     for (size_t i = 0; i < s; i++) j[i] = (double)i * 0.5;
     for (size_t i = 0; i < s; i++) a += j[i];
     (void)a;
-    free(j);
+    vfft_free(j);
 }
 static int reps_for(size_t total)
 {
@@ -70,12 +73,14 @@ static int reps_for(size_t total)
     return r < 8 ? 8 : r > 100000 ? 100000 : r;
 }
 
-/* one arm: a forward transform zi -> zo */
+static int g_ip;   /* `ip`: every arm in place (VFFT_PLACEMENT_IN, DFTI_INPLACE) */
+
+/* one arm: a forward transform zi -> zo (in place: zi -> zi, zo unused) */
 typedef struct { int kind; vfft_plan h; DFTI_DESCRIPTOR_HANDLE d; } arm_t;
 static inline void arm_run(const arm_t *a, double *zi, double *zo)
 {
-    if (a->kind == 2) DftiComputeForward(a->d, zi, zo);
-    else vfft_execute(a->h, VFFT_FORWARD, zi, zo);
+    if (a->kind == 2) { if (g_ip) DftiComputeForward(a->d, zi); else DftiComputeForward(a->d, zi, zo); }
+    else vfft_execute(a->h, VFFT_FORWARD, zi, g_ip ? zi : zo);
 }
 static double arm_time(const arm_t *a, const double *z0, int N)
 {
@@ -95,14 +100,15 @@ static double arm_time(const arm_t *a, const double *z0, int N)
         }
         for (int t = 0; t < 5; t++)
         {
+            if (g_ip) memcpy(zi, z0, 2 * (size_t)N * sizeof(double));   /* in place: the seed again, untimed */
             const double t0 = now_ns();
             for (int i = 0; i < reps; i++) arm_run(a, zi, zo);
             const double ns = (now_ns() - t0) / reps;
             if (ns < best) best = ns;
         }
     }
-    free(zi);
-    free(zo);
+    vfft_free(zi);
+    vfft_free(zo);
     return best;
 }
 
@@ -123,7 +129,7 @@ static vfft_plan make_plan(int N, unsigned flags, const char *wdir, double *crea
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform = VFFT_C2C;
-    c.placement = VFFT_PLACEMENT_OUT;
+    c.placement = g_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     c.rank = 1;
     c.n[0] = N;
     c.howmany = 1;
@@ -168,7 +174,7 @@ static int run_cell(int N, const char *wdir, FILE *csv)
     DFTI_DESCRIPTOR_HANDLE d = NULL;
     const double tm0 = now_ns();
     if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR ||
-        DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE) != DFTI_NO_ERROR ||
+        DftiSetValue(d, DFTI_PLACEMENT, g_ip ? DFTI_INPLACE : DFTI_NOT_INPLACE) != DFTI_NO_ERROR ||
         DftiCommitDescriptor(d) != DFTI_NO_ERROR)
     { printf("N=%d MKL descriptor failed\n", N); return 1; }
     const double cu_m = (now_ns() - tm0) / 1e3;
@@ -176,10 +182,21 @@ static int run_cell(int N, const char *wdir, FILE *csv)
     double *z0 = alloc_d(n2), *ym = alloc_d(n2), *ye = alloc_d(n2), *yb = alloc_d(n2), *rt = alloc_d(n2);
     srand(42 + N + 1);
     for (size_t i = 0; i < n2; i++) z0[i] = (double)rand() / RAND_MAX - 0.5;
+    if (g_ip)
+    {   /* every arm on its own copy of the input, in place */
+        memcpy(ym, z0, n2 * sizeof(double)); DftiComputeForward(d, ym);
+        memcpy(ye, z0, n2 * sizeof(double)); vfft_execute(he, VFFT_FORWARD, ye, ye);
+        if (have_b) { memcpy(yb, z0, n2 * sizeof(double)); vfft_execute(hb, VFFT_FORWARD, yb, yb); }
+        else memcpy(yb, ym, n2 * sizeof(double));
+        memcpy(rt, ye, n2 * sizeof(double)); vfft_execute(he, VFFT_BACKWARD, rt, rt);
+    }
+    else
+    {
     DftiComputeForward(d, z0, ym);
     vfft_execute(he, VFFT_FORWARD, z0, ye);
     if (have_b) vfft_execute(hb, VFFT_FORWARD, z0, yb); else memcpy(yb, ym, n2 * sizeof(double));
     vfft_execute(he, VFFT_BACKWARD, ye, rt);
+    }
     for (size_t i = 0; i < n2; i++) rt[i] /= N;
     const double ee = rel_err(ye, ym, n2), eb = rel_err(yb, ym, n2), ert = rel_err(rt, z0, n2);
 
@@ -219,13 +236,15 @@ static int run_cell(int N, const char *wdir, FILE *csv)
     DftiFreeDescriptor(&d);
     vfft_destroy(he);
     if (hb) vfft_destroy(hb);
-    free(z0); free(ym); free(ye); free(yb); free(rt);
+    vfft_free(z0); vfft_free(ym); vfft_free(ye); vfft_free(yb); vfft_free(rt);
     return 0;
 }
 
 int main(int argc, char **argv)
 {
-    if (argc < 4) { printf("usage: %s <wisdom dir for B> <csv out> N [N ...]\n", argv[0]); return 2; }
+    if (argc < 4) { printf("usage: %s <wisdom dir for B> <csv out> [ip] N [N ...]\n", argv[0]); return 2; }
+    for (int i = 3; i < argc; i++) if (!strcmp(argv[i], "ip")) g_ip = 1;
+    printf("# placement: %s\n", g_ip ? "in place (VFFT_PLACEMENT_IN, DFTI_INPLACE)" : "out of place");
     mkl_set_num_threads(1);
     bench_scope(-1, 1, bench_guard_mode());
     {
@@ -245,7 +264,7 @@ int main(int argc, char **argv)
     FILE *csv = fopen(argv[2], "a");
     if (!csv) { printf("cannot open %s\n", argv[2]); return 1; }
     int rc = 0;
-    for (int i = 3; i < argc; i++) rc |= run_cell(atoi(argv[i]), argv[1], csv);
+    for (int i = 3; i < argc; i++) if (strcmp(argv[i], "ip")) rc |= run_cell(atoi(argv[i]), argv[1], csv);
     fclose(csv);
     return rc;
 }
