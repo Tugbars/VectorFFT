@@ -1,7 +1,7 @@
 #!/bin/sh
 # run.sh -- the VectorFFT benchmark programs of this folder, from a menu (README.txt).
 #   ./run.sh              the menu
-#   ./run.sh 1 [options]  a choice directly, with the program's options (--cells LIST, --avx2 / --avx512, --out DIR)
+#   ./run.sh 1 [options]  a choice directly, with the program's options (--cells LIST, --inplace, --avx2 / --avx512, --out DIR)
 # The results land in vectorfft_results/ beside it. FFTW is the system's: install libfftw3 (Debian / Ubuntu:
 # sudo apt install libfftw3-3 libfftw3-single3; Fedora: sudo dnf install fftw-libs).
 cd "$(dirname "$0")" || exit 1

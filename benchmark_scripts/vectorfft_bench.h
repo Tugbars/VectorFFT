@@ -4,7 +4,8 @@
  * runs the worker of the instruction set it picks, vectorfft_bench_worker (vectorfft_bench_worker.c, one build
  * per instruction set), with the program's name, its comparator, its plans, its precision and its list of
  * transforms, its cells: 1D N, 2D N1xN2 (N1 rows of N2 points) or 3D N1xN2xN3; complex to complex, interleaved,
- * natural order, out of place, one transform per call, one thread.
+ * natural order, out of place (--inplace: in place, one buffer on both engines: the bench's --k1nat 1D cell, its
+ * 2D / 3D cells with --ilip), one transform per call, one thread.
  *
  * The worker times them against Intel MKL or FFTW with the gauntlet's own tools, as gauntlet/gauntlet.py runs
  * them: one bench_1d_vs_mkl process per cell and engine order (the bench pins its core, raises its priority and
@@ -121,6 +122,7 @@ typedef struct {
     int measured;                  /* 0 = the estimate's plans, 1 = the planner's */
     int f32;                       /* 1 = single precision (1D powers of two, the planner's plans) */
     int check_only;                /* 1 = plan and check the cells, print the bench's commands, time nothing */
+    int ip;                        /* 1 = in place (--inplace): our plans and the comparator's, one buffer */
     const char *out;               /* the directory the run directories are made in */
     const char *cmp, *cmp_short;   /* "Intel MKL" / "MKL", "FFTW" / "FFTW" */
 } vs_opts_t;
@@ -165,8 +167,9 @@ static void vs_machine(est_machine_t *m)
     m->l1d_ways = (int)vfft_cpu_l1d_ways();
 }
 
-/* the rows a VFFT_FLAG_ESTIMATE create puts in its private store for this cell at one thread */
-static int vs_put_estimate(vw2_store_t *st, const est_machine_t *m, const vs_cell_t *c, char *why, size_t whylen)
+/* the rows a VFFT_FLAG_ESTIMATE create puts in its private store for this cell at one thread (ip: in place; the 2D
+ * and 3D c2c rows serve both placements) */
+static int vs_put_estimate(vw2_store_t *st, const est_machine_t *m, const vs_cell_t *c, int ip, char *why, size_t whylen)
 {
     if (c->d == 1)
     {
@@ -176,7 +179,7 @@ static int vs_put_estimate(vw2_store_t *st, const est_machine_t *m, const vs_cel
         rq.N = c->n[0];
         rq.transform = VFFT_C2C;
         rq.order = VFFT_ORDER_NATURAL;
-        rq.placement = VFFT_PLACEMENT_OUT;
+        rq.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
         rq.nthreads = 1;
         rq.howmany = 1;
         if (est_plan_1d(m, &rq, &rc, why, whylen))
@@ -211,11 +214,11 @@ static int vs_put_estimate(vw2_store_t *st, const est_machine_t *m, const vs_cel
     return r;
 }
 
-static void vs_config(const vs_cell_t *c, vfft_config_t *cfg)
+static void vs_config(const vs_cell_t *c, int ip, vfft_config_t *cfg)
 {
     memset(cfg, 0, sizeof *cfg);
     cfg->transform = VFFT_C2C;
-    cfg->placement = VFFT_PLACEMENT_OUT;
+    cfg->placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     cfg->layout = VFFT_LAYOUT_INTERLEAVED;
     cfg->rank = c->d;
     for (int i = 0; i < c->d; i++)
@@ -224,13 +227,14 @@ static void vs_config(const vs_cell_t *c, vfft_config_t *cfg)
     cfg->nthreads = 1;
 }
 
-/* the store's plan for this cell: served with no measurement, and the same output as VFFT_FLAG_ESTIMATE's plan */
-static int vs_check_cell(const vs_cell_t *c, const char *store, char *why, size_t whylen)
+/* the store's plan for this cell: served with no measurement, and the same output as VFFT_FLAG_ESTIMATE's plan (in
+ * place: each plan on its own copy of the input) */
+static int vs_check_cell(const vs_cell_t *c, int ip, const char *store, char *why, size_t whylen)
 {
     vfft_config_t a, e;
-    vs_config(c, &a);
+    vs_config(c, ip, &a);
     a.wisdom_dir = store;
-    vs_config(c, &e);
+    vs_config(c, ip, &e);
     e.flags = VFFT_FLAG_ESTIMATE;
     const long r0 = vs_clock_reads;
     vfft_plan pa = vfft_create(&a);
@@ -255,8 +259,18 @@ static int vs_check_cell(const vs_cell_t *c, const char *store, char *why, size_
                 s = s * 1664525u + 1013904223u;
                 in[i] = (double)(s >> 8) / 16777216.0 - 0.5;
             }
-            vfft_execute(pa, VFFT_FORWARD, in, oa);
-            vfft_execute(pe, VFFT_FORWARD, in, oe);
+            if (ip)
+            {
+                memcpy(oa, in, bytes);
+                memcpy(oe, in, bytes);
+                vfft_execute(pa, VFFT_FORWARD, oa, oa);
+                vfft_execute(pe, VFFT_FORWARD, oe, oe);
+            }
+            else
+            {
+                vfft_execute(pa, VFFT_FORWARD, in, oa);
+                vfft_execute(pe, VFFT_FORWARD, in, oe);
+            }
             if (memcmp(oa, oe, bytes))
                 snprintf(why, whylen, "the store's plan and the estimate's plan give different outputs");
             else
@@ -467,7 +481,7 @@ static int vs_run(char *const argv[], const char *logpath)
 }
 
 /* one cell, both engine orders, rows appended to csv: gauntlet.py bench_cell (with --check-only the commands are
- * printed instead) */
+ * printed instead). In place: the 1D cell --k1nat, the 2D / 3D cells with --ilip (both engines in place) */
 static int vs_bench_cell(const vs_opts_t *o, const vs_cell_t *c, const char *store_file, const char *csv,
                          const char *logpath)
 {
@@ -486,8 +500,8 @@ static int vs_bench_cell(const vs_opts_t *o, const vs_cell_t *c, const char *sto
         snprintf(kstr, sizeof kstr, "%d", c->n[1]);
     }
     else
-    {   /* the 1D cell: K = 1, natural order, out of place (FP32: the bench's --f32 arm of the same cell) */
-        flag = "--k1noop";
+    {   /* the 1D cell: K = 1, natural order, out of place, in place --k1nat (FP32: the bench's --f32 arm of the cell) */
+        flag = o->ip ? "--k1nat" : "--k1noop";
         snprintf(nstr, sizeof nstr, "%d", c->n[0]);
         snprintf(kstr, sizeof kstr, "1");
     }
@@ -507,6 +521,8 @@ static int vs_bench_cell(const vs_opts_t *o, const vs_cell_t *c, const char *sto
         if (o->f32)
             argv[k++] = (char *)"--f32";
         argv[k++] = (char *)flag;
+        if (o->ip && c->d > 1)
+            argv[k++] = (char *)"--ilip";
         argv[k++] = (char *)store_file;
         argv[k++] = (char *)csv;
         argv[k++] = (char *)VS_PACE_MS;
@@ -704,7 +720,7 @@ static unsigned long long vs_store_stamp(const char *store)
 }
 
 /* plan one cell with the library's planner into store, as gauntlet.py's calibrate stage does (recal_1d_probe:
- * natural order, out of place, one thread, no recalibration; FP32: its --f32 cell); its output appended to
+ * natural order, the run's placement, one thread, no recalibration; FP32: its --f32 cell); its output appended to
  * planlog. 1 = planned */
 static int vs_plan_cell(const vs_opts_t *o, const vs_cell_t *c, const char *store, const char *run, const char *planlog)
 {
@@ -724,8 +740,8 @@ static int vs_plan_cell(const vs_opts_t *o, const vs_cell_t *c, const char *stor
         snprintf(a[i], sizeof a[i], "%d", c->n[i]);
         argv[k++] = a[i];
     }
-    argv[k++] = (char *)"0";   /* natural order */
-    argv[k++] = (char *)"0";   /* out of place */
+    argv[k++] = (char *)"0";                    /* natural order */
+    argv[k++] = (char *)(o->ip ? "1" : "0");   /* in place or out of place */
     argv[k++] = (char *)"1";   /* one thread */
     argv[k++] = (char *)"0";   /* no recalibration: a planned cell is read back */
     argv[k] = NULL;
@@ -766,7 +782,7 @@ static int vs_plan_estimate(const vs_opts_t *o, const vs_cell_t *cells, int ncel
     for (int j = 0; j < ncell + nctl; j++)
     {
         const vs_cell_t *c = j < ncell ? &cells[j] : &ctl[j - ncell];
-        if (vs_put_estimate(&st, &m, c, why, sizeof why))
+        if (vs_put_estimate(&st, &m, c, o->ip, why, sizeof why))
         {
             printf("  %s%s: the estimate refused it: %s\n", j < ncell ? "" : "control ", c->name, why);
             bad = 1;
@@ -783,7 +799,7 @@ static int vs_plan_estimate(const vs_opts_t *o, const vs_cell_t *cells, int ncel
     printf("checking the %d plans (the store's plan = the estimate's plan, bit for bit) ...\n", ncell);
     fflush(stdout);
     for (int i = 0; i < ncell; i++)
-        if (vs_check_cell(&cells[i], store, why, sizeof why))
+        if (vs_check_cell(&cells[i], o->ip, store, why, sizeof why))
         {
             printf("  %s: %s\n", cells[i].name, why);
             bad = 1;
@@ -837,9 +853,10 @@ static int vs_usage(const char *why)
         printf("vectorfft_bench_worker: %s\n\n", why);
     printf("vectorfft_bench_worker -- what the vectorfft_vs_* programs run (start those instead)\n\n"
            "  vectorfft_bench_worker --program NAME --title TEXT --vs mkl|fftw --plans estimate|planned\n"
-           "                         --prec f64|f32 --cells LIST [--out DIR] [--check-only]\n\n"
-           "LIST: transforms separated by commas, N (1D), N1xN2 (2D) or N1xN2xN3 (3D). --check-only plans and\n"
-           "checks them and prints the bench's commands, timing nothing.\n");
+           "                         --prec f64|f32 --cells LIST [--out DIR] [--inplace] [--check-only]\n\n"
+           "LIST: transforms separated by commas, N (1D), N1xN2 (2D) or N1xN2xN3 (3D). --inplace times every\n"
+           "transform in place (one buffer, both engines). --check-only plans and checks them and prints the\n"
+           "bench's commands, timing nothing.\n");
     return why ? 2 : 0;
 }
 
@@ -854,6 +871,8 @@ static int vs_main(int argc, char **argv)
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--check-only"))
             o.check_only = 1;
+        else if (!strcmp(a, "--inplace"))
+            o.ip = 1;
         else if (!strcmp(a, "--help") || !strcmp(a, "-h"))
             return vs_usage(NULL);
         else if (!v)
@@ -967,7 +986,7 @@ static int vs_main(int argc, char **argv)
         printf("%s: cannot create %s\n", o.program, o.out);
         return 1;
     }
-    snprintf(run, sizeof run, "%s/%s_%s", o.out, o.program, stamp);
+    snprintf(run, sizeof run, "%s/%s%s_%s", o.out, o.program, o.ip ? "_inplace" : "", stamp);
     if (o.measured && vs_pkg_wisdom[0])
     {   /* a release package: this CPU's folder of the package's wisdom root, chosen as the library chooses its own
          * (wisdom2_folders.h: the folder stamped with this CPU's identity, else new/, else one made for it) */
@@ -995,8 +1014,9 @@ static int vs_main(int argc, char **argv)
         vs_parse_cell(control_of[1], &ctl[nctl++]);
 
     printf("%s -- %s\n", o.program, o.title);
-    printf("VectorFFT (codelets %s, %s precision) against %s, one thread; the gauntlet's bench, both engine orders "
-           "per cell\n", VFFT_IL_VW == 8 ? "AVX-512" : "AVX2", o.f32 ? "single" : "double", o.cmp);
+    printf("VectorFFT (codelets %s, %s precision) against %s, one thread, %s; the gauntlet's bench, both engine "
+           "orders per cell\n", VFFT_IL_VW == 8 ? "AVX-512" : "AVX2", o.f32 ? "single" : "double", o.cmp,
+           o.ip ? "in place (one buffer, both engines)" : "out of place");
     const double secs = vs_expected_seconds(cells, ncell);
     if (secs < 75)
         printf("%d transforms; timing them takes about a minute on a fast desktop; run directory %s\n", ncell, run);
@@ -1096,10 +1116,11 @@ static int vs_main(int argc, char **argv)
     size_t tl = 0;
     tl += (size_t)snprintf(text + tl, sizeof text - tl,
                            "\n%s -- %s\n"
-                           "complex to complex, %s, interleaved, natural order, out of place, one thread\n"
+                           "complex to complex, %s, interleaved, natural order, %s, one thread\n"
                            "each speedup = %s's time / VectorFFT's time, the worse of the two engine orders\n\n"
                            "  cell                 points       VectorFFT  %12s    speedup\n",
-                           o.program, o.title, o.f32 ? "single precision" : "double", o.cmp_short, o.cmp_short);
+                           o.program, o.title, o.f32 ? "single precision" : "double",
+                           o.ip ? "in place (both engines)" : "out of place", o.cmp_short, o.cmp_short);
     double lg = 0;
     int nok = 0, nwin = 0;
     for (int i = 0; i < ncell; i++)

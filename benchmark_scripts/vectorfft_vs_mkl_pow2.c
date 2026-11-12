@@ -4,7 +4,7 @@
  * vectorfft_launcher.h checks the CPU and runs the benchmark worker; the target is benchmark_scripts/CMakeLists.txt's.
  *
  *   cmake --build <build> --target vectorfft_vs_mkl_pow2
- *   <build>/benchmark_scripts/vectorfft_vs_mkl_pow2 [--cells LIST] [--out DIR] [--avx2 | --avx512] */
+ *   <build>/benchmark_scripts/vectorfft_vs_mkl_pow2 [--cells LIST] [--out DIR] [--inplace] [--avx2 | --avx512] */
 #include "vectorfft_launcher.h"
 
 static const vl_program_t P = { "vectorfft_vs_mkl_pow2", "1D powers of two, estimate plans", "mkl", "estimate", "f64",

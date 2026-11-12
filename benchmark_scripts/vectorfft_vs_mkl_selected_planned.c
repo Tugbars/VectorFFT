@@ -5,7 +5,7 @@
  * vectorfft_launcher.h checks the CPU and runs the benchmark worker; the target is benchmark_scripts/CMakeLists.txt's.
  *
  *   cmake --build <build> --target vectorfft_vs_mkl_selected_planned
- *   <build>/benchmark_scripts/vectorfft_vs_mkl_selected_planned [--cells LIST] [--out DIR] [--avx2 | --avx512] */
+ *   <build>/benchmark_scripts/vectorfft_vs_mkl_selected_planned [--cells LIST] [--out DIR] [--inplace] [--avx2 | --avx512] */
 #include "vectorfft_launcher.h"
 
 static const vl_program_t P = { "vectorfft_vs_mkl_selected_planned", "selected transforms, the planner's plans", "mkl",

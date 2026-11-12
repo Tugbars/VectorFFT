@@ -445,7 +445,7 @@ def bench_cell(run, n, csv_path):
         nstr, kstr = ckey(n), "1"
     elif is2d(n) and len(n) == 3:
         # the 3D interleaved cell: the shape N1xN2xN3 in the N slot (bench --3dilnat, 2026-09-24)
-        flag = ["--3dilnat"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded cell at $VFFT_MT (2026-09-24)
+        flag = ["--3dilnat"] + (["--mt"] if run.threads > 1 else []) + (["--ilip"] if run.ip else [])   # --mt: the threaded cell at $VFFT_MT (2026-09-24); --ilip: in place (2026-11-12)
         nstr, kstr = ckey(n), "1"
     elif is2d(n) and run.real:
         # the 2D REAL cell (2026-09-29): N1 in the N slot, N2 in the K slot (bench --2drealnat)
@@ -453,7 +453,7 @@ def bench_cell(run, n, csv_path):
         nstr, kstr = str(n[0]), str(n[1])
     elif is2d(n):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
-        flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else [])
+        flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else []) + (["--ilip"] if run.ip else [])   # --ilip: in place (2026-11-12)
         nstr, kstr = str(n[0]), str(n[1])
     elif run.real:
         # the 1D REAL cell (2026-09-29): K transform-contiguous rows in the K slot
@@ -676,8 +676,8 @@ def main():
     run = Run(args, dims)
     if run.cmp == "kfr" and ((dims >= 2 and run.real) or run.threads > 1 or run.k > 1 or run.ip):
         raise SystemExit("--cmp kfr: the KFR arm serves the 1D, 2D and 3D c2c cells and the 1D r2c / c2r cells (an even N: KFR's real DFT is even-only), K=1, out of place, one thread")
-    if run.cmp == "fftw" and run.ip and not run.real:
-        raise SystemExit("--cmp fftw: the FFTW arm serves the 1D/2D/3D c2c cells out of place and the real cells (in place too), at one thread or --threads T with a threads-enabled FFTW; in-place c2c is not served")
+    if run.ip == 2 and not run.real:
+        raise SystemExit("--owned: the plan's own plane at its pitch is the 2D and 3D real contract (--real); the c2c cells in place are --inplace")
     if run.real and run.ip and dims not in (2, 3):
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
     if run.k > 1 and (not run.real or dims != 1):

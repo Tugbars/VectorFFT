@@ -5,7 +5,7 @@
  * worker; the target is benchmark_scripts/CMakeLists.txt's.
  *
  *   cmake --build <build> --target vectorfft_vs_fftw_selected
- *   <build>/benchmark_scripts/vectorfft_vs_fftw_selected [--cells LIST] [--out DIR] [--avx2 | --avx512] */
+ *   <build>/benchmark_scripts/vectorfft_vs_fftw_selected [--cells LIST] [--out DIR] [--inplace] [--avx2 | --avx512] */
 #include "vectorfft_launcher.h"
 
 static const vl_program_t P = { "vectorfft_vs_fftw_selected", "selected transforms, estimate plans", "fftw", "estimate",

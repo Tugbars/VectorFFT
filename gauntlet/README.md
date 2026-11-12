@@ -74,7 +74,8 @@ is comparator time / our time, the worse of the two engine orders.
 
 **2D** (since 2026-09-23): a cell is a shape `N1xN2` (N1 = the column length),
 the contract 2D complex-to-complex, interleaved, natural order, out of place,
-K = 1, one thread, against MKL DFTI 2D out of place; files carry `_2d`
+K = 1, one thread, against MKL DFTI 2D out of place (`--inplace`: both engines in place, the bench's
+`--ilip`); files carry `_2d`
 (`gauntlet_2d.csv`, `report_2d.md`, `calibrate_2d.log`, `verify_2d.csv`), the
 control cell is 64x64, GFLOPS = 5 N1 N2 log2(N1 N2). Shapes never mix with 1D
 lengths in one run. The groups:
@@ -119,7 +120,7 @@ Either path builds the same binaries from the same sources.
   [`fftw/`](fftw/README.md) on Windows, else vcpkg's `fftw3.dll`) and refuses
   MKL's FFTW wrapper layer. The FFTW in `fftw/` is 3.3.10 with SSE2 to AVX-512
   and its threads API, so on Windows nothing needs installing. It serves the 1D, 2D and 3D c2c cells
-  and the real cells (1D, 2D, 3D; in place too), out of place, FFTW_MEASURE, at
+  and the real cells (1D, 2D, 3D), out of place and with `--inplace` in place, FFTW_MEASURE, at
   one thread or `--threads T`; a threaded run needs an FFTW built with its
   threads API (`--enable-threads --with-combined-threads`, CMake
   `ENABLE_THREADS` + `WITH_COMBINED_THREADS`) -- the one in `fftw/` has it, the

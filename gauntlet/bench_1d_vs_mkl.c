@@ -27,7 +27,7 @@
  *   1D c2c    --k1nat / --k1noop / --k1zip / --k1dir the natural in-place and out-of-place forms;
  *             --mt threaded; --cmp mkl|fftw|kfr the comparator
  *   1D real   --realfwd / --realbwd (r2c / c2r); --zr2c the earlier real form
- *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells; --2drealnat / --3dreal the
+ *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells (--ilip in place); --2drealnat / --3dreal the
  *             real cells; --realip / --realown the real cell in place; --2dil, --3dil, --2dreal
  *             the earlier forms
  *   batches   --lmc2c / --lmr2c / --lmc2r the lane-major 1D batches; --lm2d / --lm3d the lane-major
@@ -266,6 +266,9 @@ static int g_k2nat = 0;              /* --2dilnat (2026-09-23): the 2D interleav
                                       * cell -- the K=1 natural cell's protocol on a
                                       * dims=2 plan, N1 x N2, OOP, natural, one thread;
                                       * MKL DFTI 2D out of place; one csv row per flip */
+static int g_ilip = 0;               /* --ilip (2026-11-12): the 2D / 3D c2c cell IN PLACE on every engine (ours
+                                      * VFFT_PLACEMENT_IN, MKL DFTI_INPLACE, FFTW in == out), the --k1zip discipline:
+                                      * one buffer laid from the input before each arm, the timed loops on it */
 static int g_k1nat = 0;              /* --k1nat (B6): --k1zip discipline +
                                       * order=NATURAL on our side. MKL is
                                       * ALWAYS natural — this mode finally
@@ -355,7 +358,8 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
          * clock (3D_mt_il_strategy.md, the transient rule) */
         const double tw = vfft_now_ns();
         do
-            vfft_execute(h, dir, z0, S);
+            g_k1zip ? vfft_execute(h, dir, S, S)   /* an in-place plan takes one buffer (--ilip --mt) */
+                    : vfft_execute(h, dir, z0, S);
         while (vfft_now_ns() - tw < 5e6);
     }
     else
@@ -2045,7 +2049,7 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     dims[2] = N3;
     if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, N3 > 0 ? 3 : 2, dims) != DFTI_NO_ERROR)
         return 0;
-    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_PLACEMENT, g_ilip ? DFTI_INPLACE : DFTI_NOT_INPLACE);   /* --ilip: one buffer */
     if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
     {
         DftiFreeDescriptor(&d);
@@ -2053,16 +2057,17 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
     }
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
     memcpy(zi, z0, 2 * total * sizeof(double));
+#define K2Z_MKL_FWD() (g_ilip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo))
     if (g_k1noop_mt)
     {   /* >= 5 ms untimed: MKL's parked team wakes and settles (the threaded cell, 2026-09-24) */
         const double tw = vfft_now_ns();
         do
-            DftiComputeForward(d, zi, zo);
+            K2Z_MKL_FWD();
         while (vfft_now_ns() - tw < 5e6);
     }
     else
         for (int w = 0; w < 10; w++)
-            DftiComputeForward(d, zi, zo);
+            K2Z_MKL_FWD();
     int reps = reps_for(total);
     double best = 1e18;
     for (int win = 0; win < 2; win++)
@@ -2072,7 +2077,7 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
             const double tw0 = vfft_now_ns();
             pace(K1Z_WINDOW_IDLE_MS);
             do
-                DftiComputeForward(d, zi, zo);
+                K2Z_MKL_FWD();
             while (vfft_now_ns() - tw0 < K1Z_WINDOW_IDLE_MS * 1e6 + K1Z_WINDOW_WARM_NS);
         }
         for (int t = 0; t < 5; t++)
@@ -2081,12 +2086,13 @@ static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t tota
                 pace(g_trial_pace_ms);
             double t0 = vfft_now_ns();
             for (int i = 0; i < reps; i++)
-                DftiComputeForward(d, zi, zo);
+                K2Z_MKL_FWD();
             double ns = (vfft_now_ns() - t0) / reps;
             if (ns < best)
                 best = ns;
         }
     }
+#undef K2Z_MKL_FWD
     free_d(zi);
     free_d(zo);
     DftiFreeDescriptor(&d);
@@ -2170,7 +2176,7 @@ static double k2z_kfr_xerr(int N1, int N2, int N3, const double *z0, const doubl
 }
 #endif
 /* the FFTW twin of k2z_time_mkl (2026-10-19): fftw_plan_dft at rank 2 (N3 = 0)
- * or 3, out of place, FFTWX_MEASURE, the plan built once outside the timed
+ * or 3, out of place (--ilip: in place), FFTWX_MEASURE, the plan built once outside the timed
  * windows and $VFFT_FFTW_WIS re-exported after it; the input copied AFTER
  * planning (MEASURE scribbles); the threaded cell's >= 5 ms untimed warm, then
  * the same windows, trials, reps and pacing. --mt: planned at T
@@ -2185,8 +2191,8 @@ static double k2z_time_fftw(int N1, int N2, int N3, const double *z0, size_t tot
     if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
         return 0;
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
-    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)zo,
-                                     FFTWX_FORWARD, FFTWX_MEASURE);
+    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)(g_ilip ? zi : zo),
+                                     FFTWX_FORWARD, FFTWX_MEASURE);   /* --ilip: in place, in == out */
     if (!p) { free_d(zi); free_d(zo); return 0; }
     fftw_wis_export();
     memcpy(zi, z0, 2 * total * sizeof(double));   /* AFTER planning: MEASURE scribbles */
@@ -2285,7 +2291,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
 {   /* N3 = 0: the 2D cell (N2 rides the K argument); N3 > 0: the 3D cell,
      * the same protocol on a dims=3 plan against MKL DFTI 3D (2026-09-24) */
     const int nd = N3 > 0 ? 3 : 2;
-    const char *plan_s = nd == 3 ? "z:il3d" : "z:il2d", *path = "nat-oop";
+    const char *plan_s = nd == 3 ? "z:il3d" : "z:il2d", *path = g_ilip ? "nat-ip" : "nat-oop";
     char shape[48];
     if (nd == 3)
         snprintf(shape, sizeof shape, "%dx%dx%d", N1, N2, N3);
@@ -2311,7 +2317,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_PLACEMENT_OUT;
+    cfg.placement = g_ilip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;   /* --ilip (2026-11-12) */
     cfg.rank = nd;
     cfg.n[0] = N1;
     cfg.n[1] = N2;
@@ -2333,9 +2339,19 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     srand(42 + 131 * N1 + N2 + 7919 * N3);
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
-    /* roundtrip gate through the API */
-    vfft_execute(h, VFFT_FORWARD, z0, S);
-    vfft_execute(h, VFFT_BACKWARD, S, rt);
+    /* roundtrip gate through the API (--ilip: the forward on S laid from z0, the backward on rt laid from S) */
+    if (g_ilip)
+    {
+        memcpy(S, z0, 2 * total * sizeof(double));
+        vfft_execute(h, VFFT_FORWARD, S, S);
+        memcpy(rt, S, 2 * total * sizeof(double));
+        vfft_execute(h, VFFT_BACKWARD, rt, rt);
+    }
+    else
+    {
+        vfft_execute(h, VFFT_FORWARD, z0, S);
+        vfft_execute(h, VFFT_BACKWARD, S, rt);
+    }
     double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)total;
     for (size_t i = 0; i < 2 * total; i++)
     {
@@ -5468,7 +5484,7 @@ int main(int argc, char **argv)
         "usage: bench_1d_vs_mkl [mode flags] [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]\n"
         "  1D c2c    --k1nat / --k1noop / --k1zip / --k1dir; --mt threaded; --cmp mkl|fftw|kfr\n"
         "  1D real   --realfwd / --realbwd; --zr2c\n"
-        "  2D / 3D   --2dilnat / --3dilnat; --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
+        "  2D / 3D   --2dilnat / --3dilnat (--ilip in place); --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt\n"
 #ifdef VFFT_HAS_FLOAT
         "  FP32      --f32 with --k1noop [--mt] / --k1nat: the cell on float data (K > 1: a contiguous batch), MKL DFTI_SINGLE;\n"
@@ -5624,6 +5640,11 @@ int main(int argc, char **argv)
             g_real_ip = 1;
             g_real_own = 1; /* door 2: the plan's own plane at its pitch (2026-10-08) */
         }
+        else if (strcmp(argv[1], "--ilip") == 0)
+        {
+            g_ilip = 1;     /* the 2D / 3D c2c cell in place (2026-11-12) */
+            g_k1zip = 1;    /* the in-place discipline the timers share */
+        }
         else if (strcmp(argv[1], "--ilmt") == 0)
         {
             /* TC-batch MT vs MKL batched MT (2026-08-06). Implies the MT
@@ -5673,6 +5694,18 @@ int main(int argc, char **argv)
     if (g_cmp_kfr && (mt || il2d || il3d || real2d || g_k2real || g_k3real || g_real_ip))
     {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) and the 2D/3D c2c cells (--2dilnat / --3dilnat) */
         fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell, the 2D/3D c2c cells (--2dilnat / --3dilnat) and the 1D real cells (--realfwd / --realbwd), one thread\n");
+        return 2;
+    }
+#endif
+    if (g_ilip && !(g_k2nat || g_k3nat))
+    {
+        fprintf(stderr, "--ilip: the 2D / 3D c2c cell in place (--2dilnat / --3dilnat); the 1D c2c cell in place is --k1nat\n");
+        return 2;
+    }
+#ifdef VFFT_HAS_KFR
+    if (g_ilip && g_cmp_kfr)
+    {
+        fprintf(stderr, "--ilip --cmp kfr: the KFR arm is out of place\n");
         return 2;
     }
 #endif

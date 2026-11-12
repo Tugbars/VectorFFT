@@ -12,7 +12,7 @@ echo   3  selected transforms, the planner's plans                  2 minutes + 
 if exist vectorfft_vs_fftw_pow2_fp32.exe echo   4  1D powers of two in single precision, the planner's plans  a minute + planning of new lengths
 echo.
 echo  The first run against FFTW takes longer: FFTW measures its own plans once and keeps them.
-echo  Options of every program: --cells LIST, --avx2 / --avx512, --out DIR (README.txt).
+echo  Options of every program: --cells LIST, --inplace, --avx2 / --avx512, --out DIR (README.txt).
 echo.
 set "choice=1"
 set /p "choice=Choice [1]: "

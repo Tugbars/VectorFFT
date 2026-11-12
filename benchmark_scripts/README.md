@@ -56,6 +56,7 @@ Every program takes the same options:
 | `--cells LIST` | your own transforms instead of the program's, separated by commas: `N` (1D), `N1xN2` (2D, N1 rows of N2 points), `N1xN2xN3` (3D); the FP32 program takes 1D powers of two up to 16,777,216 |
 | `--avx2`, `--avx512` | the instruction set; by default AVX-512 when the CPU runs it, else AVX2 |
 | `--out DIR` | where the run directory is made (default: `vectorfft_results/` in the current directory) |
+| `--inplace` | every transform in place, on both libraries: one buffer, the input overwritten by the output (VectorFFT `VFFT_PLACEMENT_IN`, MKL `DFTI_INPLACE`, FFTW with the input and output the same array); the run directory's name ends in `_inplace` |
 | `--check-only` | plans and checks the transforms and shows the bench's commands, times nothing |
 
 A program checks the CPU before anything else: VectorFFT needs an x86-64 CPU with AVX2 and
@@ -240,6 +241,7 @@ further argument goes to `python benchmark_scripts/scripts/run_suite.py`, the sc
 | `--fftw-dll PATH` | the FFTW library, when it is not the one `build_tools.py` recorded |
 | `--yes` | answer the gauntlet's duration prompt in advance (a set estimated at more than 30 minutes asks) |
 | `--plots-only` | draw the pictures and write the summaries from runs already finished; nothing runs |
+| `--inplace` | every set in place, on both libraries (the gauntlet's `--inplace`: one buffer, the input overwritten); the run directories and their files end in `_ip`, so they sit beside the out-of-place runs of the same prefix |
 
 Each set is one gauntlet command, then the plot script of that picture, drawn into the run
 directory, then the summary. The gauntlet's output streams through as it runs; the first
@@ -332,7 +334,7 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 - `scripts/build_avx512.sh`, `scripts/build_avx2.sh` -- build the tools with the AVX-512 or the AVX2 tree: call `scripts/build_tools.py` with that ISA and your arguments
 - `scripts/run_all.sh`, `scripts/run_1d.sh`, `scripts/run_accuracy.sh`, `scripts/run_2d.sh`, `scripts/run_2d_mt.sh`, `scripts/run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `scripts/run_suite.py`'s options
 - `scripts/run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
-- `scripts/run_estimate_pow2.sh`, `scripts/estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused. Windows only; `--help` for the options
+- `scripts/run_estimate_pow2.sh`, `scripts/estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused; `--inplace` times both plans in place. Windows only; `--help` for the options
 - `scripts/build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `scripts/.config.json`
 - `scripts/run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `scripts/.config.json` -- the record of the last build (per machine, not tracked)

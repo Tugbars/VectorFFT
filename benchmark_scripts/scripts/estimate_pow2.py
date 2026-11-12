@@ -12,7 +12,8 @@ banked in the wisdom store), in one process per set:
     --threads T         the 2D and 3D sets at T threads (default 1; the 1D tool times one thread only, so 1d is skipped)
     --store DIR         the wisdom store to start from (default: this CPU's shipped folder, as the library names it)
     --cells "..."       replace the lists: N for 1D, N1xN2 for the 2D sets, N1xN2xN3 for the 3D sets
-    --name NAME         the run directory under gauntlet/results (default estimate-pow2-<isa>-<date>)
+    --name NAME         the run directory under gauntlet/results (default estimate-pow2-<isa>[-inplace]-<date>)
+    --inplace           every plan in place (the tools' ip: both plans run on one buffer)
     --no-build          use the tools as built
 
 The tools are src/estimate/estimate_race.c (1D complex), estimate_race_nd.c (2D and 3D complex) and
@@ -161,6 +162,7 @@ def main():
     ap.add_argument("--store")
     ap.add_argument("--cells")
     ap.add_argument("--name")
+    ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--no-build", action="store_true")
     a = ap.parse_args()
     if os.name != "nt":
@@ -186,7 +188,8 @@ def main():
     src = os.path.abspath(a.store) if a.store else shipped_store(TOOL[sets[0]], ENV)
     if not os.path.isdir(src):
         sys.exit("no store at %s" % src)
-    name = a.name or "estimate-pow2-%s-%s" % (a.isa, datetime.datetime.now().strftime("%Y%m%d-%H%M"))
+    name = a.name or "estimate-pow2-%s%s-%s" % (a.isa, "-inplace" if a.inplace else "",
+                                                 datetime.datetime.now().strftime("%Y%m%d-%H%M"))
     out = os.path.join(GAUNTLET, "results", name)
     store = os.path.join(out, "store")
     if os.path.exists(store):
@@ -194,12 +197,12 @@ def main():
     shutil.copytree(src, store)
     print("run: %s\n  store copied from %s" % (out, src))
 
-    t = ["T=%d" % a.threads] if a.threads > 1 else []
+    t = (["T=%d" % a.threads] if a.threads > 1 else []) + (["ip"] if a.inplace else [])   # the tools' tokens
     parts = []   # (title, log)
     for s in sets:
         cells = lists[s]
         if s == "1d":
-            jobs = [("1D complex", "1d.txt", [store, "{R}", "c2c"] + cells)]
+            jobs = [("1D complex", "1d.txt", [store, "{R}", "c2c"] + (["ip"] if a.inplace else []) + cells)]
         elif s in ("2d", "3d"):
             jobs = [("%s complex" % s.upper(), s + ".txt", [store, "{R}"] + t + cells)]
         else:
@@ -235,9 +238,10 @@ def main():
         md.append("")
     head = ["# Estimate against the planner, powers of two (%s, %s)" % (a.isa, datetime.datetime.now().strftime("%Y-%m-%d %H:%M")),
             "",
-            "Natural order, out of place, %s; store copied from `%s`; %d rounds. E/B = the estimate plan's time over "
+            "Natural order, %s, %s; store copied from `%s`; %d rounds. E/B = the estimate plan's time over "
             "the planner's banked plan's (below 1: the estimate is faster); B2/B = the banked plan created again, the "
-            "noise floor." % ("one thread" if a.threads <= 1 else "%d threads" % a.threads, src, a.rounds),
+            "noise floor." % ("in place" if a.inplace else "out of place",
+                              "one thread" if a.threads <= 1 else "%d threads" % a.threads, src, a.rounds),
             "",
             "**All sets: %d cells, E/B %.3f (geometric mean).**" % (len(allv), gm(allv)) if allv else "**No timed cells.**",
             ""]

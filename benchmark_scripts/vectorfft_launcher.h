@@ -181,10 +181,11 @@ static int vl_run(char *const argv[])
 static int vl_usage(const vl_program_t *p, int rc)
 {
     printf("%s -- %s\n\n"
-           "  %s [--cells LIST] [--out DIR] [--avx2 | --avx512] [--check-only]\n\n"
+           "  %s [--cells LIST] [--out DIR] [--inplace] [--avx2 | --avx512] [--check-only]\n\n"
            "  --cells LIST       your own transforms instead of this program's, separated by commas: N (1D),\n"
            "                     N1xN2 (2D, N1 rows of N2 points), N1xN2xN3 (3D)%s\n"
            "  --out DIR          where the run directory is made (default: vectorfft_results in the current directory)\n"
+           "  --inplace          every transform in place: one buffer, the input overwritten, on both libraries\n"
            "  --avx2, --avx512   the instruction set (default: AVX-512 when the CPU runs it, else AVX2)\n"
            "  --check-only       plan and check the transforms and show the bench's commands, time nothing\n\n"
            "Its transforms: %s\n",
@@ -196,7 +197,7 @@ static int vl_usage(const vl_program_t *p, int rc)
 static int vl_main(int argc, char **argv, const vl_program_t *p)
 {
     const char *cells = p->cells, *out = NULL;
-    int force = 0, check = 0;
+    int force = 0, check = 0, inplace = 0;
     for (int i = 1; i < argc; i++)
     {
         const char *a = argv[i];
@@ -204,6 +205,8 @@ static int vl_main(int argc, char **argv, const vl_program_t *p)
             cells = argv[++i];
         else if (!strcmp(a, "--out") && i + 1 < argc)
             out = argv[++i];
+        else if (!strcmp(a, "--inplace"))
+            inplace = 1;
         else if (!strcmp(a, "--avx2"))
             force = 2;
         else if (!strcmp(a, "--avx512"))
@@ -276,6 +279,8 @@ static int vl_main(int argc, char **argv, const vl_program_t *p)
         wargv[k++] = (char *)"--out";
         wargv[k++] = (char *)out;
     }
+    if (inplace)
+        wargv[k++] = (char *)"--inplace";
     if (check)
         wargv[k++] = (char *)"--check-only";
     wargv[k] = NULL;

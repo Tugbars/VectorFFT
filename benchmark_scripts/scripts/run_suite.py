@@ -39,6 +39,8 @@ what to do when it is missing, or lacks the threads API the 2d-mt set needs).
     --yes                do not stop for the driver's duration prompt
     --plots-only         draw the pictures and write the summaries from runs already finished; nothing runs
     --cells SPEC         replace every set's cell list, for a quick check (e.g. --cells 64,4096; 32x32,64x64 for 2d; 16x16x16 for 3d)
+    --inplace            every set in place, both libraries (one buffer, the input overwritten): the driver's --inplace;
+                         the run directories and files end in _ip, beside the out-of-place runs of the same prefix
 """
 import argparse
 import ctypes
@@ -127,22 +129,24 @@ def physical_cores():
     return os.cpu_count() or 1
 
 
-def suffix(dims, threads, cmp):
-    """gauntlet.py's Run.sfx for the suite's contracts: _2d / _3d, _mt<T>, _<cmp> (nothing for mkl)"""
-    return ("_%dd" % dims if dims >= 2 else "") + ("_mt%d" % threads if threads > 1 else "") + ("_" + cmp if cmp != "mkl" else "")
+def suffix(dims, threads, cmp, ip=False):
+    """gauntlet.py's Run.sfx for the suite's contracts: _2d / _3d, _ip, _mt<T>, _<cmp> (nothing for mkl)"""
+    return (("_%dd" % dims if dims >= 2 else "") + ("_ip" if ip else "") + ("_mt%d" % threads if threads > 1 else "")
+            + ("_" + cmp if cmp != "mkl" else ""))
 
 
 class Set:
     """one set: the driver's verb and arguments, its run directory, the files the plot reads and writes"""
 
-    def __init__(self, name, cmp, prefix, threads, cells):
+    def __init__(self, name, cmp, prefix, threads, cells, ip=False):
         self.name = name
         self.cmp = cmp
+        self.ip = ip                     # --inplace: every transform in place, both libraries (the driver's --inplace)
         dims = {"1d": 1, "accuracy": 1, "2d": 2, "2d-mt": 2, "3d": 3, "pow2": 1}[name]
         self.threads = threads if name == "2d-mt" else 1
-        self.sfx = suffix(dims, self.threads, cmp)
+        self.sfx = suffix(dims, self.threads, cmp, ip)
         self.run = prefix + {"1d": "_1d", "accuracy": "_1d", "2d": "_2d", "2d-mt": "_2d_mt%d" % self.threads, "3d": "_3d",
-                             "pow2": "_pow2"}[name]
+                             "pow2": "_pow2"}[name] + ("_ip" if ip else "")
         self.rel = RESULTS + "/" + self.run
         self.dir = os.path.join(ROOT, RESULTS, self.run)
         self.verb = "verify" if name == "accuracy" else "run"
@@ -158,7 +162,7 @@ class Set:
 
     def command(self, yes):
         return ([DRIVER, self.verb] + self.cell_args + (["--threads", str(self.threads)] if self.threads > 1 else [])
-                + ["--cmp", self.cmp, "--name", self.run] + (["--yes"] if yes else []))
+                + (["--inplace"] if self.ip else []) + ["--cmp", self.cmp, "--name", self.run] + (["--yes"] if yes else []))
 
     def estimate_command(self):
         """the driver's own duration estimate for the set's cells (the cells verb; it runs nothing)"""
@@ -287,6 +291,8 @@ def main():
     ap.add_argument("--yes", action="store_true", help="pass the driver's --yes (no duration prompt)")
     ap.add_argument("--plots-only", action="store_true", help="draw from finished runs; nothing runs")
     ap.add_argument("--cells", help="replace every set's cell list, for a quick check")
+    ap.add_argument("--inplace", action="store_true",
+                    help="every transform in place, both libraries (one buffer, the input overwritten); the run directories end in _ip")
     args = ap.parse_args()
 
     names = [n.strip() for n in args.sets.split(",") if n.strip()]
@@ -337,10 +343,10 @@ def main():
             print(fftw_no_threads(fftw_dll), file=sys.stderr)
             sys.exit(2)
 
-    plan = [Set(n, cmp, prefix, threads, args.cells) for n in names]
+    plan = [Set(n, cmp, prefix, threads, args.cells, args.inplace) for n in names]
     for s in plan:
         if s.name == "2d-mt":
-            one = Set("2d", cmp, prefix, threads, args.cells)
+            one = Set("2d", cmp, prefix, threads, args.cells, args.inplace)
             s.one_thread_csv = one.csv
             if "2d" not in names and not os.path.isfile(os.path.join(ROOT, one.csv)):
                 sys.exit("the 2d-mt picture sets the threaded run beside the one-thread run, and %s does not exist: "
@@ -350,7 +356,9 @@ def main():
     machine = ["machine: %s, %s, %d logical CPUs" % (cpu_name(), platform.platform(), os.cpu_count() or 0),
                "VectorFFT: codelets for %s, compiler %s, tools built %s (build_tools.py)%s" % (
                    isa, config.get("cc", "gcc"), config.get("built", "?"), ", commit " + commit if commit else ""),
-               "comparator: " + comparator]
+               "comparator: " + comparator,
+               "placement: " + ("in place (--inplace): one buffer, the input overwritten, both libraries" if args.inplace
+                                else "out of place")]
     print("\n".join(machine))
     print("sets: %s; run directories: %s/%s_*" % (", ".join(names), RESULTS, prefix), flush=True)
 
