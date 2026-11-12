@@ -19,7 +19,14 @@
  * Reported per cell: each arm's median over the rounds, the per-round ratios E/B and B2/B with their range, the
  * agreement and the check; at the end the geometric mean of E/B.
  *
- *   estimate_race_real <store dir> [rounds=15] [T=n] [r2c|c2r] cell...   (cell = N1xN2 or N1xN2xN3; none: the list)
+ * In place (`ip`): every plan in place on the padded plane (vfft.h: every row of the last axis padded to
+ * 2 (N_last/2 + 1) doubles, the pitch vfft_info gives), the reals laid in its rows and the bins over them; one buffer
+ * per arm, laid out again from the seed (untimed) before every block (at T > 1 followed by one untimed execute), the
+ * block's executes on that buffer; the check runs the in-place estimate plans (R2C on the padded reals, C2R back to
+ * them), the agreement compares the reals' positions only (C2R) or the whole spectrum (R2C); the banked row is the
+ * cell's place=ip row. With `race`: only the banked create per cell, its time and whether it raced.
+ *
+ *   estimate_race_real <store dir> [rounds=15] [T=n] [r2c|c2r] [ip] [race] cell...   (cell = N1xN2 or N1xN2xN3; none: the list)
  * Build: python gauntlet/build.py --compile --src src/estimate/estimate_race_real.c   (no --vfft)
  * Run it on a quiet machine only, against a scratch COPY of the store. */
 #include <stdio.h>
@@ -57,6 +64,7 @@ static double qpc_ns(void)
 }
 static int cmpd(const void *a, const void *b) { const double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
 
+static int g_ip;   /* `ip`: every plan in place */
 /* the banked row's verdicts for one cell (the 2D or 3D shard), the children's tokens left out */
 static char *g_shard[2];
 static void banked_tokens(const char *store, const int *n, int rank, int T, char *out, size_t cap)
@@ -82,9 +90,10 @@ static void banked_tokens(const char *store, const int *n, int rank, int T, char
     if (T > 1)
         snprintf(thr, sizeof thr, " nthreads=%d", T);
     if (rank == 3)
-        snprintf(key, sizeof key, "@cell t=r2c n=%dx%dx%d q=1 ord=nat place=oop lay=il%s |", n[0], n[1], n[2], thr);
+        snprintf(key, sizeof key, "@cell t=r2c n=%dx%dx%d q=1 ord=nat place=%s lay=il%s |", n[0], n[1], n[2],
+                 g_ip ? "ip" : "oop", thr);
     else
-        snprintf(key, sizeof key, "@cell t=r2c n=%dx%d q=1 ord=nat place=oop lay=il%s |", n[0], n[1], thr);
+        snprintf(key, sizeof key, "@cell t=r2c n=%dx%d q=1 ord=nat place=%s lay=il%s |", n[0], n[1], g_ip ? "ip" : "oop", thr);
     if (!(l = strstr(*sh, key))) { snprintf(out, cap, "(no row)"); return; }
     e = strstr(l + strlen(key), " | ");
     if (!e) e = strchr(l, '\n');
@@ -124,7 +133,7 @@ static int est_tokens(const est_machine_t *m, const int *n, int rank, int c2r, i
     if (rank == 2)
     {
         est_plan2dr_t *p = (est_plan2dr_t *)malloc(sizeof *p);
-        if (!p || est_plan_2d_real(m, n[0], n[1], c2r, 0, T, p, why, whylen)) { free(p); return -1; }
+        if (!p || est_plan_2d_real(m, n[0], n[1], c2r, g_ip, T, p, why, whylen)) { free(p); return -1; }
         rec2(p, out, cap);
         free(p);
         return 0;
@@ -133,7 +142,7 @@ static int est_tokens(const est_machine_t *m, const int *n, int rank, int c2r, i
         est_plan3dr_t *p = (est_plan3dr_t *)malloc(sizeof *p);
         char c0[64], pl[384];
         int l;
-        if (!p || est_plan_3d_real(m, n[0], n[1], n[2], c2r, 0, T, p, why, whylen)) { free(p); return -1; }
+        if (!p || est_plan_3d_real(m, n[0], n[1], n[2], c2r, g_ip, T, p, why, whylen)) { free(p); return -1; }
         chain_s(c0, sizeof c0, p->col.R, p->col.nst);
         rec2(&p->plane, pl, sizeof pl);
         l = snprintf(out, cap, "chain=%s blu=%d s=%d nf=%d nsw=%d", c0, p->col.blu, p->s, p->nf, p->nsw);
@@ -151,7 +160,7 @@ static vfft_plan create(const int *n, int rank, int c2r, int T, const char *stor
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform = c2r ? VFFT_C2R : VFFT_R2C;
-    c.placement = VFFT_PLACEMENT_OUT;
+    c.placement = g_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     c.rank = rank;
     memcpy(c.n, n, sizeof(int) * 3);
     c.nthreads = T;
@@ -216,8 +225,8 @@ int main(int argc, char **argv)
         return 0;
     }
     static double t[NARM][128];
-    int nc = 0, T = 1, c2r = 0, fails = 0;
-    if (argc < 2) { printf("usage: estimate_race_real <store dir> [rounds] [T=n] [r2c|c2r] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
+    int nc = 0, T = 1, c2r = 0, fails = 0, race = 0;
+    if (argc < 2) { printf("usage: estimate_race_real <store dir> [rounds] [T=n] [r2c|c2r] [ip] [race] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
     const char *store = argv[1];
     const int R = argc > 2 ? atoi(argv[2]) : 15;
     if (R < 1 || R > 128) { printf("rounds: 1..128\n"); return 2; }
@@ -231,6 +240,8 @@ int main(int argc, char **argv)
             continue;
         }
         if (!strcmp(argv[i], "r2c") || !strcmp(argv[i], "c2r")) { c2r = !strcmp(argv[i], "c2r"); continue; }
+        if (!strcmp(argv[i], "ip") || !strcmp(argv[i], "oop")) { g_ip = !strcmp(argv[i], "ip"); continue; }
+        if (!strcmp(argv[i], "race")) { race = 1; continue; }
         const int k = sscanf(argv[i], "%dx%dx%d", &a, &b, &c);
         if (k < 2) { printf("bad cell %s\n", argv[i]); return 2; }
         cells[nc][0] = a; cells[nc][1] = b; cells[nc][2] = k == 3 ? c : 0;
@@ -248,8 +259,27 @@ int main(int argc, char **argv)
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
     m.l1d_ways = (int)vfft_cpu_l1d_ways();
-    printf("# %s; machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d\n",
-           c2r ? "C2R" : "R2C", m.lanes, m.l1d, m.l1d_ways, m.l2, m.l3, m.cores, store, R, T);
+    printf("# %s; machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d; %s%s\n",
+           c2r ? "C2R" : "R2C", m.lanes, m.l1d, m.l1d_ways, m.l2, m.l3, m.cores, store, R, T,
+           g_ip ? "in place" : "out of place", race ? "; RACE mode (banked creates only)" : "");
+    if (race)
+    {   /* the banked create only: a miss races and banks into the store named */
+        for (int k = 0; k < nc; k++)
+        {
+            const int *n = cells[k], rank = n[2] ? 3 : 2;
+            const long r0 = est_clock_reads;
+            const double t0 = qpc_ns();
+            vfft_plan p = create(n, rank, c2r, T, store);
+            const double dt = (qpc_ns() - t0) * 1e-9;
+            if (rank == 3) printf("RACE %dx%dx%d", n[0], n[1], n[2]); else printf("RACE %dx%d", n[0], n[1]);
+            if (!p) printf(" %s T=%d %s REFUSED after %.2f s: %s\n", c2r ? "c2r" : "r2c", T, g_ip ? "ip" : "oop", dt, vfft_error());
+            else printf(" %s T=%d %s %s %.2f s (clock reads %ld) route %s\n", c2r ? "c2r" : "r2c", T, g_ip ? "ip" : "oop",
+                        est_clock_reads != r0 ? "raced+banked" : "replayed", dt, est_clock_reads - r0, vfft_plan_route(p));
+            fflush(stdout);
+            vfft_destroy(p);
+        }
+        return 0;
+    }
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
     if (T > 1)
     {   /* the threaded protocol: the caller on logical CPU 0 in one measurement scope, the library's guard */
@@ -314,11 +344,65 @@ int main(int argc, char **argv)
             double *in, *out[NARM];
             const size_t nin = c2r ? 2 * ncpx : nreal, nout = c2r ? nreal : 2 * ncpx;
             const int dir = c2r ? VFFT_BACKWARD : VFFT_FORWARD;
+            const size_t P2 = 2 * hp1, bufd = 2 * ncpx;   /* in place: the padded row's doubles, the plane's */
+            double *seed = NULL;                          /* in place: what every arm's buffer is laid out from */
             unsigned s = 12345u;
             memset(spec, 0, sizeof(double) * 2 * ncpx);
             for (size_t i = 0; i < nreal; i++) { s = s * 1664525u + 1013904223u; x[i] = (double)(s >> 8) / 16777216.0 - 0.5; }
+            if (g_ip)
+            {   /* the check and the seed on the padded plane, every plan in place */
+                vfft_info_t inf;
+                double *xpad = vfft_malloc(sizeof(double) * bufd + 64), *tmp = vfft_malloc(sizeof(double) * bufd + 64);
+                const double NN = (double)n[0] * n[1] * (rank == 3 ? n[2] : 1);
+                memset(xpad, 0, sizeof(double) * bufd);
+                for (int r = 0; r < A; r++) memcpy(xpad + (size_t)r * P2, x + (size_t)r * B, sizeof(double) * (size_t)B);
+                if (vfft_info(p[0], &inf) == 0 && inf.stride != P2)
+                    printf("%-12s NOTE: the banked plan's row pitch is %zu doubles, not %zu\n", name, inf.stride, P2);
+                if (!c2r)
+                {   /* R2C: the estimate plan on the padded reals, against the long-double DFT */
+                    memcpy(tmp, xpad, sizeof(double) * bufd);
+                    vfft_execute(p[1], VFFT_FORWARD, tmp, tmp);
+                    chk = check_r2c(n, rank, x, tmp);
+                    seed = xpad;
+                    vfft_free(tmp);
+                }
+                else
+                {   /* C2R: an in-place estimate R2C makes the bins; the estimate C2R brings back N x on the padded rows */
+                    vfft_plan f = create(n, rank, 0, T, NULL);
+                    if (f)
+                    {
+                        double err = 0, mg = 0;
+                        memcpy(spec, xpad, sizeof(double) * bufd);
+                        vfft_execute(f, VFFT_FORWARD, spec, spec);
+                        memcpy(tmp, spec, sizeof(double) * bufd);
+                        vfft_execute(p[1], VFFT_BACKWARD, tmp, tmp);
+                        for (int r = 0; r < A; r++)
+                            for (int k = 0; k < B; k++)
+                            {
+                                const double w = NN * x[(size_t)r * B + k], g = tmp[(size_t)r * P2 + k];
+                                if (fabs(g - w) > err) err = fabs(g - w);
+                                if (fabs(w) > mg) mg = fabs(w);
+                            }
+                        chk = mg > 0 ? err / mg : err;
+                        vfft_destroy(f);
+                    }
+                    seed = spec;
+                    vfft_free(tmp);
+                    vfft_free(xpad);
+                    xpad = NULL;
+                }
+                if (chk < 0 || chk >= 1e-11) fails++;
+                for (int a = 0; a < NARM; a++)
+                {
+                    out[a] = vfft_malloc(sizeof(double) * bufd + 64);
+                    memcpy(out[a], seed, sizeof(double) * bufd);
+                    vfft_execute(p[a], dir, out[a], out[a]);
+                }
+                in = NULL;
+                if (!c2r) { vfft_free(x); x = xpad; }   /* x now holds the seed; freed at the end */
+            }
             /* the check: the estimate R2C (the plan itself, or for C2R a second estimate plan) on x */
-            {
+            else {
                 vfft_plan f = c2r ? create(n, rank, 0, T, NULL) : p[1];
                 if (f)
                 {
@@ -342,16 +426,29 @@ int main(int argc, char **argv)
                     }
                 }
             }
-            if (chk < 0 || chk >= 1e-11) fails++;
-            in = c2r ? spec : x;
-            for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(sizeof(double) * nout + 64); vfft_execute(p[a], dir, in, out[a]); }
+            if (!g_ip)
+            {
+                if (chk < 0 || chk >= 1e-11) fails++;
+                in = c2r ? spec : x;
+                for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(sizeof(double) * nout + 64); vfft_execute(p[a], dir, in, out[a]); }
+            }
             double emax = 0, mag = 0;
             for (int a = 1; a < NARM; a++)
-                for (size_t i = 0; i < nout; i++) { const double e = fabs(out[a][i] - out[0][i]); if (e > emax) emax = e; if (fabs(out[0][i]) > mag) mag = fabs(out[0][i]); }
+                for (size_t i = 0; i < nout; i++)
+                {   /* in place C2R: the reals' positions on the padded rows */
+                    const size_t j = g_ip && c2r ? (i / (size_t)B) * P2 + i % (size_t)B : i;
+                    const double e = fabs(out[a][j] - out[0][j]);
+                    if (e > emax) emax = e;
+                    if (fabs(out[0][j]) > mag) mag = fabs(out[0][j]);
+                }
             (void)nin;
+            /* in place: the arm's own buffer, laid out from the seed before each block (RELAY), executed on itself */
+#define SRC(a) (g_ip ? out[(a)] : in)
+#define RELAY(a) do { if (g_ip) memcpy(out[(a)], seed, sizeof(double) * bufd); } while (0)
             /* size the block to ~80 ms (T > 1: ~10 ms) from a short probe of B */
+            RELAY(0);
             double t0 = qpc_ns();
-            for (int i = 0; i < 3; i++) vfft_execute(p[0], dir, in, out[0]);
+            for (int i = 0; i < 3; i++) vfft_execute(p[0], dir, SRC(0), out[0]);
             const double one = (qpc_ns() - t0) / 3;
             int reps = (int)((T > 1 ? 10e6 : 80e6) / one); if (reps < 3) reps = 3; if (reps > 200000) reps = 200000;
             int warm = reps / 10; if (warm < 2) warm = 2;
@@ -361,8 +458,9 @@ int main(int argc, char **argv)
                 for (int a = 0; a < NARM; a++)
                 {
                     int w = 0;
+                    RELAY(a);
                     t0 = qpc_ns();
-                    while (qpc_ns() - t0 < 5e6 || w < 2) { vfft_execute(p[a], dir, in, out[a]); w++; }
+                    while (qpc_ns() - t0 < 5e6 || w < 2) { vfft_execute(p[a], dir, SRC(a), out[a]); w++; }
                 }
                 for (int r = 0; r < R; r++)
                 {
@@ -378,8 +476,9 @@ int main(int argc, char **argv)
                     for (int j = 0; j < NARM; j++)
                     {
                         const int a = ord[j];
+                        if (g_ip) { RELAY(a); vfft_execute(p[a], dir, out[a], out[a]); }   /* untimed: wakes the pool */
                         t0 = qpc_ns();
-                        for (int i = 0; i < reps; i++) vfft_execute(p[a], dir, in, out[a]);
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], dir, SRC(a), out[a]);
                         t[a][r] = (qpc_ns() - t0) / reps;
                     }
                 }
@@ -389,9 +488,10 @@ int main(int argc, char **argv)
                     for (int j = 0; j < NARM; j++)
                     {
                         const int a = (j + r) % NARM;
-                        for (int w = 0; w < warm; w++) vfft_execute(p[a], dir, in, out[a]);
+                        RELAY(a);
+                        for (int w = 0; w < warm; w++) vfft_execute(p[a], dir, SRC(a), out[a]);
                         t0 = qpc_ns();
-                        for (int i = 0; i < reps; i++) vfft_execute(p[a], dir, in, out[a]);
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], dir, SRC(a), out[a]);
                         t[a][r] = (qpc_ns() - t0) / reps;
                         Sleep(200);
                     }

@@ -20,7 +20,13 @@
  * workers and the next block times their wake). Each arm's engagement is reported (the door's threaded pass
  * counter, vfft_il2d_col_mt_passes / vfft_ilnd_mt_passes): a threaded verdict that did not run threaded shows.
  *
- *   estimate_race_nd <store dir> [rounds=15] [T=n] cell...   (cell = N1xN2 or N1xN2xN3; none: the list below)
+ * In place (`ip`): every plan in place, one buffer per arm, laid out again from the seed (untimed) before every
+ * block (at T > 1 followed by one untimed execute, so the block does not time the pool's wake), the block's
+ * executes on that buffer. The c2c rows at rank 2 and 3 serve both placements (wisdom2_2d_il_reader.h: the c2c
+ * tier's row is placement-blind), so the banked plan in place is the out-of-place row's. With `race`: only the
+ * banked create per cell, its time and whether it raced, nothing timed.
+ *
+ *   estimate_race_nd <store dir> [rounds=15] [T=n] [ip] [race] cell...   (cell = N1xN2 or N1xN2xN3; none: the list below)
  * Build: python gauntlet/build.py --compile --src src/estimate/estimate_race_nd.c   (no --vfft)
  * Run it on a quiet machine only, against a scratch COPY of the store (a cell whose row is incomplete races
  * at its banked create and saves into the directory named). */
@@ -164,8 +170,8 @@ int main(int argc, char **argv)
         return 0;
     }
     static double t[NARM][128];
-    int nc = 0, T = 1;
-    if (argc < 2) { printf("usage: estimate_race_nd <store dir> [rounds] [T=n] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
+    int nc = 0, T = 1, ip = 0, race = 0;
+    if (argc < 2) { printf("usage: estimate_race_nd <store dir> [rounds] [T=n] [ip] [race] cell...   (cell = N1xN2 or N1xN2xN3)\n"); return 2; }
     const char *store = argv[1];
     const int R = argc > 2 ? atoi(argv[2]) : 15;
     if (R < 1 || R > 128) { printf("rounds: 1..128\n"); return 2; }
@@ -178,6 +184,8 @@ int main(int argc, char **argv)
             if (T < 1 || T > 1024) { printf("threads: 1..1024\n"); return 2; }
             continue;
         }
+        if (!strcmp(argv[i], "ip") || !strcmp(argv[i], "oop")) { ip = !strcmp(argv[i], "ip"); continue; }
+        if (!strcmp(argv[i], "race")) { race = 1; continue; }
         const int k = sscanf(argv[i], "%dx%dx%d", &a, &b, &c);
         if (k < 2) { printf("bad cell %s\n", argv[i]); return 2; }
         cells[nc][0] = a; cells[nc][1] = b; cells[nc][2] = k == 3 ? c : 0;
@@ -195,9 +203,34 @@ int main(int argc, char **argv)
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
     m.l1d_ways = (int)vfft_cpu_l1d_ways();
-    printf("# machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d\n", m.lanes,
-           m.l1d, m.l1d_ways, m.l2,
-           m.l3, m.cores, store, R, T);
+    printf("# machine: lanes %d, L1d %ld (%d-way), L2 %ld, L3 %ld, cores %d; store %s; rounds %d; threads %d; %s%s\n",
+           m.lanes, m.l1d, m.l1d_ways, m.l2,
+           m.l3, m.cores, store, R, T, ip ? "in place" : "out of place", race ? "; RACE mode (banked creates only)" : "");
+    if (race)
+    {   /* the banked create only: a miss races and banks into the store named */
+        for (int k = 0; k < nc; k++)
+        {
+            const int *n = cells[k], rank = n[2] ? 3 : 2;
+            vfft_config_t c;
+            memset(&c, 0, sizeof c);
+            c.rank = rank;
+            memcpy(c.n, n, sizeof(int) * 3);
+            c.nthreads = T;
+            c.wisdom_dir = store;
+            c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
+            const long r0 = est_clock_reads;
+            const double t0 = qpc_ns();
+            vfft_plan p = vfft_create(&c);
+            const double dt = (qpc_ns() - t0) * 1e-9;
+            if (rank == 3) printf("RACE %dx%dx%d", n[0], n[1], n[2]); else printf("RACE %dx%d", n[0], n[1]);
+            if (!p) printf(" T=%d %s REFUSED after %.2f s: %s\n", T, ip ? "ip" : "oop", dt, vfft_error());
+            else printf(" T=%d %s %s %.2f s (clock reads %ld) route %s\n", T, ip ? "ip" : "oop",
+                        est_clock_reads != r0 ? "raced+banked" : "replayed", dt, est_clock_reads - r0, vfft_plan_route(p));
+            fflush(stdout);
+            vfft_destroy(p);
+        }
+        return 0;
+    }
     printf("# confine -> 0x%llx\n", (unsigned long long)vfft_measure_confine(0));
     if (T > 1)
     {   /* the threaded protocol: the caller on logical CPU 0 in one measurement scope, the library's guard */
@@ -238,6 +271,7 @@ int main(int argc, char **argv)
             c.rank = rank;
             memcpy(c.n, n, sizeof(int) * 3);
             c.nthreads = T;
+            c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
             if (a == 1)
             {   /* E: the estimate, through the public flag; the recipe printed from the library's formulas */
                 if (est_tokens(&m, n, rank, T, et, sizeof et, why, sizeof why)) { printf("%-12s estimate refused (formula): %s\n", name, why); goto next; }
@@ -260,13 +294,17 @@ int main(int argc, char **argv)
             double *in = vfft_malloc(bytes), *out[NARM];
             unsigned s = 12345u;
             for (long i = 0; i < 2L * P; i++) { s = s * 1664525u + 1013904223u; in[i] = (double)(s >> 8) / 16777216.0 - 0.5; }
-            for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(bytes); vfft_execute(p[a], VFFT_FORWARD, in, out[a]); }
+            /* in place: the arm's own buffer, laid out from the seed before each block (RELAY), executed on itself */
+#define SRC(a) (ip ? out[(a)] : in)
+#define RELAY(a) do { if (ip) memcpy(out[(a)], in, bytes); } while (0)
+            for (int a = 0; a < NARM; a++) { out[a] = vfft_malloc(bytes); RELAY(a); vfft_execute(p[a], VFFT_FORWARD, SRC(a), out[a]); }
             double emax = 0, mag = 0;
             for (int a = 1; a < NARM; a++)
                 for (long i = 0; i < 2L * P; i++) { const double e = fabs(out[a][i] - out[0][i]); if (e > emax) emax = e; if (fabs(out[0][i]) > mag) mag = fabs(out[0][i]); }
             /* size the block to ~80 ms (T > 1: ~10 ms) from a short probe of B */
+            RELAY(0);
             double t0 = qpc_ns();
-            for (int i = 0; i < 3; i++) vfft_execute(p[0], VFFT_FORWARD, in, out[0]);
+            for (int i = 0; i < 3; i++) vfft_execute(p[0], VFFT_FORWARD, SRC(0), out[0]);
             const double one = (qpc_ns() - t0) / 3;
             int reps = (int)((T > 1 ? 10e6 : 80e6) / one); if (reps < 3) reps = 3; if (reps > 200000) reps = 200000;
             int warm = reps / 10; if (warm < 2) warm = 2;
@@ -277,8 +315,9 @@ int main(int argc, char **argv)
                 for (int a = 0; a < NARM; a++)
                 {
                     int w = 0;
+                    RELAY(a);
                     t0 = qpc_ns();
-                    while (qpc_ns() - t0 < 5e6 || w < 2) { vfft_execute(p[a], VFFT_FORWARD, in, out[a]); w++; }
+                    while (qpc_ns() - t0 < 5e6 || w < 2) { vfft_execute(p[a], VFFT_FORWARD, SRC(a), out[a]); w++; }
                 }
                 for (int r = 0; r < R; r++)
                 {
@@ -294,9 +333,10 @@ int main(int argc, char **argv)
                     for (int j = 0; j < NARM; j++)
                     {
                         const int a = ord[j];
+                        if (ip) { RELAY(a); vfft_execute(p[a], VFFT_FORWARD, out[a], out[a]); }   /* untimed: wakes the pool */
                         const long c0 = rank == 3 ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes();
                         t0 = qpc_ns();
-                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, SRC(a), out[a]);
                         t[a][r] = (qpc_ns() - t0) / reps;
                         if ((rank == 3 ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes()) != c0) thr[a] = 1;
                     }
@@ -307,9 +347,10 @@ int main(int argc, char **argv)
                     for (int j = 0; j < NARM; j++)
                     {
                         const int a = (j + r) % NARM;
-                        for (int w = 0; w < warm; w++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        RELAY(a);
+                        for (int w = 0; w < warm; w++) vfft_execute(p[a], VFFT_FORWARD, SRC(a), out[a]);
                         t0 = qpc_ns();
-                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, in, out[a]);
+                        for (int i = 0; i < reps; i++) vfft_execute(p[a], VFFT_FORWARD, SRC(a), out[a]);
                         t[a][r] = (qpc_ns() - t0) / reps;
                         Sleep(200);
                     }
