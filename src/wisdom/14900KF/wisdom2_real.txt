@@ -6278,3 +6278,5 @@
 @cell t=r2c n=13 q=6 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=6 ns=100.00 metric=fwd1 units=ns src=race date=2026-11-12 bld=0.1.0-b3c48ec3
 @cell t=r2c n=19 q=1 ord=nat place=ip nthreads=8 | eng=zrm | ran=1 src=race ns=30.9 metric=fwd1 units=ns date=2026-11-12 bld=0.1.0-b3c48ec3
 @cell t=r2c n=19 q=3 ord=nat place=ip lay=il nthreads=8 | eng=tcb tcmt=0 | ran=3 ns=100.00 metric=fwd1 units=ns src=race date=2026-11-12 bld=0.1.0-b3c48ec3
+@cell t=r2c n=64 q=1024 ord=nat place=oop lay=lm nthreads=8 | chain=4.8 sw=0 cmt=1 blu=0 mtarm=1 msw=64 | ran=1 ns=15614.3 metric=fwd1 units=ns src=race date=2026-11-12 bld=0.1.0-b4451d46-dirty
+@cell t=r2c n=512 q=512 ord=nat place=oop lay=lm nthreads=8 | chain=8.4.8 sw=0 cmt=1 blu=0 mtarm=1 msw=32 | ran=1 ns=117200.0 metric=fwd1 units=ns src=race date=2026-11-12 bld=0.1.0-b4451d46-dirty

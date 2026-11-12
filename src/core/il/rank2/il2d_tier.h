@@ -265,16 +265,19 @@ static inline size_t _il2d_cpd(const struct vfft_plan_s *h)
 }
 static inline void _tc_one(struct vfft_plan_s *in, vfft_dir_t dir, vfft_real *s, vfft_real *d);   /* il/il_execute.h */
 /* THE DOOR ROUTE IN PLACE: the K = 1 in-place inner on every row of the plane, a landing's row
- * (c2r from the column-inverse plane, at its pitch Pz) moved onto its own row first; at T > 1
- * the rows split across the batch's own clones (each a serial in-place plan: the slab role,
- * vfft.c), the caller on the primary's serial twin -- an engagement of the row pass. */
-typedef struct { struct vfft_plan_s *h; const vfft_real *s; vfft_real *d; int bwd, tid; size_t lo, hi, Pz; } _il2d_door_ip_t;
+ * (c2r from the column-inverse plane, at its pitch Pz) moved onto its own row first. The row
+ * batch's threading verdict (tc_mt) decides as in its own execute (il_execute.h): slabs, the
+ * rows split across the batch's own clones (each a serial in-place plan: the slab role, vfft.c),
+ * the caller on the primary's serial twin -- an engagement of the row pass; else the serial loop,
+ * every row on the primary (its threaded form, when it has one, on each row). */
+typedef struct { struct vfft_plan_s *h; const vfft_real *s; vfft_real *d; int bwd, tid, mt; size_t lo, hi, Pz; } _il2d_door_ip_t;
 static void _il2d_door_ip_range(void *v)
 {
     const _il2d_door_ip_t *a = (const _il2d_door_ip_t *)v;
     const struct vfft_plan_s *h = a->h;
     struct vfft_plan_s *row = h->il2d_row;
-    struct vfft_plan_s *in = a->tid > 0 ? row->tcbw[a->tid - 1] : (row->tcb ? (row->tcb0 ? row->tcb0 : row->tcb) : row);
+    struct vfft_plan_s *in = a->tid > 0 ? row->tcbw[a->tid - 1]
+                                        : (row->tcb ? ((a->mt && row->tcb0) ? row->tcb0 : row->tcb) : row);
     const size_t rp = _il2d_rp(h), hp1 = (size_t)h->N2 / 2 + 1;
     size_t r;
     for (r = a->lo; r < a->hi; r++)
@@ -291,13 +294,13 @@ static void _il2d_door_ip(struct vfft_plan_s *h, const vfft_real *s, vfft_real *
     _il2d_door_ip_t a[THREAD_POOL_MAX_DISPATCH];
     const size_t n1 = (size_t)h->N;
     struct vfft_plan_s *row = h->il2d_row;
-    int T = (h->nthreads > 1 && row->tcb) ? thread_pool_workers_for(h->nthreads) : 1, t;
+    int T = (h->nthreads > 1 && row->tcb && row->tc_mt) ? thread_pool_workers_for(h->nthreads) : 1, t;
     if (T > row->tcbw_n + 1) T = row->tcbw_n + 1;
     if ((size_t)T > n1) T = (int)n1;
     if (T < 1) T = 1;
     for (t = 0; t < T; t++)
     {
-        a[t].h = h; a[t].s = s; a[t].d = d; a[t].bwd = bwd; a[t].tid = t; a[t].Pz = Pz;
+        a[t].h = h; a[t].s = s; a[t].d = d; a[t].bwd = bwd; a[t].tid = t; a[t].mt = T > 1; a[t].Pz = Pz;
         a[t].lo = n1 * (size_t)t / (size_t)T;
         a[t].hi = n1 * (size_t)(t + 1) / (size_t)T;
     }
