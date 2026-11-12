@@ -283,6 +283,7 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
         p->msw = plain ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
     }
     p->rx[0] = p->rxs[0] = p->cx[0] = p->cxs[0] = 0;
+    int zrm_rows = 0;   /* R2C at an odd N2: the rows on the real mono kernel (below), in place of the real axis */
     if (!c2r || !(N2 & 1))
     {   /* C2R's row engines race at even N2 only (fft2d_create_il.h:1259) */
         /* the rows kernel out of place on one thread; at T > 1 the door's row child (the kernel 2.2 - 3.8 x slower at
@@ -301,6 +302,26 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             char tk[96];
             if (est__rx_token(&p->rxe, tk, sizeof tk))
                 snprintf(p->rx, sizeof p->rx, "%s", tk);
+        }
+        if (!c2r && (N2 & 1))
+        {   /* R2C at an odd N2 the 1D real estimate runs on the real mono kernel: the rows on it, at one thread up to 19
+             * (out of place an odd prime from 13 keeps the real axis on N1, below), at T > 1 from 7 (study 1,
+             * 2026-11-12: the estimate's recipe built with the rows on the door's C2C child and on the kernel, every
+             * other choice the same, N1 16 - 512 and the 3D planes of 8x32, 32x64, both placements. One thread: the
+             * kernel 0.42 - 0.92 of the child at 3 - 19, about 1 at 23 - 31, 1.1 - 3.3 from 37; out of place faster
+             * than the real axis at 3, 5, 7, 11, even at 13, slower from 17. 8 threads: 0.25 - 0.89 from 7 to 61, the
+             * child's odd rows never thread (il2d_tier.h:317-329); 1.0 - 1.45 at 3, 5. The planner's on 5, 7, 9, 13,
+             * 15, 31 in the store) */
+            est_real_recipe_t z;
+            char w2[160];
+            const int named = p->has_rxe ? !strcmp(p->rxe.eng, "zrm")
+                                         : (N2 >= 3 && !est_real(m, N2, 0, 0, 1, &z, w2, sizeof w2) && !strcmp(z.eng, "zrm"));
+            const int keep_rax = !ip && N1 >= 4 && !(N1 & 1) && N2 >= 13 && vfft_policy_is_prime(N2);
+            if (named && (p->T == 1 ? N2 <= 19 && !keep_rax : N2 >= 7))
+            {
+                snprintf(p->rx, sizeof p->rx, "zrm");
+                zrm_rows = 1;
+            }
         }
         if (!c2r && !ip && p->T > 1 && N2 == 64 && N1 >= 4LL * N2 && VFFT_IL_VW == 4)
             /* R2C AT T > 1 OVER ROWS OF 64 ON A TALL PLANE (2026-11-02): the rows by the real pair 4.16, form a, the
@@ -335,7 +356,7 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             int q = 3, prime = N2 > 2;
             for (; prime && (long long)q * q <= N2; q += 2)
                 if (N2 % q == 0) prime = 0;
-            if (prime) { p->raxis = 1; p->tf = 0; }
+            if (prime) { p->raxis = zrm_rows ? 0 : 1; p->tf = 0; }   /* the kernel's rows take the axis's place */
         }
         else p->cxp = 3;  /* the column-inverse plane at hp1 + 3 (1.014 -> 0.999 on 17 planes, none slower) */
     }
