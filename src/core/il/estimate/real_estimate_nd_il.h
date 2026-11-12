@@ -915,11 +915,31 @@ out:
  * (fft2d_create_il.h _vfft_create_pq_il, plane_queue.h) over the plan of one transform -- on one thread that plan run
  * once per transform, no copy built; on T threads the primary at T and T one-thread copies that replay the cell's
  * one-thread row, run the way the batch's own row says (pq=, vw2_pq_bank, keyed by the request's direction): whole
- * transforms per thread (1), else all threads on each transform in turn (0). The way: the C2C rule (est_batch_whole) at
- * a transform's spectrum, 16 bytes a bin (stage 4, step 1: no rule of its own). The 3D queue's groups arm (pq=2: K
+ * transforms per thread (1), else all threads on each transform in turn (0). The way: est__real_nd_batch_whole
+ * (below). The 3D queue's groups arm (pq=2: K
  * copies at G = T / K threads, vfft_policy_pq_groups_ok) is never the way written, but the door builds its copies
  * whenever the policy admits it, each replaying the cell's row at G threads: that row is written too (g3).
- * est_build_real_ndb: p2 or p3 the recipe at T, q2 or q3 the copies' one-thread recipe (T > 1; else NULL), g3 the
+ * THE WAY (study of 2026-11-12, src/estimate/estimate_batch_way.c: the estimate's batch built both ways and timed at
+ * 1,240 cells, planes 16 x 16 - 1024 x 1024 and volumes 8^3 - 96^3, K 2 - 32, both directions and placements, 8
+ * threads). All threads on each transform run it at a speedup s over one thread; whole transforms per thread run
+ * ceil(K / T) rounds of one-thread transforms. So whole transforms win iff s < K / ceil(K / T). s follows the
+ * transform's spectrum against the core's L2: s = e T, e by band -- below L2 / 256 1/2 (there it stands for the queue's
+ * one fork-join against tiny work), L2 / 256 - L2 / 16 1/8, L2 / 16 - L2 / 4 1/4, L2 / 4 - L2 1/2, from L2 on 1 (one
+ * transform over T cores' L2s, superlinear: the loop always). Against the faster way: 1.015 over the 1,240 cells, 1.010
+ * over 576 fresh ones (other shapes, K 2 - 28), every rank x direction x placement 1.001 - 1.026; the C2C rule 1.060 /
+ * 1.062 (to 2.7 x: 2 transforms on 8 threads whole, 6 threads idle). The groups arm was never the faster. Fitted at 8
+ * threads on one machine (i9-14900KF, L2 2 MiB): other thread counts and machines are untested. */
+static inline int est__real_nd_batch_whole(const est_machine_t *m, size_t bytes, size_t K, int T)
+{
+    double x, e;
+    if (T < 2 || K < 2 || m->l2 <= 0)
+        return 0;
+    x = (double)bytes / (double)m->l2;
+    e = x < 1.0 / 256 ? 0.5 : x < 1.0 / 16 ? 0.125 : x < 0.25 ? 0.25 : x < 1.0 ? 0.5 : 1.0;
+    return e * T < (double)K / (double)((K + (size_t)T - 1) / (size_t)T);
+}
+
+/* est_build_real_ndb: p2 or p3 the recipe at T, q2 or q3 the copies' one-thread recipe (T > 1; else NULL), g3 the
  * groups' recipe at G (else NULL), whole the way -> a plan built with nothing measured, or NULL with the reason in why
  * and the outcome in rep (may be NULL). */
 static inline struct vfft_plan_s *est_build_real_ndb(const est_plan2dr_t *p2, const est_plan3dr_t *p3,
@@ -1037,8 +1057,8 @@ static vfft_plan _vfft_create_estimate_real_nd(const est_machine_t *m, const vff
             h = NULL;
         else if (cfg->howmany > 1)
             h = est_build_real_ndb(p, NULL, T > 1 ? q : NULL, NULL, NULL,
-                                   T > 1 && est_batch_whole(m, 16 * (size_t)cfg->n[0] * ((size_t)cfg->n[1] / 2 + 1),
-                                                            cfg->howmany, T),
+                                   T > 1 && est__real_nd_batch_whole(m, 16 * (size_t)cfg->n[0] * ((size_t)cfg->n[1] / 2 + 1),
+                                                                     cfg->howmany, T),
                                    cfg, NULL, why, sizeof why);
         else
             h = est_build_real_2d(p, cfg, NULL, why, sizeof why);
@@ -1064,8 +1084,8 @@ static vfft_plan _vfft_create_estimate_real_nd(const est_machine_t *m, const vff
             h = NULL;
         else if (cfg->howmany > 1)
             h = est_build_real_ndb(NULL, p, NULL, T > 1 ? q : NULL, groups ? g : NULL,
-                                   T > 1 && est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1] *
-                                                                   ((size_t)cfg->n[2] / 2 + 1), cfg->howmany, T),
+                                   T > 1 && est__real_nd_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1] *
+                                                                            ((size_t)cfg->n[2] / 2 + 1), cfg->howmany, T),
                                    cfg, NULL, why, sizeof why);
         else
             h = est_build_real_3d(p, cfg, NULL, why, sizeof why);

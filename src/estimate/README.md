@@ -18,7 +18,7 @@ replay code.
 | `src/core/il/estimate/estimate_nd_il.h` | rank 2 and 3: the recipes `est_plan2d_t` / `est_plan3d_t`, the formulas `est_plan_2d` / `est_plan_3d` (the column chain from the door's pool, the N-arm, the bands, the 2D row route, the 3D natural form; the 1D children by `est_plan_1d`) and how they thread, `est_mt_2d` / `est_mt_3d`, the row writers `est_put_rows_2d` / `est_put_rows_3d` |
 | `src/core/il/estimate/c2c_estimate_nd_il.h` | rank 2 and 3: the build `est_build_nd` (pre-flight, rows, the door's replay, the plan check) and `_vfft_create_estimate_nd` |
 | `src/core/il/estimate/real_estimate_il.h` | one 1D R2C or C2R transform (2026-11-01) and a contiguous batch of them (2026-11-02, the batch's way `tcmt` by `est_batch_whole`): the real recipe `est_real_recipe_t`, the formulas `est_plan_real` / `est_real` (the sketch's sections 6 and 7), the row writer `est_put_rows_real`, the pre-flight, the plan check (the engine, its threaded arm, the lean door's entry), the build `est_build_real` and `_vfft_create_estimate_real` |
-| `src/core/il/estimate/real_estimate_nd_il.h` | one R2C or C2R transform at rank 2 and 3 (2026-11-02) and a contiguous batch of them (2026-11-03, the plane and volume queue: `est_build_real_ndb`, the way by `est_batch_whole` at a transform's spectrum): the recipes `est_plan2dr_t` / `est_plan3dr_t`, the formulas `est_plan_2d_real` / `est_plan_3d_real`, the rows, the plan checks, the builds and `_vfft_create_estimate_real_nd` |
+| `src/core/il/estimate/real_estimate_nd_il.h` | one R2C or C2R transform at rank 2 and 3 (2026-11-02) and a contiguous batch of them (2026-11-03, the plane and volume queue: `est_build_real_ndb`, the way by `est__real_nd_batch_whole` at a transform's spectrum, 2026-11-12): the recipes `est_plan2dr_t` / `est_plan3dr_t`, the formulas `est_plan_2d_real` / `est_plan_3d_real`, the rows, the plan checks, the builds and `_vfft_create_estimate_real_nd` |
 | `src/core/il/estimate/real_estimate_lm_il.h` | a lane-major batch of R2C or C2R transforms: 1D, the real batch's default (2026-11-02), and rank 2 and 3 when named (2026-11-03): the recipe `est_planlmr_t` (rank 1: the c2c lane-major recipe of rank 1 at N / 2 over K lanes; rank 2 and 3: the first axis over the spectrum's lanes and the block child one rank down), the formulas `est_plan_lmrn`, the build `est_build_lmr` and `_vfft_create_estimate_lmr` |
 | `src/core/vfft_api.h` | the flag's refusals (`_vfft_api_translate`) and the dispatch (`vfft_create`) |
 | `src/tools/gates/estimate_gate.c` | the release gate (registered in `run_gates.py`) |
@@ -57,6 +57,7 @@ length the column pool cannot chain (above 2^24). It never opens `wisdom_dir`.
 | `estimate_race.c` | Timed: the banked plans against the estimate plans (E through the public flag). |
 | `estimate_race_nd.c` | The same at rank 2 and 3: 2D and 3D cells, the same protocol at one thread; with `T=n` the threaded protocol (one measurement scope with the library's guards, the blocks back to back, the arm order shuffled, each arm's engagement reported). The owner times on a quiet machine. |
 | `estimate_race_real.c` | The real twin of `estimate_race_nd.c`: 2D and 3D R2C or C2R cells (`r2c` / `c2r`), the same arms and protocols, and each estimate plan checked against a long-double DFT (R2C: 48 sampled bins; C2R: the round trip); an estimate create the library refused is reported with its reason. |
+| `estimate_batch_way.c` | Timed: the way of a contiguous 2D or 3D real batch on T threads. The estimate's batch built all threads on each transform, whole transforms per thread, and the 3D groups; the time of each, and the way `est__real_nd_batch_whole` picks. `estimate_batch_way <T> <2d\|3d\|all\|val> [rounds]`: `all` is the grid the rule was fitted on, `val` the grid it was checked on. Nothing is measured at create. Run it on each machine the rule should hold on. |
 | `estimate_store.c` | Writes the c2c estimate plans as a store on disk, for the gauntlet. |
 | `TEST_LOG.md` | Every test sweep before the release, every bug found, and the review fixes. |
 
@@ -101,6 +102,7 @@ takes about two minutes.
 ```
 python gauntlet/build.py --compile --src src/estimate/estimate_tool.c
 python gauntlet/build.py --compile --src src/estimate/estimate_selftest.c
+python gauntlet/build.py --compile --src src/estimate/estimate_batch_way.c
 ```
 
 The exe lands beside the source. Run it from the Bash tool, where the mingw DLLs are on `PATH`.

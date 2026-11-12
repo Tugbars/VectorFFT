@@ -71,7 +71,7 @@
  *      the round trip within TOL; on 8 threads a contiguous batch runs whole transforms per thread exactly when the
  *      rule says so (est__real_batch_whole: one transform's 16 (N/2 + 1) bytes within the L2, the batch past 16 KiB or a
  *      prime engine). RB2, RB3 and RLM2, RLM3 the same at rank 2 and 3 (contiguous: the plane and volume queues, the
- *      DEFAULT there, its way est_batch_whole at a transform's spectrum, vfft_pq_mt_passes; lane-major when named), on
+ *      DEFAULT there, its way est__real_nd_batch_whole at a transform's spectrum, vfft_pq_mt_passes; lane-major when named), on
  *      one thread and on 8 (RB2T, RB3T, RLM2T, RLM3T).
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
@@ -1138,6 +1138,18 @@ static int rb_whole(long N, int K, int T)
      * on each from 128 KiB a transform, which the section's Bluestein lengths (131, 1031) never reach */
     return m > 1 || (long long)K * bytes >= ((N & 1) ? (8LL << 10) : (16LL << 10));
 }
+/* the contiguous 2D / 3D real batch's rule on T threads (est__real_nd_batch_whole, il/estimate/real_estimate_nd_il.h),
+ * stated again: whole transforms per thread iff e T < K / ceil(K / T), e by a transform's spectrum bytes against a
+ * core's L2 -- below L2 / 256 1/2, to L2 / 16 1/8, to L2 / 4 1/4, to the L2 1/2, from it 1 */
+static int rbn_whole(long long bytes, int K, int T)
+{
+    const double l2 = (double)vfft_cpu_l2_bytes(), x = bytes / l2;
+    double e;
+    if (T < 2 || K < 2 || l2 <= 0)
+        return 0;
+    e = x < 1.0 / 256 ? 0.5 : x < 1.0 / 16 ? 0.125 : x < 0.25 ? 0.25 : x < 1.0 ? 0.5 : 1.0;
+    return e * T < (double)K / (double)((K + T - 1) / T);
+}
 /* one batch at rank 1, 2 or 3 (n0 x n1 x n2, the last extent the real one): R rows of L reals before the real axis's
  * H = L/2 + 1 bins. The one-transform plan's layout: out of place R L reals, R H bins; in place R rows of 2 H doubles,
  * the reals first. A contiguous batch: K of them one after another. Lane-major: real (r, c) of transform t at
@@ -1247,7 +1259,7 @@ static void rbn_cell(int rank, long n0, long n1, long n2, int K, int ip, int T, 
         ok = fsame && bsame && er <= TOL;
         if (!lm && T > 1)
         {
-            whole = rank == 1 ? rb_whole(n0, K, T) : batch_whole(16LL * R * H, K, T, NULL);
+            whole = rank == 1 ? rb_whole(n0, K, T) : rbn_whole(16LL * R * H, K, T);
             CHECK((c1 != c0) == whole, "RB %s: the batch ran %s, the rule says %s", name,
                   c1 != c0 ? "whole transforms per thread" : "all threads on each transform",
                   whole ? "whole transforms per thread" : "all threads on each transform");
