@@ -486,13 +486,18 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
 /* a zr2c row engine at a route: its child from the row engines' own store
  * (the real row's rx_* tokens, wisdom2_child.h) when that banks this route,
  * else raced in the real role and banked there, so the recipe rides on the
- * 2D row. A 1D row is never read (owner, 2026-10-01). */
+ * 2D row. A 1D row is never read (owner, 2026-10-01). Looked up under the key
+ * _zr2c_bank writes: the row config's placement (the plane's, _il2d_rowx_cfg)
+ * at one thread -- an in-place plane's child is place=ip (looked up out of
+ * place it was never found, and every create raced it again) */
 static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_cfg_t *c, struct vfft_wisdom_s *S, int N2, int route)
 {
     int r = 0, fmt = 0;
     vw2_zr2c_child_t ch;
     struct vfft_plan_s *e;
-    if (S && !c->recalibrate && vw2_real_il_lookup_zr2c(&S->vw2, N2, c->transform == VFFT_C2R, 0, 1, &r, &fmt, &ch) &&
+    if (S && !c->recalibrate &&
+        vw2_real_il_lookup_zr2c(&S->vw2, N2, c->transform == VFFT_C2R, c->placement == VFFT_INPLACE,
+                                _vfft_plan_threads(c), &r, &fmt, &ch) &&
         r == route)
     {
         vfft_il_cand_t kc;
