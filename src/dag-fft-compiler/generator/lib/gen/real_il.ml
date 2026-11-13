@@ -64,9 +64,9 @@
    doubles each. Ls / OLs = the leg pitch in / out, count = R2/2 (the tops)
    or R1 (the real leaf). Gs, OGs, tw_im unused.
 
-   AT 512 BITS (the pair's three kinds; the rows kind r2zr is 256-bit only) the
-   same DAGs run four columns per vector in the tops and eight real columns in
-   the leaf. The tops: a record set serves the column QUAD (4s+1 .. 4s+4), its
+   AT 512 BITS the pair's three kinds run the same DAGs four columns per vector
+   in the tops and eight real columns in the leaf (the rows kind r2zr: eight
+   rows per vector, its own section below). The tops: a record set serves the column QUAD (4s+1 .. 4s+4), its
    records 16 doubles, [c c] per column then [-s +s] per column; the columns a
    quad does not fill run as a pair at 256 bits and a last column at VEX-128,
    each at its lanes of the quad's record; the special pass stays 2 lanes, at
@@ -834,10 +834,24 @@ let emit_leaf ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : st
    count rows, at least two: four per wide iteration, then two at VEX-128;
    a lone last row runs with the row before it (out of place, the same
    values written again). The backward twin follows it (emit_rows_bwd).
+
+   AT 512 BITS a lane is still a row, eight rows per vector, then four rows at
+   256 bits and two at VEX-128 as count leaves them:
+   - the load edge takes a block of FOUR samples of eight rows as four
+     vectors, two rows a vector (a 256-bit half each, the rows paired (0, 2),
+     (1, 3), (4, 6), (5, 7)): one unpack round and one lane deinterleave per
+     sample give the sample across the eight rows in order;
+   - the store edge turns four slots at a time into one 512-bit store per row
+     (a slot's two unpacks, then two rounds of the lane deinterleave over the
+     four slots); a slot past the last whole quad leaves as per-row quarters;
+   - the backward loads four slots of a row per vector and turns the even and
+     the odd rows' vectors into the slots' (a slot past the last quad gathers
+     four rows' 128-bit slots a vector), and stores eight samples of a row per
+     vector, the sample pairs past the last whole block as per-row quarters.
    ═══════════════════════════════════════════════════════════════ *)
 let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   let vw = isa.Isa.vec_width in
-  if vw <> 4 then failwith "real_il: r2zr is emitted for the 256-bit ISA only";
+  if vw <> 4 && vw <> 8 then failwith "real_il: r2zr is emitted for the 256- and 512-bit ISAs only";
   if radix < 4 || radix mod 2 <> 0 then failwith "real_il: r2zr needs an even radix >= 4";
   let h = radix / 2 in
   let ctx =
@@ -869,7 +883,22 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
     let x : t option array = Array.make radix None in
     let block (off : int) (keep : int list) : unit =
       let s =
-        if lanes = 4
+        if lanes = 8
+        then (
+          (* eight rows x four samples. The rows load two a vector, a 256-bit half each, paired
+             (0, 2), (1, 3), (4, 6), (5, 7): one unpack round puts sample pairs of two adjacent
+             rows in a 128-bit lane, and one lane deinterleave per sample gathers the eight rows
+             in order *)
+          let p = ld (AXinRow2 (0, 2, off))
+          and q = ld (AXinRow2 (1, 3, off))
+          and p' = ld (AXinRow2 (4, 6, off))
+          and q' = ld (AXinRow2 (5, 7, off)) in
+          let u = cunpack p q false
+          and uh = cunpack p q true
+          and v = cunpack p' q' false
+          and vh = cunpack p' q' true in
+          [| cturn u v false; cturn uh vh false; cturn u v true; cturn uh vh true |])
+        else if lanes = 4
         then (
           let a = Array.init 4 (fun r -> ld (AXinRow (r, off))) in
           let u0 = cunpack a.(0) a.(1) false
@@ -884,10 +913,12 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       in
       List.iter (fun j -> x.(off + j) <- Some s.(j)) keep
     in
-    for b = 0 to (radix / lanes) - 1 do
-      block (b * lanes) (List.init lanes Fun.id)
+    (* the samples a block holds: the lane count, four at eight lanes *)
+    let bw = if lanes = 8 then 4 else lanes in
+    for b = 0 to (radix / bw) - 1 do
+      block (b * bw) (List.init bw Fun.id)
     done;
-    if radix mod lanes <> 0 then block (radix - lanes) [ lanes - 2; lanes - 1 ];
+    if radix mod bw <> 0 then block (radix - bw) [ bw - 2; bw - 1 ];
     let x =
       Array.mapi
         (fun j v ->
@@ -910,7 +941,43 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
     in
     let roots = ref []
     and st = ref [] in
-    if lanes = 4
+    if lanes = 8
+    then (
+      (* quads of slots (p .. p+3): a slot's two unpacks hold its even and its odd rows as
+         (re, im) pairs; the four slots' even unpacks turn into the four even rows' vectors,
+         the odd ones likewise: one 512-bit store per row. A slot past the last whole quad
+         leaves as its eight per-row quarters. *)
+      let p = ref 0 in
+      while !p <= h do
+        if !p + 3 <= h
+        then (
+          let abs = Array.init 4 (fun i -> ab (!p + i)) in
+          let lo = Array.map (fun (a, b) -> cunpack a b false) abs
+          and hi = Array.map (fun (a, b) -> cunpack a b true) abs in
+          let ev, _ = Cx_math.turn_transpose ~per:4 lo
+          and od, _ = Cx_math.turn_transpose ~per:4 hi in
+          for j = 0 to 3 do
+            roots := od.(j) :: ev.(j) :: !roots;
+            st
+            := (AZoutTurn (!p, (2 * j) + 1), od.(j), None)
+               :: (AZoutTurn (!p, 2 * j), ev.(j), None)
+               :: !st
+          done;
+          p := !p + 4)
+        else (
+          let a0, b0 = ab !p in
+          let ulo = cunpack a0 b0 false
+          and uhi = cunpack a0 b0 true in
+          roots := uhi :: ulo :: !roots;
+          for j = 0 to 3 do
+            st
+            := (AZoutTurn (!p, (2 * j) + 1), uhi, Some j)
+               :: (AZoutTurn (!p, 2 * j), ulo, Some j)
+               :: !st
+          done;
+          p := !p + 1)
+      done)
+    else if lanes = 4
     then (
       let p = ref 0 in
       while !p <= h do
@@ -982,9 +1049,14 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       st;
     Buffer.add_string body "        }\n"
   in
+  (* THE ARMS: the wide iteration (4 rows at 256 bits, 8 at 512), at 512 bits four rows at 256
+     bits when count leaves them, then two rows at VEX-128 *)
+  let wide8 = vw = 8 in
   let body_w = Buffer.create 8192 in
+  let body_y = Buffer.create 4096 in
   let body_n = Buffer.create 4096 in
-  emit_group ~body:body_w ~nisa:isa ~label:"four rows";
+  emit_group ~body:body_w ~nisa:isa ~label:(if wide8 then "eight rows" else "four rows");
+  if wide8 then emit_group ~body:body_y ~nisa:Isa.avx2 ~label:"four rows at 256 bits";
   emit_group ~body:body_n ~nisa:Isa.sse2 ~label:"two rows at VEX-128";
   let buf = Buffer.create 16384 in
   Buffer.add_string
@@ -998,14 +1070,26 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   Buffer.add_string
     buf
     (Printf.sprintf
-       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
-       \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr fwd: the real %d-point DFT of every\n\
-       \ * ROW of a row-major plane (row k's samples at zin[k*Ls + j]) -> its CCE\n\
-       \ * bins 0..%d at zout[2*(k*OLs + p)]; real arithmetic throughout (cx_real.ml),\n\
-       \ * the DC and Nyquist bins stored with a zero imaginary part.\n\
-       \ * count = the rows, at least two: four per wide iteration, then two at\n\
-       \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
-       \ * tw_re, tw_im, Gs, OGs unused. */\n"
+       (if wide8
+        then
+          format_of_string
+            "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+            \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr fwd: the real %d-point DFT of every\n\
+            \ * ROW of a row-major plane (row k's samples at zin[k*Ls + j]) -> its CCE\n\
+            \ * bins 0..%d at zout[2*(k*OLs + p)]; real arithmetic throughout (cx_real.ml),\n\
+            \ * the DC and Nyquist bins stored with a zero imaginary part.\n\
+            \ * count = the rows, at least two: eight per wide iteration, then four at\n\
+            \ * 256 bits and two at VEX-128 as count leaves them (a lone last row runs\n\
+            \ * with the row before it). Out of place. tw_re, tw_im, Gs, OGs unused. */\n"
+        else
+          "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+          \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr fwd: the real %d-point DFT of every\n\
+          \ * ROW of a row-major plane (row k's samples at zin[k*Ls + j]) -> its CCE\n\
+          \ * bins 0..%d at zout[2*(k*OLs + p)]; real arithmetic throughout (cx_real.ml),\n\
+          \ * the DC and Nyquist bins stored with a zero imaginary part.\n\
+          \ * count = the rows, at least two: four per wide iteration, then two at\n\
+          \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
+          \ * tw_re, tw_im, Gs, OGs unused. */\n")
        radix
        radix
        h);
@@ -1024,6 +1108,12 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   Buffer.add_string buf (Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw);
   Buffer.add_buffer buf body_w;
   Buffer.add_string buf "    }\n";
+  if wide8
+  then (
+    Buffer.add_string buf "    if (k + 4 <= count) {  /* four rows at 256 bits */\n";
+    Buffer.add_buffer buf body_y;
+    Buffer.add_string buf "        k += 4;\n";
+    Buffer.add_string buf "    }\n");
   Buffer.add_string buf "    while (k < count) {  /* two rows at VEX-128 */\n";
   Buffer.add_string buf "        if (k + 2 > count) k = count - 2;  /* a lone last row: with the row before it */\n";
   Buffer.add_buffer buf body_n;
@@ -1052,7 +1142,7 @@ let emit_rows_fwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
    ═══════════════════════════════════════════════════════════════ *)
 let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   let vw = isa.Isa.vec_width in
-  if vw <> 4 then failwith "real_il: r2zr is emitted for the 256-bit ISA only";
+  if vw <> 4 && vw <> 8 then failwith "real_il: r2zr is emitted for the 256- and 512-bit ISAs only";
   if radix < 4 || radix mod 2 <> 0 then failwith "real_il: r2zr needs an even radix >= 4";
   let h = radix / 2 in
   let ctx =
@@ -1086,7 +1176,31 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       let re = cunpack lo hi false in
       if p = 0 || p = h then xs.(p) <- (Some re, None) else xs.(p) <- (Some re, Some (cunpack lo hi true))
     in
-    if lanes = 4
+    if lanes = 8
+    then (
+      let p = ref 0 in
+      while !p <= h do
+        if !p + 3 <= h
+        then (
+          (* rows 0..7, slots (p .. p+3), a 512-bit load per row: the even rows' four vectors
+             turn into the four slots' even-row vectors (two rounds of the lane deinterleave),
+             the odd rows' likewise; a slot's unpacks then order the rows *)
+          let l = Array.init 8 (fun r -> ld (AZinTurn (!p, r))) in
+          let ev, _ = Cx_math.turn_transpose ~per:4 [| l.(0); l.(2); l.(4); l.(6) |]
+          and od, _ = Cx_math.turn_transpose ~per:4 [| l.(1); l.(3); l.(5); l.(7) |] in
+          for i = 0 to 3 do
+            slot (!p + i) ev.(i) od.(i)
+          done;
+          p := !p + 4)
+        else (
+          (* a slot past the last whole quad: the even rows' 128-bit slots in one vector, the
+             odd rows' in another *)
+          let ulo = ld (AZinTurnQ (!p, 0))
+          and uhi = ld (AZinTurnQ (!p, 1)) in
+          slot !p ulo uhi;
+          p := !p + 1)
+      done)
+    else if lanes = 4
     then (
       let p = ref 0 in
       while !p <= h do
@@ -1119,7 +1233,34 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
     (* the store edge: the sample vectors back into row blocks *)
     let roots = ref []
     and st = ref [] in
-    if lanes = 4
+    if lanes = 8
+    then (
+      (* blocks of eight samples: a sample pair's two unpacks hold the even and the odd rows'
+         pairs; the four pairs' even unpacks turn into the four even rows' vectors, the odd
+         ones likewise: one 512-bit store per row. The sample pairs past the last whole block
+         leave as per-row quarters. *)
+      let off = ref 0 in
+      while !off + 8 <= radix do
+        let lo = Array.init 4 (fun m -> cunpack x.(!off + (2 * m)) x.(!off + (2 * m) + 1) false)
+        and hi = Array.init 4 (fun m -> cunpack x.(!off + (2 * m)) x.(!off + (2 * m) + 1) true) in
+        let ev, _ = Cx_math.turn_transpose ~per:4 lo
+        and od, _ = Cx_math.turn_transpose ~per:4 hi in
+        for j = 0 to 3 do
+          roots := od.(j) :: ev.(j) :: !roots;
+          st := (AXoutRow ((2 * j) + 1, !off), od.(j), None) :: (AXoutRow (2 * j, !off), ev.(j), None) :: !st
+        done;
+        off := !off + 8
+      done;
+      while !off < radix do
+        let u0 = cunpack x.(!off) x.(!off + 1) false
+        and u1 = cunpack x.(!off) x.(!off + 1) true in
+        roots := u1 :: u0 :: !roots;
+        for j = 0 to 3 do
+          st := (AXoutRow ((2 * j) + 1, !off), u1, Some j) :: (AXoutRow (2 * j, !off), u0, Some j) :: !st
+        done;
+        off := !off + 2
+      done)
+    else if lanes = 4
     then (
       let block (off : int) : unit =
         let u0 = cunpack x.(off) x.(off + 1) false
@@ -1184,9 +1325,14 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       st;
     Buffer.add_string body "        }\n"
   in
+  (* THE ARMS: the wide iteration (4 rows at 256 bits, 8 at 512), at 512 bits four rows at 256
+     bits when count leaves them, then two rows at VEX-128 *)
+  let wide8 = vw = 8 in
   let body_w = Buffer.create 8192 in
+  let body_y = Buffer.create 4096 in
   let body_n = Buffer.create 4096 in
-  emit_group ~body:body_w ~nisa:isa ~label:"four rows";
+  emit_group ~body:body_w ~nisa:isa ~label:(if wide8 then "eight rows" else "four rows");
+  if wide8 then emit_group ~body:body_y ~nisa:Isa.avx2 ~label:"four rows at 256 bits";
   emit_group ~body:body_n ~nisa:Isa.sse2 ~label:"two rows at VEX-128";
   let buf = Buffer.create 16384 in
   Buffer.add_string
@@ -1200,14 +1346,26 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   Buffer.add_string
     buf
     (Printf.sprintf
-       "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
-       \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr bwd: the CCE bins 0..%d of every\n\
-       \ * ROW of a row-major plane (row k's bins at zin[2*(k*Ls + p)]) -> its %d real\n\
-       \ * samples at zout[k*OLs + j], unnormalized (%d times x); real arithmetic\n\
-       \ * throughout (cx_real.ml), the DC and Nyquist imaginary parts never read.\n\
-       \ * count = the rows, at least two: four per wide iteration, then two at\n\
-       \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
-       \ * tw_re, tw_im, Gs, OGs unused. */\n"
+       (if wide8
+        then
+          format_of_string
+            "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+            \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr bwd: the CCE bins 0..%d of every\n\
+            \ * ROW of a row-major plane (row k's bins at zin[2*(k*Ls + p)]) -> its %d real\n\
+            \ * samples at zout[k*OLs + j], unnormalized (%d times x); real arithmetic\n\
+            \ * throughout (cx_real.ml), the DC and Nyquist imaginary parts never used.\n\
+            \ * count = the rows, at least two: eight per wide iteration, then four at\n\
+            \ * 256 bits and two at VEX-128 as count leaves them (a lone last row runs\n\
+            \ * with the row before it). Out of place. tw_re, tw_im, Gs, OGs unused. */\n"
+        else
+          "/* Auto-generated by vfft_v2 — INTERLEAVED-COMPLEX (full-IL) family,\n\
+          \ * PIPELINE-HOSTED (real_il.ml). radix-%d r2zr bwd: the CCE bins 0..%d of every\n\
+          \ * ROW of a row-major plane (row k's bins at zin[2*(k*Ls + p)]) -> its %d real\n\
+          \ * samples at zout[k*OLs + j], unnormalized (%d times x); real arithmetic\n\
+          \ * throughout (cx_real.ml), the DC and Nyquist imaginary parts never read.\n\
+          \ * count = the rows, at least two: four per wide iteration, then two at\n\
+          \ * VEX-128 (a lone last row runs with the row before it). Out of place.\n\
+          \ * tw_re, tw_im, Gs, OGs unused. */\n")
        radix
        h
        radix
@@ -1227,6 +1385,12 @@ let emit_rows_bwd ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
   Buffer.add_string buf (Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw);
   Buffer.add_buffer buf body_w;
   Buffer.add_string buf "    }\n";
+  if wide8
+  then (
+    Buffer.add_string buf "    if (k + 4 <= count) {  /* four rows at 256 bits */\n";
+    Buffer.add_buffer buf body_y;
+    Buffer.add_string buf "        k += 4;\n";
+    Buffer.add_string buf "    }\n");
   Buffer.add_string buf "    while (k < count) {  /* two rows at VEX-128 */\n";
   Buffer.add_string buf "        if (k + 2 > count) k = count - 2;  /* a lone last row: with the row before it */\n";
   Buffer.add_buffer buf body_n;
@@ -1471,8 +1635,6 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
   then
     failwith
       (Printf.sprintf "real_il: the real interleaved kinds have no FP32 form (target %s)" isa.Isa.name);
-  if isa.Isa.vec_width <> 4 && kind = R2zr
-  then failwith "real_il: the real rows kind is emitted for the 256-bit ISA only";
   if isa.Isa.vec_width <> 4 && isa.Isa.vec_width <> 8
   then failwith "real_il: the real kinds are emitted for the 256- and 512-bit ISAs only";
   match kind with

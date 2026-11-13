@@ -502,10 +502,24 @@ VFFT_IL_DECL(radix64_z_r2z_bwd_avx512)
 #define VFFT_IL_R2Z_BWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
 #define VFFT_IL_R2Z_PAIR_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
 
-/* ── r2zr ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_R2ZR_FWD_RADICES(X)
-#define VFFT_IL_R2ZR_BWD_RADICES(X)
-#define VFFT_IL_R2ZR_PAIR_RADICES(X)
+/* ── r2zr ── fwd 7 · bwd 7 · pair 7 */
+VFFT_IL_DECL(radix4_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix6_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix8_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix10_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix12_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix16_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix32_z_r2zr_fwd_avx512)
+VFFT_IL_DECL(radix4_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix6_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix8_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix10_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix12_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix16_z_r2zr_bwd_avx512)
+VFFT_IL_DECL(radix32_z_r2zr_bwd_avx512)
+#define VFFT_IL_R2ZR_FWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32)
+#define VFFT_IL_R2ZR_BWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32)
+#define VFFT_IL_R2ZR_PAIR_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32)
 
 /* ── rn1 ── fwd 32 · bwd 32 · pair 32 */
 VFFT_IL_DECL(radix2_z_rn1_fwd_avx512)
@@ -1273,15 +1287,14 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
 /* zil-boundary-avx512: 4 cells DECLARED ABSENT at avx512:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* zil-pure-avx512: 66 cells DECLARED ABSENT at avx512:
+/* zil-pure-avx512: 52 cells DECLARED ABSENT at avx512:
  *   2  codelet_cil: --cil-split 4.4 does not factor the row kind's stage 1 at 512 bits (p = 8, m1 a multiple of 4)
  *   2  codelet_cil: --cil-split 4.8 does not factor the row kind's stage 1 at 512 bits (p = 16, m1 a multiple of 4)
  *   2  codelet_cil: the row kind needs radix 12 to be a multiple of 16 (per^2) at 512 bits
  *   2  codelet_cil: the row kind needs radix 4 to be a multiple of 16 (per^2) at 512 bits
  *   32  no 512-bit edge yet: codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair; split stores at 512 bits wait on a Zen 4 measurement (gauntlet/half_store_bench.sh)
- *   14  no 512-bit edge yet: real_il emits the real rows kind for the 256-bit ISA only
  *   12  the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there
  */
-/* 931 declarations over 75 kinds */
+/* 945 declarations over 75 kinds */
 
 #endif

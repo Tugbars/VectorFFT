@@ -101,6 +101,11 @@ type caddr =
   | AZinTurn of int * int (* (l, r): zin[2*(((size_t)k + r)*Ls + l)] *)
   | AZinTurnH of int * int (* (l, r): rows k+r (low half) and k+r+2 (high), slot l *)
   | AXoutRow of int * int (* (r, off): zout[((size_t)k + r)*OLs + off] *)
+  (* the rows kind at 512 bits (2026-11-13), eight rows a vector: a block of four samples
+     loads 256 bits per row, two rows a vector; the backward's slot past its last whole
+     quad gathers four rows' 128-bit slots into one vector. *)
+  | AXinRow2 of int * int * int (* (r0, r1, off): rows k+r0 (low half) and k+r1 (high), samples off.. *)
+  | AZinTurnQ of int * int (* (l, r): rows k+r, k+r+2, k+r+4, k+r+6, slot l, a 128-bit lane each *)
   (* ── the c2c ROW kind (c2c_il.ml emit_row, 2026-11-08): iteration k holds
      the rows k+r at the pitches Gs (in) / OGs (out), both in complex; c = the
      complex offset inside the row (v*per for whole vector v; any point for

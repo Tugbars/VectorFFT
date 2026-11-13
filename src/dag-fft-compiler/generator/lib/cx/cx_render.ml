@@ -193,6 +193,8 @@ let addr_str (a : caddr) : string =
   | AZoutRowT (0, l) -> Printf.sprintf "zout[2*((size_t)%d*OLs + (size_t)k*OGs)]" l
   | AZoutRowT (r, l) -> Printf.sprintf "zout[2*((size_t)%d*OLs + ((size_t)k + %d)*OGs)]" l r
   | AZinTurnH _ -> failwith "cx_render.addr_str: the half-row pair renders through render_load"
+  | AXinRow2 _ | AZinTurnQ _ ->
+    failwith "cx_render.addr_str: a several-row load renders through render_load"
   | AZeroV -> failwith "cx_render.addr_str: the zero vector has no address (render_load)"
   | AZinMir _ | AZoutMir _ | AZoutTurnMir _ | AZinSpec _ | AZinSpecC _ | AZinSpecB _ | AZinSpecP _ ->
     failwith "cx_render.addr_str: a mirror / special form renders through render_load or render_store"
@@ -385,13 +387,30 @@ let render_load (isa : Isa.t) (a : caddr) : string =
       "_mm512_xor_pd(_mm512_loadu_pd(&zin[2*((size_t)%d*Ls + k)]), _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0))"
       (r - l)
   | AZinHerm _ -> failwith "cx_render.render_load: AZinHerm renders at 512 / 256 / 128 bits only"
+  | AZeroV when isa.Isa.vec_width = 8 -> "_mm512_setzero_pd()"
   | AZeroV when isa.Isa.vec_width = 4 -> "_mm256_setzero_pd()"
   | AZeroV when isa.Isa.vec_width = 2 -> "_mm_setzero_pd()"
-  | AZeroV -> failwith "cx_render.render_load: AZeroV renders at 256 / 128 bits only"
+  | AZeroV -> failwith "cx_render.render_load: AZeroV renders at 512 / 256 / 128 bits only"
   (* the r2zr backward's lone last slot: rows k+r and k+r+2 as the two halves *)
   | AZinTurnH (l, r) when isa.Isa.vec_width = 4 ->
     Printf.sprintf "_mm256_loadu2_m128d(&%s, &%s)" (addr_str (AZinTurn (l, r + 2))) (addr_str (AZinTurn (l, r)))
   | AZinTurnH _ -> failwith "cx_render.render_load: AZinTurnH renders at 256 bits only"
+  (* the 512-bit rows kind: two rows' four samples, a 256-bit half each; and four rows'
+     128-bit slots, a lane each *)
+  | AXinRow2 (r0, r1, off) when isa.Isa.vec_width = 8 ->
+    Printf.sprintf
+      "_mm512_insertf64x4(_mm512_castpd256_pd512(_mm256_loadu_pd(&%s)), _mm256_loadu_pd(&%s), 1)"
+      (addr_str (AXinRow (r0, off)))
+      (addr_str (AXinRow (r1, off)))
+  | AXinRow2 _ -> failwith "cx_render.render_load: AXinRow2 renders at 512 bits only"
+  | AZinTurnQ (l, r) when isa.Isa.vec_width = 8 ->
+    Printf.sprintf
+      "_mm512_insertf64x4(_mm512_castpd256_pd512(_mm256_loadu2_m128d(&%s, &%s)), _mm256_loadu2_m128d(&%s, &%s), 1)"
+      (addr_str (AZinTurn (l, r + 2)))
+      (addr_str (AZinTurn (l, r)))
+      (addr_str (AZinTurn (l, r + 6)))
+      (addr_str (AZinTurn (l, r + 4)))
+  | AZinTurnQ _ -> failwith "cx_render.render_load: AZinTurnQ renders at 512 bits only"
   | _ -> Isa.loadu_pd isa (addr_str a)
 ;;
 

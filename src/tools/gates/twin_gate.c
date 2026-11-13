@@ -966,6 +966,8 @@ enum {
     C_RPTOPB,  /* the real pair's top over the real leaf's half spectra: R rows, the first
                 * count slots of each, in; the CCE half spectrum out; the backward that
                 * spectrum in, the R legs' count slots corner-turned out (t2m) */
+    C_RROWS,   /* the real rows: row k's R real samples at k*Ls + j in, its bins 0..R/2 at
+                * k*OLs + p out; the backward the other way (r2zr); at least two rows */
     C_T0TP,    /* ZTURN-T ingest: natural legs in, runs of R0 at rb[c] out (block split) */
     C_TMG,     /* ZTURN-T mid, in place on the block split plane */
     C_TLF,     /* ZTURN-T last: block split in, natural out */
@@ -1005,6 +1007,7 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "tld", C_TLD, TW_NONE },       { "mono64_8x8_il", C_MONO, TW_NONE },
     { "rn1", C_RMONO, TW_NONE },     { "rn1b48", C_RMONO, TW_NONE },  { "rn1b444", C_RMONO, TW_NONE },
     { "r2z", C_RPLEAF, TW_NONE },    { "t2h", C_RPTOPA, TW_RPAIR },   { "t2m", C_RPTOPB, TW_RPAIR },
+    { "r2zr", C_RROWS, TW_NONE },
 };
 #define NKINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
@@ -1241,6 +1244,20 @@ static int case_geom(int cls, int R, int C, int bwd, t_case_t *c, size_t **a1, s
         }
         return 1;
     }
+    case C_RROWS: {
+        /* count rows, a lane a row: a real row's R samples at a pitch of R + 3 doubles, a
+         * spectrum row's R/2 + 1 bins at a pitch of R/2 + 3 complex; the gaps between rows
+         * are not the kernel's */
+        const size_t H = RR / 2 + 1, rp = RR + 3, cp = H + 2;
+        t_buf_t *rs = bwd ? &c->out : &c->in, *cs = bwd ? &c->in : &c->out;
+        c->Ls = bwd ? cp : rp;
+        c->OLs = bwd ? rp : cp;
+        b_init(rs, (CC - 1) * rp + RR, L_REAL);
+        b_init(cs, (CC - 1) * cp + H, L_NAT);
+        for (k = 0; k < CC; k++) for (l = 0; l < RR; l++) rs->fp[k * rp + l] = 1;
+        for (k = 0; k < CC; k++) for (m = 0; m < H; m++) cs->fp[k * cp + m] = 1;
+        return 1;
+    }
     case C_RPTOPA:
     case C_RPTOPB: {
         /* count half-stored columns: on the spectrum side the leg pitch is W = 2 count (the
@@ -1448,6 +1465,7 @@ static void gate_kernel(int ki, int R, int bwd, twin_kfn f2, twin_kfn f5, t_stat
         if (tw == TW_GEN2 && C > kt[0].f.G) continue;   /* the table holds G columns */
         if (cls == C_RPLEAF && (C & 1)) continue;       /* the real pair's leaf takes its columns in twos */
         if ((cls == C_RPTOPA || cls == C_RPTOPB) && C < 2) continue;   /* its tops: R2 = 2 count >= 4 */
+        if (cls == C_RROWS && C < 2) continue;          /* the real rows: two rows at least */
         if (cls == C_TLD) {
             if (!case_tld(R, ci, bwd, &c)) {
                 st->cases++;
