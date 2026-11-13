@@ -174,7 +174,19 @@ static void _il2d_fs_twiddle(vfft_real *row, const vfft_real *rec, int B, size_t
     {
         const size_t hl = ((size_t)B - b0 < (size_t)VFFT_IL2D_FS_HB) ? (size_t)B - b0 : (size_t)VFFT_IL2D_FS_HB;
         const vfft_real *Fb = F + 2 * b0;
-        for (b = 0; b + 2 <= hl; b += 2)
+        b = 0;
+#if defined(VFFT_BUILD_ISA_AVX512)
+        {
+            const __m512d sgz = _mm512_set1_pd(conj ? -0.0 : 0.0);
+            for (; b + 4 <= hl; b += 4)
+            {
+                const __m512d f = _mm512_loadu_pd(Fb + 2 * b);
+                _mm512_store_pd(frd + 2 * b, _mm512_movedup_pd(f));
+                _mm512_store_pd(fid + 2 * b, _mm512_xor_pd(_mm512_permute_pd(f, 0xFF), sgz));
+            }
+        }
+#endif
+        for (; b + 2 <= hl; b += 2)
         {
             const __m256d f = _mm256_loadu_pd(Fb + 2 * b);
             _mm256_store_pd(frd + 2 * b, _mm256_movedup_pd(f));
@@ -414,9 +426,27 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const vfft_real *zsrc,
  * + back 527 us against the Bluestein pass's ~8400. Both directions (the 1D
  * plan's own backward). */
 #define VFFT_IL2D_TPC_PITCH(N) ((size_t)(N) + 8)
+#if defined(__AVX512F__) && !defined(VFFT_FLOAT)
+/* THE 4 x 4 COMPLEX TURN at 512 bits (the turns below and the TURN route's back-turn): four
+ * vectors of four points, a row each, into the four columns' vectors -- two rounds of the
+ * 128-bit-lane deinterleave. It is its own inverse. */
+#define VFFT_IL2D_TURN4 1
+static inline __attribute__((always_inline)) void _il2d_turn4(const __m512d a0, const __m512d a1, const __m512d a2,
+                                                             const __m512d a3, __m512d *o0, __m512d *o1,
+                                                             __m512d *o2, __m512d *o3)
+{
+    const __m512d t0 = _mm512_shuffle_f64x2(a0, a1, 0x88), t1 = _mm512_shuffle_f64x2(a0, a1, 0xDD);
+    const __m512d t2 = _mm512_shuffle_f64x2(a2, a3, 0x88), t3 = _mm512_shuffle_f64x2(a2, a3, 0xDD);
+    *o0 = _mm512_shuffle_f64x2(t0, t2, 0x88);
+    *o1 = _mm512_shuffle_f64x2(t1, t3, 0x88);
+    *o2 = _mm512_shuffle_f64x2(t0, t2, 0xDD);
+    *o3 = _mm512_shuffle_f64x2(t1, t3, 0xDD);
+}
+#endif
 /* S[c][r] = src[r][c] for lanes c in [c0, c1), rows r < N (src pitch rn, S
- * pitch P): 2 x 2 complex blocks through one 128-bit lane permute, the rows
- * blocked so a block's source lines stay in L1 across the lane pairs */
+ * pitch P): 2 x 2 complex blocks through one 128-bit lane permute (at 512 bits
+ * 4 x 4 blocks first, _il2d_turn4), the rows blocked so a block's source lines
+ * stay in L1 across the lane groups */
 static void _il2d_tpc_turn_in(const vfft_real *src, size_t rn, size_t N, size_t c0, size_t c1,
                               vfft_real *S, size_t P)
 {
@@ -425,7 +455,33 @@ static void _il2d_tpc_turn_in(const vfft_real *src, size_t rn, size_t N, size_t 
     for (r0 = 0; r0 < N; r0 += RB)
     {
         const size_t r1 = (r0 + RB < N) ? r0 + RB : N;
-        for (c = c0; c + 2 <= c1; c += 2)
+        c = c0;
+#ifdef VFFT_IL2D_TURN4
+        for (; c + 4 <= c1; c += 4)
+        {   /* four lanes a step; the rows a 4 x 4 block does not fill go point by point */
+            vfft_real *s0 = S + 2 * (c * P), *s1 = S + 2 * ((c + 1) * P), *s2 = S + 2 * ((c + 2) * P),
+                      *s3 = S + 2 * ((c + 3) * P);
+            for (r = r0; r + 4 <= r1; r += 4)
+            {
+                __m512d o0, o1, o2, o3;
+                _il2d_turn4(_mm512_loadu_pd(src + 2 * (r * rn + c)), _mm512_loadu_pd(src + 2 * ((r + 1) * rn + c)),
+                            _mm512_loadu_pd(src + 2 * ((r + 2) * rn + c)), _mm512_loadu_pd(src + 2 * ((r + 3) * rn + c)),
+                            &o0, &o1, &o2, &o3);
+                _mm512_storeu_pd(s0 + 2 * r, o0);
+                _mm512_storeu_pd(s1 + 2 * r, o1);
+                _mm512_storeu_pd(s2 + 2 * r, o2);
+                _mm512_storeu_pd(s3 + 2 * r, o3);
+            }
+            for (; r < r1; r++)
+            {
+                _mm_storeu_pd(s0 + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c)));
+                _mm_storeu_pd(s1 + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c + 1)));
+                _mm_storeu_pd(s2 + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c + 2)));
+                _mm_storeu_pd(s3 + 2 * r, _mm_loadu_pd(src + 2 * (r * rn + c + 3)));
+            }
+        }
+#endif
+        for (; c + 2 <= c1; c += 2)
         {
             vfft_real *sa = S + 2 * (c * P), *sb = S + 2 * ((c + 1) * P);
             for (r = r0; r + 2 <= r1; r += 2)
@@ -472,7 +528,32 @@ static void _il2d_tpc_turn_out(const vfft_real *S, size_t P, vfft_real *dst, siz
     for (r0 = 0; r0 < N; r0 += RB)
     {
         const size_t r1 = (r0 + RB < N) ? r0 + RB : N;
-        for (c = c0; c + 2 <= c1; c += 2)
+        c = c0;
+#ifdef VFFT_IL2D_TURN4
+        for (; c + 4 <= c1; c += 4)
+        {   /* four lanes a step; the rows a 4 x 4 block does not fill go point by point */
+            const vfft_real *t0 = S + 2 * (c * P), *t1 = S + 2 * ((c + 1) * P), *t2 = S + 2 * ((c + 2) * P),
+                            *t3 = S + 2 * ((c + 3) * P);
+            for (r = r0; r + 4 <= r1; r += 4)
+            {
+                __m512d o0, o1, o2, o3;
+                _il2d_turn4(_mm512_loadu_pd(t0 + 2 * r), _mm512_loadu_pd(t1 + 2 * r), _mm512_loadu_pd(t2 + 2 * r),
+                            _mm512_loadu_pd(t3 + 2 * r), &o0, &o1, &o2, &o3);
+                _mm512_storeu_pd(dst + 2 * (r * rn + c), o0);
+                _mm512_storeu_pd(dst + 2 * ((r + 1) * rn + c), o1);
+                _mm512_storeu_pd(dst + 2 * ((r + 2) * rn + c), o2);
+                _mm512_storeu_pd(dst + 2 * ((r + 3) * rn + c), o3);
+            }
+            for (; r < r1; r++)
+            {
+                _mm_storeu_pd(dst + 2 * (r * rn + c), _mm_loadu_pd(t0 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * rn + c + 1), _mm_loadu_pd(t1 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * rn + c + 2), _mm_loadu_pd(t2 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * rn + c + 3), _mm_loadu_pd(t3 + 2 * r));
+            }
+        }
+#endif
+        for (; c + 2 <= c1; c += 2)
         {
             const vfft_real *ta = S + 2 * (c * P), *tb = S + 2 * ((c + 1) * P);
             for (r = r0; r + 2 <= r1; r += 2)
@@ -1211,7 +1292,8 @@ static void _il2d_csk_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_rea
 #define VFFT_IL2D_TURN_PITCH(N1) ((size_t)(N1) + 8)
 /* the TURN route's back-turn: the N2 x N1 scratch T (row c = column c of the
  * plane, N1 long) into the N1 x N2 plane dst, 2 x 2 complex blocks through one
- * 128-bit lane permute, the row range blocked so a block of dst rows stays in
+ * 128-bit lane permute (at 512 bits 4 x 4 blocks first, _il2d_turn4), the row
+ * range blocked so a block of dst rows stays in
  * L1 while every column pair lands in it (N2 is small where this route wins:
  * dst rows are 32..128 B and would otherwise be re-fetched once per column
  * pair). Odd N1 / odd N2 finish scalar. */
@@ -1222,7 +1304,32 @@ static void _il2d_turn_back_range(const vfft_real *T, size_t P, vfft_real *dst, 
     for (r0 = ra; r0 < rb; r0 += RB)
     {
         const size_t r1 = (r0 + RB < rb) ? r0 + RB : rb;
-        for (c = 0; c + 2 <= N2; c += 2)
+        c = 0;
+#ifdef VFFT_IL2D_TURN4
+        for (; c + 4 <= N2; c += 4)
+        {   /* four columns a step (512 bits, _il2d_turn4); the rows a 4 x 4 block does not fill go point by point */
+            const vfft_real *t0 = T + 2 * (c * P), *t1 = T + 2 * ((c + 1) * P), *t2 = T + 2 * ((c + 2) * P),
+                            *t3 = T + 2 * ((c + 3) * P);
+            for (r = r0; r + 4 <= r1; r += 4)
+            {
+                __m512d o0, o1, o2, o3;
+                _il2d_turn4(_mm512_loadu_pd(t0 + 2 * r), _mm512_loadu_pd(t1 + 2 * r), _mm512_loadu_pd(t2 + 2 * r),
+                            _mm512_loadu_pd(t3 + 2 * r), &o0, &o1, &o2, &o3);
+                _mm512_storeu_pd(dst + 2 * (r * N2 + c), o0);
+                _mm512_storeu_pd(dst + 2 * ((r + 1) * N2 + c), o1);
+                _mm512_storeu_pd(dst + 2 * ((r + 2) * N2 + c), o2);
+                _mm512_storeu_pd(dst + 2 * ((r + 3) * N2 + c), o3);
+            }
+            for (; r < r1; r++)
+            {
+                _mm_storeu_pd(dst + 2 * (r * N2 + c), _mm_loadu_pd(t0 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * N2 + c + 1), _mm_loadu_pd(t1 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * N2 + c + 2), _mm_loadu_pd(t2 + 2 * r));
+                _mm_storeu_pd(dst + 2 * (r * N2 + c + 3), _mm_loadu_pd(t3 + 2 * r));
+            }
+        }
+#endif
+        for (; c + 2 <= N2; c += 2)
         {
             const vfft_real *ta = T + 2 * (c * P), *tb = T + 2 * ((c + 1) * P);
             for (r = r0; r + 2 <= r1; r += 2)

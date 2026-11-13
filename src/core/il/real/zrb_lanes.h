@@ -123,6 +123,18 @@ static inline vfft_zrbl_plan_t *vfft_zrbl_create(int N, int K, int M, const int 
 static inline void _zrbl_row_rmul(double *dst, const double *x, double cr, double ci, int K)
 {
     int t = 0;
+#if defined(__AVX512F__)
+    {   /* eight lanes a step: each half of the real vector spread over its lanes' two slots */
+        const __m512d cz = _mm512_setr_pd(cr, ci, cr, ci, cr, ci, cr, ci);
+        const __m512i lo = _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3), hi = _mm512_setr_epi64(4, 4, 5, 5, 6, 6, 7, 7);
+        for (; t + 8 <= K; t += 8)
+        {
+            const __m512d xv = _mm512_loadu_pd(x + t);
+            _mm512_storeu_pd(dst + 2 * t, _mm512_mul_pd(_mm512_permutexvar_pd(lo, xv), cz));
+            _mm512_storeu_pd(dst + 2 * t + 8, _mm512_mul_pd(_mm512_permutexvar_pd(hi, xv), cz));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     const __m256d cv = _mm256_setr_pd(cr, ci, cr, ci);
     for (; t + 4 <= K; t += 4)
@@ -139,6 +151,18 @@ static inline void _zrbl_row_rmul(double *dst, const double *x, double cr, doubl
 static inline void _zrbl_row_reout(double *x, const double *y, double cr, double ci, int K)
 {
     int t = 0;
+#if defined(__AVX512F__)
+    {   /* eight lanes a step: the products' two halves gathered by one two-source permute each, then added */
+        const __m512d cz = _mm512_setr_pd(cr, ci, cr, ci, cr, ci, cr, ci);
+        const __m512i ev = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14), od = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+        for (; t + 8 <= K; t += 8)
+        {
+            const __m512d p0 = _mm512_mul_pd(_mm512_loadu_pd(y + 2 * t), cz);
+            const __m512d p1 = _mm512_mul_pd(_mm512_loadu_pd(y + 2 * t + 8), cz);
+            _mm512_storeu_pd(x + t, _mm512_add_pd(_mm512_permutex2var_pd(p0, ev, p1), _mm512_permutex2var_pd(p0, od, p1)));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     const __m256d cv = _mm256_setr_pd(cr, ci, cr, ci);
     for (; t + 4 <= K; t += 4)

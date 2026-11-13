@@ -136,6 +136,18 @@ static inline void vfft_zrb_name_inner(vfft_zrb_plan_t *p, const char *kind, con
 static inline void _zrb_chirp_in(const double *x, const double *c, double *za, int N)
 {
     int n = 0;
+#if defined(__AVX512F__)
+    {   /* eight samples a step: each half of the real vector spread over its samples' two lanes */
+        const __m512i lo = _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3), hi = _mm512_setr_epi64(4, 4, 5, 5, 6, 6, 7, 7);
+        for (; n + 8 <= N; n += 8)
+        {
+            const __m512d xv = _mm512_loadu_pd(x + n);
+            const __m512d c0 = _mm512_loadu_pd(c + 2 * n), c1 = _mm512_loadu_pd(c + 2 * n + 8);
+            _mm512_storeu_pd(za + 2 * n, _mm512_mul_pd(_mm512_permutexvar_pd(lo, xv), c0));
+            _mm512_storeu_pd(za + 2 * n + 8, _mm512_mul_pd(_mm512_permutexvar_pd(hi, xv), c1));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     for (; n + 4 <= N; n += 4)
     {
@@ -152,6 +164,15 @@ static inline void _zrb_chirp_in(const double *x, const double *c, double *za, i
 static inline void _zrb_cmul_out(const double *a, const double *c, double *out, int cnt)
 {
     int k = 0;
+#if defined(__AVX512F__)
+    for (; k + 4 <= cnt; k += 4)
+    {   /* four points a step, the 256-bit step's operations */
+        const __m512d av = _mm512_loadu_pd(a + 2 * k), cv = _mm512_loadu_pd(c + 2 * k);
+        const __m512d cr = _mm512_movedup_pd(cv), ci = _mm512_permute_pd(cv, 0xFF);
+        const __m512d t = _mm512_mul_pd(_mm512_permute_pd(av, 0x55), ci);
+        _mm512_storeu_pd(out + 2 * k, _mm512_fmaddsub_pd(av, cr, t));
+    }
+#endif
 #if defined(__AVX2__)
     for (; k + 2 <= cnt; k += 2)
     {
@@ -186,6 +207,18 @@ static inline void _zrb_cmul(double *a, const double *b, int cnt)
 static inline void _zrb_real_out(const double *a, const double *c, double *x, int N)
 {
     int n = 0;
+#if defined(__AVX512F__)
+    {   /* eight samples a step: the products' real-lane and imaginary-lane halves gathered by one
+         * two-source permute each, then added (the 256-bit step's horizontal add, in column order) */
+        const __m512i ev = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14), od = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+        for (; n + 8 <= N; n += 8)
+        {
+            const __m512d p0 = _mm512_mul_pd(_mm512_loadu_pd(a + 2 * n), _mm512_loadu_pd(c + 2 * n));
+            const __m512d p1 = _mm512_mul_pd(_mm512_loadu_pd(a + 2 * n + 8), _mm512_loadu_pd(c + 2 * n + 8));
+            _mm512_storeu_pd(x + n, _mm512_add_pd(_mm512_permutex2var_pd(p0, ev, p1), _mm512_permutex2var_pd(p0, od, p1)));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     for (; n + 4 <= N; n += 4)
     {

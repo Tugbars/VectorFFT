@@ -128,6 +128,9 @@ static vfft_zfsr_plan_t *vfft_zfsr_create(int N, int N1, int N2, struct vfft_wis
     return p;
 }
 
+#if defined(__AVX512F__)
+#include "zfsr_avx512.h"   /* the gather, the scatter and the two sweeps at 512 bits, in place of the 256-bit ones */
+#else
 /* the block gathers and scatters. A block is k1 = k1b..k1b+15 (the segments
  * p_of_k1), k2 = k2b..k2b+15; its mirror block is the segments of N1 - k1 at
  * the positions N2-1-k2. Both land in a local buffer k2-major ([i][j] = the
@@ -273,6 +276,7 @@ static void _zfsr_sweep_fwd_range(const vfft_zfsr_plan_t *p, const double *plane
     }
     if (stream) _mm_sfence();
 }
+#endif /* the 256-bit gather, scatter and forward sweep */
 /* the self-paired segment k1 = 0: (0, k2) <-> (0, N2 - k2); its centre; DC and Nyquist */
 static void _zfsr_fix_fwd(const vfft_zfsr_plan_t *p, const double *plane, double *X)
 {
@@ -298,6 +302,7 @@ static void _zfsr_fix_fwd(const vfft_zfsr_plan_t *p, const double *plane, double
     }
 }
 
+#if !defined(__AVX512F__)
 /* c2r's first sweep: X (CCE) -> the four-step's plane, scaled 2x as zr2c's
  * backward fold is. Per pair, F = X[f], Mv = X[m]:
  *     t = F - conj(Mv);  cy = t * (s, -c);  E = F + conj(Mv)
@@ -342,6 +347,7 @@ static void _zfsr_sweep_bwd_range(const vfft_zfsr_plan_t *p, const double *X, do
     }
     _mm_sfence();
 }
+#endif /* the 256-bit backward sweep */
 /* the self-paired segment k1 = 0, the backward's */
 static void _zfsr_fix_bwd(const vfft_zfsr_plan_t *p, const double *X, double *plane)
 {
