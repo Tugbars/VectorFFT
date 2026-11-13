@@ -47,8 +47,8 @@
  * (rn1b444), N <= VFFT_ZRM_MAX_N = 64 (il/real/zrm.h:39,42-57); the same at avx512 */
 static const int est_rn1_list[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21,
                                     22, 23, 25, 26, 27, 29, 31, 32, 37, 41, 43, 47, 53, 59, 61, 64 };
-/* the real pair's radices: VFFT_IL_T2M / R2Z / T2H lists at avx2 (il_registry_avx2.h:525,1104,
- * 1125); EMPTY at avx512 (il_registry_avx512.h:477,1024,1029) */
+/* the real pair's radices: the VFFT_IL_T2M / R2Z / T2H lists, the same at avx2 and at avx512
+ * (il_registry_<isa>.h); the estimate names the pair at 4 lanes only (est_real, step 2) */
 static const int est_zrp_list[] = { 4, 6, 8, 10, 12, 16, 32, 64 };
 /* the zrf tile budgets (il/real/odd_build.h:236) */
 static const int est_zrf_budgets[] = { 64, 128, 256, 512, 1024, 2048 };
@@ -830,7 +830,8 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
     case EST_ENG_ZRP:
         h = _zrp_build_pair(c1, N, rc->zrp.R1, rc->zrp.R2, rc->zrp.form);
         break;
-    case EST_ENG_ZTTR:   /* zrp and ZTT-r are 4-lane engines; at 8 lanes the builders return NULL (zttr.h:164-172) */
+    case EST_ENG_ZTTR:   /* the pair and ZTT-r build at both lane counts (ZTT-r where its chain is legal there:
+                          * at 8 lanes the first radix is 8, zttr.h) */
         h = _zttr_build_plan(c1, N, rc->zttr.chain, rc->zttr.nf, rc->zttr.tile, rc->zttr.stk);
         break;
     case EST_ENG_ZRF:

@@ -35,7 +35,12 @@
  *   the columns (2s+1, 2s+2) at the angles -2 pi j p / N, the last set the
  *   columns 0 (angle 0) and R2/2. Form A's fwd records are halved (the
  *   untangle's 1/2; leg 0's is the kernel's own constant); form B's and
- *   every bwd record are unhalved, the bwd ones conjugated. */
+ *   every bwd record are unhalved, the bwd ones conjugated.
+ *   AT 8 LANES (avx512) a record is 16 doubles and holds FOUR columns, a
+ *   column a pair: [c c] x4 then [-s +s] x4. Set s is the columns
+ *   (4s+1 .. 4s+4), ceil((R2/2 - 1) / 4) of them; the last set holds the
+ *   columns 0 and R2/2 in its lanes 0 and 1. The kernels' narrower arms read
+ *   their columns at their lanes of the same records. */
 #ifndef VFFT_ZRP_H
 #define VFFT_ZRP_H
 
@@ -110,6 +115,44 @@ static inline int vfft_zrp_pair_ok(int N, int R1, int R2, int form)
            vfft_zrp_top_fn(R1, form, 0) && vfft_zrp_top_fn(R1, form, 1);
 }
 
+/* THE TOPS' RECORD TABLES (the header's TABLES). The doubles of one direction's
+ * table for the top radix R1 over R2/2 half-stored columns, and its fill:
+ * bwd = 0 the forward records (form A's halved), 1 the backward ones. The
+ * lengths need not be a pair the registry holds: the table is the top
+ * kernel's contract alone. */
+enum { VFFT_ZRP_PER = VFFT_IL_VW / 2, VFFT_ZRP_REC = 2 * VFFT_IL_VW };   /* columns and doubles per record: 2 and 8, or 4 and 16 */
+static inline int vfft_zrp_tw_sets(int R2)
+{
+    return (R2 / 2 - 1 + VFFT_ZRP_PER - 1) / VFFT_ZRP_PER + 1;   /* the regular sets, then the special one */
+}
+static inline size_t vfft_zrp_tw_doubles(int R1, int R2)
+{
+    return (size_t)vfft_zrp_tw_sets(R2) * (size_t)(R1 - 1) * (size_t)VFFT_ZRP_REC;
+}
+static inline void vfft_zrp_fill_tw(double *tw, int R1, int R2, int form, int bwd)
+{
+    const long long N = (long long)R1 * (long long)R2;
+    const int half = R2 / 2, nsets = vfft_zrp_tw_sets(R2);
+    const double fs = (!bwd && form == VFFT_ZRP_FORM_A) ? 0.5 : 1.0;   /* form A's fwd records carry the untangle's 1/2 */
+    for (int s = 0; s < nsets; s++)
+        for (int j = 1; j < R1; j++) {
+            double *r = tw + ((size_t)s * (size_t)(R1 - 1) + (size_t)(j - 1)) * (size_t)VFFT_ZRP_REC;
+            for (int l = 0; l < VFFT_ZRP_PER; l++) {
+                /* lane l's column: a regular set -> PER s + 1 + l (a lane past
+                 * the last regular column: valid values never read); the last
+                 * set -> 0 and R2/2 (its lanes past 1 repeat R2/2, never read) */
+                const int col = (s == nsets - 1) ? (l ? half : 0) : (VFFT_ZRP_PER * s + 1 + l);
+                double c, sn;
+                vfft_cs2pi_exact((long long)j * (long long)col, N, &c, &sn);
+                const double sa = -sn; /* sin(-2 pi j col / N) */
+                r[2 * l] = fs * c;
+                r[2 * l + 1] = fs * c;
+                r[VFFT_IL_VW + 2 * l] = bwd ? sa : -fs * sa;
+                r[VFFT_IL_VW + 2 * l + 1] = bwd ? -sa : fs * sa;
+            }
+        }
+}
+
 /* inplace = 1 allocates the scratch the in-place placements need; form B and
  * the c2r direction need it out of place too, so it is allocated whenever
  * the plan can be asked for it (form B always; form A in place only — its
@@ -124,32 +167,14 @@ static inline vfft_zrp_plan_t *vfft_zrp_create(int N, int R1, int R2, int form, 
     p->leaf_b = vfft_zrp_leaf_fn(R2, form, 1);
     p->top_f = vfft_zrp_top_fn(R1, form, 0);
     p->top_b = vfft_zrp_top_fn(R1, form, 1);
-    const int half = R2 / 2, nsets = half / 2 + 1;
-    const size_t ntw = (size_t)nsets * (size_t)(R1 - 1) * 8u;
+    const size_t ntw = vfft_zrp_tw_doubles(R1, R2);
     const int need_scratch = inplace || form == VFFT_ZRP_FORM_B;
     p->tw = (double *)vfft_aligned_alloc(ntw * sizeof(double));
     p->twb = (double *)vfft_aligned_alloc(ntw * sizeof(double));
     p->scratch = need_scratch ? (double *)vfft_aligned_alloc(2u * (size_t)N * sizeof(double)) : 0;
     if (!p->tw || !p->twb || (need_scratch && !p->scratch)) { vfft_zrp_destroy(p); return 0; }
-    const double fs = form == VFFT_ZRP_FORM_A ? 0.5 : 1.0;   /* form A's fwd records carry the untangle's 1/2 */
-    for (int s = 0; s < nsets; s++)
-        for (int j = 1; j < R1; j++) {
-            double *rf = p->tw + ((size_t)s * (size_t)(R1 - 1) + (size_t)(j - 1)) * 8u;
-            double *rb = p->twb + ((size_t)s * (size_t)(R1 - 1) + (size_t)(j - 1)) * 8u;
-            for (int l = 0; l < 2; l++) {
-                /* lane l's column: a regular set -> 2s+1+l (the tail set's
-                 * lane 1 = column R2/2, valid values never read); the last
-                 * set -> 0 and R2/2 */
-                const int col = (s == nsets - 1) ? (l ? half : 0) : (2 * s + 1 + l);
-                double c, sn;
-                vfft_cs2pi_exact((long long)j * (long long)col, (long long)N, &c, &sn);
-                const double sa = -sn; /* sin(-2 pi j col / N) */
-                rf[2 * l] = fs * c;       rf[2 * l + 1] = fs * c;
-                rf[4 + 2 * l] = -fs * sa; rf[5 + 2 * l] = fs * sa;
-                rb[2 * l] = c;            rb[2 * l + 1] = c;
-                rb[4 + 2 * l] = sa;       rb[5 + 2 * l] = -sa;
-            }
-        }
+    vfft_zrp_fill_tw(p->tw, R1, R2, form, 0);
+    vfft_zrp_fill_tw(p->twb, R1, R2, form, 1);
     return p;
 }
 

@@ -204,15 +204,31 @@ let addr_str (a : caddr) : string =
    VEX-128 the reversal is the identity and only the xor remains. A mirror
    STORE is the same two ops on the value. The turned mirror store lands one
    column per store, so it conjugates only. The masks are the file's own
-   _M_IM (256) / _M_IM_n (128) — both are declared by every t2h file. *)
-let mir_mask (isa : Isa.t) : string = if isa.Isa.vec_width = 2 then "_M_IM_n" else "_M_IM"
+   _M_IM (256) / _M_IM_n (128) — both are declared by every t2h file.
+   At 512 bits the reversal is one 128-bit-lane shuffle (vshuff64x2 0x1B) and
+   the mask the file's 512-bit _M_IM; a 256-bit arm of a 512-bit kernel (its
+   column-pair tail and its 2-lane special pass) names the ymm twin _M_IM_y.
+   mir_main_vw is the main width of the kernel being emitted (set by
+   Real_il.emit_top, 4 otherwise). *)
+let mir_main_vw = ref 4
+
+let mir_mask (isa : Isa.t) : string =
+  match isa.Isa.vec_width with
+  | 2 -> "_M_IM_n"
+  | 4 when !mir_main_vw > 4 -> "_M_IM_y"
+  | _ -> "_M_IM"
+;;
 
 let mir_value (isa : Isa.t) (v : string) : string =
   match isa.Isa.vec_width with
-  | 4 -> Printf.sprintf "_mm256_xor_pd(_mm256_permute4x64_pd(%s, 0x4E), _M_IM)" v
+  | 8 -> Printf.sprintf "_mm512_xor_pd(_mm512_shuffle_f64x2(%s, %s, 0x1B), _M_IM)" v v
+  | 4 -> Printf.sprintf "_mm256_xor_pd(_mm256_permute4x64_pd(%s, 0x4E), %s)" v (mir_mask isa)
   | 2 -> Printf.sprintf "_mm_xor_pd(%s, _M_IM_n)" v
   | w -> failwith (Printf.sprintf "cx_render.mir_value: no mirror at vec_width %d" w)
 ;;
+
+(* the 256-bit special forms' conjugation mask: the file's _M_IM, or its ymm twin in a 512-bit kernel *)
+let spec_mask () : string = if !mir_main_vw > 4 then "_M_IM_y" else "_M_IM"
 
 let spec_gather (i0 : string) (i1 : string) : string =
   Printf.sprintf
@@ -259,8 +275,9 @@ let render_load (isa : Isa.t) (a : caddr) : string =
     spec_gather (Printf.sprintf "(size_t)%d*Ls" c) (Printf.sprintf "(size_t)%d*Ls + count" c)
   | AZinSpecC c ->
     Printf.sprintf
-      "_mm256_xor_pd(%s, _M_IM)"
+      "_mm256_xor_pd(%s, %s)"
       (spec_gather (Printf.sprintf "(size_t)%d*Ls" c) (Printf.sprintf "(size_t)%d*Ls + count" c))
+      (spec_mask ())
   | AZinSpecB (r, q) ->
     (* the c2r special leg q: lane 0 = X[q R2] (q > R/2: conj X[(R-q) R2]),
        lane 1 = X[q R2 + R2/2] (q >= R/2: conj X[(R-1-q) R2 + R2/2]) *)
@@ -278,7 +295,7 @@ let render_load (isa : Isa.t) (a : caddr) : string =
     let v = spec_gather i0 i1 in
     (match c0, c1 with
      | false, false -> v
-     | true, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IM)" v
+     | true, true -> Printf.sprintf "_mm256_xor_pd(%s, %s)" v (spec_mask ())
      | false, true -> Printf.sprintf "_mm256_xor_pd(%s, _M_IMHI)" v
      | true, false -> failwith "cx_render.render_load: AZinSpecB lane pattern")
   (* the Hermitian load edge: the mirrored legs conjugated from the mirror, the

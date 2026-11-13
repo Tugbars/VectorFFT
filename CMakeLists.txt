@@ -364,15 +364,17 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 
 # Families that legitimately have NO tree for a given ISA, DECLARED per ISA.
 # This is deliberately a declaration and not a discovery: an absence nobody
-# wrote down is a hard error below. The zil avx512 tree holds 862 corpus cells,
-# the two mono64 kernels, the 14 pair2p/tangent kernels and the 6 forward
-# pair2p/blocked kernels t2b*/n1tb* of radix 16 and 32 (built outside the
-# corpus from their recorded recipes, as at avx2). The generator declares
-# the other 98 corpus cells absent at avx512 (Corpus.zil_isa_gap, with each
-# reason): 94 are the whole of shared/col/half, real/pair and real/rows, which
-# therefore have no avx512 folder, and 4 are the radix-4 t0tp/tld kernels of ztt.
+# wrote down is a hard error below. The zil avx512 tree holds its corpus cells
+# (il_registry_avx512.h counts them), the two mono64 kernels, the 14
+# pair2p/tangent kernels and the 6 forward pair2p/blocked kernels t2b*/n1tb*
+# of radix 16 and 32 (built outside the corpus from their recorded recipes, as
+# at avx2). The generator declares the other corpus cells absent at avx512
+# (Corpus.zil_isa_gap, with each reason; the registry's header lists them):
+# the whole of shared/col/half, real/rows and rows/rowswap, which therefore
+# have no avx512 folder, and the radix-4 t0tp/tld kernels of ztt. The real
+# pair (real/pair: r2z, t2h, t2m) is emitted at avx512 since 2026-11-13.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/pair zil/real/rows zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
+set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/rows zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
 
 set(VFFT_CODELET_SRCS)
 

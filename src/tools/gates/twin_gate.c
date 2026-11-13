@@ -179,6 +179,7 @@ typedef struct {
     const twin_cell_t *cell;
     double *(*pair)(int R, int blocks, int cols, int modulus, int conj, size_t *nd);
     double *(*lane)(long L, int R, long RL, int bwd, size_t *nd);
+    double *(*rpair)(int R, int cols, int form, int bwd, size_t *nd);   /* the real pair's top records */
     int (*flat)(const int *R, int K, int s, twin_flat_t *t);
     void (*flat_free)(twin_flat_t *t);
     int (*ztt)(int N, const int *chain, int nf, int scr, int staged, twin_ztt_t *z);
@@ -197,6 +198,7 @@ typedef struct {
 #include "il2p.h"
 #include "il_flatdit.h"
 #include "ztt.h"
+#include "zrp.h"
 
 /* every kernel the registry lists, from its radix lists: the emitter defines
  * the same lists at every ISA, empty where the ISA has no kernel
@@ -466,6 +468,17 @@ static double *_twin_lane(long L, int R, long RL, int bwd, size_t *nd)
     return t;
 }
 
+/* the real pair's top records: radix R over cols half-stored columns (the real length
+ * R * 2 cols), form 0 the untangling top's (t2h), 1 the real legs' (t2m) */
+static double *_twin_rpair(int R, int cols, int form, int bwd, size_t *nd)
+{
+    double *t;
+    *nd = vfft_zrp_tw_doubles(R, 2 * cols);
+    t = (double *)vfft_aligned_alloc(*nd * sizeof(double));
+    if (t) vfft_zrp_fill_tw(t, R, 2 * cols, form, bwd);
+    return t;
+}
+
 /* stage s of the plan over chain R: which tables it carries is the create's
  * choice (t2cp and msz on a run above VFFT_ILFD_TAIL_D, t2csg at or below) */
 static int _twin_flat(const int *R, int K, int s, twin_flat_t *t)
@@ -584,6 +597,7 @@ const twin_side_t *VFFT_IL_SYM(twin_side)(void)
         s.cell = _twin_cells;
         s.pair = _twin_pair;
         s.lane = _twin_lane;
+        s.rpair = _twin_rpair;
         s.flat = _twin_flat;
         s.flat_free = _twin_flat_free;
         s.ztt = _twin_ztt;
@@ -943,13 +957,22 @@ enum {
                 * complex at doubles 2p*OLs + 2k out, the backward the other way (r1c) */
     C_HERM,    /* the gen2 group loop with the Hermitian edge on the spectrum side: base
                 * table, legs above R/2 at the mirror (t2csgh, t2csght) */
+    C_RPLEAF,  /* the real pair's leaf: real legs l*Ls + k in, each column's R/2 packed slots
+                * k*OLs + p out; the backward the corner-turned slots p*Ls + k in, real legs
+                * out (r2z); count even */
+    C_RPTOPA,  /* the real pair's untangling top over count half-stored columns, Ls = 2 count:
+                * R/2 packed legs of 2 count bins in, the CCE half spectrum 0..R count out;
+                * the backward that spectrum in, the packed plane corner-turned out (t2h) */
+    C_RPTOPB,  /* the real pair's top over the real leaf's half spectra: R rows, the first
+                * count slots of each, in; the CCE half spectrum out; the backward that
+                * spectrum in, the R legs' count slots corner-turned out (t2m) */
     C_T0TP,    /* ZTURN-T ingest: natural legs in, runs of R0 at rb[c] out (block split) */
     C_TMG,     /* ZTURN-T mid, in place on the block split plane */
     C_TLF,     /* ZTURN-T last: block split in, natural out */
     C_T0D,     /* ZTURN-T plain ingest: natural in, leg-major block split out */
     C_TLD      /* ZTURN-T plain last: block split <-> the scrambled positions */
 };
-enum { TW_NONE, TW_PAIR, TW_BCAST, TW_GEN2, TW_SPLAT, TW_LANE };
+enum { TW_NONE, TW_PAIR, TW_BCAST, TW_GEN2, TW_SPLAT, TW_LANE, TW_RPAIR };
 static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "n1", C_COL, TW_NONE },        { "n1c", C_COL, TW_NONE },       { "n1_ct", C_COL, TW_NONE },
     { "n1b216", C_COL, TW_NONE },    { "n1b416", C_COL, TW_NONE },    { "n1b48", C_COL, TW_NONE },
@@ -981,6 +1004,7 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "tlf", C_TLF, TW_LANE },       { "tlfi", C_TLF, TW_LANE },      { "t0d", C_T0D, TW_LANE },
     { "tld", C_TLD, TW_NONE },       { "mono64_8x8_il", C_MONO, TW_NONE },
     { "rn1", C_RMONO, TW_NONE },     { "rn1b48", C_RMONO, TW_NONE },  { "rn1b444", C_RMONO, TW_NONE },
+    { "r2z", C_RPLEAF, TW_NONE },    { "t2h", C_RPTOPA, TW_RPAIR },   { "t2m", C_RPTOPB, TW_RPAIR },
 };
 #define NKINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
@@ -1195,6 +1219,64 @@ static int case_geom(int cls, int R, int C, int bwd, t_case_t *c, size_t **a1, s
         for (m = 1; m <= h; m++) for (k = 0; k < 2 * CC; k++) ds->fp[2 * m * dp + k] = 1;
         return 1;
     }
+    case C_RPLEAF: {
+        /* fwd: the R real legs at pitch Ls = count + 3 in; column k's R/2 packed slots at
+         * k*OLs + p out, OLs = R/2 + 2 (the pair runs it at OLs = R: the rest of a column's
+         * row is a gap either way). bwd: the slots corner-turned, p*Ls + k, in (Ls = count +
+         * 3); the real legs at pitch OLs = count + 5 out */
+        const size_t h = RR / 2;
+        c->Ls = CC + 3;
+        if (!bwd) {
+            c->OLs = h + 2;
+            b_init(&c->in, (RR - 1) * c->Ls + CC, L_REAL);
+            b_init(&c->out, (CC - 1) * c->OLs + h, L_NAT);
+            for (l = 0; l < RR; l++) for (k = 0; k < CC; k++) c->in.fp[l * c->Ls + k] = 1;
+            for (k = 0; k < CC; k++) for (m = 0; m < h; m++) c->out.fp[k * c->OLs + m] = 1;
+        } else {
+            c->OLs = CC + 5;
+            b_init(&c->in, (h - 1) * c->Ls + CC, L_NAT);
+            b_init(&c->out, (RR - 1) * c->OLs + CC, L_REAL);
+            for (m = 0; m < h; m++) for (k = 0; k < CC; k++) c->in.fp[m * c->Ls + k] = 1;
+            for (l = 0; l < RR; l++) for (k = 0; k < CC; k++) c->out.fp[l * c->OLs + k] = 1;
+        }
+        return 1;
+    }
+    case C_RPTOPA:
+    case C_RPTOPB: {
+        /* count half-stored columns: on the spectrum side the leg pitch is W = 2 count (the
+         * mirror of column k is W - k) and the half spectrum is the bins 0..R count. Forward:
+         * the untangling top reads R/2 packed legs whole (W bins each), the real legs' top
+         * the first count slots of R rows at pitch W; both store every bin. Backward: every
+         * bin in; the corner-turned plane out, column p's legs at p*OLs -- W columns of R/2
+         * packed legs (OLs = R/2 + 2), or count columns of R legs (OLs = R + 2). */
+        const size_t h = RR / 2, W = 2 * CC, NB = RR * CC + 1;
+        if (!bwd) {
+            c->Ls = c->OLs = W;
+            if (cls == C_RPTOPA) {
+                b_init(&c->in, h * W, L_NAT);
+                b_all(&c->in);
+            } else {
+                b_init(&c->in, (RR - 1) * W + CC, L_NAT);
+                for (l = 0; l < RR; l++) for (k = 0; k < CC; k++) c->in.fp[l * W + k] = 1;
+            }
+            b_init(&c->out, NB, L_NAT);
+            b_all(&c->out);
+        } else {
+            c->Ls = W;
+            b_init(&c->in, NB, L_NAT);
+            b_all(&c->in);
+            if (cls == C_RPTOPA) {
+                c->OLs = h + 2;
+                b_init(&c->out, (W - 1) * c->OLs + h, L_NAT);
+                for (k = 0; k < W; k++) for (m = 0; m < h; m++) c->out.fp[k * c->OLs + m] = 1;
+            } else {
+                c->OLs = RR + 2;
+                b_init(&c->out, (CC - 1) * c->OLs + RR, L_NAT);
+                for (k = 0; k < CC; k++) for (m = 0; m < RR; m++) c->out.fp[k * c->OLs + m] = 1;
+            }
+        }
+        return 1;
+    }
     case C_HERM: {
         /* ngrp groups of count columns x R legs on the plane (the forward D columns
          * per block, the backward one), the spectrum at the groups' bases g*step
@@ -1364,6 +1446,8 @@ static void gate_kernel(int ki, int R, int bwd, twin_kfn f2, twin_kfn f5, t_stat
         t_table_t ptab[2];
         memset(ptab, 0, sizeof ptab);
         if (tw == TW_GEN2 && C > kt[0].f.G) continue;   /* the table holds G columns */
+        if (cls == C_RPLEAF && (C & 1)) continue;       /* the real pair's leaf takes its columns in twos */
+        if ((cls == C_RPTOPA || cls == C_RPTOPB) && C < 2) continue;   /* its tops: R2 = 2 count >= 4 */
         if (cls == C_TLD) {
             if (!case_tld(R, ci, bwd, &c)) {
                 st->cases++;
@@ -1392,6 +1476,8 @@ static void gate_kernel(int ki, int R, int bwd, twin_kfn f2, twin_kfn f5, t_stat
                 t = S[isa]->pair(R, 1, cols, R * (cols + 1), bwd, &nd);
             } else if (tw == TW_LANE) {
                 t = S[isa]->lane((long)C, R, (long)R * C, bwd, &nd);
+            } else if (tw == TW_RPAIR) {
+                t = S[isa]->rpair(R, C, cls == C_RPTOPB, bwd, &nd);
             }
             if (t) {
                 ptab[isa] = t_guarded(t, nd);

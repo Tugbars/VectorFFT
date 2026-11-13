@@ -481,10 +481,26 @@ VFFT_IL_DECL(radix47_z_r1c_bwd_avx512)
 #define VFFT_IL_R1C_BWD_RADICES(X) X(3) X(5) X(7) X(9) X(11) X(13) X(15) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
 #define VFFT_IL_R1C_PAIR_RADICES(X) X(3) X(5) X(7) X(9) X(11) X(13) X(15) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
 
-/* ── r2z ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_R2Z_FWD_RADICES(X)
-#define VFFT_IL_R2Z_BWD_RADICES(X)
-#define VFFT_IL_R2Z_PAIR_RADICES(X)
+/* ── r2z ── fwd 8 · bwd 8 · pair 8 */
+VFFT_IL_DECL(radix4_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix6_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix8_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix10_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix12_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix16_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix32_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix64_z_r2z_fwd_avx512)
+VFFT_IL_DECL(radix4_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix6_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix8_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix10_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix12_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix16_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix32_z_r2z_bwd_avx512)
+VFFT_IL_DECL(radix64_z_r2z_bwd_avx512)
+#define VFFT_IL_R2Z_FWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_R2Z_BWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_R2Z_PAIR_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
 
 /* ── r2zr ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_R2ZR_FWD_RADICES(X)
@@ -1060,15 +1076,47 @@ VFFT_IL_DECL(radix43_z_t2csgt_bwd_avx512)
 VFFT_IL_DECL(radix47_z_t2csgt_bwd_avx512)
 #define VFFT_IL_T2CSGT_BWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(23) X(25) X(27) X(29) X(31) X(37) X(41) X(43) X(47)
 
-/* ── t2h ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_T2H_FWD_RADICES(X)
-#define VFFT_IL_T2H_BWD_RADICES(X)
-#define VFFT_IL_T2H_PAIR_RADICES(X)
+/* ── t2h ── fwd 8 · bwd 8 · pair 8 */
+VFFT_IL_DECL(radix4_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix6_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix8_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix10_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix12_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix16_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix32_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix64_z_t2h_fwd_avx512)
+VFFT_IL_DECL(radix4_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix6_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix8_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix10_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix12_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix16_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix32_z_t2h_bwd_avx512)
+VFFT_IL_DECL(radix64_z_t2h_bwd_avx512)
+#define VFFT_IL_T2H_FWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_T2H_BWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_T2H_PAIR_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
 
-/* ── t2m ── fwd 0 · bwd 0 · pair 0 */
-#define VFFT_IL_T2M_FWD_RADICES(X)
-#define VFFT_IL_T2M_BWD_RADICES(X)
-#define VFFT_IL_T2M_PAIR_RADICES(X)
+/* ── t2m ── fwd 8 · bwd 8 · pair 8 */
+VFFT_IL_DECL(radix4_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix6_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix8_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix10_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix12_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix16_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix32_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix64_z_t2m_fwd_avx512)
+VFFT_IL_DECL(radix4_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix6_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix8_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix10_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix12_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix16_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix32_z_t2m_bwd_avx512)
+VFFT_IL_DECL(radix64_z_t2m_bwd_avx512)
+#define VFFT_IL_T2M_FWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_T2M_BWD_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
+#define VFFT_IL_T2M_PAIR_RADICES(X) X(4) X(6) X(8) X(10) X(12) X(16) X(32) X(64)
 
 /* ── t2r ── fwd 3 · bwd 0 · pair 0 */
 VFFT_IL_DECL(radix4_z_t2r_fwd_avx512)
@@ -1225,15 +1273,15 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
 /* zil-boundary-avx512: 4 cells DECLARED ABSENT at avx512:
  *   4  codelet_zsplit: t0tp/tld radix 4 is not a whole number of 8-lane blocks (law: R % VW == 0)
  */
-/* zil-pure-avx512: 114 cells DECLARED ABSENT at avx512:
+/* zil-pure-avx512: 66 cells DECLARED ABSENT at avx512:
  *   2  codelet_cil: --cil-split 4.4 does not factor the row kind's stage 1 at 512 bits (p = 8, m1 a multiple of 4)
  *   2  codelet_cil: --cil-split 4.8 does not factor the row kind's stage 1 at 512 bits (p = 16, m1 a multiple of 4)
  *   2  codelet_cil: the row kind needs radix 12 to be a multiple of 16 (per^2) at 512 bits
  *   2  codelet_cil: the row kind needs radix 4 to be a multiple of 16 (per^2) at 512 bits
  *   32  no 512-bit edge yet: codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair; split stores at 512 bits wait on a Zen 4 measurement (gauntlet/half_store_bench.sh)
- *   62  no 512-bit edge yet: real_il emits the real pair and real rows kinds for the 256-bit ISA only
+ *   14  no 512-bit edge yet: real_il emits the real rows kind for the 256-bit ISA only
  *   12  the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there
  */
-/* 883 declarations over 75 kinds */
+/* 931 declarations over 75 kinds */
 
 #endif
