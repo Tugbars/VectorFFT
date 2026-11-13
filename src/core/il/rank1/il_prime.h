@@ -180,7 +180,22 @@ static inline void _ilprime_cmul_vec(vfft_real *a, const vfft_real *b, size_t cn
      * consistent conjugation). Roundtrip alone cannot gate Bluestein/Rader:
      * gate the forward.) */
     static const __m256d RMSK = { -0.0, 0.0, -0.0, 0.0 };
-    for (size_t i = 0; i + 2 <= cnt; i += 2) {
+    size_t i = 0;
+#if defined(__AVX512F__)
+    {   /* four points a step, the 256-bit step's operations: the same values, bit for bit */
+        static const __m512d RMSK8 = { -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0 };
+        for (; i + 4 <= cnt; i += 4) {
+            const __m512d x = _mm512_loadu_pd(a + 2 * i);
+            const __m512d w = _mm512_loadu_pd(b + 2 * i);
+            const __m512d wr = _mm512_movedup_pd(w);
+            const __m512d wi = _mm512_permute_pd(w, 0xFF);
+            const __m512d xs = _mm512_permute_pd(x, 0x55);
+            const __m512d t = _mm512_mul_pd(_mm512_xor_pd(xs, RMSK8), wi);
+            _mm512_storeu_pd(a + 2 * i, _mm512_fmadd_pd(x, wr, t));
+        }
+    }
+#endif
+    for (; i + 2 <= cnt; i += 2) {
         __m256d x = _mm256_loadu_pd(a + 2 * i);
         __m256d w = _mm256_loadu_pd(b + 2 * i);
         __m256d wr = _mm256_movedup_pd(w);              /* [br br] lanes  */
