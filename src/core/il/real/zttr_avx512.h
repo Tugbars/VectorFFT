@@ -1,6 +1,6 @@
 /* zttr_avx512.h — ZTT-r's two fused kernels at 8 lanes (the avx512 build).
  *
- * Included by zttr.h when VFFT_IL_VW == 8, in place of its 4-lane kernels:
+ * Included by zttr.h at the avx512 ISA (VFFT_ZTTR_VW == 8), in place of its 4-lane kernels:
  * the plan, the job, the stack entry and the two runs are zttr.h's, and the
  * method is the one its header states. Here the plane is 128-byte
  * [re x8][im x8] blocks (the 8-lane ZTT's), a step takes eight columns, and

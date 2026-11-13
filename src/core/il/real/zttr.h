@@ -66,6 +66,18 @@
 #include "ztt.h"
 #include "common/math/pi.h"
 
+/* THE LANES of the fused kernels and the doubles of their twiddle record: the DOUBLES of a
+ * vector at the build's ISA, 4 (avx2) or 8 (avx512). Read from the ISA, never from
+ * VFFT_IL_VW: the FP32 unit (vfftf.c) compiles this header too, and there VFFT_IL_VW counts
+ * floats. The real engines are FP64's: in that unit no ZTT-r plan is built
+ * (vfft_zttr_create, vfft_zttr_chains). */
+#if defined(VFFT_BUILD_ISA_AVX512)
+#define VFFT_ZTTR_VW 8
+#else
+#define VFFT_ZTTR_VW 4
+#endif
+#define VFFT_ZTTR_REC (2 * VFFT_ZTTR_VW)
+
 typedef struct {
     int N, M, R;              /* N real, M = N/2, R = the last radix */
     long L;                   /* the terminator's run length, M / R */
@@ -138,18 +150,15 @@ static inline void _zttr_chains_rec(int rem, int pos, int ch[8], int out[][8], i
 static inline int vfft_zttr_chains(int m, int out[][8], int *nfs, int cap)
 {
     int n = 0, ch[8];
+    if (sizeof(vfft_real) != sizeof(double)) return 0;   /* the FP32 unit: no ZTT-r (vfft_zttr_create) */
     for (int r0 = 4; r0 <= 8 && n < cap; r0 += 4)
     {   /* the ZTT's lane laws (ztt.h): at 8 lanes the ingest is 8 and its columns come in eights */
-        if (m % r0 || r0 % VFFT_IL_VW || (m / r0) % VFFT_IL_VW) continue;
+        if (m % r0 || r0 % VFFT_ZTTR_VW || (m / r0) % VFFT_ZTTR_VW) continue;
         ch[0] = r0;
         _zttr_chains_rec(m / r0, 1, ch, out, nfs, cap, &n);
     }
     return n;
 }
-
-/* the lanes of a terminator step (4, or 8 at avx512) and the doubles of its twiddle record */
-#define VFFT_ZTTR_VW VFFT_IL_VW
-#define VFFT_ZTTR_REC (2 * VFFT_ZTTR_VW)
 
 /* one terminator record set for the columns b[0..VW-1], legs 1..R-1, fwd:
  * [c xVW][-sin xVW] of w_M^(r b) — the layout _ztt_fill_stage writes */
@@ -175,6 +184,7 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
      * a multiple of 2 VW; the ingest's laws are the ZTT's (its create below: at 8 lanes the
      * ingest is radix 8). The 8-lane kernels are the tlfhc terminator and the t0h ingest;
      * the reversed-lane tables of the two older terminator forms are 4-lane only. */
+    if (sizeof(vfft_real) != sizeof(double)) return NULL;   /* the FP32 unit: the real engines are FP64's */
     if (N < 64 || (N & 1)) return NULL;
     const int M = N / 2;
     vfft_ztt_plan_t *zt = vfft_ztt_create_chain(M, chain, nf);

@@ -120,7 +120,15 @@ static inline int vfft_zrp_pair_ok(int N, int R1, int R2, int form)
  * bwd = 0 the forward records (form A's halved), 1 the backward ones. The
  * lengths need not be a pair the registry holds: the table is the top
  * kernel's contract alone. */
-enum { VFFT_ZRP_PER = VFFT_IL_VW / 2, VFFT_ZRP_REC = 2 * VFFT_IL_VW };   /* columns and doubles per record: 2 and 8, or 4 and 16 */
+/* the doubles of a vector at the build's ISA (4 avx2, 8 avx512), read from the ISA: the FP32 unit
+ * (vfftf.c) compiles this header too, where VFFT_IL_VW counts floats (it has no pair kernel and
+ * builds no pair) */
+#if defined(VFFT_BUILD_ISA_AVX512)
+#define VFFT_ZRP_VW 8
+#else
+#define VFFT_ZRP_VW 4
+#endif
+enum { VFFT_ZRP_PER = VFFT_ZRP_VW / 2, VFFT_ZRP_REC = 2 * VFFT_ZRP_VW };   /* columns and doubles per record: 2 and 8, or 4 and 16 */
 static inline int vfft_zrp_tw_sets(int R2)
 {
     return (R2 / 2 - 1 + VFFT_ZRP_PER - 1) / VFFT_ZRP_PER + 1;   /* the regular sets, then the special one */
@@ -147,8 +155,8 @@ static inline void vfft_zrp_fill_tw(double *tw, int R1, int R2, int form, int bw
                 const double sa = -sn; /* sin(-2 pi j col / N) */
                 r[2 * l] = fs * c;
                 r[2 * l + 1] = fs * c;
-                r[VFFT_IL_VW + 2 * l] = bwd ? sa : -fs * sa;
-                r[VFFT_IL_VW + 2 * l + 1] = bwd ? -sa : fs * sa;
+                r[VFFT_ZRP_VW + 2 * l] = bwd ? sa : -fs * sa;
+                r[VFFT_ZRP_VW + 2 * l + 1] = bwd ? -sa : fs * sa;
             }
         }
 }
