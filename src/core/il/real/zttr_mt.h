@@ -7,16 +7,18 @@
  * those by units -- columns (the ingest, the backward's last stage), groups
  * (a mid), tiles (the tiled prefix). The two fused kernels are loops over
  * the same columns, so they take a RANGE the same way:
- *   tlfhc  column quads k of [0, L/2). The run stays in the destination
- *          plane (no scratch), where the stage's input is split blocks and
+ *   tlfhc  column steps k of [0, L/2), VW columns each (4, or 8 at avx512).
+ *          The run stays in the destination plane (no scratch), where the
+ *          stage's input is split blocks and
  *          its output interleaved pairs: the block at a range boundary is
  *          read by both neighbours and overwritten by both, so each
  *          boundary block is SNAPSHOT before the workers start -- one
  *          range takes it as its carry, the other as its last partner
  *          block. The peeled centre column is computed before the workers
  *          start and stored after they join.
- *   t0h    column pairs k of [0, ncol/2): X is read only and every pair
- *          writes its own blocks; the centre column after the join.
+ *   t0h    column steps k of [0, ncol/2), VW/2 columns each: X is read only
+ *          and every step writes its own blocks; the centre column after
+ *          the join.
  * Two arms, the ZTT's: mt=1 BLOCKS (every stage cut by units, one fork-join
  * a stage), mt=2 TILES (each tile's whole prefix on one thread). The arm is
  * a RACED plan input, banked per thread count (eng=zttr ... mt=); this
@@ -68,21 +70,22 @@ static inline int vfft_zttr_execute_mt(const vfft_zttr_plan_t *p, const double *
     const double *tw = bwd ? zt->twb : zt->tw;
     const vfft_ztt_kfn *st = bwd ? zt->st_bwd : zt->st_fwd;
     _zttr_mt_arg a[THREAD_POOL_MAX_DISPATCH];
-    double snapL[THREAD_POOL_MAX_DISPATCH][64], snapH[THREAD_POOL_MAX_DISPATCH][64];   /* R <= 8 legs x 8 doubles */
+    double snapL[THREAD_POOL_MAX_DISPATCH][8 * VFFT_ZTTR_REC], snapH[THREAD_POOL_MAX_DISPATCH][8 * VFFT_ZTTR_REC];   /* R <= 8 legs x one block */
     int s, w;
     if (p->mt <= 0 || T < 2 || T != p->mt_t || p->blocked != 2) return 0;
     if (p->mt == 2 && (tile == 0 || M / tile < 2)) return 0;
     if (!bwd)
         _ztt_mt_columns(T, st[0], in, W, 0, 0, 0, 0, (size_t)zt->ncol, 0, (size_t)zt->ncol, zt->rb);
     else
-    {   /* the fused ingest: ranges of column pairs, then the centre column */
-        const _zttr_job_fn fn = zt->chain[0] == 4 ? _zttr_t0h4 : _zttr_t0h8;
-        const long np = (long)(zt->ncol / 4);   /* k steps by 2 over [0, ncol/2) */
+    {   /* the fused ingest: ranges of column steps (half a vector's lanes each), then the centre column */
+        enum { HV = VFFT_ZTTR_VW / 2 };
+        const _zttr_job_fn fn = _zttr_t0h_fn(zt->chain[0]);
+        const long np = (long)(zt->ncol / 2) / HV;   /* k steps by HV over [0, ncol/2) */
         for (w = 0; w < T; w++)
         {
             a[w].fn = fn; a[w].a = in; a[w].b = W;
             a[w].jb.p = p; a[w].jb.mode = 0; a[w].jb.cen = NULL; a[w].jb.carry = NULL; a[w].jb.edge = NULL;
-            a[w].jb.lo = 2 * (np * w / T); a[w].jb.hi = 2 * (np * (w + 1) / T);
+            a[w].jb.lo = HV * (np * w / T); a[w].jb.hi = HV * (np * (w + 1) / T);
         }
         thread_pool_run(T, _zttr_mt_tramp, a, sizeof a[0]);
         {
@@ -99,9 +102,9 @@ static inline int vfft_zttr_execute_mt(const vfft_zttr_plan_t *p, const double *
             _ztt_mt_groups(T, st[s], W, 2 * RL, tw + zt->twoff[s], (size_t)zt->L[s], (size_t)zt->Gs[s], (size_t)zt->L[s]);
     }
     if (!bwd)
-    {   /* the fused terminator: the centre first, ranges of column quads, the centre's store last */
+    {   /* the fused terminator: the centre first, ranges of column steps (VW columns each), the centre's store last */
         const _zttr_job_fn fn = p->R == 4 ? _zttr_tlfhc4 : _zttr_tlfhc8;
-        const long nq = (p->L / 2) / 4;
+        const long nq = (p->L / 2) / VFFT_ZTTR_VW;
         double cen[16];
         {
             const _zttr_job_t jc = { p, 0, 0, 1, cen, NULL, NULL };
@@ -110,15 +113,15 @@ static inline int vfft_zttr_execute_mt(const vfft_zttr_plan_t *p, const double *
         for (w = 0; w < T; w++)
         {
             a[w].fn = fn; a[w].a = W; a[w].b = out;
-            const long lo = 4 * (nq * w / T), hi = 4 * (nq * (w + 1) / T);
+            const long lo = VFFT_ZTTR_VW * (nq * w / T), hi = VFFT_ZTTR_VW * (nq * (w + 1) / T);
             a[w].jb.p = p; a[w].jb.mode = 0; a[w].jb.cen = cen; a[w].jb.carry = NULL; a[w].jb.edge = NULL;
             a[w].jb.lo = lo; a[w].jb.hi = hi;
             if (lo < hi)
             {   /* the two boundary blocks, raw, before any worker stores */
                 for (int r = 0; r < p->R; r++)
                 {
-                    if (lo > 0) memcpy(snapL[w] + 8 * r, W + 2 * ((size_t)r * (size_t)p->L + (size_t)(p->L - lo)), 8 * sizeof(double));
-                    if (2 * hi != p->L) memcpy(snapH[w] + 8 * r, W + 2 * ((size_t)r * (size_t)p->L + (size_t)(p->L - hi)), 8 * sizeof(double));
+                    if (lo > 0) memcpy(snapL[w] + VFFT_ZTTR_REC * r, W + 2 * ((size_t)r * (size_t)p->L + (size_t)(p->L - lo)), VFFT_ZTTR_REC * sizeof(double));
+                    if (2 * hi != p->L) memcpy(snapH[w] + VFFT_ZTTR_REC * r, W + 2 * ((size_t)r * (size_t)p->L + (size_t)(p->L - hi)), VFFT_ZTTR_REC * sizeof(double));
                 }
                 if (lo > 0) a[w].jb.carry = snapL[w];
                 if (2 * hi != p->L) a[w].jb.edge = snapH[w];

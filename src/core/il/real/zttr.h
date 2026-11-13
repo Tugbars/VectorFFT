@@ -45,6 +45,11 @@
  * iteration reads exactly the columns it overwrites plus block lanes it
  * does not use. L >= 8 (L/2 a multiple of 4): M >= 32 at R = 4, 64 at R = 8.
  *
+ * AT 8 LANES (the avx512 build; the kernels are zttr_avx512.h's) the same
+ * method runs on the 8-lane ZTT's 128-B [re x8][im x8] blocks: eight columns
+ * a step, so L is a multiple of 16 (L/2 a multiple of 8), and the first radix
+ * is 8 (the ZTT's law for a natural plan there).
+ *
  * FORWARD ONLY for now (the c2r twin, the fold fused into the backward
  * ingest, is the next arm). The chain and the tile are PLAN INPUT (the c2c
  * cell's ZTT verdict at M, or the race). */
@@ -133,43 +138,43 @@ static inline void _zttr_chains_rec(int rem, int pos, int ch[8], int out[][8], i
 static inline int vfft_zttr_chains(int m, int out[][8], int *nfs, int cap)
 {
     int n = 0, ch[8];
-    if (VFFT_IL_VW != 4) return 0;   /* no ZTT-r at 8 lanes (vfft_zttr_create): the sweeps build no arm */
     for (int r0 = 4; r0 <= 8 && n < cap; r0 += 4)
-    {
-        if (m % r0 || (m / r0) % 4) continue;
+    {   /* the ZTT's lane laws (ztt.h): at 8 lanes the ingest is 8 and its columns come in eights */
+        if (m % r0 || r0 % VFFT_IL_VW || (m / r0) % VFFT_IL_VW) continue;
         ch[0] = r0;
         _zttr_chains_rec(m / r0, 1, ch, out, nfs, cap, &n);
     }
     return n;
 }
 
-/* one terminator record set for the columns b[0..3], legs 1..R-1, fwd:
- * [c x4][-sin x4] of w_M^(r b) — the layout _ztt_fill_stage writes */
-static inline void _zttr_records(double *rec, int R, long M, const long b[4])
+/* the lanes of a terminator step (4, or 8 at avx512) and the doubles of its twiddle record */
+#define VFFT_ZTTR_VW VFFT_IL_VW
+#define VFFT_ZTTR_REC (2 * VFFT_ZTTR_VW)
+
+/* one terminator record set for the columns b[0..VW-1], legs 1..R-1, fwd:
+ * [c xVW][-sin xVW] of w_M^(r b) — the layout _ztt_fill_stage writes */
+static inline void _zttr_records(double *rec, int R, long M, const long b[VFFT_ZTTR_VW])
 {
     for (int r = 1; r < R; r++)
-        for (int lane = 0; lane < 4; lane++)
+        for (int lane = 0; lane < VFFT_ZTTR_VW; lane++)
         {
             long pw = ((long)r * b[lane]) % M;
             double c, sn;
             if (2 * pw > M) pw -= M;
             vfft_cs2pi_exact((long long)pw, (long long)M, &c, &sn);
-            rec[(r - 1) * 8 + lane] = c;
-            rec[(r - 1) * 8 + 4 + lane] = -sn;
+            rec[(r - 1) * VFFT_ZTTR_REC + lane] = c;
+            rec[(r - 1) * VFFT_ZTTR_REC + VFFT_ZTTR_VW + lane] = -sn;
         }
 }
 
 static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf, size_t tile)
 {
-    /* NO ZTT-r AT 8 LANES. Its own code is 4-lane hand code over a plane of 64-byte
-     * [re x4][im x4] blocks: the fused terminators (_zttr_tlfh, _zttr_tlfhb, _zttr_tlfhc),
-     * the c2r ingest (_zttr_t0h), the combines on __m256d, the 8-double records and the
-     * column-quad tables below. At 8 lanes the ZTT stages lay the plane out in 128-byte
-     * [re x8][im x8] blocks, so a plan built there computes wrong output. It refuses here,
-     * on every path: the VFFT_ZTTR pin, a banked eng=zttr row and the 2D zttr_ row token
-     * all see a plan that does not build. The 8-lane port waits on a Zen 4 measurement of
-     * what ZTT-r would win over zr2c there. */
-    if (VFFT_IL_VW != 4) return NULL;
+    /* THE LANES. The fused kernels are hand code at the build's lane count: 4 lanes over
+     * 64-byte [re x4][im x4] blocks (this file), 8 lanes over 128-byte [re x8][im x8]
+     * blocks (zttr_avx512.h). A terminator step takes VW columns of the half run, so L is
+     * a multiple of 2 VW; the ingest's laws are the ZTT's (its create below: at 8 lanes the
+     * ingest is radix 8). The 8-lane kernels are the tlfhc terminator and the t0h ingest;
+     * the reversed-lane tables of the two older terminator forms are 4-lane only. */
     if (N < 64 || (N & 1)) return NULL;
     const int M = N / 2;
     vfft_ztt_plan_t *zt = vfft_ztt_create_chain(M, chain, nf);
@@ -177,22 +182,25 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
     if (tile && !vfft_ztt_set_tile(zt, tile)) { vfft_ztt_destroy(zt); return NULL; }
     const int R = chain[nf - 1];
     const long L = zt->L[nf - 1];
-    if ((R != 4 && R != 8) || L < 8 || (L % 8)) { vfft_ztt_destroy(zt); return NULL; }
+    if ((R != 4 && R != 8) || L < 2 * VFFT_ZTTR_VW || (L % (2 * VFFT_ZTTR_VW))) { vfft_ztt_destroy(zt); return NULL; }
     vfft_zttr_plan_t *p = (vfft_zttr_plan_t *)calloc(1, sizeof *p);
     if (!p) { vfft_ztt_destroy(zt); return NULL; }
     p->N = N; p->M = M; p->R = R; p->L = L; p->zt = zt;
     p->blocked = 2;                                  /* tlfhc, at stack state 3 */
     p->stk = 3;
-    const long nq = L / 8 + 1;                       /* quads k = 0, 4, .., L/2 */
-    const size_t recs = (size_t)nq * (size_t)(R - 1) * 8u;
+    const long nq = L / (2 * VFFT_ZTTR_VW) + 1;      /* steps k = 0, VW, .., L/2 */
+    const size_t recs = (size_t)nq * (size_t)(R - 1) * (size_t)VFFT_ZTTR_REC;
+#if VFFT_ZTTR_VW == 4
     p->twr = (double *)vfft_aligned_alloc(recs * sizeof(double));
     p->twp = (double *)vfft_aligned_alloc(recs * sizeof(double));
     p->affS = (double *)vfft_aligned_alloc(2u * (size_t)M * sizeof(double));
+    if (!p->twr || !p->twp || !p->affS) { vfft_zttr_destroy(p); return NULL; }
+    p->affC = p->affS + M;
+#endif
     p->twr3 = (double *)vfft_aligned_alloc(recs * sizeof(double));
     p->twp3 = (double *)vfft_aligned_alloc(recs * sizeof(double));
     p->affS3 = (double *)vfft_aligned_alloc(2u * (size_t)M * sizeof(double));
-    if (!p->twr || !p->twp || !p->affS || !p->twr3 || !p->twp3 || !p->affS3) { vfft_zttr_destroy(p); return NULL; }
-    p->affC = p->affS + M;
+    if (!p->twr3 || !p->twp3 || !p->affS3) { vfft_zttr_destroy(p); return NULL; }
     p->affC3 = p->affS3 + M;
     p->bS = (double *)vfft_aligned_alloc(4u * (size_t)M * sizeof(double));
     if (!p->bS) { vfft_zttr_destroy(p); return NULL; }
@@ -210,22 +218,26 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
     }
     for (long q = 0; q < nq; q++)
     {
-        const long k = 4 * q;
-        long b[4];
+        const size_t at = (size_t)q * (size_t)(R - 1) * (size_t)VFFT_ZTTR_REC;
+        const long k = VFFT_ZTTR_VW * q;
+        long b[VFFT_ZTTR_VW];
+#if VFFT_ZTTR_VW == 4
         for (int i = 0; i < 4; i++) b[i] = k + 3 - i;          /* the primary, reversed */
-        _zttr_records(p->twr + (size_t)q * (size_t)(R - 1) * 8u, R, M, b);
+        _zttr_records(p->twr + at, R, M, b);
         for (int i = 0; i < 4; i++) b[i] = (L - k - 3 + i) % M; /* the window; column L -> 0 */
-        _zttr_records(p->twp + (size_t)q * (size_t)(R - 1) * 8u, R, M, b);
-        for (int i = 0; i < 4; i++) b[i] = k + i;                /* tlfhc: natural */
-        _zttr_records(p->twr3 + (size_t)q * (size_t)(R - 1) * 8u, R, M, b);
-        for (int i = 0; i < 4; i++) b[i] = L - k - i;            /* tlfhc: the window reversed; column L is a run's column 0 */
-        _zttr_records(p->twp3 + (size_t)q * (size_t)(R - 1) * 8u, R, M, b);
+        _zttr_records(p->twp + at, R, M, b);
+#endif
+        for (int i = 0; i < VFFT_ZTTR_VW; i++) b[i] = k + i;     /* tlfhc: natural */
+        _zttr_records(p->twr3 + at, R, M, b);
+        for (int i = 0; i < VFFT_ZTTR_VW; i++) b[i] = L - k - i; /* tlfhc: the window reversed; column L is a run's column 0 */
+        _zttr_records(p->twp3 + at, R, M, b);
     }
     for (long f = 0; f < M; f++)
     {
         p->affS3[f] = 0.5 - 0.5 * ts[f];
         p->affC3[f] = 0.5 * tc[f];
     }
+#if VFFT_ZTTR_VW == 4
     /* S~(f), C~(f) at f = rL + k + 3 - i for lane i: the table holds each
      * quad's four values in that order */
     for (long f0 = 0; f0 < M; f0 += 4)
@@ -235,6 +247,7 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
             p->affS[f0 + i] = 0.5 - 0.5 * ts[f];
             p->affC[f0 + i] = 0.5 * tc[f];
         }
+#endif
     free(tc);
     return p;
 }
@@ -243,7 +256,9 @@ static inline vfft_zttr_plan_t *vfft_zttr_create(int N, const int *chain, int nf
  * (codelets/zil/avx2/ztt/radixR_z_tlf_avx2.c): pre-twiddle legs 1..R-1
  * from the record set `tw` ([c x4][s x4] per leg, 8 doubles), then the
  * DIT butterfly; outputs leg-major in (or, oi). ── */
+#define ZTTR_UNROLL _Pragma("GCC unroll 8")
 #if defined(__AVX2__)
+#if VFFT_ZTTR_VW == 4   /* the 4-lane combines, the monolithic terminator and the reversed-lane blocked one */
 static inline __attribute__((always_inline)) void _zttr_comb4(
     const __m256d *lr, const __m256d *li, const double *tw, __m256d *orr, __m256d *oi)
 {
@@ -364,8 +379,7 @@ static inline __attribute__((always_inline)) void _zttr_comb8(
  * in registers; the partner combine's outputs are parked on the stack
  * (PW[], L1-hot) and the untangle streams them leg by leg against the
  * primary combine held in registers. */
-#define ZTTR_UNROLL _Pragma("GCC unroll 8")
-#define ZTTR_TLFH_BODY(RR, COMB)                                                                          \
+#define ZTTR_TLFH_BODY(RR, COMB)                                                                       \
 static inline void _zttr_tlfh##RR(const vfft_zttr_plan_t *p, const double *W, double *X)                 \
 {                                                                                                         \
     enum { R = RR };                                                                                      \
@@ -691,6 +705,7 @@ static __attribute__((noinline)) void _zttr_tlfhb##RR(const vfft_zttr_plan_t *p,
 ZTTR_TLFHB_BODY(4)
 ZTTR_TLFHB_BODY(8)
 #undef ZTTR_TLFHB_BODY
+#endif /* VFFT_ZTTR_VW == 4 */
 
 /* One call's work for the two fused kernels (tlfhc, t0h): the plan and a range
  * of columns. The serial run is one job over everything; the threaded run
@@ -703,14 +718,19 @@ typedef struct
     long lo, hi;
     int mode;
     double *cen;              /* tlfhc: 2R doubles, the caller's */
-    const double *carry;      /* tlfhc, a threaded range: the RAW block at its first mirror column, 8 doubles a leg */
-    const double *edge;       /* tlfhc, a threaded range: the RAW block its last partner load reads, 8 doubles a leg.
+    const double *carry;      /* tlfhc, a threaded range: the RAW block at its first mirror column, one block
+                               * (VFFT_ZTTR_REC doubles) a leg */
+    const double *edge;       /* tlfhc, a threaded range: the RAW block its last partner load reads, one block a leg.
                                * The run is in the destination plane: the stage's input is split blocks and its
                                * output interleaved pairs, so the next range's first store overwrites two values of
                                * this block and this range's last store overwrites the rest -- both are read from a
                                * snapshot taken before the workers start (zttr_mt.h). NULL = read the plane. */
 } _zttr_job_t;
 typedef void (*_zttr_job_fn)(const _zttr_job_t *, const double *, double *);
+
+#if VFFT_ZTTR_VW == 8
+#include "zttr_avx512.h"   /* the 8-lane kernels: _zttr_tlfhc4, _zttr_tlfhc8 and _zttr_t0h8 */
+#else
 
 /* ── the NATURAL-ORDER blocked terminator (tlfhc) ──
  * The primary quad keeps its lane order (lane i = column k+i, no reversal);
@@ -879,6 +899,7 @@ static __attribute__((noinline)) void _zttr_tlfhc##RR(const _zttr_job_t *jb, con
 ZTTR_TLFHC_BODY(4)
 ZTTR_TLFHC_BODY(8)
 #undef ZTTR_TLFHC_BODY
+#endif /* the lane count's tlfhc */
 
 /* THE STACK-ALIGNING ENTRY. Win64 gives a callee 16-B stack alignment and
  * mingw gcc never realigns a frame, so a spilling kernel's ymm slots split
@@ -889,13 +910,20 @@ ZTTR_TLFHC_BODY(8)
  * (p->stk) is a plan knob the calibration can race. Win64 call: args in
  * rcx, rdx, r8; 32 B of shadow space below the return address; rcx, rdx,
  * r8-r11, rax and every vector register volatile (ymm6-15's upper halves
- * are not preserved either), r12 callee-saved.
+ * are not preserved either; at avx512 zmm16-31 and k0-k7 too), r12 callee-saved.
  * The entry exists for the Win64 ABI under GCC-style inline asm (mingw gcc,
  * clang, icx). Elsewhere -- the System V ABI passes rdi, rsi, rdx and keeps
  * a red zone below rsp that the entry's call would overwrite -- the
  * terminator is entered directly and p->stk binds nothing. */
 typedef void (*_zttr_term_fn)(const vfft_zttr_plan_t *, const double *, double *);
 #if defined(_WIN64) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+/* the registers AVX-512 adds, volatile across a call as well: zmm16-31 and the masks */
+#if defined(__AVX512F__)
+#define ZTTR_CLOBBER_512 "xmm16", "xmm17", "xmm18", "xmm19", "xmm20", "xmm21", "xmm22", "xmm23", "xmm24", "xmm25", \
+                         "xmm26", "xmm27", "xmm28", "xmm29", "xmm30", "xmm31", "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7",
+#else
+#define ZTTR_CLOBBER_512
+#endif
 static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *p, const double *W, double *X)
 {
     register const vfft_zttr_plan_t *a0 __asm__("rcx") = p;
@@ -912,7 +940,7 @@ static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *
         : "+r"(a0), "+r"(a1), "+r"(a2), "+r"(f), "+r"(ad)
         :
         : "rax", "r9", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", ZTTR_CLOBBER_512 "memory", "cc");
 }
 
 /* the same aligned entry for a job (tlfhc, t0h): the stack state is the job's plan's */
@@ -932,7 +960,7 @@ static inline void _zttr_call_job(_zttr_job_fn fn, const _zttr_job_t *jb, const 
         : "+r"(a0), "+r"(a1), "+r"(a2), "+r"(f), "+r"(ad)
         :
         : "rax", "r9", "r12", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
-          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", "memory", "cc");
+          "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15", ZTTR_CLOBBER_512 "memory", "cc");
 }
 #else
 static inline void _zttr_call_aligned(_zttr_term_fn fn, const vfft_zttr_plan_t *p, const double *W, double *X)
@@ -949,14 +977,16 @@ static inline void _zttr_call_job(_zttr_job_fn fn, const _zttr_job_t *jb, const 
 static inline void _zttr_tlfh(const vfft_zttr_plan_t *p, const double *W, double *X)
 {
     if (p->blocked == 2)
-    {   /* the whole run as one job: every column quad, the centre computed and stored */
+    {   /* the whole run as one job: every column step, the centre computed and stored */
         double cen[16];
         const _zttr_job_t jb = { p, 0, p->L / 2, 3, cen };
         _zttr_call_job(p->R == 4 ? _zttr_tlfhc4 : _zttr_tlfhc8, &jb, W, X);
         return;
     }
+#if VFFT_ZTTR_VW == 4
     if (p->blocked) { _zttr_call_aligned(p->R == 4 ? _zttr_tlfhb4 : _zttr_tlfhb8, p, W, X); return; }
     if (p->R == 4) _zttr_tlfh4(p, W, X); else _zttr_tlfh8(p, W, X);
+#endif
 }
 #endif /* __AVX2__ */
 
@@ -1023,6 +1053,7 @@ static inline void vfft_zttr_execute_fwd_ip(const vfft_zttr_plan_t *p, double *x
  * mirror "column Ls" it produces does not exist and is not stored. Column
  * Ls/2 pairs with itself across legs and is peeled. X[0], X[M] are taken
  * real (their imaginary lanes zeroed), as the fold does. */
+#if VFFT_ZTTR_VW == 4
 static inline __attribute__((always_inline)) void _zttr_unt_bwd(
     const __m256d F, const __m256d Mv, const __m256d wr, const __m256d wi, __m256d *zf, __m256d *zm)
 {
@@ -1138,6 +1169,16 @@ static __attribute__((noinline)) void _zttr_t0h##RR(const _zttr_job_t *jb, const
 ZTTR_T0H_BODY(4)
 ZTTR_T0H_BODY(8)
 #undef ZTTR_T0H_BODY
+#endif /* VFFT_ZTTR_VW == 4 */
+
+/* the fused ingest of a first radix; 0 = none at this lane count (8 lanes: radix 8 only, the ZTT's law) */
+static inline _zttr_job_fn _zttr_t0h_fn(int R0)
+{
+#if VFFT_ZTTR_VW == 4
+    if (R0 == 4) return _zttr_t0h4;
+#endif
+    return R0 == 8 ? _zttr_t0h8 : 0;
+}
 
 /* c2r: X[0..M] CCE (N+2 doubles) -> x[N]. The fused ingest untangles X into
  * the plane W, the backward mids run there, the last stage lands in x
@@ -1151,7 +1192,7 @@ static inline void _zttr_run_bwd(const vfft_zttr_plan_t *p, const double *X, dou
     const double *tw = zt->twb;
     {   /* the whole fused ingest as one job: every column pair, then the centre column */
         const _zttr_job_t jb = { p, 0, (long)(zt->ncol / 2), 2, NULL };
-        _zttr_call_job(zt->chain[0] == 4 ? _zttr_t0h4 : _zttr_t0h8, &jb, X, W);
+        _zttr_call_job(_zttr_t0h_fn(zt->chain[0]), &jb, X, W);
     }
     if (tile)
         for (size_t t = 0; t < M / tile; t++)
