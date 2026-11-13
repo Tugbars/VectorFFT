@@ -24,6 +24,15 @@
  * p0/p1/p5 instead of piling onto the saturated p5.  fwd is BITWISE vs the
  * de-interleaving kernel; bwd differs at rel ~1.3e-16 (the s=1-2S~ / c=2C~
  * derivation reassociates).
+ * 8-LANE FORM (AVX-512): 8 ascending bins + their 8 mirrors per iteration, on
+ * the same tables; the 4-bin loop and the scalar loop take the rest.  Each
+ * mirror vector is reversed whole by one 128-bit-lane shuffle and is never
+ * conjugated: the conjugations ride in the alternating add/subtract of a fused
+ * multiply by 1 (or by +1, -1 per pair), so no sign uop is issued.  A step is
+ * 10 shuffles (4 reversals, 4 table spreads, 2 pair swaps) and 10 (fwd) / 12
+ * (bwd) arithmetic uops.  Bin for bin the values equal the 4-bin loop's (the
+ * same operations, each rounded once); only the sign of an exact zero can
+ * differ.
  *   S~[f] = 1/2 - 1/2 sin(2*pi*f/N),   C~[f] = 1/2 cos(2*pi*f/N),  f = 0..N/4
  * Per pair (f, m=N/2-f), A=Z[f], B=Z[m]:
  *   t1 = Ar-Br   t2 = Ai+Bi
@@ -66,6 +75,13 @@
 
 /* Defined in vfft.c with external linkage (the engagement counters' rule). */
 extern long _vfft_zr2c_fold_mt_count;
+
+/* the bins of one vector step of the folds: 8 at 512 bits, else 4 (the threaded fold cuts by it) */
+#if defined(__AVX512F__)
+#define VFFT_ZR2C_FOLD_STEP 8
+#else
+#define VFFT_ZR2C_FOLD_STEP 4
+#endif
 
 /* Pair tables, N/4+1 entries each (f = 0..N/4 inclusive covers every pair
  * index for any even N; entry 0 is never read — kept for direct indexing).
@@ -110,6 +126,38 @@ static void _zr2c_fold_fwd_pairs(const double *z, double *o,
         const double *affS, const double *affC, int half, int f0, int f1)
 {
     int f = f0;
+#if defined(__AVX512F__)
+    {   /* 8 lanes: eight bins and their eight mirrors a step (the header's 8-LANE FORM) */
+        const __m512d ONE = _mm512_set1_pd(1.0);
+        const __m512d PM = _mm512_setr_pd(1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0);
+        const __m512i LO = _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3);
+        const __m512i HI = _mm512_setr_epi64(4, 4, 5, 5, 6, 6, 7, 7);
+        for (; f + 8 <= f1 && 2 * (f + 7) < half; f += 8)
+        {
+            const int m7 = half - f - 7;
+            const __m512d a0 = _mm512_loadu_pd(z + 2 * f);          /* A: the bins f..f+3 */
+            const __m512d a1 = _mm512_loadu_pd(z + 2 * f + 8);      /*    f+4..f+7 */
+            const __m512d b0 = _mm512_loadu_pd(z + 2 * m7);         /* B: the mirrors of f+7..f+4 */
+            const __m512d b1 = _mm512_loadu_pd(z + 2 * m7 + 8);     /*    of f+3..f */
+            const __m512d S8 = _mm512_loadu_pd(affS + f);
+            const __m512d C8 = _mm512_loadu_pd(affC + f);
+            const __m512d r0 = _mm512_shuffle_f64x2(b1, b1, 0x1B);  /* B in A's order, unconjugated */
+            const __m512d r1 = _mm512_shuffle_f64x2(b0, b0, 0x1B);
+            const __m512d t0 = _mm512_fmaddsub_pd(a0, ONE, r0);     /* t = A - conj(B) */
+            const __m512d t1 = _mm512_fmaddsub_pd(a1, ONE, r1);
+            const __m512d x0 = _mm512_fmsubadd_pd(_mm512_permutexvar_pd(LO, S8), t0,
+                                   _mm512_mul_pd(_mm512_permutexvar_pd(LO, C8), _mm512_permute_pd(t0, 0x55)));
+            const __m512d x1 = _mm512_fmsubadd_pd(_mm512_permutexvar_pd(HI, S8), t1,
+                                   _mm512_mul_pd(_mm512_permutexvar_pd(HI, C8), _mm512_permute_pd(t1, 0x55)));
+            _mm512_storeu_pd(o + 2 * f,     _mm512_fmsubadd_pd(x0, ONE, r0));   /* X[f] = conj(B) + x */
+            _mm512_storeu_pd(o + 2 * f + 8, _mm512_fmsubadd_pd(x1, ONE, r1));
+            const __m512d m0 = _mm512_fmaddsub_pd(a0, PM, x0);      /* X[m] = conj(A - x) */
+            const __m512d m1 = _mm512_fmaddsub_pd(a1, PM, x1);
+            _mm512_storeu_pd(o + 2 * m7,     _mm512_shuffle_f64x2(m1, m1, 0x1B));
+            _mm512_storeu_pd(o + 2 * m7 + 8, _mm512_shuffle_f64x2(m0, m0, 0x1B));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     {
         const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
@@ -207,6 +255,40 @@ static void _zr2c_fold_bwd_pairs(const double *x, double *o,
         const double *bwdS, const double *bwdC, int half, int f0, int f1)
 {
     int f = f0;
+#if defined(__AVX512F__)
+    {   /* 8 lanes: eight bins and their eight mirrors a step (the header's 8-LANE FORM) */
+        const __m512d ONE = _mm512_set1_pd(1.0);
+        const __m512d PM = _mm512_setr_pd(1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0);
+        const __m512i LO = _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3);
+        const __m512i HI = _mm512_setr_epi64(4, 4, 5, 5, 6, 6, 7, 7);
+        for (; f + 8 <= f1 && 2 * (f + 7) < half; f += 8)
+        {
+            const int m7 = half - f - 7;
+            const __m512d a0 = _mm512_loadu_pd(x + 2 * f);          /* F: the bins f..f+3 */
+            const __m512d a1 = _mm512_loadu_pd(x + 2 * f + 8);      /*    f+4..f+7 */
+            const __m512d b0 = _mm512_loadu_pd(x + 2 * m7);         /* M: the mirrors of f+7..f+4 */
+            const __m512d b1 = _mm512_loadu_pd(x + 2 * m7 + 8);     /*    of f+3..f */
+            const __m512d s8 = _mm512_loadu_pd(bwdS + f);
+            const __m512d c8 = _mm512_loadu_pd(bwdC + f);           /* -cos */
+            const __m512d r0 = _mm512_shuffle_f64x2(b1, b1, 0x1B);  /* M in F's order, unconjugated */
+            const __m512d r1 = _mm512_shuffle_f64x2(b0, b0, 0x1B);
+            const __m512d t0 = _mm512_fmaddsub_pd(a0, ONE, r0);     /* t  = F - conj(M) */
+            const __m512d t1 = _mm512_fmaddsub_pd(a1, ONE, r1);
+            const __m512d e0 = _mm512_fmsubadd_pd(a0, ONE, r0);     /* Ep = F + conj(M) */
+            const __m512d e1 = _mm512_fmsubadd_pd(a1, ONE, r1);
+            const __m512d cy0 = _mm512_fmaddsub_pd(_mm512_permutexvar_pd(LO, s8), t0,
+                                    _mm512_mul_pd(_mm512_permutexvar_pd(LO, c8), _mm512_permute_pd(t0, 0x55)));
+            const __m512d cy1 = _mm512_fmaddsub_pd(_mm512_permutexvar_pd(HI, s8), t1,
+                                    _mm512_mul_pd(_mm512_permutexvar_pd(HI, c8), _mm512_permute_pd(t1, 0x55)));
+            _mm512_storeu_pd(o + 2 * f,     _mm512_sub_pd(e0, cy0));
+            _mm512_storeu_pd(o + 2 * f + 8, _mm512_sub_pd(e1, cy1));
+            const __m512d zm0 = _mm512_fmsubadd_pd(e0, PM, cy0);    /* Zhat[m] = conj(Ep + cy) */
+            const __m512d zm1 = _mm512_fmsubadd_pd(e1, PM, cy1);
+            _mm512_storeu_pd(o + 2 * m7,     _mm512_shuffle_f64x2(zm1, zm1, 0x1B));
+            _mm512_storeu_pd(o + 2 * m7 + 8, _mm512_shuffle_f64x2(zm0, zm0, 0x1B));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     {
         const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
@@ -317,13 +399,13 @@ static void _zr2c_fold_mt(const double *in, double *out, const double *S, const 
     else
     {
         _zr2c_fold_arg_t a[THREAD_POOL_MAX_DISPATCH];
-        const int quads = (fe - 1) / 4;
+        const int steps = (fe - 1) / VFFT_ZR2C_FOLD_STEP;   /* the cuts fall between whole vector steps */
         int t;
         for (t = 0; t < T; t++)
         {
             a[t].in = in; a[t].out = out; a[t].S = S; a[t].C = C; a[t].half = half; a[t].bwd = bwd;
-            a[t].f0 = 1 + 4 * (int)((long)quads * t / T);
-            a[t].f1 = t == T - 1 ? fe : 1 + 4 * (int)((long)quads * (t + 1) / T);
+            a[t].f0 = 1 + VFFT_ZR2C_FOLD_STEP * (int)((long)steps * t / T);
+            a[t].f1 = t == T - 1 ? fe : 1 + VFFT_ZR2C_FOLD_STEP * (int)((long)steps * (t + 1) / T);
         }
         thread_pool_run(T, _zr2c_fold_tramp, a, sizeof a[0]);
         _vfft_zr2c_fold_mt_count++;
