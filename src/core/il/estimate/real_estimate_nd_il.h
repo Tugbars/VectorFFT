@@ -48,13 +48,13 @@ typedef struct est_plan2dr_s
     int tcmt;                 /* T > 1, even N2: the row batch's verdict; -1 = not written */
 } est_plan2dr_t;
 
-/* the lengths the estimate names the rows kernel at (the r2zr list, il_registry: 4 .. 32 at both ISAs; the
- * estimate names it at 4 lanes only) */
+/* the lengths the estimate names the rows kernel at (the r2zr list, il_registry: 4 .. 32 at both ISAs). At 8
+ * lanes as at 4 (2026-11-13, a 2-core Xeon at AVX-512, one thread: the planner banked the kernel on all 12 planes
+ * of 64, 256, 1024 rows by 4, 8, 16, 32, both directions, 1.4 - 2.3 x faster than the estimate's plan on the
+ * door's row child) */
 static inline int est__rows_lm_ok(int N2)
 {
     static const int n[7] = { 4, 6, 8, 10, 12, 16, 32 };
-    if (VFFT_IL_VW != 4)
-        return 0;
     for (int i = 0; i < 7; i++)
         if (n[i] == N2)
             return 1;
@@ -324,11 +324,11 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
                 zrm_rows = 1;
             }
         }
-        if (!c2r && !ip && p->T > 1 && N2 == 64 && N1 >= 4LL * N2 && VFFT_IL_VW == 4)
+        if (!c2r && !ip && p->T > 1 && N2 == 64 && N1 >= 4LL * N2)
             /* R2C AT T > 1 OVER ROWS OF 64 ON A TALL PLANE (2026-11-02): the rows by the real pair 4.16, form a, the
-             * planner's on every banked tall plane over rows of 64 from 512 rows (the pair engine exists at 4 lanes
-             * only, as the 1D real estimate's zrp). 8 threads, 8 planes 256 - 8192 x 64: 1.181 -> 1.023, 7 faster,
-             * none slower; over rows of 32 and 128, and in C2R, the door's row child stays (no gap) */
+             * planner's on every banked tall plane over rows of 64 from 512 rows. 8 threads, 8 planes 256 - 8192 x
+             * 64: 1.181 -> 1.023, 7 faster, none slower; over rows of 32 and 128, and in C2R, the door's row child
+             * stays (no gap). Fitted at 4 lanes; at 8 the same rule, not yet timed there */
             snprintf(p->rx, sizeof p->rx, "zrp_4.16_a");
     }
     if (p->col.blu <= 0)

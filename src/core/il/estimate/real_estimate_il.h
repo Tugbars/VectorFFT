@@ -19,6 +19,10 @@
  * zrf's chain led by its largest radix up to 9, zttr from N = 1024 where N is not a power of two and for r2c
  * powers of two from 16384, the zrp pair with a second factor of 10 or more. The zr2c half is the c2c
  * estimate at N/2 (est_c2c), so the c2c rules reach it.
+ * AT 8 LANES (an AVX-512 build; the owner, 2026-11-13) the pair, ZTT-r and the rows kernel are named by the same
+ * rules, with the differences the 8-lane engines' laws and the first AVX-512 planner rows ask for, each at its
+ * rule below: a ZTT-r chain is led by an 8, c2r powers of two take ZTT-r from 2048, and at one thread the real
+ * four-step starts at N = 524288. To be refined on the next AVX-512 machine.
  * The sketch's open decisions (its section 12) take these defaults: every T > 1 takes the rules fitted at
  * T = 8; the formulas follow the build's lanes (an 8-lane recipe is planned by an AVX-512 build only).
  * zfsr at T > 1 takes the c2c four-step's threaded split and child at N/2 (the owner, 2026-11-01). A gap of
@@ -42,13 +46,16 @@
 /* ── the real code facts ─────────────────────────────────────────────────── */
 
 #define EST_ZFSR_TB 16   /* VFFT_ZFSR_TB (il/real/zfsr.h:57): N1 % 16, N2 % 32 (zfsr.h:100-101) */
+/* the real engines' lanes: the pair, ZTT-r and the rows kernel run the build ISA's doubles per vector, 4 at AVX2
+ * and 8 at AVX-512 (VFFT_ZTTR_VW, il/real/zttr.h; VFFT_ZRP_VW, il/real/zrp.h) */
+#define EST_REAL_VW VFFT_ZTTR_VW
 
 /* the real mono: VFFT_IL_RN1_PAIR_RADICES (il_registry_avx2.h:613) plus 32 (rn1b48) and 64
  * (rn1b444), N <= VFFT_ZRM_MAX_N = 64 (il/real/zrm.h:39,42-57); the same at avx512 */
 static const int est_rn1_list[] = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 21,
                                     22, 23, 25, 26, 27, 29, 31, 32, 37, 41, 43, 47, 53, 59, 61, 64 };
 /* the real pair's radices: the VFFT_IL_T2M / R2Z / T2H lists, the same at avx2 and at avx512
- * (il_registry_<isa>.h); the estimate names the pair at 4 lanes only (est_real, step 2) */
+ * (il_registry_<isa>.h) */
 static const int est_zrp_list[] = { 4, 6, 8, 10, 12, 16, 32, 64 };
 /* the zrf tile budgets (il/real/odd_build.h:236) */
 static const int est_zrf_budgets[] = { 64, 128, 256, 512, 1024, 2048 };
@@ -66,11 +73,11 @@ typedef struct est_real_recipe_s
                            * child's threaded arm). zfsr / zrb kind 4: c.fs holds the four-step child. */
 
     /* ---- real: one row per (r2c|c2r, N, placement, T), ord=nat (wisdom2_real_il.h:1-44) ------- */
-    struct { int R1, R2, form; } zrp;    /* [pair=R1.R2 leaf=n1t|r2z] form 0 A (n1t), 1 B (r2z);
-                                          * 4 lanes only (sketch 6)                             */
+    struct { int R1, R2, form; } zrp;    /* [pair=R1.R2 leaf=n1t|r2z] form 0 A (n1t), 1 B (r2z)
+                                          * (sketch 6)                                           */
     struct { int chain[8], nf; size_t tile; int stk, mt; } zttr;
                                          /* [chain= tile= stk= mt=] the chain at M = N/2, 2..8
-                                          * stages; stk = 3; mt 0 = absent; 4 lanes only         */
+                                          * stages; stk = 3; mt 0 = absent                       */
     struct { int route, fold_mt; } zr2c; /* [route=child_oop_il|child_nat_ip fold=st|mt] route =
                                           * the CHILD's placement, 0 child_oop_il, 1 child_nat_ip;
                                           * fold_mt only on a T > 1 row                          */
@@ -91,13 +98,14 @@ typedef struct est_real_recipe_s
 
 /* ── the formulas (the sketch's section 6 real, section 7 threads) ──────── */
 
-/* ZTT-r's grammar at M = N/2 (zttr.h:113-143,180): 2^a times a product over {15, 9, 7, 5, 3},
- * a >= 5 (the terminator run L = M / R_last >= 8 with L % 8 == 0 needs 32 | M), 32 <= M <= 262144 */
+/* ZTT-r's grammar at M = N/2 (zttr.h, vfft_zttr_create): 2^a times a product over {15, 9, 7, 5, 3}; the terminator
+ * run L = M / R_last comes in whole pairs of vectors, L >= 2 VW and L % (2 VW) == 0, so 8 VW | M: a >= 5 at 4
+ * lanes, a >= 6 at 8; 32 <= M <= 262144 */
 static inline int est_zttr_grammar(long long M)
 {
     long long o;
     int i;
-    if (M < 32 || M > VFFT_ZTT_MAX_N || est_v2(M) < 5) return 0;
+    if (M < 32 || M > VFFT_ZTT_MAX_N || est_v2(M) < (EST_REAL_VW == 8 ? 6 : 5)) return 0;
     o = M >> est_v2(M);
     for (i = 0; i < VFFT_ZTT_ODD_MIDS_N; i++)
         while (o % VFFT_ZTT_ODD_MIDS[i] == 0) o /= VFFT_ZTT_ODD_MIDS[i];
@@ -108,15 +116,16 @@ static inline int est__zttr_tile_ok(long long M, const int *c, long long w)
 {
     return w < M && M % w == 0 && w % ((long long)c[0] * c[1]) == 0;
 }
-/* ZTT-r's laws on a whole chain (est_ztt_ok, natural) and its terminator: the last stage 4 or 8 over a run
- * M / R_last of at least 8 whole blocks of 8 (zttr.h:173-180) */
+/* ZTT-r's laws on a whole chain (est_ztt_ok, natural: at 8 lanes the first stage is 8) and its terminator: the
+ * last stage 4 or 8 over a run M / R_last of whole pairs of vectors, 2 VW points at least (vfft_zttr_create) */
 static inline int est__zttr_legal(long long M, const int *c, int k)
 {
-    return k <= VFFT_ZTT_MAX_NF && est_ztt_ok(M, c, k, 0) && (c[k - 1] == 4 || c[k - 1] == 8) && M / c[k - 1] >= 8 &&
-           (M / c[k - 1]) % 8 == 0;
+    return k <= VFFT_ZTT_MAX_NF && est_ztt_ok(M, c, k, 0) && (c[k - 1] == 4 || c[k - 1] == 8) &&
+           M / c[k - 1] >= 2 * EST_REAL_VW && (M / c[k - 1]) % (2 * EST_REAL_VW) == 0;
 }
 /* 2^a odd M: the first power-of-two stage, the odd stages mids, the other power-of-two stages, the closing
- * radix; 2^(a - lg close) as 8s, one 4 and 8s, or two 4s and 8s. 0 = none within the laws. */
+ * radix; 2^(a - lg close) as 8s, one 4 and 8s, or two 4s and 8s; at 8 lanes its first 8 leads (the law), and
+ * with no 8 there is no chain. 0 = none within the laws. */
 static inline int est__zttr_odd(long long M, int a, const int *mids, int nm, int close, int *c)
 {
     const int r = a - (close == 8 ? 3 : 2);
@@ -125,6 +134,13 @@ static inline int est__zttr_odd(long long M, int a, const int *mids, int nm, int
     if (r % 3 == 0) { for (i = 0; i < r / 3; i++) p2[np++] = 8; }
     else if (r % 3 == 2) { p2[np++] = 4; for (i = 0; i < r / 3; i++) p2[np++] = 8; }
     else { if (r < 4) return 0; p2[np++] = 4; p2[np++] = 4; for (i = 0; i < (r - 4) / 3; i++) p2[np++] = 8; }
+    if (EST_REAL_VW == 8)
+    {
+        for (i = 0; i < np && p2[i] != 8; i++) ;
+        if (i == np) return 0;
+        for (; i > 0; i--) p2[i] = p2[i - 1];
+        p2[0] = 8;
+    }
     if (!np || np + nm + 1 > 16) return 0;
     c[k++] = p2[0];
     for (i = 0; i < nm; i++) c[k++] = mids[i];
@@ -154,7 +170,11 @@ static inline int est_zttr_fewest(long long M, int *c)
  * planner at 400,000 and 6.7 x at 276,480 on 8 threads, 1.15 x at one thread; with the fewest stages, 16 of them
  * 1.01 x at one thread (the planner's 31,104 8.3.9.9.8, 400,000 8.5.5.5.5.5.8, 103,680 4.15.9.3.4.8). Tile: untiled
  * below M = 4096, else the first legal width of 2048, 3072, 1024, 512. Validated by ZTT's natural laws and
- * zttr.h:173-180. 0 = none. */
+ * the terminator's (est__zttr_legal). 0 = none.
+ * AT 8 LANES the first stage is 8 (the law). r2c's power-of-two chain leads with 8 as it stands. c2r's cannot lead
+ * with its 4: two 8s, the forced 4s, then the other 8s (2026-11-13, a 2-core Xeon at AVX-512, one thread: the
+ * planner's chain on 10 of its 15 c2r power-of-two ZTT-r rows, 2048 8.8.4.4, 8192 8.8.8.8, 16384 8.8.4.4.8,
+ * 262144 8.8.4.8.8.8; no other one form names more). 2^a odd M: est__zttr_odd's stages, its first 8 leading. */
 static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
 {
     const long long M = N / 2;
@@ -165,20 +185,31 @@ static inline int est_zttr_chain(long long N, int c2r, int *c, size_t *tile)
     if (o == 1)
     {
         est_mincounts(a, &e, &f);
-        if (f == 0 && e >= 2) { e -= 2; f += 3; }
-        if (f < 1 || (!c2r && e < 1)) return 0;
-        if (c2r)
-        {
-            c[k++] = 4;
-            for (i = 0; i < e; i++) c[k++] = 8;
-            for (i = 0; i < f - 1; i++) c[k++] = 4;
+        if (EST_REAL_VW == 8 && c2r)
+        {   /* 8 lanes: two 8s, the forced 4s, then the other 8s */
+            if (e < 1) return 0;
+            c[k++] = 8;
+            if (e >= 2) c[k++] = 8;
+            for (i = 0; i < f; i++) c[k++] = 4;
+            for (i = 0; i < e - 2; i++) c[k++] = 8;
         }
         else
         {
-            c[k++] = 8;
-            for (i = 0; i < f - 1; i++) c[k++] = 4;
-            for (i = 0; i < e - 1; i++) c[k++] = 8;
-            c[k++] = 4;
+            if (f == 0 && e >= 2) { e -= 2; f += 3; }
+            if (f < 1 || (!c2r && e < 1)) return 0;
+            if (c2r)
+            {
+                c[k++] = 4;
+                for (i = 0; i < e; i++) c[k++] = 8;
+                for (i = 0; i < f - 1; i++) c[k++] = 4;
+            }
+            else
+            {
+                c[k++] = 8;
+                for (i = 0; i < f - 1; i++) c[k++] = 4;
+                for (i = 0; i < e - 1; i++) c[k++] = 8;
+                c[k++] = 4;
+            }
         }
     }
     else
@@ -411,12 +442,13 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         snprintf(o->eng, sizeof o->eng, "zrm");
         return 0;
     }
-    /* 2. zrp, 4 lanes only, N <= 160 (table 5.8), an even x even pair R1.R2, form B (the r2z leaf): 10 second
+    /* 2. zrp, N <= 160 (table 5.8), an even x even pair R1.R2, form B (the r2z leaf): 10 second
      * when it divides; else the most balanced pair whose second factor is at least 10; else the most balanced,
      * smaller factor first (the owner, 2026-11-01: 32 of the store's 34 pair rows, the most balanced pair 21;
      * at one thread 48 4.12, 64 4.16, 120 12.10, 160 16.10 against 6.8, 8.8, 10.12, 10.16: 1.07 - 1.28 ->
-     * 0.95 - 1.03) */
-    if (VFFT_IL_VW == 4 && N <= 160)
+     * 0.95 - 1.03). The same at 8 lanes (2026-11-13, a 2-core Xeon at AVX-512, one thread: its planner banked the
+     * pair on 21 of its 32 rows at 32 - 160, this rule's pair on 20 of them; 128 took zr2c in all four cells) */
+    if (N <= 160)
     {
         int lo = 0, hi = 0, pass;
         for (pass = 0; pass < 3 && !hi; pass++)
@@ -440,7 +472,17 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
      * At T > 1 the c2c four-step's threaded recipe at N/2 (the owner, 2026-11-01): the door builds its c2c
      * four-step child at T and seeds the child's rows under T (_k1fs_child_keys(n1, n2, 0, T),
      * zrp_build.h:308-318), so the split is the c2c threaded split (est_fs_split, threaded: N/2048 up to 2^20,
-     * then 4096) and the child is that split's own at T (est_fs_child), as the c2c four-step's row at T. */
+     * then 4096) and the child is that split's own at T (est_fs_child), as the c2c four-step's row at T.
+     * At 8 lanes and one thread the band starts an octave lower, at ZTT-r's ceiling N/2 = 2^18, as the square
+     * 512 x 512 (2026-11-13, the Xeon's planner at AVX-512: zfsr at N = 524288 in all four cells, its splits
+     * 1024x256 twice, 512x512 and 256x1024; 1.08 - 1.20 x faster than the zr2c the estimate named there). */
+    if (EST_REAL_VW == 8 && T == 1 && N / 2 == (1LL << 18))
+    {
+        snprintf(o->eng, sizeof o->eng, "zfsr");
+        o->zfsr.n1 = 512;
+        o->zfsr.n2 = 512;
+        return est_fs_child(m, 512, 512, 1, o->c.fs, sizeof o->c.fs, why, whylen);
+    }
     if (est_is_pow2(N / 2) && N / 2 >= (1LL << 19))
     {
         int n1, n2;
@@ -451,12 +493,16 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
         o->zfsr.n2 = n2;
         return est_fs_child(m, n1, n2, T, o->c.fs, sizeof o->c.fs, why, whylen);
     }
-    /* 4. zttr, 4 lanes only: a pow2 N in 512..524288 (r2c from 16384), or N >= 1024 with N/2 in ZTT-r's grammar
+    /* 4. zttr: a pow2 N in 512..524288 (r2c from 16384), or N >= 1024 with N/2 in ZTT-r's grammar
      * (the owner, 2026-11-01: at one thread zttr wins from 1152 where N is not a power of two, 1920 1.20 ->
      * 1.005; r2c powers of two up to 8192 run faster as zr2c, 512 1.01 -> 0.90, 1024 1.07 -> 0.96, and the
-     * planner's r2c rows take zttr at powers of two from 16384; c2r unchanged) */
-    if (VFFT_IL_VW == 4 && ((est_is_pow2(N) && N >= (c2r ? 512 : 16384) && N <= 524288) ||
-                            (!est_is_pow2(N) && N >= 1024 && est_zttr_grammar(N / 2))))
+     * planner's r2c rows take zttr at powers of two from 16384; c2r unchanged).
+     * At 8 lanes c2r's powers of two start at 2048 (2026-11-13, the Xeon's planner at AVX-512, one thread: c2r 512
+     * and 1024 on zr2c in both placements, zttr from 2048 out of place and 4096 in place; out of place at 4096 -
+     * 262144 its zttr rows ran 1.13 - 1.41 x faster than the zr2c the estimate named, in place and in r2c within
+     * 0.84 - 1.22; 1536, 3840, 6144 took zttr in every cell, 1920 has no 8-lane chain) */
+    if ((est_is_pow2(N) && N >= (c2r ? (EST_REAL_VW == 8 ? 2048 : 512) : 16384) && N <= 524288) ||
+        (!est_is_pow2(N) && N >= 1024 && est_zttr_grammar(N / 2)))
     {
         size_t tile = 0;
         k = est_zttr_chain(N, c2r, c, &tile);
