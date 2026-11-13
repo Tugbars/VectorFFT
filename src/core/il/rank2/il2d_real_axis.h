@@ -88,6 +88,17 @@ static void _il2d_rax_pack(const double *x, double *W, size_t M, size_t N2)
         const double *a = x + 2 * m * N2, *b = a + N2;
         double *w = W + 2 * m * N2;
         n = 0;
+#if defined(__AVX512F__)
+        {   /* eight columns a step: the two rows' samples interleaved by one two-source permute per vector */
+            const __m512i lo = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11), hi = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+            for (; n + 8 <= N2; n += 8)
+            {
+                const __m512d va = _mm512_loadu_pd(a + n), vb = _mm512_loadu_pd(b + n);
+                _mm512_storeu_pd(w + 2 * n, _mm512_permutex2var_pd(va, lo, vb));
+                _mm512_storeu_pd(w + 2 * n + 8, _mm512_permutex2var_pd(va, hi, vb));
+            }
+        }
+#endif
 #if defined(__AVX2__)
         for (; n + 4 <= N2; n += 4)
         {
@@ -127,6 +138,22 @@ static void _il2d_rax_fold(const double *W, double *A, size_t M, size_t N2, cons
         const double wr = tw[2 * k], wi = tw[2 * k + 1];
         const int mirror = (2 * k < M);
         n = 0;
+#if defined(__AVX512F__)
+        {   /* four columns a step, the 256-bit step's operations */
+            const __m512d cj = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0), half = _mm512_set1_pd(0.5);
+            const __m512d vwr = _mm512_set1_pd(wr), vwi = _mm512_setr_pd(-wi, wi, -wi, wi, -wi, wi, -wi, wi);
+            for (; n + 4 <= N2; n += 4)
+            {
+                const __m512d P = _mm512_loadu_pd(Pk + 2 * n), Q = _mm512_xor_pd(_mm512_loadu_pd(Pm + 2 * n), cj);
+                const __m512d E = _mm512_mul_pd(half, _mm512_add_pd(P, Q)), D = _mm512_mul_pd(half, _mm512_sub_pd(P, Q));
+                const __m512d O = _mm512_xor_pd(_mm512_permute_pd(D, 0x55), cj);                          /* -i D */
+                const __m512d T = _mm512_fmadd_pd(O, vwr, _mm512_mul_pd(_mm512_permute_pd(O, 0x55), vwi)); /* w^k O */
+                _mm512_storeu_pd(Ak + 2 * n, _mm512_add_pd(E, T));
+                if (mirror)
+                    _mm512_storeu_pd(Am + 2 * n, _mm512_xor_pd(_mm512_sub_pd(E, T), cj));
+            }
+        }
+#endif
 #if defined(__AVX2__)
         {
             const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0), half = _mm256_set1_pd(0.5);
@@ -170,6 +197,16 @@ static void _il2d_rax_mirror(double *dst, const double *src, size_t n, size_t cn
         dst[1] = -src[1];
         j = 1;
     }
+#if defined(__AVX512F__)
+    {   /* four points a step: the source vector reversed whole by one 128-bit-lane shuffle */
+        const __m512d cj = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0);
+        for (; j + 4 <= cnt; j += 4)
+        {   /* dst[j .. j+3] <- conj src[n-j], src[n-j-1], src[n-j-2], src[n-j-3] */
+            const __m512d v = _mm512_loadu_pd(src + 2 * (n - j - 3));
+            _mm512_storeu_pd(dst + 2 * j, _mm512_xor_pd(_mm512_shuffle_f64x2(v, v, 0x1B), cj));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     {
         const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);

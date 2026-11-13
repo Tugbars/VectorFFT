@@ -370,11 +370,12 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # of radix 16 and 32 (built outside the corpus from their recorded recipes, as
 # at avx2). The generator declares the other corpus cells absent at avx512
 # (Corpus.zil_isa_gap, with each reason; the registry's header lists them):
-# the whole of shared/col/half, real/rows and rows/rowswap, which therefore
-# have no avx512 folder, and the radix-4 t0tp/tld kernels of ztt. The real
-# pair (real/pair: r2z, t2h, t2m) is emitted at avx512 since 2026-11-13.
+# the whole of shared/col/half and rows/rowswap, which therefore have no
+# avx512 folder, and the radix-4 t0tp/tld kernels of ztt. The real pair
+# (real/pair: r2z, t2h, t2m) and the real rows (real/rows: r2zr) are emitted
+# at avx512 since 2026-11-13.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/real/rows zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
+set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
 
 set(VFFT_CODELET_SRCS)
 

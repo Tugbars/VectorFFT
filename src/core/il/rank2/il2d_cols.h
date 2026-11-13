@@ -318,8 +318,13 @@ static void _il2d_row_stream(vfft_real *dst, const vfft_real *src, size_t w, int
     if (nt && (((uintptr_t)dst | (uintptr_t)src) & 31) == 0)
     {   /* two complex per store; an odd row's last complex goes alone (a
          * 4-double store there would write the next row's first element) */
-        size_t q;
-        for (q = 0; q + 4 <= 2 * w; q += 4)
+        size_t q = 0;
+#if defined(__AVX512F__)
+        if ((((uintptr_t)dst | (uintptr_t)src) & 63) == 0)   /* four complex per store where both rows sit on a 64-byte boundary */
+            for (; q + 8 <= 2 * w; q += 8)
+                _mm512_stream_pd(dst + q, _mm512_load_pd(src + q));
+#endif
+        for (; q + 4 <= 2 * w; q += 4)
             _mm256_stream_pd(dst + q, _mm256_load_pd(src + q));
         if (q < 2 * w)
             _mm_stream_pd(dst + q, _mm_load_pd(src + q));
@@ -882,6 +887,10 @@ static void _il2d_col_pass_nat_tile(const vfft_real *src, vfft_real *dst, int N1
         vfftf__copy(dp, sp, w2, 0);
         q = w2;
 #elif defined(__AVX2__)
+#if defined(__AVX512F__)
+        for (; q + 8 <= w2; q += 8)
+            _mm512_storeu_pd(dp + q, _mm512_loadu_pd(sp + q));
+#endif
         for (; q + 4 <= w2; q += 4)
             _mm256_storeu_pd(dp + q, _mm256_loadu_pd(sp + q));
         if (q < w2)

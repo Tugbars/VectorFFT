@@ -48,7 +48,8 @@ typedef struct est_plan2dr_s
     int tcmt;                 /* T > 1, even N2: the row batch's verdict; -1 = not written */
 } est_plan2dr_t;
 
-/* the rows kernel's lengths at this ISA (the r2zr list, il_registry: AVX2 4 .. 32, none at AVX-512) */
+/* the lengths the estimate names the rows kernel at (the r2zr list, il_registry: 4 .. 32 at both ISAs; the
+ * estimate names it at 4 lanes only) */
 static inline int est__rows_lm_ok(int N2)
 {
     static const int n[7] = { 4, 6, 8, 10, 12, 16, 32 };

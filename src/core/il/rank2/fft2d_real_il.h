@@ -24,6 +24,18 @@
 static inline void _il2d_row_promote(const double *x, double *z, size_t n)
 {
     size_t j = 0;
+#if defined(__AVX512F__)
+    {   /* eight reals a step: each half of the vector spread to the real lanes by one
+         * lane permute, its mask zeroing the imaginary lanes */
+        const __m512i lo = _mm512_setr_epi64(0, 0, 1, 1, 2, 2, 3, 3);
+        const __m512i hi = _mm512_setr_epi64(4, 4, 5, 5, 6, 6, 7, 7);
+        for (; j + 8 <= n; j += 8) {
+            const __m512d v = _mm512_loadu_pd(x + j);
+            _mm512_storeu_pd(z + 2 * j,     _mm512_maskz_permutexvar_pd(0x55, lo, v));
+            _mm512_storeu_pd(z + 2 * j + 8, _mm512_maskz_permutexvar_pd(0x55, hi, v));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     /* unpack works WITHIN 128-bit lanes, so the vector must be lane-
      * permuted FIRST: [x0 x1 x2 x3] -> [x0 x2 x1 x3], then unpacklo
@@ -44,6 +56,16 @@ static inline void _il2d_row_promote(const double *x, double *z, size_t n)
 static inline void _il2d_row_re(const double *z, double *x, size_t n)
 {
     size_t j = 0;
+#if defined(__AVX512F__)
+    {   /* eight complex a step: the real lanes of two vectors gathered by one two-source permute */
+        const __m512i re = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+        for (; j + 8 <= n; j += 8) {
+            const __m512d a = _mm512_loadu_pd(z + 2 * j);
+            const __m512d b = _mm512_loadu_pd(z + 2 * j + 8);
+            _mm512_storeu_pd(x + j, _mm512_permutex2var_pd(a, re, b));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     for (; j + 4 <= n; j += 4) {
         const __m256d a = _mm256_loadu_pd(z + 2 * j);     /* r0 i0 r1 i1 */
@@ -76,6 +98,16 @@ static inline void _il2d_row_cmul(double *dst, const double *src,
                                   double cr, double ci, size_t n)
 {
     size_t k = 0;
+#if defined(__AVX512F__)
+    {   /* four points a step; the sign of the even lanes rides in the constant (-ci, +ci) */
+        const __m512d vcr = _mm512_set1_pd(cr);
+        const __m512d vci = _mm512_setr_pd(-ci, ci, -ci, ci, -ci, ci, -ci, ci);
+        for (; k + 4 <= n; k += 4) {
+            const __m512d v = _mm512_loadu_pd(src + 2 * k);
+            _mm512_storeu_pd(dst + 2 * k, _mm512_fmadd_pd(v, vcr, _mm512_mul_pd(_mm512_permute_pd(v, 0x55), vci)));
+        }
+    }
+#endif
 #if defined(__AVX2__)
     /* (even lanes get -ci so t = [-si*ci, +sr*ci]; fmadd(v, cr, t)
      * lands (sr*cr - si*ci, si*cr + sr*ci) — the _ilprime_cmul_vec
