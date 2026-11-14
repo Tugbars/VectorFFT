@@ -134,9 +134,9 @@ def build_2d(run_dir, sfx="_2d"):
     W("# gauntlet report (%dD)\n" % nd)
     place = "in place" if re.search(r"_ipo?(?=_|$)", sfx) else "out of place"   # --inplace / --owned: the suffix's _ip / _ipo
     W("run: `%s`  contract: %dD %s interleaved, natural, %s, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "c2c",   # the real runs (2026-10-07)
+        os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "DST-II" if "_dst2" in sfx else "DST-III" if "_dst3" in sfx else "c2c",   # the real runs (2026-10-07), the DST runs (2026-11-14)
         place, sfx.replace("_%dd" % nd, ""), len(keys), len(cells),
-        (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
+        (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else "MKL staggered sine transform (in place)" if "_dst" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
     if any("engaged" in r for rs in rows.values() for r in rs):

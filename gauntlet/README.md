@@ -92,6 +92,23 @@ python gauntlet/gauntlet.py run --cells 47x64,23x256          # any shapes
 The report's tables are by route (`chain` / `blu`), by column class of N1
 (pow2, even, odd, prime) and by plane size.
 
+**DST-II and DST-III** (since 2026-11-14): `--real dst2` / `--real dst3`, the 1D
+cell with N reals in and out (`VFFT_DST2` / `VFFT_DST3`), one transform, out of
+place or `--inplace`, one thread or `--threads T`; files carry `_dst2` / `_dst3`.
+The calibrate stage banks the cell's own rows (`t=dst2` and `t=dst3` in
+`wisdom2_real.txt`, the real FFT inside under `dst_`). The comparators: FFTW
+(`--cmp fftw`: `RODFT10` / `RODFT01`, the same definition and scale as ours) and
+MKL, whose form of these transforms is the staggered sine transform of its
+Trigonometric Transform interface: in place only, on N + 1 doubles, its backward
+half our DST-II and its forward our DST-III over N. MKL's timed arm is therefore
+in place in both contracts, and the error column against MKL is taken after
+scaling its output to ours.
+
+```
+python gauntlet/gauntlet.py run --real dst2 --cells 64,1024,4096,10007
+python gauntlet/gauntlet.py run --real dst3 --cells 64,1024,4096,10007 --cmp fftw
+```
+
 ## Building the tools
 
 Either path builds the same binaries from the same sources.

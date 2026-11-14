@@ -212,7 +212,9 @@ class Run:
         self.threads = int(args.threads)
         self.ip = 2 if getattr(args, "owned", False) else (1 if args.inplace else 0)   # 2 = door 2 (2026-10-08): the plan's own plane at its pitch
         self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default), kfr (2026-09-25) or fftw (2026-09-29), each its own csv
-        self.real = getattr(args, "real", None)           # the real contract (2026-09-29): "r2c" / "c2r", else the c2c cell
+        self.real = getattr(args, "real", None)           # the real contract (2026-09-29): "r2c" / "c2r", else the c2c cell;
+                                                          # "dst2" / "dst3" (2026-11-14): the 1D DST cell, reals in and out
+        self.dst = self.real in ("dst2", "dst3")
         self.k = int(getattr(args, "k", 1) or 1)          # the 1D real cell's batch count (transform-contiguous rows)
         self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_ipo" if self.ip == 2 else "_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
         name = args.name or self.default_name()
@@ -346,6 +348,10 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
     if real and is2d(n):
         # the direction-shared t=r2c row: wisdom2_2d.txt for a plane, wisdom2_3d.txt for a cube (the rank-3 real tier, 2026-10-07)
         pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
+    elif real in ("dst2", "dst3"):
+        # the DST cell (2026-11-14): its own row in the real shard, the real FFT inside under dst_; one row,
+        # stamped place=oop, serves both placements
+        pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=oop[^|\n]*\| ([^\n]*)" % (real, n)),)
     elif real:
         pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=%s[^|\n]*\| ([^\n]*)" % (real, n, pl)),
                 ("wisdom2_oop.txt", r"@cell t=c2c n=%d q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (n // 2, pl)),
@@ -370,6 +376,10 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
 
 
 def route_of(rows):
+    for k, v in rows.items():                 # the DST cells: the engine of the real FFT inside (its row under dst_)
+        if "t=dst2" in k or "t=dst3" in k:
+            m = re.search(r"dst_1_eng=(\w+)", v)
+            return "dst:" + (m.group(1) if m else "?")
     for k, v in rows.items():                 # the real cells: the engine (zrp pair / zr2c route) or the odd-N bridge verdict
         if ("t=r2c" in k or "t=c2r" in k) and "eng=zrp" in v:
             m = re.search(r"pair=([\d.]+)", v)
@@ -455,6 +465,10 @@ def bench_cell(run, n, csv_path):
         # the 2D interleaved cell: N1 in the N slot, N2 in the K slot (bench --2dilnat)
         flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else []) + (["--ilip"] if run.ip else [])   # --ilip: in place (2026-11-12)
         nstr, kstr = str(n[0]), str(n[1])
+    elif run.dst:
+        # the 1D DST cell (2026-11-14): bench --dst2 / --dst3; --realip in place; --mt the threaded cell at $VFFT_MT
+        flag = ["--" + run.real] + (["--mt"] if run.threads > 1 else []) + (["--realip"] if run.ip else [])
+        nstr, kstr = str(n), "1"
     elif run.real:
         # the 1D REAL cell (2026-09-29): K transform-contiguous rows in the K slot
         flag = ["--realfwd" if run.real == "r2c" else "--realbwd"] + (["--mt"] if run.threads > 1 else [])   # --mt: the threaded real cell at $VFFT_MT (2026-09-30)
@@ -645,7 +659,7 @@ def main():
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
     ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D, 2D and 3D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from $VFFT_FFTW_DLL, else the repository's gauntlet/fftw/libfftw3-3.dll on Windows -- FFTW 3.3.10 with AVX-512 and threads -- else vcpkg's fftw3.dll; FFTW_MEASURE, its wisdom in the run's fftw.wis; the 1D/2D/3D c2c cells out of place and the real cells, at one thread or --threads T with an FFTW built with its threads API: --enable-threads --with-combined-threads, CMake ENABLE_THREADS + WITH_COMBINED_THREADS; verify writes FFTW's rows too); its own csv suffix")
-    ap.add_argument("--real", choices=["r2c", "c2r"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r")
+    ap.add_argument("--real", choices=["r2c", "c2r", "dst2", "dst3"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r. dst2 / dst3 (2026-11-14): the 1D DST-II / DST-III cell, N reals in and out, out of place or --inplace, one thread or --threads T, against MKL (its staggered sine transform, in place) or --cmp fftw (RODFT10 / RODFT01); suffix _dst2 / _dst3")
     ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
     ap.add_argument("--store", help="use this wisdom store instead of a fresh copy of the shipped one")
@@ -678,7 +692,9 @@ def main():
         raise SystemExit("--cmp kfr: the KFR arm serves the 1D, 2D and 3D c2c cells and the 1D r2c / c2r cells (an even N: KFR's real DFT is even-only), K=1, out of place, one thread")
     if run.ip == 2 and not run.real:
         raise SystemExit("--owned: the plan's own plane at its pitch is the 2D and 3D real contract (--real); the c2c cells in place are --inplace")
-    if run.real and run.ip and dims not in (2, 3):
+    if run.dst and (dims != 1 or run.k > 1 or run.ip == 2 or run.cmp == "kfr"):
+        raise SystemExit("--real dst2 / dst3: the DST cell is 1D, one transform, out of place or --inplace, against MKL or --cmp fftw")
+    if run.real and not run.dst and run.ip and dims not in (2, 3):
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
     if run.k > 1 and (not run.real or dims != 1):
         raise SystemExit("--k: the batch count belongs to the 1D real cell")

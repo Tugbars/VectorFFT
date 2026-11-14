@@ -89,6 +89,9 @@ typedef fftwx_plan (*fftwx_plan_many_dft_f)(int, const int *, int,
                                             int, unsigned);
 typedef fftwx_plan (*fftwx_plan_guru_split_dft_f)(int, const fftwx_iodim *, int, const fftwx_iodim *,
                                                   double *, double *, double *, double *, unsigned);
+typedef fftwx_plan (*fftwx_plan_r2r_1d_f)(int, double *, double *, int, unsigned);   /* the real-to-real cell (2026-11-14): the kind is FFTW's r2r enum */
+#define FFTWX_RODFT01 8   /* DST-III (fftw3.h: fftw_r2r_kind) */
+#define FFTWX_RODFT10 9   /* DST-II */
 typedef fftwx_plan (*fftwx_plan_dft_r2c_1d_f)(int, double *, fftwx_complex *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_c2r_1d_f)(int, fftwx_complex *, double *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_r2c_2d_f)(int, int, double *, fftwx_complex *, unsigned);
@@ -146,6 +149,7 @@ typedef struct {
     fftwx_plan_many_dft_c2r_f        plan_many_dft_c2r;
     fftwx_plan_guru_split_dft_r2c_f  plan_guru_split_dft_r2c;
     fftwx_plan_guru_split_dft_c2r_f  plan_guru_split_dft_c2r;
+    fftwx_plan_r2r_1d_f              plan_r2r_1d;       /* optional: the DST cell */
     /* execute */
     fftwx_execute_f                  execute;
     fftwx_execute_dft_f              execute_dft;
@@ -196,6 +200,7 @@ static const struct fftwx__sym fftwx__tab[] = {
     FFTWX__ENTRY(plan_many_dft_c2r,         "fftw_plan_many_dft_c2r"),
     FFTWX__ENTRY(plan_guru_split_dft_r2c,   "fftw_plan_guru_split_dft_r2c"),
     FFTWX__ENTRY(plan_guru_split_dft_c2r,   "fftw_plan_guru_split_dft_c2r"),
+    FFTWX__OPTIONAL(plan_r2r_1d,            "fftw_plan_r2r_1d"),
     FFTWX__ENTRY(execute,                   "fftw_execute"),
     FFTWX__ENTRY(execute_dft,               "fftw_execute_dft"),
     FFTWX__ENTRY(execute_split_dft,         "fftw_execute_split_dft"),
