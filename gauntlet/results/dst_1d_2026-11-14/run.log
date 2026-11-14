@@ -1,0 +1,18 @@
+2026-11-14 03:28:02 run: 26 cells, contract out of place, bin c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 03:28:02 calibrate: 26 cells (0 already done)
+2026-11-14 03:51:24   calibrated 25/26 (524288), 1402 s elapsed
+2026-11-14 03:54:43   calibrated 26/26 (1048576), 1600 s elapsed
+2026-11-14 03:54:43 bench: 26 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 03:55:43   benched 25/26 (524288), 58 s elapsed
+2026-11-14 03:55:46   benched 26/26 (1048576), 61 s elapsed
+2026-11-14 03:55:48 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dst_1d_2026-11-14\report_dst2.md
+2026-11-14 03:55:48 run: 26 cells, contract out of place, bin c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 03:55:48 calibrate: 26 cells (0 already done)
+2026-11-14 03:55:55   calibrated 25/26 (524288), 7 s elapsed
+2026-11-14 03:55:56   calibrated 26/26 (1048576), 7 s elapsed
+2026-11-14 03:55:56 bench: 26 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 03:56:56   benched 25/26 (524288), 59 s elapsed
+2026-11-14 03:57:00   benched 26/26 (1048576), 62 s elapsed
+2026-11-14 03:57:02 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dst_1d_2026-11-14\report_dst3.md
+2026-11-14 03:57:02 run: 26 cells, contract out of place, bin c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 03:57:02 calibrate: 26 cells (0 already done)
