@@ -44,65 +44,65 @@ extern "C"
    * thread ever ran. Tests that mean to assert THREADING must assert on this,
    * and benches should report it rather than assume the thread count they
    * asked for is the thread count they got. */
-  int vfft_plan_tc_workers(vfft_plan p);
+  VFFT_API int vfft_plan_tc_workers(vfft_plan p);
 
   /* Process-lifetime count of transform-contiguous MT DISPATCHES. Clones
    * built and work dispatched are INDEPENDENT gates: a plan can own clones
    * and still run its serial loop because the cell sits under the engage
    * floor. Assert this MOVED across an execute to prove threading actually
    * happened; vfft_plan_tc_workers alone does not. */
-  long vfft_tc_mt_dispatches(void);
+  VFFT_API long vfft_tc_mt_dispatches(void);
 
   /* Same question for the native IL 2D real COLUMN pass: how many
    * threaded column passes actually ran. Zero after an execute means the
    * column pass was serial (too few independent units, or no pool). */
-  long vfft_il2d_col_mt_passes(void);
+  VFFT_API long vfft_il2d_col_mt_passes(void);
   /* the native IL 2D real ROW pass (the row plan's threaded walk, at K = 1
    * and in a batch alike): how many threaded row passes actually ran. A 2D
    * real plan can thread its rows while its column pass stays serial, so
    * read both counters before calling such a plan serial. */
-  long vfft_il2d_row_mt_passes(void);
+  VFFT_API long vfft_il2d_row_mt_passes(void);
   /* the rank-N INTERLEAVED c2c tier (3D IL): threaded executes (band or
    * plane arm engaged); serial serves leave it unchanged. */
-  long vfft_ilnd_mt_passes(void);
+  VFFT_API long vfft_ilnd_mt_passes(void);
   /* the flat mixed-radix DIT (odd-N K=1 interleaved): threaded executes of
    * the blocks or tiles arm; serial serves leave it unchanged. */
-  long vfft_ilfd_mt_passes(void);
+  VFFT_API long vfft_ilfd_mt_passes(void);
   /* ZTURN-T's threaded arm (the staged walk sectioned): threaded executes
    * actually run; raced per T at create, VFFT_ZTT_MT=0|1|2 pins. */
-  long vfft_ztt_mt_passes(void);
+  VFFT_API long vfft_ztt_mt_passes(void);
   /* the real four-step's fused order sweeps (1D r2c/c2r from 2^20): sweeps
    * cut across the pool's workers; a serial sweep leaves it unchanged. */
-  long vfft_zfsr_mt_passes(void);
+  VFFT_API long vfft_zfsr_mt_passes(void);
   /* ZTT-r's threaded arms (the ZTT's walk with the real fold fused):
    * threaded executes actually run; a serial serve leaves it unchanged. */
-  long vfft_zttr_mt_passes(void);
-  long vfft_zrf_mt_passes(void);   /* the real flat DIT's threaded executes */
-  long vfft_ilpr_mt_passes(void);  /* the prime cell's (Rader / Bluestein) threaded executes */
-  long vfft_zrb_mt_passes(void);   /* the real Bluestein's threaded executes */
+  VFFT_API long vfft_zttr_mt_passes(void);
+  VFFT_API long vfft_zrf_mt_passes(void);   /* the real flat DIT's threaded executes */
+  VFFT_API long vfft_ilpr_mt_passes(void);  /* the prime cell's (Rader / Bluestein) threaded executes */
+  VFFT_API long vfft_zrb_mt_passes(void);   /* the real Bluestein's threaded executes */
   /* zr2c's Hermitian fold cut across the pool's workers (a raced plan
    * input at T > 1); a serial fold leaves it unchanged. */
-  long vfft_zr2c_fold_mt_passes(void);
+  VFFT_API long vfft_zr2c_fold_mt_passes(void);
   /* the flat DIT's create-time races (forms, tile): arms whose timed batch
    * was under half the sample target. A property, not an outcome: 0 means
    * every verdict was decided above the clock's tick. */
-  long vfft_ilfd_race_short_samples(void);
+  VFFT_API long vfft_ilfd_race_short_samples(void);
 
   /* And for the plane and volume queues (a contiguous batch, howmany>1):
    * queued (plane-per-worker) executes actually run. Loop-vs-queue is
    * raced at create (VFFT_PQ_NO_MT=1 kills, =0 pins the queue, =2 pins the
    * groups); zero after an execute means the serial plane loop served
    * (which still intra-MTs per the inner plan's own banked verdicts). */
-  long vfft_pq_mt_passes(void);
+  VFFT_API long vfft_pq_mt_passes(void);
   /* The volume queue's GROUPS arm: executes that ran the K volumes as K
    * groups of T / K threads at once (a rank-3 real batch at 2 <= K <= T/2,
    * raced against the loop and the queue at create). */
-  long vfft_pq_grp_passes(void);
+  VFFT_API long vfft_pq_grp_passes(void);
 
   /* Measurement scopes entered by this process (vfft.h, "the measurement
    * scope"): one per vfft_create that raced, one per outermost
    * vfft_measure_begin. A create served from wisdom leaves it unchanged. */
-  long vfft_measure_scopes(void);
+  VFFT_API long vfft_measure_scopes(void);
 
   /* ── THE MEASUREMENT SCOPE'S SETTINGS (moved here from vfft.h with API v2, 2026-10-15) ──
    * vfft_create() measures (races) a cell's candidates whenever wisdom does not serve it and
@@ -150,7 +150,7 @@ extern "C"
   };
   /** @brief Set how this process measures; NULL restores the defaults. Call during setup,
    *         outside any scope. */
-  void vfft_measure_configure(const vfft_measure_config_t *config);
+  VFFT_API void vfft_measure_configure(const vfft_measure_config_t *config);
 
   /** @brief The route a plan committed to, as vfft_info() reports it: a convenience for logs. */
   static inline const char *vfft_plan_route(vfft_plan p)
@@ -184,7 +184,7 @@ extern "C"
    * @return 0, or VFFT_MEASURE_CONTENDED and/or VFFT_MEASURE_UNPINNED:
    *         winners raced in such a scope are served, not saved.
    */
-  int vfft_measure_begin(void);
+  VFFT_API int vfft_measure_begin(void);
 
   /**
    * @brief Leave the scope: the guard ends, the thread's priority and
@@ -194,7 +194,7 @@ extern "C"
    *        calling thread to the core the pool left to it, from its first
    *        fork-join to the end of the call, and puts its affinity back.)
    */
-  void vfft_measure_end(void);
+  VFFT_API void vfft_measure_end(void);
 
   /**
    * @brief Confine the process to a set of logical CPUs, for a threaded
@@ -207,14 +207,14 @@ extern "C"
    * @return The mask applied, 0 when the system refused it. Not undone by
    *         vfft_measure_end().
    */
-  unsigned long long vfft_measure_confine(unsigned long long mask);
+  VFFT_API unsigned long long vfft_measure_confine(unsigned long long mask);
 
   /**
    * @brief One line describing the calling thread's most recent scope: the
    *        pinned CPU, the guard, the priority, the lock.
    * @return buf.
    */
-  const char *vfft_measure_describe(char *buf, size_t n);
+  VFFT_API const char *vfft_measure_describe(char *buf, size_t n);
 
   /**
    * @brief The SIMD level this build was compiled for (a fact for logs; the
@@ -223,7 +223,7 @@ extern "C"
    * @return "avx512", "avx2" or "scalar": a build-time fact, not runtime
    *         detection. Static storage.
    */
-  const char *vfft_isa(void);
+  VFFT_API const char *vfft_isa(void);
 
   /* ── THE WISDOM FACTS (moved here from vfft.h, 2026-10-07): where the
    * library's own store is, what stamps it, and its report. A plan needs
@@ -244,7 +244,7 @@ extern "C"
    *
    * @return The directory. Static storage.
    */
-  const char *vfft_wisdom_folder(void);
+  VFFT_API const char *vfft_wisdom_folder(void);
   /**
    * @brief This CPU's identity, as a store is stamped with it: vendor and
    *        model, the P-core's L1d and L2 and the L3 in bytes, and the
@@ -254,7 +254,7 @@ extern "C"
    * @return "host=... l1d=... l2=... l3=... pcores=... ecores=...".
    *         Static storage.
    */
-  const char *vfft_wisdom_identity(void);
+  VFFT_API const char *vfft_wisdom_identity(void);
   /**
    * @brief This build's id, "<version>-<commit>": the stamp (bld=) every row
    *        this build races is saved with. The commit is the last one that
@@ -262,7 +262,7 @@ extern "C"
    *        from changed ones; a build that knows no commit returns the
    *        version alone. Static storage.
    */
-  const char *vfft_wisdom_build(void);
+  VFFT_API const char *vfft_wisdom_build(void);
   /**
    * @brief Report the library's own store: the folder in use, the identity,
    *        this build's id, and the rows counted by the build that raced
@@ -279,7 +279,7 @@ extern "C"
    *        NULL with n == 0 to size it.
    * @return The length of the whole report, as snprintf() counts it.
    */
-  size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n);
+  VFFT_API size_t vfft_wisdom_report(const char *list_build, char *buf, size_t n);
 
   /**
    * @brief Read a wisdom directory again at the next create that names it.
@@ -292,11 +292,11 @@ extern "C"
    *
    * @return 0, or -1 for a NULL dir.
    */
-  int vfft_wisdom_reread(const char *dir);
+  VFFT_API int vfft_wisdom_reread(const char *dir);
 
   /** @brief The thread pool's size now: its live workers plus the calling thread
    *  (1 before any plan asked for more). The pool only grows; a gate asserts that. */
-  int vfft_pool_threads(void);
+  VFFT_API int vfft_pool_threads(void);
 
 #ifdef __cplusplus
 }

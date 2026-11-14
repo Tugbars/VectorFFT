@@ -24,6 +24,21 @@
 
 #include <stddef.h>
 
+/* VFFT_API marks the functions of the public headers: a shared library (CMake: -DVFFT_BUILD_SHARED=ON) exports
+ * them and nothing else. A program that links the shared library is compiled with VFFT_SHARED, which the CMake
+ * package and the pkg-config file set; with the static archive, VFFT_API is empty. */
+#ifndef VFFT_API
+#if defined(VFFT_SHARED_BUILD) && defined(_WIN32)
+#define VFFT_API __declspec(dllexport)
+#elif defined(VFFT_SHARED_BUILD)
+#define VFFT_API __attribute__((visibility("default")))
+#elif defined(VFFT_SHARED) && defined(_WIN32)
+#define VFFT_API __declspec(dllimport)
+#else
+#define VFFT_API
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -215,7 +230,7 @@ extern "C"
    *
    * @return The plan, or NULL: vfft_error() says why.
    */
-  vfft_plan vfft_create(const vfft_config_t *config);
+  VFFT_API vfft_plan vfft_create(const vfft_config_t *config);
 
   /**
    * @brief Run an INTERLEAVED plan.
@@ -236,7 +251,7 @@ extern "C"
    * serially leaves the thread alone, and a thread whose affinity does not hold
    * that core stays where it is.
    */
-  void vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
+  VFFT_API void vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
 
   /**
    * @brief Run a SPLIT plan: separate re and im planes.
@@ -245,12 +260,12 @@ extern "C"
    * in_re holds the reals, in_im is NULL. C2R: out_re receives the reals,
    * out_im is NULL. An INTERLEAVED plan is refused here.
    */
-  void vfft_execute_split(vfft_plan p, vfft_dir_t dir,
+  VFFT_API void vfft_execute_split(vfft_plan p, vfft_dir_t dir,
                           const double *in_re, const double *in_im,
                           double *out_re, double *out_im);
 
   /** @brief Free a plan and everything it allocated. NULL is accepted. */
-  void vfft_destroy(vfft_plan p);
+  VFFT_API void vfft_destroy(vfft_plan p);
 
   /* ── memory ─────────────────────────────────────────────────────────── */
 
@@ -259,9 +274,9 @@ extern "C"
    *        (vfft_info().alignment bytes). Uninitialised; release with
    *        vfft_free() only. NULL when memory runs out.
    */
-  void *vfft_malloc(size_t bytes);
+  VFFT_API void *vfft_malloc(size_t bytes);
   /** @brief Release a vfft_malloc() block. NULL is accepted. */
-  void vfft_free(void *ptr);
+  VFFT_API void vfft_free(void *ptr);
 
   /* ── facts ──────────────────────────────────────────────────────────── */
 
@@ -287,14 +302,14 @@ extern "C"
    * @brief Fill a plan's facts; with p == NULL, the library's facts only.
    * @return 0, or -1 when out is NULL.
    */
-  int vfft_info(vfft_plan p, vfft_info_t *out);
+  VFFT_API int vfft_info(vfft_plan p, vfft_info_t *out);
 
   /**
    * @brief Why the last vfft_create() or vfft_execute() on this thread was
    *        refused. Static storage, "" when nothing was refused since the
    *        thread's last create.
    */
-  const char *vfft_error(void);
+  VFFT_API const char *vfft_error(void);
 
 #ifdef __cplusplus
 }

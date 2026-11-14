@@ -52,6 +52,10 @@ option(VFFT_NATIVE         "Compile for this machine's CPU (-march=native): the 
 # kernels (codelets/zil/<isa>_f32/...) and ZTURN-T drivers. Off by default: it adds a second core
 # translation unit and the FP32 corpus to the build.
 option(VFFT_ENABLE_FLOAT   "Also build the FP32 library (vfftf_*, include/vfftf.h): 1D C2C power-of-two" OFF)
+# THE SHARED LIBRARY (owner 2026-11-14): libvfft.so on Linux, libvfft.dll with its import library libvfft.dll.a
+# on Windows, in place of the static archive: one kind per build. It exports the functions of the public headers
+# alone (VFFT_API, include/vfft.h). Off by default.
+option(VFFT_BUILD_SHARED   "Build VectorFFT::vfft as a shared library (libvfft.so, libvfft.dll) in place of libvfft.a" OFF)
 
 # A subproject never sets its parent's (cache-wide) build type.
 if(VFFT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -489,6 +493,9 @@ message(STATUS "  runtime source:  ${DAG_CORE}/vfft.c  (the ONE non-header .c in
 add_library(dagcodelets OBJECT ${VFFT_CODELET_SRCS})
 target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
 target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
+if(VFFT_BUILD_SHARED)   # they go into the shared library: position-independent, and none of them exported
+    set_target_properties(dagcodelets PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+endif()
 
 # ── THE KERNELS' STACK ALIGNMENT (Windows, GCC and icx; 2026-10-29) ──
 # Win64 guarantees a 16-byte aligned stack and GCC cannot realign one under SEH, so a codelet that spills a vector
@@ -587,24 +594,50 @@ set(VFFT_CORE_SRCS "${DAG_CORE}/vfft.c")
 if(VFFT_ENABLE_FLOAT)
     list(APPEND VFFT_CORE_SRCS "${DAG_CORE}/vfftf.c")   # the FP32 unit (vfftf_*)
 endif()
-add_library(vectorfft_vfft STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)
+# The static build: the archive libvfft.a is the library. The shared build: the same objects go into an archive
+# of their own first (vectorfft_vfft_objs: the kernel stack alignment rewrites an archive, never a DLL), and the
+# shared library is linked from the whole of it, exporting the public functions alone (VFFT_API).
+if(VFFT_BUILD_SHARED)
+    if(VFFT_MSVC_STYLE)
+        message(FATAL_ERROR "VFFT_BUILD_SHARED needs GCC or Clang with a GNU-style command line")
+    endif()
+    set(_vfft_lib vectorfft_vfft_objs)
+    add_library(vectorfft_vfft_objs STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)
+    set_target_properties(vectorfft_vfft_objs PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+    file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/vfft_shared_unit.c"
+         CONTENT "/* the shared library's own unit: its code is the archive vectorfft_vfft_objs */\n")
+    add_library(vectorfft_vfft SHARED "${PROJECT_BINARY_DIR}/vfft_shared_unit.c")
+    target_link_libraries(vectorfft_vfft PRIVATE -Wl,--whole-archive vectorfft_vfft_objs -Wl,--no-whole-archive)
+    target_compile_definitions(vectorfft_vfft INTERFACE VFFT_SHARED)   # a program that links it: dllimport (VFFT_API)
+    set_target_properties(vectorfft_vfft PROPERTIES VERSION ${PROJECT_VERSION}
+                          SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+    if(WIN32)
+        target_link_options(vectorfft_vfft PRIVATE -static)   # libgcc and winpthread inside: the DLL needs Windows' own DLLs alone
+    endif()
+else()
+    set(_vfft_lib vectorfft_vfft)
+    add_library(vectorfft_vfft STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)
+endif()
 add_library(VectorFFT::vfft ALIAS vectorfft_vfft)
 # a target name of its own (a consumer may own a target called vfft); the file is
-# libvfft.a and the exported name VectorFFT::vfft
+# libvfft.a (libvfft.so, libvfft.dll) and the exported name VectorFFT::vfft
 set_target_properties(vectorfft_vfft PROPERTIES OUTPUT_NAME vfft EXPORT_NAME vfft)
 target_include_directories(vectorfft_vfft
     PUBLIC  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
-            "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
-    PRIVATE ${VFFT_INCLUDE_DIRS})
-target_compile_options(vectorfft_vfft PRIVATE ${VFFT_C_FLAGS})
-target_compile_definitions(vectorfft_vfft PRIVATE ${VFFT_STAMP_DEFS} _CRT_SECURE_NO_WARNINGS
+            "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+target_include_directories(${_vfft_lib} PRIVATE ${VFFT_INCLUDE_DIRS})
+target_compile_options(${_vfft_lib} PRIVATE ${VFFT_C_FLAGS})
+target_compile_definitions(${_vfft_lib} PRIVATE ${VFFT_STAMP_DEFS} _CRT_SECURE_NO_WARNINGS
     "VFFT_WISDOM_DIR_DEFAULT=\"${VFFT_LIB_STORE}\""
     "VFFT_FROZEN_WISDOM_DIR=\"${VFFT_LIB_FROZEN}\"")
+if(VFFT_BUILD_SHARED)
+    target_compile_definitions(${_vfft_lib} PRIVATE VFFT_SHARED_BUILD)   # VFFT_API exports
+endif()
 target_link_libraries(vectorfft_vfft PRIVATE Threads::Threads)   # a static archive exports these as $<LINK_ONLY:>
 if(NOT VFFT_MSVC_STYLE)
     target_link_libraries(vectorfft_vfft PRIVATE m)
 endif()
-vfft_align_kernel_stacks(vectorfft_vfft)   # before the last word below: POST_BUILD steps run in this order
+vfft_align_kernel_stacks(${_vfft_lib})   # before the last word below: POST_BUILD steps run in this order
 # the build's last word on the library: what was compiled, for which CPU
 add_custom_command(TARGET vectorfft_vfft POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "VectorFFT: built $<TARGET_FILE_NAME:vectorfft_vfft> -- codelet ISA ${VFFT_ISA} (${_ncodelets} codelets, ${VFFT_ISA_FLAGS_TXT}), for ${VFFT_TARGET_TXT}"
@@ -614,9 +647,9 @@ add_custom_command(TARGET vectorfft_vfft POST_BUILD
 # vfft.c on three default warnings, its -ffast-math would change the library's
 # rounding. Both are undone after them. Nothing here applies at the top level.
 if(NOT VFFT_IS_TOP_LEVEL AND NOT VFFT_MSVC_STYLE)
-    target_compile_options(vectorfft_vfft PRIVATE -Wno-error -fno-fast-math)
+    target_compile_options(${_vfft_lib} PRIVATE -Wno-error -fno-fast-math)
     target_compile_options(dagcodelets PRIVATE -fno-fast-math)
-    set_target_properties(vectorfft_vfft PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+    set_target_properties(${_vfft_lib} PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
 endif()
 
 # ── Install: the archive, the headers, the package, pkg-config, the store ────
@@ -644,7 +677,8 @@ if(VFFT_INSTALL)
     set(VFFT_CMAKE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/VectorFFT")
     set(VFFT_DATA_DIR  "${CMAKE_INSTALL_DATADIR}/vectorfft")   # relative: VectorFFT_DATA_DIR follows the files
 
-    install(TARGETS vectorfft_vfft EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(TARGETS vectorfft_vfft EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES "${PROJECT_SOURCE_DIR}/include/vfft.h" "${PROJECT_SOURCE_DIR}/include/vfft_diagnostics.h"
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     if(VFFT_ENABLE_FLOAT)
@@ -652,10 +686,19 @@ if(VFFT_INSTALL)
     endif()
 
     # pkg-config: the prefix relative to the .pc file's own folder; the system
-    # libraries go in Libs, as the library is a static archive only
+    # libraries go in Libs for the static archive, in Libs.private for the shared library
     file(RELATIVE_PATH VFFT_PC_RELPREFIX "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig" "${CMAKE_INSTALL_PREFIX}")
     string(REGEX REPLACE "/$" "" VFFT_PC_RELPREFIX "${VFFT_PC_RELPREFIX}")
     string(STRIP "${CMAKE_THREAD_LIBS_INIT} -lm" VFFT_PC_SYSLIBS)
+    if(VFFT_BUILD_SHARED)
+        set(VFFT_PC_CFLAGS " -DVFFT_SHARED")
+        set(VFFT_PC_LIBS "")
+        set(VFFT_PC_LIBS_PRIVATE "${VFFT_PC_SYSLIBS}")
+    else()
+        set(VFFT_PC_CFLAGS "")
+        set(VFFT_PC_LIBS " ${VFFT_PC_SYSLIBS}")
+        set(VFFT_PC_LIBS_PRIVATE "")
+    endif()
     file(CONFIGURE OUTPUT "${PROJECT_BINARY_DIR}/vectorfft.pc" @ONLY CONTENT [==[
 prefix=${pcfiledir}/@VFFT_PC_RELPREFIX@
 exec_prefix=${prefix}
@@ -666,8 +709,9 @@ datadir=${prefix}/@CMAKE_INSTALL_DATADIR@/vectorfft
 Name: VectorFFT
 Description: VectorFFT, an FFT library; built for the build machine's CPU unless configured with VFFT_NATIVE=OFF (then any CPU with AVX2 and FMA)
 Version: @PROJECT_VERSION@
-Cflags: -I${includedir}
-Libs: -L${libdir} -lvfft @VFFT_PC_SYSLIBS@
+Cflags: -I${includedir}@VFFT_PC_CFLAGS@
+Libs: -L${libdir} -lvfft@VFFT_PC_LIBS@
+Libs.private: @VFFT_PC_LIBS_PRIVATE@
 ]==])
     install(FILES "${PROJECT_BINARY_DIR}/vectorfft.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
@@ -682,10 +726,11 @@ Libs: -L${libdir} -lvfft @VFFT_PC_SYSLIBS@
 #   find_package(VectorFFT CONFIG REQUIRED)            VectorFFT::vfft  (#include <vfft.h>)
 #   target_link_libraries(app PRIVATE VectorFFT::vfft)
 #
-# VectorFFT::vfft is a static archive built for the CPU of the machine that built it
+# VectorFFT::vfft is a static archive (a shared library when configured with
+# VFFT_BUILD_SHARED=ON) built for the CPU of the machine that built it
 # (-march=native) unless it was configured with VFFT_NATIVE=OFF, which builds it for
 # any CPU with AVX2 and FMA (AVX-512 for an avx512 build). VectorFFT_DATA_DIR is the
-# installed data: wisdom/ (the shipped store, one folder per CPU) and frozen/.
+# installed data: wisdom/ (the shipped store, one folder per CPU).
 
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)   # the static archive links Threads::Threads ($<LINK_ONLY:...>)

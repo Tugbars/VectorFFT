@@ -38,23 +38,23 @@ extern "C"
    * @brief Commit a configuration to one FP32 plan (vfft_create's contract,
    *        for float data). @return The plan, or NULL: vfft_error() says why.
    */
-  vfftf_plan vfftf_create(const vfft_config_t *config);
+  VFFT_API vfftf_plan vfftf_create(const vfft_config_t *config);
 
   /**
    * @brief Run an FP32 plan: in and out are complex float pairs; in place,
    *        out == in. Safe to call concurrently on different plans.
    */
-  void vfftf_execute(vfftf_plan p, vfft_dir_t dir, const void *in, void *out);
+  VFFT_API void vfftf_execute(vfftf_plan p, vfft_dir_t dir, const void *in, void *out);
 
   /** @brief Free an FP32 plan and everything it allocated. NULL is accepted. */
-  void vfftf_destroy(vfftf_plan p);
+  VFFT_API void vfftf_destroy(vfftf_plan p);
 
   /**
    * @brief Fill an FP32 plan's facts; with p == NULL, the library's facts.
    *        The in_doubles and out_doubles fields count FLOATS for an FP32 plan.
    * @return 0, or -1 when out is NULL.
    */
-  int vfftf_info(vfftf_plan p, vfft_info_t *out);
+  VFFT_API int vfftf_info(vfftf_plan p, vfft_info_t *out);
 
 #ifdef __cplusplus
 }
