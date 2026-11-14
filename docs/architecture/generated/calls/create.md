@@ -78,12 +78,19 @@ flowchart LR
         n_fn_vfft_policy_pq_groups_ok["vfft_policy_pq_groups_ok +1<br/>policy_il.h"]
     end
     subgraph n_f_il_real["il/real"]
-        n_fn__dst_child["_dst_child +7<br/>dst.h"]
+        n_fn__dct1_role_run["_dct1_role_run +2<br/>dct1_dst1.h"]
+        n_fn__dst1_role_run["_dst1_role_run +2<br/>dct1_dst1.h"]
+        n_fn__dst_child["_dst_child +2<br/>dst.h"]
+        n_fn__k1x_dct1["_k1x_dct1 +1<br/>dct1_dst1.h"]
         n_fn__k1x_dst["_k1x_dst +2<br/>dst.h"]
+        n_fn__k1x_dst1["_k1x_dst1 +1<br/>dct1_dst1.h"]
         n_fn__k1x_dst2["_k1x_dst2 +1<br/>dst.h"]
         n_fn__k1x_dst3["_k1x_dst3 +1<br/>dst.h"]
+        n_fn__real_child_create["_real_child_create +5<br/>real_child.h"]
         n_fn__vfft_create_dst_il["_vfft_create_dst_il<br/>dst.h"]
+        n_fn__vfft_create_type1_il["_vfft_create_type1_il<br/>dct1_dst1.h"]
         n_fn__vfft_dst_destroy["_vfft_dst_destroy<br/>dst.h"]
+        n_fn__vfft_type1_destroy["_vfft_type1_destroy<br/>dct1_dst1.h"]
     end
     n_fn__vfft_api_translate --> n_fn__vfft_store_for_dir
     n_fn__vfft_create_dst_il --> n_fn__dst_child
@@ -98,6 +105,7 @@ flowchart LR
     n_fn__vfft_create_estimate --> n_fn__vfft_create_estimate_nd
     n_fn__vfft_create_estimate --> n_fn__vfft_create_estimate_real
     n_fn__vfft_create_estimate --> n_fn__vfft_create_estimate_real_nd
+    n_fn__vfft_create_estimate --> n_fn__vfft_create_type1_il
     n_fn__vfft_create_estimate --> n_fn_est_build_c2c
     n_fn__vfft_create_estimate --> n_fn_est_env_steers
     n_fn__vfft_create_estimate --> n_fn_est_plan_1d
@@ -128,6 +136,12 @@ flowchart LR
     n_fn__vfft_create_estimate_real_nd --> n_fn_est_plan_2d_real
     n_fn__vfft_create_estimate_real_nd --> n_fn_est_plan_3d_real
     n_fn__vfft_create_estimate_real_nd --> n_fn_vfft_policy_pq_groups_ok
+    n_fn__vfft_create_type1_il -.-> n_fn__dct1_role_run
+    n_fn__vfft_create_type1_il -.-> n_fn__dst1_role_run
+    n_fn__vfft_create_type1_il -.-> n_fn__k1x_dct1
+    n_fn__vfft_create_type1_il -.-> n_fn__k1x_dst1
+    n_fn__vfft_create_type1_il --> n_fn__real_child_create
+    n_fn__vfft_create_type1_il --> n_fn__vfft_type1_destroy
     n_fn__vfft_k1_go_mt --> n_fn_thread_pool_caller_arm
     n_fn__vfft_k1_go_mt --> n_fn_thread_pool_caller_release
     n_fn__vfft_store_for_dir --> n_fn__vfft_wisdom_load

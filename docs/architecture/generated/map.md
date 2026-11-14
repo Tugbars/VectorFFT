@@ -42,7 +42,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - includes: common/vfft_prec.h
   - external: vfft.h
   - included by: common/plan/vfft_internal.h, common/policy/policy_order.h, vfft.c
-- **common/plan/vfft_internal.h** (627 lines): the three private handle types.
+- **common/plan/vfft_internal.h** (632 lines): the three private handle types.
   - includes: common/vfft_prec.h, common/support/zalloc.h, common/plan/vfft_cfg.h
   - included by: il/rank1/k1_commit.h, il/rank2/il2d_tier.h, il/rank2/plane_queue.h, il/real/real_role.h, il/real/zr2c_build.h, il/real/zrp_build.h, il/wisdom/wisdom2_child.h, vfft.c, vfft_execute.h
 ### common/policy
@@ -97,7 +97,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: common/abi/codelet_abi.h, common/plan/vfft_cfg.h, common/plan/vfft_internal.h, il/il_execute.h, il/isa/avx512/vtw_avx512.h, il/isa/il_isa.h, il/planning/dp_planner_il.h, il/rank1/il2p.h, il/rank1/k1_commit.h, il/rank1/ztt.h, il/rank1/ztt_mt.h
 ### common/wisdom
 
-- **common/wisdom/wisdom2.h** (1760 lines): THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).
+- **common/wisdom/wisdom2.h** (1761 lines): THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).
   - included by: common/wisdom/wisdom2_folders.h, common/wisdom/wisdom2_oop_rows.h, common/wisdom/wisdom2_rank_rows.h, common/wisdom/wisdom2_selftest.h, common/wisdom/wisdom2_tcmt.h, il/wisdom/wisdom2_2d_il_reader.h, il/wisdom/wisdom2_child.h, il/wisdom/wisdom2_real_il.h, split/wisdom/wisdom2_zts_split.h
 - **common/wisdom/wisdom2_folders.h** (168 lines): ONE CPU, ONE FOLDER: which folder of a store root is this CPU's.
   - includes: common/wisdom/wisdom2.h
@@ -150,7 +150,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: split/split_create.h
 ### split
 
-- **split/split_create.h** (56 lines): the SPLIT create: the split side of vfft_create's one fork.
+- **split/split_create.h** (57 lines): the SPLIT create: the split side of vfft_create's one fork.
   - includes: split/rank1/c2c_create_split.h, split/rankn/c2c_nd_create_split.h
   - included by: vfft.c
 - **split/split_execute.h** (282 lines): the SPLIT execute: the split side of vfft_execute's one fork.
@@ -165,7 +165,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 
 ### il/estimate
 
-- **il/estimate/c2c_estimate_il.h** (833 lines): the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with nothing measu...
+- **il/estimate/c2c_estimate_il.h** (841 lines): the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with nothing measu...
   - includes: il/estimate/estimate_il.h, il/estimate/c2c_estimate_nd_il.h, il/estimate/c2c_estimate_lm_il.h, il/estimate/real_estimate_il.h, il/estimate/real_estimate_nd_il.h, il/estimate/real_estimate_lm_il.h
   - included by: vfft_api.h
 - **il/estimate/c2c_estimate_lm_il.h** (437 lines): the ESTIMATE create of a LANE-MAJOR c2c batch (VFFT_FLAG_ESTIMATE with VFFT_BATCH_LANE_MAJOR, howmany = K >= 2) at rank 1, 2 and 3: the batch's rows written from the formulas an...
@@ -307,16 +307,22 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: vfft.c
 ### il/real
 
-- **il/real/dst.h** (507 lines): DST-II and DST-III (VFFT_DST2, VFFT_DST3): 1D, N reals in and N reals out, any N, one transform, on the interleaved real FFT of the same length.
-  - includes: common/math/tw_exact.h, il/real/real_role.h, il/wisdom/wisdom2_real_il.h, il/wisdom/wisdom2_child.h
+- **il/real/dct1_dst1.h** (350 lines): DCT-I and DST-I (VFFT_DCT1, VFFT_DST1): 1D, N reals in and N reals out, any N, one transform, on the interleaved real FFT of the input extended to twice its length.
+  - includes: il/real/real_child.h
+  - included by: vfft.c
+- **il/real/dst.h** (460 lines): DST-II and DST-III (VFFT_DST2, VFFT_DST3): 1D, N reals in and N reals out, any N, one transform, on the interleaved real FFT of the same length.
+  - includes: common/math/tw_exact.h, il/real/real_child.h
   - included by: vfft.c
 - **il/real/odd_build.h** (763 lines): the real door's ODD-N engine pick (K=1, INTERLEAVED, both placements): env pin, the banked engine, or THE ODD REAL RACE.
   - included by: vfft.c
+- **il/real/real_child.h** (99 lines): THE REAL FFT INSIDE A REAL-TO-REAL PLAN, CREATED AS A CHILD IN ROLE (owner, 2026-11-14).
+  - includes: il/real/real_role.h, il/wisdom/wisdom2_real_il.h, il/wisdom/wisdom2_child.h
+  - included by: il/real/dct1_dst1.h, il/real/dst.h
 - **il/real/real_create_il.h** (461 lines): the r2c / c2r CREATE, interleaved tier.
   - included by: vfft.c
-- **il/real/real_role.h** (49 lines): THE ROLE OF THE REAL DOOR'S RACES (owner, 2026-11-14: "the OOO engine makes everything non predictable").
+- **il/real/real_role.h** (51 lines): THE ROLE OF THE REAL DOOR'S RACES (owner, 2026-11-14: "the OOO engine makes everything non predictable").
   - includes: common/plan/vfft_internal.h
-  - included by: il/real/dst.h, il/real/zr2c_build.h
+  - included by: il/real/real_child.h, il/real/zr2c_build.h
 - **il/real/zfsr.h** (427 lines): the real FOUR-STEP: the 1D real transform above ZTT-r's band on the 1D c2c four-step's recipe (il/rank1/k1_fourstep.h), the Hermitian fold acting on the mirror pairs through the...
   - includes: il/rank1/k1_fourstep.h, common/math/tw_exact.h, il/real/zfsr_avx512.h
   - included by: il/real/zrp_build.h
@@ -365,15 +371,15 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **il/wisdom/wisdom2_2d_il_reader.h** (731 lines): the INTERLEAVED rank>=2 cell codec: the lay=il rows of the native IL 2D tier (column chains, forms, axis races), the IL 2D real rows and the rank-3 IL (ilnd) tokens.
   - includes: common/wisdom/wisdom2.h, common/wisdom/wisdom2_rank_rows.h
   - included by: il/rank2/il2d_tier.h, vfft.c
-- **il/wisdom/wisdom2_child.h** (235 lines): A CHILD PLAN IN ROLE (owner, 2026-10-02; the 2D and 3D tiers 2026-10-05).
+- **il/wisdom/wisdom2_child.h** (236 lines): A CHILD PLAN IN ROLE (owner, 2026-10-02; the 2D and 3D tiers 2026-10-05).
   - includes: common/wisdom/wisdom2.h, common/plan/vfft_internal.h
-  - included by: il/rank1/k1_fourstep.h, il/rank2/il2d_tier.h, il/real/dst.h
+  - included by: il/rank1/k1_fourstep.h, il/rank2/il2d_tier.h, il/real/real_child.h
 - **il/wisdom/wisdom2_oop_il.h** (761 lines): the INTERLEAVED library's OOP-family wisdom: its K=1 record and codec.
   - includes: common/wisdom/wisdom2_oop_rows.h, common/wisdom/wisdom2_oop_legacy.h, common/abi/route_ids.h
   - included by: il/planning/dp_planner_il.h, il/rank1/k1_commit.h, il/wisdom/wisdom2_real_il.h, wisdom2/wisdom2_oop.h
-- **il/wisdom/wisdom2_real_il.h** (760 lines): the interleaved 1D real cell's ENGINE verdict.
+- **il/wisdom/wisdom2_real_il.h** (767 lines): the interleaved 1D real cell's ENGINE verdict.
   - includes: common/wisdom/wisdom2.h, common/wisdom/wisdom2_oop_rows.h, il/wisdom/wisdom2_oop_il.h
-  - included by: il/real/dst.h, il/real/zr2c_build.h, il/real/zrp_build.h
+  - included by: il/real/real_child.h, il/real/zr2c_build.h, il/real/zrp_build.h
 
 ## wisdom2: the front door's wisdom include: the frozen legacy format and the interleaved record
 
@@ -387,14 +393,14 @@ includes (codelet registries, generated headers, the public API) are listed as s
 
 ### (core)
 
-- **vfft.c** (2110 lines): the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss at the chosen rigor -> build -> execute.
-  - includes: common/plan/vfft_cfg.h, common/support/env.h, common/support/threads.h, common/support/race_scope.h, wisdom2/wisdom2_oop.h, il/wisdom/wisdom2_2d_il_reader.h, common/support/diag.h, common/support/race_timing.h, common/support/race.h, common/support/cpu_cache.h, common/support/cpu_identity.h, common/wisdom/wisdom2_folders.h, il/rank1/il2p.h, il/real/zrp.h, il/rank2/il2d_col.h, il/rank1/ztt.h, il/real/zttr.h, il/real/zrm.h, il/rank1/il_flatdit.h, il/rank1/il_prime.h, il/real/zrf.h, il/real/zrb.h, il/rank1/il_flatdit_mt.h, il/rank1/ztt_mt.h, il/real/zttr_mt.h, il/real/zrf_mt.h, il/rank1/il_prime_mt.h, il/real/zrb_mt.h, il/rank1/il_flatdit_race.h, split/rank1/zts.h, split/wisdom/wisdom2_zts_split.h, split/rank1/zts_race.h, split/rank1/zts_bluestein.h, split/rank1/zts_mt.h, split/rank1/zts_blu_mt.h, il/real/zr2c.h, il/rank2/fft2d_real_il.h, common/plan/vfft_internal.h, il/rank1/k1_fourstep_band.h, il/planning/policy_il.h, il/rank1/k1_fourstep.h, il/rank2/il2d_cols.h, il/real/zrb_lanes.h, il/rank1/il_rader_stage.h, il/rank2/il2d_tier.h, il/planning/dp_planner_il.h, il/rank1/k1_commit.h, il/real/zr2c_build.h, il/real/zrp_build.h, il/real/odd_build.h, il/rank2/il2d_real_plan.h, il/rank2/il2d_real_axis.h, il/rank2/il2d_real_fuse.h, il/rank2/il2d_real_pitch.h, il/rank3/fftnd_il.h, il/rank3/fftnd_real_il.h, split/split_create.h, il/rank1/lm_batch_il.h, il/rank2/lm_batch2d_il.h, il/rank2/lm_batch2dr_il.h, il/rank3/lm_batch3d_il.h, il/rank3/lm_batch3dr_il.h, il/il_create.h, il/real/real_create_il.h, il/real/dst.h, il/rank2/plane_queue.h, vfft_execute.h, vfft_api.h, vfft_memory.h, vfft_measure.h, vfft_fingerprint.h
+- **vfft.c** (2116 lines): the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss at the chosen rigor -> build -> execute.
+  - includes: common/plan/vfft_cfg.h, common/support/env.h, common/support/threads.h, common/support/race_scope.h, wisdom2/wisdom2_oop.h, il/wisdom/wisdom2_2d_il_reader.h, common/support/diag.h, common/support/race_timing.h, common/support/race.h, common/support/cpu_cache.h, common/support/cpu_identity.h, common/wisdom/wisdom2_folders.h, il/rank1/il2p.h, il/real/zrp.h, il/rank2/il2d_col.h, il/rank1/ztt.h, il/real/zttr.h, il/real/zrm.h, il/rank1/il_flatdit.h, il/rank1/il_prime.h, il/real/zrf.h, il/real/zrb.h, il/rank1/il_flatdit_mt.h, il/rank1/ztt_mt.h, il/real/zttr_mt.h, il/real/zrf_mt.h, il/rank1/il_prime_mt.h, il/real/zrb_mt.h, il/rank1/il_flatdit_race.h, split/rank1/zts.h, split/wisdom/wisdom2_zts_split.h, split/rank1/zts_race.h, split/rank1/zts_bluestein.h, split/rank1/zts_mt.h, split/rank1/zts_blu_mt.h, il/real/zr2c.h, il/rank2/fft2d_real_il.h, common/plan/vfft_internal.h, il/rank1/k1_fourstep_band.h, il/planning/policy_il.h, il/rank1/k1_fourstep.h, il/rank2/il2d_cols.h, il/real/zrb_lanes.h, il/rank1/il_rader_stage.h, il/rank2/il2d_tier.h, il/planning/dp_planner_il.h, il/rank1/k1_commit.h, il/real/zr2c_build.h, il/real/zrp_build.h, il/real/odd_build.h, il/rank2/il2d_real_plan.h, il/rank2/il2d_real_axis.h, il/rank2/il2d_real_fuse.h, il/rank2/il2d_real_pitch.h, il/rank3/fftnd_il.h, il/rank3/fftnd_real_il.h, split/split_create.h, il/rank1/lm_batch_il.h, il/rank2/lm_batch2d_il.h, il/rank2/lm_batch2dr_il.h, il/rank3/lm_batch3d_il.h, il/rank3/lm_batch3dr_il.h, il/il_create.h, il/real/real_create_il.h, il/real/dst.h, il/real/dct1_dst1.h, il/rank2/plane_queue.h, vfft_execute.h, vfft_api.h, vfft_memory.h, vfft_measure.h, vfft_fingerprint.h
   - external: vfft.h, vfft_diagnostics.h, vfft_build_id.h
   - included by: vfftf.c
 - **vfft_api.h** (471 lines): THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).
   - includes: il/estimate/c2c_estimate_il.h
   - included by: vfft.c
-- **vfft_execute.h** (545 lines): THE execute entry point.
+- **vfft_execute.h** (547 lines): THE execute entry point.
   - includes: common/plan/vfft_internal.h, il/il_execute.h, split/split_execute.h
   - included by: vfft.c
 - **vfft_fingerprint.h** (84 lines): the create-time PLAN FINGERPRINT.

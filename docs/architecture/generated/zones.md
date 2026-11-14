@@ -12,7 +12,7 @@ may include anything.
 flowchart TD
     n_common["common (36 files)<br/>shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct"]
     n_split["split (11 files)<br/>the SPLIT library (separate re[] / im[] planes)"]
-    n_il["il (73 files)<br/>the INTERLEAVED library (z[] of (re, im) pairs)"]
+    n_il["il (75 files)<br/>the INTERLEAVED library (z[] of (re, im) pairs)"]
     n_wisdom2["wisdom2 (1 files)<br/>the front door's wisdom include: the frozen legacy format and the interleaved record"]
     n_front["front (8 files)<br/>the public front door: vfft.c and its helpers"]
     n_split -->|11| n_common
@@ -21,7 +21,7 @@ flowchart TD
     n_wisdom2 -->|1| n_il
     n_front -->|12| n_common
     n_front -->|8| n_split
-    n_front -->|49| n_il
+    n_front -->|50| n_il
     n_front -->|1| n_wisdom2
 ```
 
