@@ -1,0 +1,49 @@
+2026-11-14 05:14:15 run: 25 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 05:14:15 calibrate: 25 cells (0 already done)
+2026-11-14 05:49:31 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 05:49:31 calibrate: 0 cells (23 already done)
+2026-11-14 05:49:31 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 05:50:35   benched 23/23 (262145), 62 s elapsed
+2026-11-14 05:50:37 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dct1.md
+2026-11-14 05:50:38 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 05:50:38 calibrate: 23 cells (0 already done)
+2026-11-14 06:17:25   calibrated 23/23 (262145), 1607 s elapsed
+2026-11-14 06:17:25 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 06:18:34   benched 23/23 (262145), 65 s elapsed
+2026-11-14 06:18:37 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dst1.md
+2026-11-14 06:18:37 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:18:37 calibrate: 23 cells (0 already done)
+2026-11-14 06:18:44   calibrated 23/23 (262145), 6 s elapsed
+2026-11-14 06:18:44 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 06:20:49   benched 23/23 (262145), 122 s elapsed
+2026-11-14 06:20:51 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dct1_fftw.md
+2026-11-14 06:20:51 run: 23 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:20:51 calibrate: 23 cells (0 already done)
+2026-11-14 06:20:58   calibrated 23/23 (262145), 6 s elapsed
+2026-11-14 06:20:58 bench: 23 cells (0 already benched, 0 not banked -> not benched)
+2026-11-14 06:22:57   benched 23/23 (262145), 114 s elapsed
+2026-11-14 06:23:01 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dst1_fftw.md
+2026-11-14 06:23:02 run: 24 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:23:02 calibrate: 1 cells (23 already done)
+2026-11-14 06:26:17   calibrated 1/1 (1048577), 196 s elapsed
+2026-11-14 06:26:17 bench: 1 cells (23 already benched, 0 not banked -> not benched)
+2026-11-14 06:26:23   benched 1/1 (1048577), 4 s elapsed
+2026-11-14 06:26:25 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dct1.md
+2026-11-14 06:26:25 run: 24 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:26:25 calibrate: 1 cells (23 already done)
+2026-11-14 06:29:41   calibrated 1/1 (1048575), 196 s elapsed
+2026-11-14 06:29:41 bench: 1 cells (23 already benched, 0 not banked -> not benched)
+2026-11-14 06:29:48   benched 1/1 (1048575), 3 s elapsed
+2026-11-14 06:29:52 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dst1.md
+2026-11-14 06:29:52 run: 24 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:29:52 calibrate: 1 cells (23 already done)
+2026-11-14 06:29:52   calibrated 1/1 (1048577), 0 s elapsed
+2026-11-14 06:29:52 bench: 1 cells (23 already benched, 0 not banked -> not benched)
+2026-11-14 06:30:21   benched 1/1 (1048577), 26 s elapsed
+2026-11-14 06:30:23 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dct1_fftw.md
+2026-11-14 06:30:23 run: 24 cells, contract out of place, bin C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet
+2026-11-14 06:30:23 calibrate: 1 cells (23 already done)
+2026-11-14 06:30:24   calibrated 1/1 (1048575), 0 s elapsed
+2026-11-14 06:30:24 bench: 1 cells (23 already benched, 0 not banked -> not benched)
+2026-11-14 06:30:54   benched 1/1 (1048575), 25 s elapsed
+2026-11-14 06:30:58 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\dct1_dst1_1d_2026-11-14\report_dst1_fftw.md
