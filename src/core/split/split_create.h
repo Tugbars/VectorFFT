@@ -38,8 +38,8 @@ static vfft_plan _vfft_split_create(const vfft_cfg_t *cfg,
         return _vfft_create_c2c_nd_split(cfg, W, K);
     if (_VFFT_IS_TRIG(cfg->transform))
     {
-        _vfft_warn("vfft_create: %s N=%d is not served: the real-to-real transforms were "
-                   "retired with the split stride engine (v1.0 serves C2C, R2C and C2R)",
+        _vfft_warn("vfft_create: %s N=%d is not served: of the real-to-real transforms this version "
+                   "serves VFFT_DST2 and VFFT_DST3 (the others were retired with the split stride engine)",
                    _vfft_tname(cfg->transform), N);
         return NULL;
     }

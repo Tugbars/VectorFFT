@@ -44,8 +44,14 @@ extern "C"
    * At rank 2 and above the data is row-major, the last axis contiguous, and
    * the real transforms halve the last axis (N_last/2 + 1 bins).
    *
-   * Real-to-real (NOT SERVED in this version: vfft_create refuses them, the
-   * enums stay for the contract), 1D only, N reals in and out, unnormalized:
+   * Real-to-real, 1D only, N reals in and out, unnormalized. SERVED: VFFT_DST2
+   * and VFFT_DST3, any N of 1 or more, one transform per plan (howmany = 1),
+   * either placement, any nthreads:
+   * - VFFT_DST2: Y[k] = 2 sum x[n] sin(pi (k+1)(2n+1) / 2N); inverse DST-III, scale 2N.
+   * - VFFT_DST3: Y[k] = (-1)^k X[N-1] + 2 sum_{n<=N-2} X[n] sin(pi (n+1)(2k+1) / 2N);
+   *   inverse DST-II, scale 2N.
+   * NOT SERVED in this version (vfft_create refuses them, the enums stay for
+   * the contract):
    * - VFFT_DCT1: Y[k] = x[0] + (-1)^k x[N-1] + 2 sum_{n=1..N-2} x[n] cos(pi n k / (N-1));
    *   self-inverse, scale 2(N-1).
    * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); inverse DCT-III, scale 2N. Even N.
@@ -53,9 +59,6 @@ extern "C"
    *   scale 2N. Even N.
    * - VFFT_DCT4: Y[k] = 2 sum x[n] cos(pi (2k+1)(2n+1) / 4N); self-inverse, scale 2N. Even N.
    * - VFFT_DST1: Y[k] = 2 sum x[n] sin(pi (n+1)(k+1) / (N+1)); self-inverse, scale 2(N+1).
-   * - VFFT_DST2: Y[k] = 2 sum x[n] sin(pi (k+1)(2n+1) / 2N); inverse DST-III, scale 2N. Even N.
-   * - VFFT_DST3: Y[k] = (-1)^k X[N-1] + 2 sum_{n<=N-2} X[n] sin(pi (n+1)(2k+1) / 2N);
-   *   inverse DST-II, scale 2N. Even N.
    * - VFFT_DHT: H[k] = sum x[n] (cos(2 pi n k / N) + sin(2 pi n k / N)); self-inverse, scale N.
    * VFFT_BACKWARD runs the inverse named above. Real-to-real plans take no
    * layout, order or batch geometry: those fields are ignored for them.
@@ -155,7 +158,8 @@ extern "C"
                                             rank 1, 2 or 3 in natural order (at rank 2 and
                                             3 not with VFFT_FLAG_OWN_PITCH). One transform
                                             or a batch of them (howmany > 1), contiguous or
-                                            lane-major.
+                                            lane-major. VFFT_DST2 and VFFT_DST3: the real
+                                            transforms inside them planned this way.
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or
                                             VFFT_FLAG_RECALIBRATE, and while an environment

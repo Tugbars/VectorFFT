@@ -69,6 +69,22 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, vfft_real *sre,
 {
     const int il = (h->layout == (int)VFI_LAYOUT_IL);
     const char *tn = _vfft_tname(h->transform);
+    if (h->dst)
+    {   /* DST-II / DST-III (il/real/dst.h): N reals in, N reals out, either direction; out may be in */
+        if (sim || dim)
+        {
+            _vfft_warn("vfft_execute: a %s plan takes N reals in `in` and gives N reals in `out`; in_im and "
+                       "out_im must be NULL -- nothing executed", tn);
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: a %s plan needs in and out non-NULL (N reals each; out may equal in) "
+                       "-- nothing executed", tn);
+            return 1;
+        }
+        return 0;
+    }
     if (h->transform == VFFT_R2C)
     {
         if (dir != VFFT_FORWARD)
@@ -517,6 +533,9 @@ void vfft_destroy(vfft_plan h)
     vfft_zrf_destroy(h->zrf);       /* the real flat DIT (il/real/zrf.h) */
     vfft_zrb_destroy(h->zrb);       /* the real Bluestein (il/real/zrb.h) */
     vfft_zrbl_destroy(h->zrbl);     /* the lane Bluestein (il/real/zrb_lanes.h) */
+#ifndef VFFT_FLOAT
+    _vfft_dst_destroy(h->dst);      /* DST-II / DST-III: its two real FFTs, tables and buffers (il/real/dst.h) */
+#endif
     vfft_aligned_free(h->zr2c_aff); /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);
     free(h);

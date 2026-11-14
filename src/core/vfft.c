@@ -549,6 +549,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double
 #include "il/rank3/lm_batch3dr_il.h" /* its real twin, r2c and c2r: the 2D real batch per block, a complex column pass over the spectrum (2026-10-19) */
 #include "il/il_create.h"            /* the INTERLEAVED create: the IL side of the one fork */
 #include "il/real/real_create_il.h"  /* the 1D real door, interleaved (the bridge deleted 2026-11-06) */
+#include "il/real/dst.h"             /* DST-II / DST-III: one real FFT of length N between two passes (2026-11-14) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1131,7 +1132,8 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
      *  - real->real transforms have no complex layout;
      *  - padded batches are split-plane by construction (vfft_batch_planes'
      *    role table is split), so batch + INTERLEAVED cannot mean anything. */
-    if (cfg->layout == VFI_LAYOUT_IL && _VFFT_IS_TRIG(cfg->transform))
+    if (cfg->layout == VFI_LAYOUT_IL && _VFFT_IS_TRIG(cfg->transform) &&
+        cfg->transform != VFFT_DST2 && cfg->transform != VFFT_DST3)   /* those two are the interleaved library's (il/real/dst.h) */
     {
         _vfft_warn("vfft_create: layout=INTERLEAVED is meaningless for the real->real %s "
                    "(real planes in, real planes out) — use VFFT_LAYOUT_SPLIT",
@@ -1462,6 +1464,8 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->layout == VFI_LAYOUT_IL)
         return _vfft_create_real_door(cfg, W, N, K); /* the K = 1 real door (il/real/real_create_il.h) */
+    if (cfg->transform == VFFT_DST2 || cfg->transform == VFFT_DST3)
+        return _vfft_create_dst_il(cfg, W, 0); /* DST-II / DST-III: a real FFT at N in the DST's role, on the DST cell's own rows (il/real/dst.h) */
 #endif
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)

@@ -783,6 +783,17 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
                    "plan-steering switch is set (unset it: estimate plans from formulas only)", env);
         return NULL;
     }
+#ifndef VFFT_FLOAT
+    if (cfg->transform == VFFT_DST2 || cfg->transform == VFFT_DST3)
+    {   /* DST-II / DST-III (il/real/dst.h): its two real FFTs at N each planned here, as an R2C and a C2R
+         * request; the plan around them measures nothing. The door's retain is this create's (_vfft_create_cfg
+         * retains the plans it builds; this one is built here) */
+        vfft_plan hd = _vfft_create_dst_il(cfg, NULL, 1);
+        if (hd)
+            thread_pool_plan_retain(((struct vfft_plan_s *)hd)->nthreads);
+        return hd;
+    }
+#endif
     memset(&m, 0, sizeof m);
     m.lanes = VFFT_IL_VW;
     m.l1d = vfft_cpu_l1d_bytes();

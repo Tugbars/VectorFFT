@@ -62,6 +62,7 @@
 #include "vfft_internal.h"                 /* struct vfft_plan_s / vfft_wisdom_s */
 #include "zr2c.h"                          /* the Hermitian fold kernels */
 #include "wisdom2_real_il.h"               /* the real cell's row: route + the child's recipe */
+#include "il/real/real_role.h"             /* the role of the real door's races: a composite's whole pass */
 #include "common/support/race.h"                  /* the shared race body */
 
 /* Defined in vfft.c (tentative definition, external linkage). */
@@ -726,6 +727,8 @@ typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zr2c_arm
 static void _zr2c_arm_run(void *v)
 {
     _zr2c_arm_t *c = (_zr2c_arm_t *)v;
+    if (_real_il_role_run(c->h))
+        return;   /* raced in a role: the composite's whole pass (il/real/real_role.h) */
     _exec_zr2c(c->h, c->s0, c->b);
 }
 /* The zr2c composite: env pin, the banked verdict, or the race -- each route's

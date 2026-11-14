@@ -204,6 +204,7 @@ ARGSTYLE = {
     "zttr_mt_gate":            ("bare", False),  # COLD: ZTT-r's threaded arms bitwise against its serial run through the door, T=8
     "zrf_mt_gate":             ("bare", False),  # COLD: the real flat DIT's threaded arms bitwise against its serial run, T=8
     "real_door_gate":          ("bare", False),  # COLD: the real door's pick (raced, replayed) against the pinned incumbent at every real cell
+    "dst_gate":                ("flag", False),  # COLD: DST-II and DST-III (il/real/dst.h, 2026-11-14) against their definitions summed directly: every N to 300 and lengths to 2^20, both plan kinds, both placements, 1 and 8 threads, estimate and measured plans
     # every zil kernel and ZTURN-T fused driver both ISAs list, avx512 against avx2 (twin_gate.c): no store
     "twin_gate":               ("none", False),
     # COLD: the FP32 library (include/vfftf.h, 2026-11-10): every served pow2 cell to 2^20 races and banks

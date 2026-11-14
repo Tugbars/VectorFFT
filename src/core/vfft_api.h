@@ -12,7 +12,8 @@
  *     DEFAULT wherever DEFAULT is natural, and an explicit NATURAL where the layout's own order
  *     is the scrambled comb (SPLIT C2C at rank 2 and above; at rank 3 and 4 SPLIT serves the
  *     scrambled comb only, so such a request is refused and says to ask SCRAMBLED);
- *   - real-to-real transforms take no layout, order or batch geometry: SPLIT internally, DEFAULT;
+ *   - real-to-real transforms take no layout, order or batch geometry: DST-II and DST-III are the
+ *     interleaved library's (il/real/dst.h); the others SPLIT internally, DEFAULT, and refused there;
  *   - the batch values are the library's own (DEFAULT: contiguous for INTERLEAVED C2C, lane-major
  *     for real and for SPLIT);
  *   - nthreads 0 or 1 is one thread (no process-wide setting);
@@ -203,10 +204,11 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
             _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE with VFFT_FLAG_PATIENT: two ways of planning (drop one of the two)");
             return 0;
         }
-        if (p->transform != VFFT_C2C && p->transform != VFFT_R2C && p->transform != VFFT_C2R)
+        if (p->transform != VFFT_C2C && p->transform != VFFT_R2C && p->transform != VFFT_C2R &&
+            p->transform != VFFT_DST2 && p->transform != VFFT_DST3)
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C, VFFT_R2C and VFFT_C2R only, not VFFT_%s (drop "
-                       "the flag to plan it by measuring)", _vfft_tname(p->transform));
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DST2 and VFFT_DST3 "
+                       "only, not VFFT_%s", _vfft_tname(p->transform));
             return 0;
         }
         if (p->rank > 3)
@@ -234,7 +236,10 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     c->dims = rank;
     memcpy(c->n, p->n, sizeof c->n);
     c->howmany = p->howmany ? p->howmany : 1;
-    c->layout = (trig || p->layout == VFFT_LAYOUT_SPLIT) ? VFI_LAYOUT_SPLIT : VFI_LAYOUT_IL;
+    if (p->transform == VFFT_DST2 || p->transform == VFFT_DST3)
+        c->layout = VFI_LAYOUT_IL;             /* reals in and out on the interleaved real FFT (il/real/dst.h) */
+    else
+        c->layout = (trig || p->layout == VFFT_LAYOUT_SPLIT) ? VFI_LAYOUT_SPLIT : VFI_LAYOUT_IL;
     c->placement = p->placement == VFFT_PLACEMENT_IN ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     if (trig)
         c->order = VFI_ORDER_DEFAULT;          /* no order axis: natural bins */
@@ -323,14 +328,14 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
         h->k1_alias(h, dir, in, out);
         return;
     }
-    if (h && h->placement == VFFT_INPLACE && h->transform == VFFT_C2C && in && out && out != in &&
+    if (h && h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->dst) && in && out && out != in &&
         (unsigned)dir <= (unsigned)VFFT_BACKWARD)
     {   /* PLACEMENT IS A COMMITMENT (vfft.h: in place, out == in), as on the real plans and the split
          * ones (_vfft_sig_bad). Refused at this door only: a composite runs its own in-place child
          * with two buffers through _vfft_exec6 */
-        _vfft_warn("vfft_execute: this C2C plan is IN-PLACE and must be called with out == in; got "
+        _vfft_warn("vfft_execute: this %s plan is IN-PLACE and must be called with out == in; got "
                    "distinct pointers; for separate buffers create the plan with "
-                   "placement=VFFT_PLACEMENT_OUT -- nothing executed");
+                   "placement=VFFT_PLACEMENT_OUT -- nothing executed", _vfft_tname(h->transform));
         return;
     }
     pin = (h && h->nthreads > 1) ? thread_pool_caller_arm() : NULL;   /* the caller's pin, at the first fork-join */

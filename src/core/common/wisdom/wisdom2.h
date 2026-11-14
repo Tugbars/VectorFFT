@@ -743,7 +743,8 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
         if (k->ord == VW2_ORD_NAT) return VW2_SHARD_OOP;
         return (k->pl == VW2_PL_IP) ? VW2_SHARD_STRIDE : VW2_SHARD_OOP;
     }
-    return VW2_SHARD_STRIDE;   /* trig */
+    if (k->t == VW2_T_DST2 || k->t == VW2_T_DST3) return VW2_SHARD_REAL;   /* the DST cell: a real FFT in role (il/real/dst.h; owner, 2026-11-14) */
+    return VW2_SHARD_STRIDE;   /* the other trig transforms */
 }
 
 /* ------------------------------------------------------------- opaque */

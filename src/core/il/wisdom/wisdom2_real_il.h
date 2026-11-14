@@ -67,6 +67,48 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
     k->nthreads = (uint8_t)(T > 1 ? T : 0);   /* a threaded plan's row is its own (v1.3) */
 }
 
+/* THE DST CELL (il/real/dst.h; owner, 2026-11-14): one row per mathematical transform in this shard,
+ *     t=dst2|dst3 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=... dst_1_eng=... | ran=1 ns=...
+ * A DST-II is a reorder pass, an R2C at N and a rotation pass; a DST-III a rotation pass, a C2R at N and a
+ * reorder pass. The real FFT inside is a CHILD IN ROLE (il/wisdom/wisdom2_child.h): raced in the DST's own
+ * private store, each candidate timed as the whole DST (il/real/real_role.h), and its rows ride here under
+ * dst_ -- an R2C's on the dst2 row, a C2R's on the dst3 row. A DST never reads or writes an r2c or a c2r row.
+ * The plan is placement-blind (its FFT runs out of place for either placement), so one row, stamped
+ * place=oop, serves both, as the rank-2 rows do. A VFFT_DST2 plan and a VFFT_DST3 plan each read both rows:
+ * one transform forward, the other backward. ns is one DST call, the race's winner. */
+static inline void vw2_dst_key(vw2_key_t *k, int N, int is_dst3, int T)
+{
+    memset(k, 0, sizeof *k);
+    k->t = is_dst3 ? VW2_T_DST3 : VW2_T_DST2;
+    k->rank = 1; k->n[0] = N;
+    k->q = 1; k->ord = VW2_ORD_NAT;
+    k->pl = VW2_PL_OOP;
+    k->nthreads = (uint8_t)(T > 1 ? T : 0);
+}
+/* the cell's row without its child (wisdom2_child.h puts the child's rows on it): eng=dst, and the time of one
+ * DST call when the race gave one (ns > 0). Replaces whatever row held the cell. */
+static inline int vw2_dst_bank(vw2_store_t *s, int N, int is_dst3, int T, double ns)
+{
+    vw2_rec_t r;
+    char b[48];
+    int rc;
+    memset(&r, 0, sizeof r);
+    vw2_dst_key(&r.key, N, is_dst3, T);
+    if (vw2_rec_set(&r, 1, "eng", "dst") != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", "fwd1") != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+
 /* The cell's banked engine ("zr2c", "zrp", "zttr", "zfsr", "zrm", "zrf", "zrb") or NULL
  * (no measured record; a seed row counts as none). For eng=zrp the pair and the form are decoded
  * (*R1 = 0 when the pair token is missing or malformed: a miss; *form = 0

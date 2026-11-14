@@ -57,6 +57,8 @@ typedef struct { struct vfft_plan_s *h; const double *in; double *out; } _odd_ar
 static void _odd_arm_run(void *v)
 {
     _odd_arm_t *c = (_odd_arm_t *)v;
+    if (_real_il_role_run(c->h))
+        return;   /* raced in a role: the composite's whole pass (il/real/real_role.h) */
     if (c->h->zrm)
         _exec_zrm(c->h, c->in, c->out);
     else if (c->h->zrf)
@@ -110,7 +112,7 @@ static int _zrf_try(const vfft_cfg_t *cfg, int N, const int *R, int K, int nomsz
     }
     _exec_zrf(h, s0, b); /* warm (a threaded form: its workers too) */
     t0 = vfft_now_ns();
-    _exec_zrf(h, s0, b);
+    if (!_real_il_role_run(h)) _exec_zrf(h, s0, b);   /* in a role: the composite's whole pass (il/real/real_role.h) */
     est = vfft_now_ns() - t0;
     reps = (int)(1.0e5 / (est > 1.0 ? est : 1.0));
     if (reps < 2) reps = 2;
@@ -118,7 +120,8 @@ static int _zrf_try(const vfft_cfg_t *cfg, int N, const int *R, int K, int nomsz
     for (int r = 0; r < 5; r++)
     {
         double t = vfft_now_ns();
-        for (int i = 0; i < reps; i++) _exec_zrf(h, s0, b);
+        for (int i = 0; i < reps; i++)
+            if (!_real_il_role_run(h)) _exec_zrf(h, s0, b);
         t = (vfft_now_ns() - t) / reps;
         if (t < best) best = t;
     }
@@ -159,6 +162,8 @@ typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zrf_arm_
 static void _zrf_arm_run(void *v)
 {
     _zrf_arm_t *a = (_zrf_arm_t *)v;
+    if (_real_il_role_run(a->h))
+        return;   /* raced in a role: the composite's whole pass (il/real/real_role.h) */
     _exec_zrf(a->h, a->s0, a->b);
 }
 static void _zrf_arm_reset(void *v)
@@ -420,7 +425,7 @@ static int _zrb_try(const vfft_cfg_t *cfg, int N, int M, _ilprime_inner_desc_t *
     }
     _exec_zrb(h, s0, b);
     t0 = vfft_now_ns();
-    _exec_zrb(h, s0, b);
+    if (!_real_il_role_run(h)) _exec_zrb(h, s0, b);   /* in a role: the composite's whole pass (il/real/real_role.h) */
     est = vfft_now_ns() - t0;
     reps = (int)(5.0e4 / (est > 1.0 ? est : 1.0));
     if (reps < 2) reps = 2;
@@ -428,7 +433,8 @@ static int _zrb_try(const vfft_cfg_t *cfg, int N, int M, _ilprime_inner_desc_t *
     for (int r = 0; r < 3; r++)
     {
         double t = vfft_now_ns();
-        for (int i = 0; i < reps; i++) _exec_zrb(h, s0, b);
+        for (int i = 0; i < reps; i++)
+            if (!_real_il_role_run(h)) _exec_zrb(h, s0, b);
         t = (vfft_now_ns() - t) / reps;
         if (t < best) best = t;
     }

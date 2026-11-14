@@ -18,7 +18,10 @@
  * method's row, a four-step child's fs_ tokens -- comes back whole, and a 2D
  * row that carries its own children nests under a 3D row's plane_ prefix with
  * no special case. The prefixes: rp_ (the row plan; "row_" would collide with
- * the four-step child's fs_row_ tokens), turn_, csk_, tpc_, plane_.
+ * the four-step child's fs_row_ tokens), turn_, csk_, tpc_, plane_; and dst_
+ * (2026-11-14): the 1D real FFT inside a DST-II or DST-III cell (il/real/dst.h),
+ * the same law one rank down -- a DST create never reads or writes an r2c or
+ * a c2r row.
  *
  * THE FLOW. The parent create seeds the child's store from its own row
  * (nothing when the row carries no tokens under the prefix), creates the child

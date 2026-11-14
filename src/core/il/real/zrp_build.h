@@ -409,6 +409,8 @@ typedef struct
 static void _zrpr_arm_run(void *v)
 {
     _zrpr_arm_t *c = (_zrpr_arm_t *)v;
+    if (_real_il_role_run(c->h))
+        return;   /* raced in a role: the composite's whole pass (il/real/real_role.h) */
     if (c->h->zfsr)
         _exec_zfsr(c->h, c->s0, c->b);
     else if (c->h->zrm)
@@ -463,7 +465,7 @@ static int _zttr_sweep(const vfft_cfg_t *cfg, int N, const double *a, const doub
             if (_zrpr_relerr(b, ref, nchk) >= 1e-10) { vfft_destroy((vfft_plan)h); continue; }
             double t0 = vfft_now_ns();
             memcpy(b, a, xs * sizeof(double));
-            _exec_zttr(h, s0, b);
+            if (!_real_il_role_run(h)) _exec_zttr(h, s0, b);   /* in a role: the composite's whole pass (il/real/real_role.h) */
             double est = vfft_now_ns() - t0;
             int reps = (int)(1.5e5 / (est > 1.0 ? est : 1.0));
             if (reps < 2) reps = 2;
@@ -483,7 +485,8 @@ static int _zttr_sweep(const vfft_cfg_t *cfg, int N, const double *a, const doub
                 for (int r = 0; r < 5; r++)
                 {
                     double t = vfft_now_ns();
-                    for (int i = 0; i < reps; i++) _exec_zttr(h, s0, b);
+                    for (int i = 0; i < reps; i++)
+                        if (!_real_il_role_run(h)) _exec_zttr(h, s0, b);
                     t = (vfft_now_ns() - t) / reps;
                     if (t < best) { best = t; bmt = arm; }
                 }
@@ -543,7 +546,7 @@ static struct vfft_plan_s *_zfsr_sweep(const vfft_cfg_t *cfg, int N, struct vfft
         for (int r = 0; r < 3; r++)
         {
             double t0 = vfft_now_ns();
-            _exec_zfsr(h, s0, b);
+            if (!_real_il_role_run(h)) _exec_zfsr(h, s0, b);   /* in a role: the composite's whole pass (il/real/real_role.h) */
             t0 = vfft_now_ns() - t0;
             if (t0 < t) t = t0;
         }
