@@ -1686,6 +1686,77 @@ below parity is c2r at 2^20 (0.96). Scaling is 1.3x at 2^14, 2.5x at 2^16 and 5.
 below 2^16 a transform of 10 to 25 us cannot pay for a fork-join per stage, and at 2^23 every
 pass is bound by memory (3.2x, as MKL's 3.1x). Odd N has no threaded real form yet.
 
+### K=1 INTERLEAVED DST-II and DST-III — 26 lengths vs MKL and FFTW, the gauntlet (2026-11-14)
+
+`VFFT_DST2` and `VFFT_DST3`: N reals in, N reals out, one transform, natural order, out of
+place, one thread; the ratio is comparator / ours, the worse of the two order flips. Four runs
+under one name on the shipped store, so both comparators face the same banked plan:
+`dst_1d_2026-11-14` (files `_dst2`, `_dst3`, `_dst2_fftw`, `_dst3_fftw`; controls at 4096:
+1.59..1.60 and 2.04..2.07 vs MKL, 2.12..2.14 and 2.31..2.35 vs FFTW). FFTW is `RODFT10` /
+`RODFT01` under FFTW_MEASURE, out of place: the same definition and scale as ours. MKL is the
+staggered sine transform of its Trigonometric Transform interface, which exists in place only
+(N + 1 doubles); its timed arm is in place. `ours ns` is the MKL run's reading. `engine` is the
+real FFT inside the DST as the store names it: zrp the real pair, zr2c the complex transform at
+N/2 with the fold around it, zttr ZTT-r, zfsr the real four-step, zrf the real flat DIT (odd N),
+zrb the real Bluestein (odd N without a chain).
+
+```
+                -------- DST-II ---------------   -------- DST-III --------------
+         N      engine    ours ns    MKL   FFTW   engine    ours ns    MKL   FFTW
+        64      zrp            44   2.05   1.79   zrp            42   2.50   1.89
+       100      zr2c           69   2.19   2.42   zrp            70   2.38   2.21
+       125      zrf           142   1.54   1.90   zrf           135   1.88   1.95
+       128      zr2c           75   2.07   2.13   zrp            78   2.37   1.98
+       256      zr2c          145   2.08   2.53   zrp           163   2.16   2.25
+       512      zr2c          300   2.01   2.63   zr2c          338   2.03   2.24
+      1000      zr2c          808   1.86   2.28   zr2c         1013   1.62   1.81
+      1001      zrf           976   2.21   2.72   zrf          1074   2.41   2.44
+      1024      zttr          700   1.73   2.62   zttr          778   1.76   2.25
+      1536      zttr         1284   1.74   2.07   zttr         1226   2.00   2.03
+      2048      zr2c         1767   1.46   2.09   zttr         1679   1.77   2.09
+      3125      zrf          4432   1.67   1.80   zrf          4464   2.14   1.96
+      3840      zttr         3726   1.71   2.22   zttr         3269   2.14   2.43
+      4096      zr2c         3832   1.58   2.08   zttr         3329   2.04   2.33
+      8192      zr2c         8047   1.60   2.25   zttr         6776   2.08   2.50
+     10000      zr2c        12408   1.50   1.91   zr2c        13064   1.55   1.82
+     10007      zrb         53554   2.19   3.34   zrb         52555   2.31   3.31
+     16384      zttr        16987   1.57   2.34   zttr        13943   2.10   2.72
+     32768      zr2c        36116   1.52   2.37   zttr        46225   1.48   2.71
+     65536      zttr        86554   1.35   2.32   zttr        83697   1.48   2.12
+     65537      zrb        603726   3.00   1.49   zrb        592049   3.02   1.44
+    100000      zr2c       156100   1.35   2.26   zr2c       171974   1.32   1.96
+    131072      zr2c       194507   1.29   2.91   zttr       202537   1.34   2.83
+    262144      zttr       471873   1.24   2.53   zr2c       537773   1.15   2.40
+    524288      zr2c      1147713   1.25   2.52   zr2c      1277313   1.19   2.25
+   1048576      zfsr      2808737   1.10   2.53   zfsr      3382738   0.98   2.11
+```
+
+```
+ contract           cells   median   gmean    min    max   <1.0
+ DST-II  vs MKL        26     1.63    1.68   1.10   3.00      0
+ DST-II  vs FFTW       26     2.30    2.28   1.49   3.34      0
+ DST-III vs MKL        26     2.02    1.83   0.98   3.02      1
+ DST-III vs FFTW       26     2.23    2.20   1.44   3.31      0
+```
+
+Both transforms are ahead of FFTW at every length and ahead of MKL at every length but one:
+DST-III at 2^20 reads 0.98 in one order and 1.03 in the other. The margin over MKL narrows
+with size, from 2.05..2.50 at 64..256 to 0.98..1.48 from 65536 up (the prime 65537 apart, 3.0);
+the margin over FFTW holds (lowest at 65537, 1.49 and 1.44). DST-III at 32768 read 46.2 and
+35.5 us in the MKL run and 29.0 and 29.3 us in the FFTW run that followed: the MKL run's cell
+was disturbed, and its 1.48 is the lower of 1.48 and 1.72.
+
+A DST is one reorder pass, one real FFT of length N and one rotation pass (il/real/dst.h),
+with the DST's sign flip and reversal folded into the two passes. The planner times every
+candidate real FFT as the whole DST and banks the winner on the DST's own row (`t=dst2` /
+`t=dst3` in wisdom2_real.txt), so the engine is the DST's own choice: it differs between the
+two transforms at 9 of the 26 lengths.
+
+Ours agrees with FFTW's transform of the same input to 8.4e-16 or better at every cell (the
+largest elementwise difference over the largest output). Against MKL's output, scaled to ours,
+the difference grows with N: 2e-15 at 64, 2.0e-13 (DST-II) and 1.3e-12 (DST-III) at 4096,
+8.9e-10 and 1.6e-8 at 2^20.
+
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
 ```
