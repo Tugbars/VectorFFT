@@ -32,6 +32,7 @@
  * which vfft_error() returns; it is printed only under VFFT_FLAG_VERBOSE (the create in progress
  * on this thread) or VFFT_VERBOSE set in the environment (the whole process). */
 #define VFFT_ERR_CAP 512
+#include "common/support/cpu_check.h"   /* the CPU check of the entry points (vfft_api.h, vfft_memory.h) */
 #ifdef VFFT_FLOAT
 /* the FP32 unit (vfftf.c) writes its refusals into the FP64 unit's buffer, so vfft_error() serves
  * both precisions (vfft_api.h defines the accessor in the FP64 unit) */

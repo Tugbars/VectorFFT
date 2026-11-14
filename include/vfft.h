@@ -256,9 +256,9 @@ extern "C"
   /**
    * @brief Run a SPLIT plan: separate re and im planes.
    *
-   * C2C: all four planes (in place: out_re == in_re, out_im == in_im). R2C:
-   * in_re holds the reals, in_im is NULL. C2R: out_re receives the reals,
-   * out_im is NULL. An INTERLEAVED plan is refused here.
+   * C2C, the one transform the split layout serves: all four planes (in
+   * place: out_re == in_re, out_im == in_im). An INTERLEAVED plan is
+   * refused here.
    */
   VFFT_API void vfft_execute_split(vfft_plan p, vfft_dir_t dir,
                           const double *in_re, const double *in_im,

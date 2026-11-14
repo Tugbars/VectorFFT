@@ -60,7 +60,18 @@
 
 /* ── the bytes ──────────────────────────────────────────────────────────── */
 
-void *vfft_malloc(size_t bytes)
+static void *_vfft_malloc_checked(size_t bytes);
+VFFT_BASELINE_FN void *vfft_malloc(size_t bytes)   /* the CPU check first, as vfft_create (vfft_api.h) */
+{
+    const char *why;
+    if (vfft__cpu_lacks(&why))
+    {
+        vfft__errmsg(_vfft_err_buf, VFFT_ERR_CAP, "vfft_malloc: ", why);
+        return NULL;
+    }
+    return _vfft_malloc_checked(bytes);
+}
+__attribute__((noinline)) static void *_vfft_malloc_checked(size_t bytes)
 {
     if (bytes > SIZE_MAX - 2 * (size_t)VFFT_ALIGNMENT)
     {

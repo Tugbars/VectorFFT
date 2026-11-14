@@ -23,10 +23,13 @@ flowchart LR
     n_common_wisdom_wisdom2_selftest_h["wisdom2_selftest.h"]
     n_common_wisdom_wisdom2_tcmt_h["wisdom2_tcmt.h"]
     n_dir_common_abi("common/abi/")
+    n_dir_common_support("common/support/")
     n_common_wisdom_wisdom2_folders_h --> n_common_wisdom_wisdom2_h
+    n_common_wisdom_wisdom2_h --> n_dir_common_support
     n_common_wisdom_wisdom2_oop_legacy_h --> n_dir_common_abi
     n_common_wisdom_wisdom2_oop_rows_h --> n_common_wisdom_wisdom2_h
     n_common_wisdom_wisdom2_rank_rows_h --> n_common_wisdom_wisdom2_h
+    n_common_wisdom_wisdom2_selftest_h --> n_common_wisdom_wisdom2_folders_h
     n_common_wisdom_wisdom2_selftest_h --> n_common_wisdom_wisdom2_h
     n_common_wisdom_wisdom2_tcmt_h --> n_common_wisdom_wisdom2_h
 ```

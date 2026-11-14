@@ -73,7 +73,7 @@ flowchart LR
     n_common_move["common/move (1)"]
     n_common_plan["common/plan (2)"]
     n_common_policy["common/policy (2)"]
-    n_common_support["common/support (15)"]
+    n_common_support["common/support (16)"]
     n_common_wisdom["common/wisdom (7)"]
     n_common_abi -->|1| n_common
     n_common_move -->|2| n_common_support
@@ -81,6 +81,7 @@ flowchart LR
     n_common_plan -->|1| n_common_support
     n_common_policy -->|1| n_common_plan
     n_common_wisdom -->|1| n_common_abi
+    n_common_wisdom -->|1| n_common_support
 ```
 
 ## wisdom2 and the front door

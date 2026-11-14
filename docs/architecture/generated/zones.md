@@ -10,7 +10,7 @@ may include anything.
 
 ```mermaid
 flowchart TD
-    n_common["common (36 files)<br/>shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct"]
+    n_common["common (37 files)<br/>shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct"]
     n_split["split (11 files)<br/>the SPLIT library (separate re[] / im[] planes)"]
     n_il["il (75 files)<br/>the INTERLEAVED library (z[] of (re, im) pairs)"]
     n_wisdom2["wisdom2 (1 files)<br/>the front door's wisdom include: the frozen legacy format and the interleaved record"]

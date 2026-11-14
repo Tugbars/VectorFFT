@@ -1,5 +1,5 @@
 {
- "calls/create.svg": "bfc42f8c69fa49b8",
+ "calls/create.svg": "0c30415afbec50c6",
  "calls/create_il.svg": "98384ad764e8439a",
  "calls/create_real.svg": "d1f986d6d40b9d7f",
  "calls/create_split.svg": "2a9ce356f6710d7f",
@@ -7,7 +7,7 @@
  "calls/execute_il.svg": "173a83cf40720a0d",
  "calls/execute_real.svg": "799d5a2d95806c73",
  "calls/execute_split.svg": "2ebd06eb547c15fc",
- "folders-common.svg": "37c8d02b8d06985c",
+ "folders-common.svg": "e006ef02d60cfc86",
  "folders-il.svg": "9f8cf30f8eec1bcc",
  "folders-split.svg": "9828e9616a8a2c5a",
  "folders-wisdom2_and_the_front_door.svg": "5d685c991e0e7578",
@@ -17,8 +17,8 @@
  "folders/common__move.svg": "0e37fc6e4c0bc113",
  "folders/common__plan.svg": "4123aa6d76dc329f",
  "folders/common__policy.svg": "f107e8caf5bc968a",
- "folders/common__support.svg": "d6e35e4c091b2a42",
- "folders/common__wisdom.svg": "bedee787761f1372",
+ "folders/common__support.svg": "f20bfd2eb917f7bd",
+ "folders/common__wisdom.svg": "54fed99f50261516",
  "folders/core.svg": "b76a3d83e9a51111",
  "folders/il.svg": "9d35d2a69365dcdf",
  "folders/il__estimate.svg": "8d8b79597f82e66d",
@@ -35,5 +35,5 @@
  "folders/split__rankn.svg": "7cd3b85435bab692",
  "folders/split__wisdom.svg": "fbcfa7310db99232",
  "folders/wisdom2.svg": "9482b8fc49da38c2",
- "zones.svg": "ec76eec791b4a713"
+ "zones.svg": "6cbd53028c8994fd"
 }

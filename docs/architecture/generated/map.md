@@ -55,19 +55,22 @@ includes (codelet registries, generated headers, the public API) are listed as s
 ### common/support
 
 - **common/support/build_isa.h** (27 lines): THE build's ISA, decided once.
-  - included by: common/move/transpose.h, common/support/cpu_identity.h, common/support/env.h, il/isa/il_isa.h, il/rank2/il2d_tier.h, split/rank1/zts.h
+  - included by: common/move/transpose.h, common/support/env.h, common/wisdom/wisdom2.h, il/isa/il_isa.h, il/rank2/il2d_tier.h, split/rank1/zts.h
 - **common/support/cpu_cache.h** (595 lines): cache capacities and SMT width, discovered once at PLAN time.
   - includes: common/support/cpu_topology.h
   - included by: common/move/transpose.h, common/support/cpu_identity.h, common/support/race_scope.h, common/support/sibling_guard.h, common/support/threads.h, il/planning/dp_planner_il.h, il/planning/policy_il.h, vfft.c
-- **common/support/cpu_identity.h** (84 lines): THE CPU IDENTITY: which CPU raced a wisdom row.
-  - includes: common/support/cpu_cache.h, common/support/cpu_topology.h, common/support/build_isa.h
+- **common/support/cpu_check.h** (164 lines): THE CPU CHECK (owner 2026-11-14: "good idea"): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would othe...
+  - included by: common/support/diag.h
+- **common/support/cpu_identity.h** (88 lines): THE CPU IDENTITY: which CPU raced a wisdom row.
+  - includes: common/support/cpu_cache.h, common/support/cpu_topology.h
   - included by: vfft.c
 - **common/support/cpu_topology.h** (229 lines): which logical CPU is which: the physical cores, their hyperthread siblings, and which cores are P-cores.
   - included by: common/support/cpu_cache.h, common/support/cpu_identity.h, common/support/race_scope.h, common/support/sibling_guard.h
-- **common/support/diag.h** (98 lines): the loud-refusal helpers.
+- **common/support/diag.h** (99 lines): the loud-refusal helpers.
+  - includes: common/support/cpu_check.h
   - external: vfft.h
   - included by: il/rank2/il2d_cols.h, vfft.c
-- **common/support/env.h** (239 lines): the runtime environment. Two parts:
+- **common/support/env.h** (240 lines): the runtime environment. Two parts:
   - includes: common/support/zalloc.h, common/support/build_isa.h
   - included by: vfft.c
 - **common/support/hugepage.h** (133 lines): 2 MB pages for big data planes: vfft_alloc_huge / vfft_free_huge.
@@ -75,7 +78,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **common/support/race.h** (208 lines): the one race body shared by the in-process racers.
   - includes: common/support/race_timing.h
   - included by: il/rank1/il_flatdit_race.h, il/rank1/k1_commit.h, il/rank1/ztt_mt.h, il/real/zr2c_build.h, il/real/zrp_build.h, split/rank1/zts_race.h, vfft.c
-- **common/support/race_scope.h** (537 lines): THE RACE SCOPE: the conditions every measurement runs under.
+- **common/support/race_scope.h** (542 lines): THE RACE SCOPE: the conditions every measurement runs under.
   - includes: common/support/threads.h, common/support/race_timing.h, common/support/cpu_cache.h, common/support/cpu_topology.h, common/support/sibling_guard.h
   - included by: vfft.c
 - **common/support/race_timing.h** (39 lines): THE monotonic clock: every racer and planner times with it.
@@ -97,11 +100,12 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: common/abi/codelet_abi.h, common/plan/vfft_cfg.h, common/plan/vfft_internal.h, il/il_execute.h, il/isa/avx512/vtw_avx512.h, il/isa/il_isa.h, il/planning/dp_planner_il.h, il/rank1/il2p.h, il/rank1/k1_commit.h, il/rank1/ztt.h, il/rank1/ztt_mt.h
 ### common/wisdom
 
-- **common/wisdom/wisdom2.h** (1761 lines): THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).
+- **common/wisdom/wisdom2.h** (1953 lines): THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).
+  - includes: common/support/build_isa.h
   - included by: common/wisdom/wisdom2_folders.h, common/wisdom/wisdom2_oop_rows.h, common/wisdom/wisdom2_rank_rows.h, common/wisdom/wisdom2_selftest.h, common/wisdom/wisdom2_tcmt.h, il/wisdom/wisdom2_2d_il_reader.h, il/wisdom/wisdom2_child.h, il/wisdom/wisdom2_real_il.h, split/wisdom/wisdom2_zts_split.h
-- **common/wisdom/wisdom2_folders.h** (168 lines): ONE CPU, ONE FOLDER: which folder of a store root is this CPU's.
+- **common/wisdom/wisdom2_folders.h** (172 lines): ONE CPU, ONE FOLDER: which folder of a store root is this CPU's.
   - includes: common/wisdom/wisdom2.h
-  - included by: vfft.c
+  - included by: common/wisdom/wisdom2_selftest.h, vfft.c
 - **common/wisdom/wisdom2_oop_legacy.h** (304 lines): the FROZEN legacy oop_wisdom.txt format: its dual entry struct, table, loader and lookups.
   - includes: common/abi/route_ids.h
   - included by: il/rank1/k1_commit.h, il/wisdom/wisdom2_oop_il.h, wisdom2/wisdom2_oop.h
@@ -111,8 +115,8 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **common/wisdom/wisdom2_rank_rows.h** (102 lines): the rank>=2 row helpers both layouts' 2D/3D codecs use: the canonical request key, the record key, the MEASURE/provenance tail and the fill-only bank.
   - includes: common/wisdom/wisdom2.h
   - included by: il/wisdom/wisdom2_2d_il_reader.h
-- **common/wisdom/wisdom2_selftest.h** (823 lines): the unit gates for the wisdom2 module, OWNED BY THE MODULE (the thin-driver law): bench files only make calls; every scenario, assertion, and helper lives here beside the code i...
-  - includes: common/wisdom/wisdom2.h
+- **common/wisdom/wisdom2_selftest.h** (1046 lines): the unit gates for the wisdom2 module, OWNED BY THE MODULE (the thin-driver law): bench files only make calls; every scenario, assertion, and helper lives here beside the code i...
+  - includes: common/wisdom/wisdom2.h, common/wisdom/wisdom2_folders.h
 - **common/wisdom/wisdom2_tcmt.h** (144 lines): the contiguous batch's THREADING verdict: its row and codec.
   - includes: common/wisdom/wisdom2.h
   - included by: split/rank1/c2c_create_split.h
@@ -397,7 +401,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - includes: common/plan/vfft_cfg.h, common/support/env.h, common/support/threads.h, common/support/race_scope.h, wisdom2/wisdom2_oop.h, il/wisdom/wisdom2_2d_il_reader.h, common/support/diag.h, common/support/race_timing.h, common/support/race.h, common/support/cpu_cache.h, common/support/cpu_identity.h, common/wisdom/wisdom2_folders.h, il/rank1/il2p.h, il/real/zrp.h, il/rank2/il2d_col.h, il/rank1/ztt.h, il/real/zttr.h, il/real/zrm.h, il/rank1/il_flatdit.h, il/rank1/il_prime.h, il/real/zrf.h, il/real/zrb.h, il/rank1/il_flatdit_mt.h, il/rank1/ztt_mt.h, il/real/zttr_mt.h, il/real/zrf_mt.h, il/rank1/il_prime_mt.h, il/real/zrb_mt.h, il/rank1/il_flatdit_race.h, split/rank1/zts.h, split/wisdom/wisdom2_zts_split.h, split/rank1/zts_race.h, split/rank1/zts_bluestein.h, split/rank1/zts_mt.h, split/rank1/zts_blu_mt.h, il/real/zr2c.h, il/rank2/fft2d_real_il.h, common/plan/vfft_internal.h, il/rank1/k1_fourstep_band.h, il/planning/policy_il.h, il/rank1/k1_fourstep.h, il/rank2/il2d_cols.h, il/real/zrb_lanes.h, il/rank1/il_rader_stage.h, il/rank2/il2d_tier.h, il/planning/dp_planner_il.h, il/rank1/k1_commit.h, il/real/zr2c_build.h, il/real/zrp_build.h, il/real/odd_build.h, il/rank2/il2d_real_plan.h, il/rank2/il2d_real_axis.h, il/rank2/il2d_real_fuse.h, il/rank2/il2d_real_pitch.h, il/rank3/fftnd_il.h, il/rank3/fftnd_real_il.h, split/split_create.h, il/rank1/lm_batch_il.h, il/rank2/lm_batch2d_il.h, il/rank2/lm_batch2dr_il.h, il/rank3/lm_batch3d_il.h, il/rank3/lm_batch3dr_il.h, il/il_create.h, il/real/real_create_il.h, il/real/dst.h, il/real/dct1_dst1.h, il/rank2/plane_queue.h, vfft_execute.h, vfft_api.h, vfft_memory.h, vfft_measure.h, vfft_fingerprint.h
   - external: vfft.h, vfft_diagnostics.h, vfft_build_id.h
   - included by: vfftf.c
-- **vfft_api.h** (471 lines): THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).
+- **vfft_api.h** (495 lines): THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).
   - includes: il/estimate/c2c_estimate_il.h
   - included by: vfft.c
 - **vfft_execute.h** (547 lines): THE execute entry point.
@@ -407,7 +411,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
   - included by: vfft.c
 - **vfft_measure.h** (121 lines): the public measurement calls (vfft.h, "the measurement scope"): vfft_measure_configure, vfft_measure_begin, vfft_measure_end, vfft_measure_confine, vfft_measure_describe; and vf...
   - included by: vfft.c
-- **vfft_memory.h** (83 lines): the public memory calls (vfft.h, "memory"): vfft_malloc, vfft_free, vfft_alignment, vfft_plan_alloc and vfft_buffers_free.
+- **vfft_memory.h** (94 lines): the public memory calls (vfft.h, "memory"): vfft_malloc, vfft_free, vfft_alignment, vfft_plan_alloc and vfft_buffers_free.
   - included by: vfft.c
 - **vfftf.c** (7 lines): the FP32 library: the core's translation unit (vfft.c) compiled a second time for float data (common/vfft_prec.h).
   - includes: vfftf_names.h, vfft.c

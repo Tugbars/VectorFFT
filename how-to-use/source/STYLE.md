@@ -67,16 +67,18 @@ another chapter's files; report what you need instead.
   spelled, in code font, never plural or possessive: `vfft_create()`, `VFFT_FLAG_PATIENT`,
   `n[0]`. Never "source mode".
 - **Scope.** The native API (`vfft.h`), the DFTI interface (`src/shims/dfti/`), the four 3D
-  examples. Never in a task chapter: `VFFT_LAYOUT_SPLIT`, `vfft_execute_split()`, `VFFT_DCT1`
-  to `VFFT_DHT`, rank 4, `VFFT_FLAG_EXHAUSTIVE`, `vfft_diagnostics.h`. Chapter 18 lists them
-  once, as not part of this release; Table 1.2 also names the installed `vfft_diagnostics.h`,
+  examples. The split layout (`VFFT_LAYOUT_SPLIT`, `vfft_execute_split()`) and the real-to-real
+  transforms `VFFT_DCT1`, `VFFT_DST1`, `VFFT_DST2` and `VFFT_DST3` are part of the release:
+  chapter 18 describes them. Never in a task chapter: `VFFT_DCT2` to `VFFT_DCT4`, `VFFT_DHT`,
+  rank 4, `VFFT_FLAG_EXHAUSTIVE`, `vfft_diagnostics.h`. Chapter 18 lists them once, as not
+  part of this release; Table 1.2 also names the installed `vfft_diagnostics.h`,
   as not part of this release.
 - **Planning.** A create plans one of two ways. Measuring is the default, and
   `VFFT_FLAG_PATIENT` names it: a create that misses wisdom measures for seconds, up to minutes
   for the largest configurations, and saves the winner; later creates are served at once.
   `VFFT_FLAG_RECALIBRATE` measures again; `VFFT_FLAG_EXHAUSTIVE` is refused. The estimate,
   `VFFT_FLAG_ESTIMATE`, is the other way: it plans `VFFT_C2C`, `VFFT_R2C` and `VFFT_C2R` at
-  ranks 1 to 3 by formulas, measures nothing, reads and saves no wisdom, and refuses what it
+  ranks 1 to 3 and the four real-to-real transforms in 1D by formulas, measures nothing, reads and saves no wisdom, and refuses what it
   cannot plan (`ch10-sec-estimate`). Present it as the other method, for programs that must not
   measure or must not touch a wisdom store; never give a reason why measuring is the default,
   never recommend the estimate first, and say nothing about how long an estimate create takes.

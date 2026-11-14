@@ -277,7 +277,20 @@ static int _vfft_k1_go_mt(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real
     return r;
 }
 
-vfft_plan vfft_create(const vfft_config_t *config)
+/* THE CPU CHECK FIRST (common/support/cpu_check.h): the entry is compiled for the baseline x86-64 instruction
+ * set, and refuses on a CPU that lacks what this build was compiled for, before any such instruction runs. */
+static vfft_plan _vfft_create_checked(const vfft_config_t *config);
+VFFT_BASELINE_FN vfft_plan vfft_create(const vfft_config_t *config)
+{
+    const char *why;
+    if (vfft__cpu_lacks(&why))
+    {
+        vfft__errmsg(_vfft_err_buf, VFFT_ERR_CAP, "vfft_create: ", why);
+        return NULL;
+    }
+    return _vfft_create_checked(config);
+}
+__attribute__((noinline)) static vfft_plan _vfft_create_checked(const vfft_config_t *config)
 {
     vfft_cfg_t c;
     vfft_plan h = NULL;
@@ -442,7 +455,18 @@ static size_t _vfft_api_stride(const struct vfft_plan_s *h)
     }
     return h->K > 0 ? h->K : 1;
 }
-int vfft_info(vfft_plan p, vfft_info_t *out)
+static int _vfft_info_checked(vfft_plan p, vfft_info_t *out);
+VFFT_BASELINE_FN int vfft_info(vfft_plan p, vfft_info_t *out)   /* the CPU check first, as vfft_create */
+{
+    const char *why;
+    if (vfft__cpu_lacks(&why))
+    {
+        vfft__errmsg(_vfft_err_buf, VFFT_ERR_CAP, "vfft_info: ", why);
+        return -1;
+    }
+    return _vfft_info_checked(p, out);
+}
+__attribute__((noinline)) static int _vfft_info_checked(vfft_plan p, vfft_info_t *out)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
     if (!out)
@@ -461,7 +485,7 @@ int vfft_info(vfft_plan p, vfft_info_t *out)
     return 0;
 }
 #ifndef VFFT_FLOAT   /* vfft_error serves both precisions: the FP64 unit's alone */
-const char *vfft_error(void)
+VFFT_BASELINE_FN const char *vfft_error(void)   /* baseline: it reports the CPU check's refusal */
 {
     return _vfft_err_buf;
 }
