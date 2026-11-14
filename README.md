@@ -131,14 +131,12 @@ the tree is a native engine, a dash a refusal by contract.
   real-to-real transforms are natural by construction.
 - **Any length, 1D to 3D, batches, threads** in the interleaved layout; the split
   layout serves the lengths its footnote lists.
-- **Two ways to plan.** By default a create measures: the winner of a race is
-  kept in wisdom, and a later create reads it back at once. With
-  `VFFT_FLAG_ESTIMATE` a create plans from formulas instead (the lengths, the
-  thread and batch count, the machine's caches and vector width): nothing is
-  measured, and no wisdom is read or written. The estimate plans interleaved
-  c2c, r2c and c2r in 1D to 3D (c2c at 2D and 3D in natural order), their
-  batches and threads, and the four real-to-real transforms; a split plan is
-  always measured.
+- **Two ways to plan**, measuring by default or `VFFT_FLAG_ESTIMATE`. The
+  estimate plans interleaved c2c, r2c and c2r in 1D to 3D (c2c at 2D and 3D in
+  natural order), their batches and threads, and the four real-to-real
+  transforms; a split plan is always measured.
+
+![Two ways to plan](src/tools/plots/vectorfft-planning.svg)
 
 ![Wisdom planner](src/tools/plots/vectorfft-planner.svg)
 
@@ -147,11 +145,7 @@ banked verdict; a miss races once and banks it.
 
 ![Estimate](src/tools/plots/vectorfft-estimate.svg)
 
-How a plan is computed with `VFFT_FLAG_ESTIMATE`: machine, rules, recipe,
-replay, check. The first rule that holds picks the engine and its settings from
-the length and this machine's caches and vector width; the recipe is written as
-the rows a race would bank, in memory only, and built by the same replay.
-Nothing is measured; no wisdom is read or written.
+How the estimate computes a plan: machine, rules, recipe, replay, check.
 
 ![Codelet compiler](src/tools/plots/vectorfft-pipeline.svg)
 
