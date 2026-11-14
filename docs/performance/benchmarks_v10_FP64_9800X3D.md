@@ -1,13 +1,13 @@
-# VectorFFT v1.0 — FP64 results, **Ryzen 7 9800X3D**
+# VectorFFT v1.0 — FP64 and FP32 results, **Ryzen 7 9800X3D**
 
-Double precision on an AMD Ryzen 7 9800X3D, AVX-512 build, one thread, against FFTW 3.3.10. Speedup = FFTW's
-time / VectorFFT's time: above 1 means VectorFFT is faster.
+Double and single precision on an AMD Ryzen 7 9800X3D, AVX-512 build, one thread, against FFTW 3.3.10. Speedup =
+FFTW's time / VectorFFT's time: above 1 means VectorFFT is faster.
 
-One run, planned by the estimate (`VFFT_FLAG_ESTIMATE`): nothing was measured on this machine and no wisdom was
-read.
-
-- [18 selected transforms](#18-selected-transforms-estimate-plans) in 1D, 2D and 3D: geometric mean 1.62×, ahead
-  on 16 of 18.
+- [18 selected transforms](#18-selected-transforms-estimate-plans) in 1D, 2D and 3D, double precision, planned by
+  the estimate (`VFFT_FLAG_ESTIMATE`): nothing was measured on this machine and no wisdom was read. Geometric mean
+  1.62×, ahead on 16 of 18.
+- [1D powers of two in single precision](#1d-powers-of-two-single-precision-planned-by-measuring), 64 to
+  4,194,304 points, planned by measuring: geometric mean 2.27×, ahead on 17 of 17.
 
 This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md), the Zen 4 laptop of
 [v1_0_Zen4_results.md](v1_0_Zen4_results.md), the Xeon 6980P of
@@ -26,7 +26,7 @@ This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md), the Zen 4
 | Operating system | Windows |
 | Instruction set | AVX-512, the program's default on a CPU that runs it |
 
-The run's files record neither the CPU nor the instruction set: both are as reported by the person who ran it,
+The runs' files record neither the CPU nor the instruction set: both are as reported by the person who ran them,
 and the cache sizes are the CPU's specification.
 
 ## 18 selected transforms, estimate plans
@@ -78,3 +78,45 @@ VectorFFT is ahead on 16 of the 18 transforms and behind on two, both in one eng
   512×512 up the two orders agree within 5 %. This is one pass: the figures of the small transforms carry that
   spread.
 - **Accuracy:** VectorFFT's output agrees with FFTW's to 3.0e-15 or better at every transform.
+
+## 1D powers of two, single precision, planned by measuring
+
+Complex-to-complex in 1D at the 17 powers of two from 64 to 4,194,304 points, single precision (FP32),
+interleaved, natural order, out of place. The program is `vectorfft_vs_fftw_pow2_fp32` of
+[`benchmark_scripts/`](../../benchmark_scripts/README.md). The FP32 library has no estimate: every plan is the
+planner's, measured on this machine and kept in its wisdom folder, or read back from it. FFTW is FFTW 3.3.10 in
+single precision, its plans made with `FFTW_MEASURE`. Run `vectorfft_vs_fftw_pow2_fp32_20261114-230111`, one pass
+of 49 s on 2026-11-14.
+
+The times and the speedup are the worse of the two engine orders (VectorFFT timed first, FFTW timed first).
+
+| Transform | Points | VectorFFT | FFTW | vs FFTW |
+| --- | ---: | ---: | ---: | ---: |
+| 1D 64 | 64 | 0.01 µs | 0.03 µs | **2.08×** |
+| 1D 128 | 128 | 0.03 µs | 0.05 µs | **1.88×** |
+| 1D 256 | 256 | 0.06 µs | 0.10 µs | **1.72×** |
+| 1D 512 | 512 | 0.12 µs | 0.20 µs | **1.75×** |
+| 1D 1024 | 1,024 | 0.29 µs | 0.45 µs | **1.55×** |
+| 1D 2048 | 2,048 | 0.65 µs | 1.05 µs | **1.62×** |
+| 1D 4096 | 4,096 | 1.51 µs | 2.43 µs | **1.60×** |
+| 1D 8192 | 8,192 | 3.72 µs | 7.77 µs | **2.09×** |
+| 1D 16384 | 16,384 | 8.69 µs | 14.1 µs | **1.62×** |
+| 1D 32768 | 32,768 | 19.8 µs | 32.6 µs | **1.65×** |
+| 1D 65536 | 65,536 | 47.5 µs | 73.9 µs | **1.56×** |
+| 1D 131072 | 131,072 | 131 µs | 181 µs | **1.39×** |
+| 1D 262144 | 262,144 | 276 µs | 407 µs | **1.47×** |
+| 1D 512K | 524,288 | 473 µs | 2.94 ms | **6.22×** |
+| 1D 1M | 1,048,576 | 984 µs | 5.87 ms | **5.96×** |
+| 1D 2M | 2,097,152 | 2.01 ms | 12.2 ms | **6.08×** |
+| 1D 4M | 4,194,304 | 4.32 ms | 25.5 ms | **5.89×** |
+| **Geometric mean** | | | | **2.27×** |
+
+VectorFFT is ahead on all 17 lengths.
+
+### Reading the powers of two
+
+- **Up to 262,144 points:** 1.39× to 2.09×, every length ahead.
+- **From 524,288 points:** 5.9× to 6.2×. The step is FFTW's: from 262,144 to 524,288 points its time grows 7.2×
+  (407 µs to 2.94 ms) while VectorFFT's grows 1.7× (276 µs to 473 µs); above that, both double with each doubling
+  of the length. This is one pass, not yet repeated.
+- **Noise:** the control transform, 1D 4096, read 1.28× and 1.55× in its two timings during the run.

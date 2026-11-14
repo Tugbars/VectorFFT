@@ -145,6 +145,14 @@ the tree is a native engine, a dash a refusal by contract.
 How a plan is chosen: lookup, enumerate, race, argmin, bank. A hit replays the
 banked verdict; a miss races once and banks it.
 
+![Estimate](src/tools/plots/vectorfft-estimate.svg)
+
+How a plan is computed with `VFFT_FLAG_ESTIMATE`: machine, rules, recipe,
+replay, check. The first rule that holds picks the engine and its settings from
+the length and this machine's caches and vector width; the recipe is written as
+the rows a race would bank, in memory only, and built by the same replay.
+Nothing is measured; no wisdom is read or written.
+
 ![Codelet compiler](src/tools/plots/vectorfft-pipeline.svg)
 
 Where the kernels come from: the DAG FFT compiler takes a DFT as an expression

@@ -126,7 +126,7 @@ static void _pq_tramp(void *v)
         if ((size_t)p >= P)
             return;
         _vfft_exec6((vfft_plan)a->plan, a->dir,
-                     a->src + (size_t)p * a->h->pq_sdist, NULL,
+                     (double *)(a->src + (size_t)p * a->h->pq_sdist), NULL,
                      a->dst + (size_t)p * a->h->pq_ddist, NULL);
     }
 }
@@ -190,7 +190,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
         size_t p;
         for (p = 0; p < h->pq_n; p++)
             _vfft_exec6((vfft_plan)h->pq_inner, dir,
-                         sre + p * h->pq_sdist, NULL,
+                         (double *)(sre + p * h->pq_sdist), NULL,
                          dre + p * h->pq_ddist, NULL);
     }
 }

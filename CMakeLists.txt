@@ -330,8 +330,12 @@ else()
     endif()
     set(VFFT_C_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive
         -Wno-overflow -Wno-implicit-function-declaration -Wno-unused-function
-        -Wno-unknown-argument -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
+        -Wno-incompatible-pointer-types -Wno-deprecated-declarations)
     set(VFFT_CODE_FLAGS -O3 ${_arch} ${_native} ${_isa_clamp} -fpermissive -w)
+    if(NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        # clang's and icx's switch; GCC does not know it and names it in a note after any warning
+        list(APPEND VFFT_C_FLAGS -Wno-unknown-argument)
+    endif()
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         # GCC's address optimizer (ivopts) considers at most 250 address uses per loop
         # by default. A kernel loop with more (the batched row kernels at 32 and 64, the

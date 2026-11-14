@@ -1261,7 +1261,7 @@ static void _il2d_rows_exec2(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
          * (worker t > 0 runs its clone: the threaded skewed pass) */
         struct vfft_plan_s *rp = (tid > 0) ? h->il2d_cskw[tid - 1] : h->il2d_csk_row;
         for (i = 0; i < nrows; i++)
-            _vfft_exec6((vfft_plan)rp, dir, in + 2 * i * pin, NULL, base + 2 * i * pitch, NULL);
+            _vfft_exec6((vfft_plan)rp, dir, (vfft_real *)(in + 2 * i * pin), NULL, base + 2 * i * pitch, NULL);
         return;
     }
     for (i = 0; i < nrows; i++)
