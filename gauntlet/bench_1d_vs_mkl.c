@@ -27,8 +27,8 @@
  *   1D c2c    --k1nat / --k1noop / --k1zip / --k1dir the natural in-place and out-of-place forms;
  *             --mt threaded; --cmp mkl|fftw|kfr the comparator
  *   1D real   --realfwd / --realbwd (r2c / c2r); --zr2c the earlier real form
- *   1D DST    --dst2 / --dst3 (DST-II / DST-III; --realip in place; --mt threaded; MKL's arm is its
- *             staggered sine transform, in place)
+ *   1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (DST-II / DST-III / DCT-I / DST-I; --realip in place; --mt
+ *             threaded; MKL's arm is its staggered sine, cosine or sine transform, in place)
  *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells (--ilip in place); --2drealnat / --3dreal the
  *             real cells; --realip / --realown the real cell in place; --2dil, --3dil, --2dreal
  *             the earlier forms
@@ -2030,44 +2030,56 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
 }
 
 /* ═════════════════════════════════════════════════
- * --dst2 / --dst3 : the DST gauntlet cell (2026-11-14): 1D DST-II or DST-III
- * (VFFT_DST2 / VFFT_DST3: N reals in and out, unnormalized), K = 1, the front
+ * --dst2 / --dst3 / --dct1 / --dst1 : the real-to-real gauntlet cell
+ * (2026-11-14): 1D DST-II, DST-III, DCT-I or DST-I (VFFT_DST2 / VFFT_DST3 /
+ * VFFT_DCT1 / VFFT_DST1: N reals in and out, unnormalized), K = 1, the front
  * door on the store, natural, out of place (--realip: in place), one thread
  * (--mt: the plan's threads, the comparator at the same count). The real
  * cell's protocol and timing shape. The comparator's transform of the same
  * input is the reference, elementwise:
- *   FFTW (--cmp fftw)  plan_r2r_1d, RODFT10 / RODFT01, FFTW_MEASURE: the same
- *                      definition and scale as ours;
- *   MKL                its Trigonometric Transform interface, the staggered
- *                      sine transform: IN PLACE only, on N + 1 doubles whose
- *                      first is zero. Its backward is half our DST-II, its
- *                      forward our DST-III over N (measured at even and odd N);
- *                      the reference is scaled back to ours. MKL's timed arm
- *                      is in place in both contracts: it has no other form.
+ *   FFTW (--cmp fftw)  plan_r2r_1d, RODFT10 / RODFT01 / REDFT00 / RODFT00,
+ *                      FFTW_MEASURE: the same definitions and scales as ours;
+ *   MKL                its Trigonometric Transform interface, IN PLACE only,
+ *                      on its own array (dst_mk_open: which transform, where
+ *                      the data sits, the scale back to ours -- each measured
+ *                      against the definitions at even and odd N). MKL's timed
+ *                      arm is in place in every contract: it has no other form.
  * GFLOPS = 2.5 N log2 N per transform, the real cell's convention. Row = the
- * K=1 cell's columns; plan "z:dst2" / "z:dst3", path "nat-oop" / "nat-ip".
- * Nothing else runs in the process. */
-static int g_dst = 0;   /* 2 = DST-II, 3 = DST-III */
+ * K=1 cell's columns; plan "z:dst2" / "z:dst3" / "z:dct1" / "z:dst1", path
+ * "nat-oop" / "nat-ip". Nothing else runs in the process. */
+static int g_dst = 0;   /* 2 = DST-II, 3 = DST-III, 1 = DST-I, 4 = DCT-I */
+static const char *dst_plan_s(int kind) { return kind == 2 ? "z:dst2" : kind == 3 ? "z:dst3" : kind == 1 ? "z:dst1" : "z:dct1"; }
+static vfft_transform_t dst_xform(int kind) { return kind == 2 ? VFFT_DST2 : kind == 3 ? VFFT_DST3 : kind == 1 ? VFFT_DST1 : VFFT_DCT1; }
+static int dst_fftw_kind(int kind) { return kind == 2 ? FFTWX_RODFT10 : kind == 3 ? FFTWX_RODFT01 : kind == 1 ? FFTWX_RODFT00 : FFTWX_REDFT00; }
 
 #ifdef VFFT_HAS_MKL
-typedef struct { DFTI_DESCRIPTOR_HANDLE h; MKL_INT n, ipar[128]; double *dpar, *f; int kind; } dst_mk_t;
+typedef struct { DFTI_DESCRIPTOR_HANDLE h; MKL_INT n, ipar[128]; double *dpar, *f, scale; int off, fwd; } dst_mk_t;
 static void dst_mk_body(void *v)
 {
     dst_mk_t *c = (dst_mk_t *)v;
     MKL_INT ir;
-    if (c->kind == 2) d_backward_trig_transform(c->f, &c->h, c->ipar, c->dpar, &ir);
-    else              d_forward_trig_transform(c->f, &c->h, c->ipar, c->dpar, &ir);
+    if (c->fwd) d_forward_trig_transform(c->f, &c->h, c->ipar, c->dpar, &ir);
+    else        d_backward_trig_transform(c->f, &c->h, c->ipar, c->dpar, &ir);
 }
-/* MKL's staggered sine transform at N, committed on its own array f (N + 1 doubles, zeroed); 1 on success */
+/* MKL's transform for the cell at N, committed on its own array f (its n + 1 doubles, zeroed); 1 on success.
+ * Our N points sit at f[off .. off + N - 1]; scale turns its output into ours.
+ *   DST-II   the staggered sine transform at n = N, backward: half our DST-II; the data in f[1..N]
+ *   DST-III  the same transform, forward: our DST-III over N
+ *   DST-I    the sine transform at n = N + 1, backward: half our DST-I; the data in f[1..N], f[0] = f[n] = 0
+ *   DCT-I    the cosine transform at n = N - 1, backward: half our DCT-I; the data in f[0..N-1] */
 static int dst_mk_open(dst_mk_t *c, int N, int kind)
 {
     MKL_INT tt = MKL_STAGGERED_SINE_TRANSFORM, ir = 0;
     memset(c, 0, sizeof *c);
     c->n = N;
-    c->kind = kind;
-    c->dpar = alloc_d(5 * (size_t)N / 2 + 2);
-    c->f = alloc_d((size_t)N + 1);
-    memset(c->f, 0, ((size_t)N + 1) * sizeof(double));
+    c->off = 1;
+    c->scale = 2.0;
+    if (kind == 3) { c->fwd = 1; c->scale = (double)N; }
+    else if (kind == 1) { tt = MKL_SINE_TRANSFORM; c->n = N + 1; }
+    else if (kind == 4) { tt = MKL_COSINE_TRANSFORM; c->n = N - 1; c->off = 0; }
+    c->dpar = alloc_d(5 * (size_t)c->n / 2 + 2);
+    c->f = alloc_d((size_t)c->n + 1);
+    memset(c->f, 0, ((size_t)c->n + 1) * sizeof(double));
     d_init_trig_transform(&c->n, &tt, c->ipar, c->dpar, &ir);
     if (ir == 0)
         d_commit_trig_transform(c->f, &c->h, c->ipar, c->dpar, &ir);
@@ -2100,7 +2112,7 @@ static int dst_ref(int N, int kind, const double *x, double *ref)
             return 0;
         xi = alloc_d((size_t)N);
         zo = alloc_d((size_t)N);
-        p = g_fx_arm.plan_r2r_1d(N, xi, zo, kind == 2 ? FFTWX_RODFT10 : FFTWX_RODFT01, FFTWX_MEASURE);
+        p = g_fx_arm.plan_r2r_1d(N, xi, zo, dst_fftw_kind(kind), FFTWX_MEASURE);
         if (!p)
         {
             free_d(xi);
@@ -2121,10 +2133,10 @@ static int dst_ref(int N, int kind, const double *x, double *ref)
         dst_mk_t c;
         if (!dst_mk_open(&c, N, kind))
             return 0;
-        memcpy(c.f + 1, x, (size_t)N * sizeof(double));
+        memcpy(c.f + c.off, x, (size_t)N * sizeof(double));
         dst_mk_body(&c);
         for (int i = 0; i < N; i++)
-            ref[i] = c.f[i + 1] * (kind == 2 ? 2.0 : (double)N);
+            ref[i] = c.f[i + c.off] * c.scale;
         dst_mk_close(&c);
         return 1;
     }
@@ -2146,7 +2158,7 @@ static double dst_time_cmp(int N, int kind, const double *x)
             return 0;
         a = alloc_d((size_t)N);
         b = g_real_ip ? a : alloc_d((size_t)N);
-        p = g_fx_arm.plan_r2r_1d(N, a, b, kind == 2 ? FFTWX_RODFT10 : FFTWX_RODFT01, FFTWX_MEASURE);
+        p = g_fx_arm.plan_r2r_1d(N, a, b, dst_fftw_kind(kind), FFTWX_MEASURE);
         if (!p)
         {
             free_d(a);
@@ -2170,7 +2182,7 @@ static double dst_time_cmp(int N, int kind, const double *x)
         double ns;
         if (!dst_mk_open(&c, N, kind))
             return 0;
-        memcpy(c.f + 1, x, (size_t)N * sizeof(double));
+        memcpy(c.f + c.off, x, (size_t)N * sizeof(double));
         ns = real_time_body(dst_mk_body, &c, tot);
         dst_mk_close(&c);
         return ns;
@@ -2185,12 +2197,12 @@ static void run_dst_cell(int N, FILE *out, int cool_ms, int flip)
 {
     const int kind = g_dst;
     const size_t n = (size_t)N, tot = n / 2;
-    const char *plan_s = kind == 2 ? "z:dst2" : "z:dst3", *path = g_real_ip ? "nat-ip" : "nat-oop";
+    const char *plan_s = dst_plan_s(kind), *path = g_real_ip ? "nat-ip" : "nat-oop";
     char shape[24];
     snprintf(shape, sizeof shape, "%d", N);
     if (N < 2)
     {
-        printf("%-8s %-16s   SKIP (the DST cell: N of 2 or more)\n", shape, plan_s);
+        printf("%-8s %-16s   SKIP (the real-to-real cell: N of 2 or more)\n", shape, plan_s);
         return;
     }
     if (!g_k1noop_mt) bench_pin_one_thread();   /* --mt: the threaded cell's two-team protocol (main) */
@@ -2202,7 +2214,7 @@ static void run_dst_cell(int N, FILE *out, int cool_ms, int flip)
     }
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
-    cfg.transform = kind == 2 ? VFFT_DST2 : VFFT_DST3;
+    cfg.transform = dst_xform(kind);
     cfg.placement = g_real_ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     cfg.rank = 1;
     cfg.n[0] = N;
@@ -5763,7 +5775,7 @@ int main(int argc, char **argv)
         "usage: bench_1d_vs_mkl [mode flags] [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]\n"
         "  1D c2c    --k1nat / --k1noop / --k1zip / --k1dir; --mt threaded; --cmp mkl|fftw|kfr\n"
         "  1D real   --realfwd / --realbwd; --zr2c\n"
-        "  1D DST    --dst2 / --dst3 (--realip in place; --mt threaded)\n"
+        "  1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (--realip in place; --mt threaded)\n"
         "  2D / 3D   --2dilnat / --3dilnat (--ilip in place); --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt\n"
 #ifdef VFFT_HAS_FLOAT
@@ -5907,6 +5919,10 @@ int main(int argc, char **argv)
             g_dst = 2;    /* the DST gauntlet cell, DST-II (2026-11-14) */
         else if (strcmp(argv[1], "--dst3") == 0)
             g_dst = 3;    /* ... DST-III */
+        else if (strcmp(argv[1], "--dst1") == 0)
+            g_dst = 1;    /* ... DST-I */
+        else if (strcmp(argv[1], "--dct1") == 0)
+            g_dst = 4;    /* ... DCT-I */
         else if (strcmp(argv[1], "--2drealnat") == 0)
         {
             g_k2real = 1; /* the 2D real gauntlet cell: N1 in the N slot, N2 in the K slot */
@@ -6373,10 +6389,11 @@ int main(int argc, char **argv)
         return 0;
     }
     if (g_dst)
-    {   /* --dst2 / --dst3: one isolated DST cell per process (the N slot); nothing else runs in this process */
+    {   /* --dst2 / --dst3 / --dct1 / --dst1: one isolated real-to-real cell per process (the N slot); nothing
+         * else runs in this process */
         if (!target_N)
         {
-            printf("--dst2 / --dst3 need the cell's N\n");
+            printf("--dst2 / --dst3 / --dct1 / --dst1 need the cell's N\n");
             return 2;
         }
         run_dst_cell(target_N, out, cool_ms, flip);

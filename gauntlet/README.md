@@ -109,6 +109,18 @@ python gauntlet/gauntlet.py run --real dst2 --cells 64,1024,4096,10007
 python gauntlet/gauntlet.py run --real dst3 --cells 64,1024,4096,10007 --cmp fftw
 ```
 
+**DCT-I and DST-I** (since 2026-11-14): `--real dct1` / `--real dst1`, the same cell and contract
+(`VFFT_DCT1` / `VFFT_DST1`); files carry `_dct1` / `_dst1`. The calibrate stage banks the cell's own
+row (`t=dct1` with the real FFT inside under `dct_`, `t=dst1` with it under `dst_`). The comparators:
+FFTW (`--cmp fftw`: `REDFT00` / `RODFT00`, the same definitions and scales as ours) and MKL's cosine
+transform and sine transform of the same interface, in place only: for our N points the cosine
+transform at N - 1 and the sine transform at N + 1, each backward half of ours.
+
+```
+python gauntlet/gauntlet.py run --real dct1 --cells 65,1025,4097,10000
+python gauntlet/gauntlet.py run --real dst1 --cells 63,1023,4095,10000 --cmp fftw
+```
+
 ## Building the tools
 
 Either path builds the same binaries from the same sources.

@@ -11,9 +11,10 @@
  *        transform-contiguous rows -- so the create banks the batch's own
  *        verdicts too: its K=1 inner's row and its threading verdict, eng=tcb
  *        tcmt= on the q=K row)
- *        recal_1d_probe.exe <wisdir> --dst2|--dst3 <N> [scr=0] [ip=0] [T=1] [recal=1]
- *        (2026-11-14: the DST cell -- DST-II or DST-III, N reals in and out -- through the same
- *        door; its verdicts bank into wisdom2_real.txt, t=dst2 / t=dst3 with the real FFT under dst_)
+ *        recal_1d_probe.exe <wisdir> --dst2|--dst3|--dct1|--dst1 <N> [scr=0] [ip=0] [T=1] [recal=1]
+ *        (2026-11-14: the real-to-real cell -- DST-II, DST-III, DCT-I or DST-I, N reals in and out --
+ *        through the same door; its verdicts bank into wisdom2_real.txt, t=dst2 / t=dst3 / t=dst1 with
+ *        the real FFT under dst_, t=dct1 with it under dct_)
  *        recal_1d_probe.exe <wisdir> --2d <N1> <N2> [scr=0] [ip=0] [T=1] [recal=1]
  *        recal_1d_probe.exe <wisdir> --3d <N1> <N2> <N3> [scr=0] [ip=0] [T=1] [recal=1]
  *        (2026-09-24: the 3D interleaved cell, dims=3; its verdicts bank into wisdom2_3d.txt)
@@ -129,14 +130,16 @@ int main(int argc, char **argv)
 #endif
     /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
     int xform = VFFT_C2C;
-    if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r") || !strcmp(argv[2], "--dst2") || !strcmp(argv[2], "--dst3")))
+    if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r") || !strcmp(argv[2], "--dst2") || !strcmp(argv[2], "--dst3") ||
+                     !strcmp(argv[2], "--dct1") || !strcmp(argv[2], "--dst1")))
     {
-        xform = !strcmp(argv[2], "--r2c") ? VFFT_R2C : !strcmp(argv[2], "--c2r") ? VFFT_C2R : !strcmp(argv[2], "--dst2") ? VFFT_DST2 : VFFT_DST3;
+        xform = !strcmp(argv[2], "--r2c") ? VFFT_R2C : !strcmp(argv[2], "--c2r") ? VFFT_C2R : !strcmp(argv[2], "--dst2") ? VFFT_DST2 :
+                !strcmp(argv[2], "--dst3") ? VFFT_DST3 : !strcmp(argv[2], "--dct1") ? VFFT_DCT1 : VFFT_DST1;
         for (int i = 2; i + 1 < argc; i++)
             argv[i] = argv[i + 1];
         argc--;
     }
-    const char *tn = xform == VFFT_R2C ? "r2c " : xform == VFFT_C2R ? "c2r " : xform == VFFT_DST2 ? "dst2 " : xform == VFFT_DST3 ? "dst3 " : "";
+    const char *tn = xform == VFFT_R2C ? "r2c " : xform == VFFT_C2R ? "c2r " : xform == VFFT_DST2 ? "dst2 " : xform == VFFT_DST3 ? "dst3 " : xform == VFFT_DCT1 ? "dct1 " : xform == VFFT_DST1 ? "dst1 " : "";
     const int twod = argc > 2 && !strcmp(argv[2], "--2d");
     const int threed = argc > 2 && !strcmp(argv[2], "--3d");   /* the 3D cell (2026-09-24) */
     const int nd = threed ? 3 : twod ? 2 : 1;
