@@ -12,10 +12,13 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 - `il_flatdit_mt.h`: the FLAT mixed-radix DIT's intra-transform threading (docs/design/3D_mt_il_strategy.md declares the method).
 - `il_flatdit_race.h`: the flat DIT's create-time races on the shared race body.
 - `il_prime.h`: PRIME-N K=1 route on the PURE-IL machinery (OOP, NATURAL, interleaved z->z, both directions).
+- `il_prime_mt.h`: the prime cell's THREADED form (Rader / Bluestein, il_prime.h; owner, 2026-10-03: the convolutions take c2c's threading).
+- `il_rader_stage.h`: the RADER STAGE of the flat chain: a prime radix p above the kernel pool, served as a vectorized Rader convolution over the stage's columns (docs/roadmap/rader_leaf_design.md, 2...
 - `k1_commit.h`: the K=1 plan's replay, race, and commit.
 - `k1_fourstep.h`: the K=1 INTERLEAVED four-step above ZTURN-T's ceiling (docs/design/k1_fourstep_design.md): the standard method at 256k and above.
-- `k1_fourstep_band.h`: the K=1 interleaved four-step's BAND (docs/design/ k1_fourstep_design.md): the sizes the engine serves and the side ladder its splits draw from.
-- `ztt.h`: ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c, 16 <= N <= 262144, route VFFT_K1_IL_ZTT.
+- `k1_fourstep_band.h`: the K=1 interleaved four-step's BAND (docs/design/ k1_fourstep_design.md): the sizes the engine serves and the side ladders its splits draw from.
+- `lm_batch_il.h`: THE LANE-MAJOR 1D BATCH on the column pass (docs/roadmap/lane_major_batch_design.md, 2026-10-14).
+- `ztt.h`: ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c, 16 <= N <= 262144 (FP32: 1048576), route VFFT_K1_IL_ZTT.
 - `ztt_mt.h`: ZTURN-T's THREADED arm: the staged walk, sectioned (docs/design/ztt_mt_design.md).
 
 ```mermaid
@@ -27,17 +30,22 @@ flowchart LR
     n_il_rank1_il_flatdit_mt_h["il_flatdit_mt.h"]
     n_il_rank1_il_flatdit_race_h["il_flatdit_race.h"]
     n_il_rank1_il_prime_h["il_prime.h"]
+    n_il_rank1_il_prime_mt_h["il_prime_mt.h"]
+    n_il_rank1_il_rader_stage_h["il_rader_stage.h"]
     n_il_rank1_k1_commit_h["k1_commit.h"]
     n_il_rank1_k1_fourstep_h["k1_fourstep.h"]
     n_il_rank1_k1_fourstep_band_h["k1_fourstep_band.h"]
+    n_il_rank1_lm_batch_il_h["lm_batch_il.h"]
     n_il_rank1_ztt_h["ztt.h"]
     n_il_rank1_ztt_mt_h["ztt_mt.h"]
+    n_dir_common("common/")
     n_dir_common_math("common/math/")
     n_dir_common_plan("common/plan/")
     n_dir_common_support("common/support/")
     n_dir_common_wisdom("common/wisdom/")
     n_dir_il_isa("il/isa/")
     n_dir_il_wisdom("il/wisdom/")
+    n_il_rank1_il2p_h --> n_dir_common
     n_il_rank1_il2p_h --> n_dir_common_math
     n_il_rank1_il2p_h --> n_dir_common_support
     n_il_rank1_il2p_h --> n_dir_il_isa
@@ -48,6 +56,10 @@ flowchart LR
     n_il_rank1_il_prime_h --> n_dir_common_math
     n_il_rank1_il_prime_h --> n_dir_common_support
     n_il_rank1_il_prime_h --> n_il_rank1_il2p_h
+    n_il_rank1_il_prime_mt_h --> n_il_rank1_il_prime_h
+    n_il_rank1_il_prime_mt_h --> n_il_rank1_ztt_mt_h
+    n_il_rank1_il_rader_stage_h --> n_dir_common_math
+    n_il_rank1_k1_commit_h --> n_dir_common
     n_il_rank1_k1_commit_h --> n_dir_common_plan
     n_il_rank1_k1_commit_h --> n_dir_common_support
     n_il_rank1_k1_commit_h --> n_dir_common_wisdom
@@ -56,10 +68,13 @@ flowchart LR
     n_il_rank1_k1_commit_h --> n_il_rank1_il_prime_h
     n_il_rank1_k1_fourstep_h --> n_dir_common_math
     n_il_rank1_k1_fourstep_h --> n_dir_common_support
+    n_il_rank1_k1_fourstep_h --> n_dir_il_wisdom
     n_il_rank1_k1_fourstep_h --> n_il_rank1_k1_fourstep_band_h
+    n_il_rank1_ztt_h --> n_dir_common
     n_il_rank1_ztt_h --> n_dir_common_math
     n_il_rank1_ztt_h --> n_dir_common_support
     n_il_rank1_ztt_h --> n_dir_il_isa
+    n_il_rank1_ztt_mt_h --> n_dir_common
     n_il_rank1_ztt_mt_h --> n_dir_common_support
     n_il_rank1_ztt_mt_h --> n_il_rank1_ztt_h
 ```

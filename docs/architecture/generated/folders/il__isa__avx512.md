@@ -10,8 +10,8 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 ```mermaid
 flowchart LR
     n_il_isa_avx512_vtw_avx512_h["vtw_avx512.h"]
+    n_dir_common("common/")
     n_dir_common_math("common/math/")
-    n_dir_il_isa("il/isa/")
+    n_il_isa_avx512_vtw_avx512_h --> n_dir_common
     n_il_isa_avx512_vtw_avx512_h --> n_dir_common_math
-    n_il_isa_avx512_vtw_avx512_h --> n_dir_il_isa
 ```

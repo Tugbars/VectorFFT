@@ -12,9 +12,8 @@ layout dependency rules.
   (and the architecture graphs of docs/architecture/: src/tools/archgraph.py --check)
   dep_violations()       docs/roadmap/layout_separation_plan.md section 4:
                            common/ includes only common/
-                           split/  never includes il/ or bridge/
-                           il/     never includes split/ (bridge/ is allowed only
-                                   through bridge/real_doors.h)
+                           split/  includes only split/ and common/
+                           il/     includes only il/ and common/
                          Active only once src/core/common exists.
 
 USAGE
@@ -83,7 +82,7 @@ def unresolved_includes():
 def _zone(path):
     rel = os.path.relpath(path, CORE).replace(os.sep, "/")
     top = rel.split("/", 1)[0]
-    return top if top in ("common", "split", "il", "bridge") else "front"
+    return top if top in ("common", "split", "il") else "front"
 
 
 def dep_violations():
@@ -101,10 +100,7 @@ def dep_violations():
             if tgt is None or not tgt.startswith(CORE):
                 continue
             tz = _zone(tgt)
-            ok = (tz == z or tz == "common"
-                  or (z == "bridge" and tz in ("split", "il"))
-                  or (z == "il" and tz == "bridge"
-                      and os.path.basename(tgt) == "real_doors.h"))
+            ok = tz == z or tz == "common"
             if not ok:
                 bad.append("%s (%s) includes %s (%s)"
                            % (os.path.relpath(f, ROOT), z, os.path.relpath(tgt, ROOT), tz))

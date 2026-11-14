@@ -6,18 +6,24 @@ Files of this folder and their includes. Includes of files in other folders are
 collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 
 - `wisdom2_2d_il_reader.h`: the INTERLEAVED rank>=2 cell codec: the lay=il rows of the native IL 2D tier (column chains, forms, axis races), the IL 2D real rows and the rank-3 IL (ilnd) tokens.
-- `wisdom2_oddr.h`: the ODD-REAL route verdict row (lay=il component row).
+- `wisdom2_child.h`: A CHILD PLAN IN ROLE (owner, 2026-10-02; the 2D and 3D tiers 2026-10-05).
 - `wisdom2_oop_il.h`: the INTERLEAVED library's OOP-family wisdom: its K=1 record and codec.
+- `wisdom2_real_il.h`: the interleaved 1D real cell's ENGINE verdict.
 
 ```mermaid
 flowchart LR
     n_il_wisdom_wisdom2_2d_il_reader_h["wisdom2_2d_il_reader.h"]
-    n_il_wisdom_wisdom2_oddr_h["wisdom2_oddr.h"]
+    n_il_wisdom_wisdom2_child_h["wisdom2_child.h"]
     n_il_wisdom_wisdom2_oop_il_h["wisdom2_oop_il.h"]
+    n_il_wisdom_wisdom2_real_il_h["wisdom2_real_il.h"]
     n_dir_common_abi("common/abi/")
+    n_dir_common_plan("common/plan/")
     n_dir_common_wisdom("common/wisdom/")
     n_il_wisdom_wisdom2_2d_il_reader_h --> n_dir_common_wisdom
-    n_il_wisdom_wisdom2_oddr_h --> n_dir_common_wisdom
+    n_il_wisdom_wisdom2_child_h --> n_dir_common_plan
+    n_il_wisdom_wisdom2_child_h --> n_dir_common_wisdom
     n_il_wisdom_wisdom2_oop_il_h --> n_dir_common_abi
     n_il_wisdom_wisdom2_oop_il_h --> n_dir_common_wisdom
+    n_il_wisdom_wisdom2_real_il_h --> n_dir_common_wisdom
+    n_il_wisdom_wisdom2_real_il_h --> n_il_wisdom_wisdom2_oop_il_h
 ```

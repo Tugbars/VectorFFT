@@ -5,7 +5,7 @@ Scans src/core (every .h / .c), resolves every quoted #include the way the
 build does (the same resolver and zone rule as baseline/hygiene.py), and
 writes, under docs/architecture/generated/:
 
-  zones.md          the six zones (common, split, il, bridge, wisdom2, front)
+  zones.md          the five zones (common, split, il, wisdom2, front)
                     and the include edges between them, checked against the
                     dependency rules
   folders.md        every core folder as a node, grouped by zone; an edge is
@@ -74,13 +74,12 @@ ROOT = toolchain.ROOT
 CORE = toolchain.CORE
 OUT = os.path.join(ROOT, "docs", "architecture", "generated")
 SVG = os.path.join(ROOT, "docs", "architecture", "svg")
-ZONES = ["common", "split", "il", "bridge", "wisdom2", "front"]
+ZONES = ["common", "split", "il", "wisdom2", "front"]
 ZONE_ROLE = {
     "common": "shared by both layouts: ABI types, math, support, the wisdom2 store core, the plan struct",
     "split": "the SPLIT library (separate re[] / im[] planes)",
     "il": "the INTERLEAVED library (z[] of (re, im) pairs)",
-    "bridge": "the only place besides the front door that sees both layouts (temporary)",
-    "wisdom2": "front-side wisdom glue spanning both layouts (legacy readers, migration)",
+    "wisdom2": "the front door's wisdom include: the frozen legacy format and the interleaved record",
     "front": "the public front door: vfft.c and its helpers",
 }
 
@@ -96,10 +95,7 @@ def allowed(src_zone, dst_zone, dst_path):
     """hygiene.dep_violations' rule; the front door and wisdom2 may include anything."""
     if src_zone in ("front", "wisdom2"):
         return True
-    return (dst_zone == src_zone or dst_zone == "common"
-            or (src_zone == "bridge" and dst_zone in ("split", "il"))
-            or (src_zone == "il" and dst_zone == "bridge"
-                and os.path.basename(dst_path) == "real_doors.h"))
+    return dst_zone == src_zone or dst_zone == "common"
 
 
 def folder_of(rel):
@@ -285,8 +281,8 @@ def zones_md(files):
            "An edge A --> B means files of zone A include files of zone B; the label is the",
            "number of such includes. The dependency rules (checked by",
            "`src/tools/baseline/hygiene.py`): `common` includes only `common`; `split` and `il`",
-           "include themselves and `common` (`il` may also use `bridge/real_doors.h`); `bridge`",
-           "may include both layouts; `wisdom2` and the front door may include anything.", "",
+           "include only themselves and `common`, never each other; `wisdom2` and the front door",
+           "may include anything.", "",
            "```mermaid", "flowchart TD"]
     for z in ZONES:
         out.append('    %s["%s (%d files)<br/>%s"]' % (nid(z), z, counts[z], lbl(ZONE_ROLE[z])))
@@ -301,7 +297,7 @@ def zones_md(files):
 def folders_md(files):
     """One diagram per zone: its folders and the includes among them; includes
     that leave the zone are collapsed to one node per target zone. The small
-    zones (bridge, wisdom2, front) share one last diagram."""
+    zones (wisdom2, front) share one last diagram."""
     folders = {}
     for f in files.values():
         folders.setdefault(f["folder"], {"zone": f["zone"], "n": 0})["n"] += 1
@@ -323,7 +319,7 @@ def folders_md(files):
            "includes. Includes that leave the zone end in a rounded node for the target zone.",
            "Per-folder file diagrams are in `folders/`, the full lists in `map.md`.", ""]
     groups = [("split", ["split"]), ("il", ["il"]), ("common", ["common"]),
-              ("bridge, wisdom2 and the front door", ["bridge", "wisdom2", "front"])]
+              ("wisdom2 and the front door", ["wisdom2", "front"])]
     for title, zs in groups:
         mine = sorted(k for k, v in folders.items() if v["zone"] in zs)
         out += ["## %s" % title, "", "```mermaid", "flowchart LR"]
@@ -409,10 +405,10 @@ CALL_VIEWS = [
     ("execute", "vfft_execute", "vfft_execute: the signature check and the layout fork"),
     ("create_split", "_vfft_split_create", "the SPLIT side of the create fork"),
     ("create_il", "_vfft_il_create", "the INTERLEAVED side of the create fork"),
-    ("create_real", "_vfft_create_real", "the 1D real create (through the bridge)"),
+    ("create_real", "_vfft_create_real_door", "the 1D real create (the interleaved real door)"),
     ("execute_split", "_vfft_split_execute", "the SPLIT side of the execute fork"),
     ("execute_il", "_vfft_il_execute", "the INTERLEAVED side of the execute fork"),
-    ("execute_real", "_vfft_real_bridge_execute", "the 1D real execute (through the bridge)"),
+    ("execute_real", "_vfft_real_execute_il", "the 1D real execute (the interleaved real engines)"),
 ]
 
 
@@ -672,6 +668,8 @@ def main():
     ap.add_argument("--svg", action="store_true", help="also render docs/architecture/svg/")
     ap.add_argument("--up", action="store_true", help="with --calls: its callers instead")
     a = ap.parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")   # the roles quote source comments (a Windows console is cp1252)
     files, funcs = scan()
     if a.focus:
         focus(files, a.focus, a.depth)

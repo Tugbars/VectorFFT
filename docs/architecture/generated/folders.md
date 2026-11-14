@@ -12,62 +12,17 @@ Per-folder file diagrams are in `folders/`, the full lists in `map.md`.
 ```mermaid
 flowchart LR
     n_split["split (2)"]
-    n_split_engine["split/engine (7)"]
-    n_split_natorder["split/natorder (6)"]
-    n_split_oop["split/oop (7)"]
-    n_split_planning["split/planning (8)"]
-    n_split_primes["split/primes (5)"]
-    n_split_rank1["split/rank1 (3)"]
-    n_split_rank2["split/rank2 (7)"]
-    n_split_rank3["split/rank3 (5)"]
-    n_split_real["split/real (9)"]
-    n_split_trig["split/trig (9)"]
-    n_split_wisdom["split/wisdom (5)"]
+    n_split_rank1["split/rank1 (7)"]
+    n_split_rankn["split/rankn (1)"]
+    n_split_wisdom["split/wisdom (1)"]
     n_zone_common(["common"])
-    n_split -->|2| n_split_rank1
-    n_split -->|1| n_split_rank2
-    n_split -->|1| n_split_rank3
-    n_split -->|1| n_split_trig
-    n_split_engine -->|1| n_split_planning
-    n_split_natorder -->|2| n_split_engine
-    n_split_natorder -->|2| n_split_oop
-    n_split_oop -->|3| n_split_engine
-    n_split_oop -->|2| n_split_planning
-    n_split_planning -->|11| n_split_engine
-    n_split_planning -->|1| n_split_oop
-    n_split_planning -->|1| n_split_wisdom
-    n_split_primes -->|7| n_split_engine
-    n_split_rank2 -->|6| n_split_engine
-    n_split_rank2 -->|2| n_split_natorder
-    n_split_rank2 -->|4| n_split_planning
-    n_split_rank2 -->|1| n_split_primes
-    n_split_rank2 -->|1| n_split_rank3
-    n_split_rank2 -->|3| n_split_real
-    n_split_rank2 -->|2| n_split_wisdom
-    n_split_rank3 -->|6| n_split_engine
-    n_split_rank3 -->|3| n_split_natorder
-    n_split_rank3 -->|3| n_split_planning
-    n_split_rank3 -->|2| n_split_primes
-    n_split_rank3 -->|1| n_split_rank2
-    n_split_rank3 -->|1| n_split_real
-    n_split_real -->|6| n_split_engine
-    n_split_real -->|2| n_split_planning
-    n_split_trig -->|5| n_split_engine
-    n_split_trig -->|3| n_split_real
-    n_split_wisdom -->|1| n_split_oop
-    n_split_wisdom -->|1| n_split_planning
-    n_split_wisdom -->|2| n_split_rank2
-    n_split_wisdom -->|1| n_split_rank3
-    n_split_engine -->|7| n_zone_common
-    n_split_natorder -->|3| n_zone_common
-    n_split_oop -->|8| n_zone_common
-    n_split_planning -->|5| n_zone_common
-    n_split_primes -->|8| n_zone_common
-    n_split_rank2 -->|11| n_zone_common
-    n_split_rank3 -->|8| n_zone_common
-    n_split_real -->|12| n_zone_common
-    n_split_trig -->|6| n_zone_common
-    n_split_wisdom -->|6| n_zone_common
+    n_split -->|1| n_split_rank1
+    n_split -->|1| n_split_rankn
+    n_split_rank1 -->|1| n_split_wisdom
+    n_split_rankn -->|1| n_split_rank1
+    n_split_wisdom -->|1| n_split_rank1
+    n_split_rank1 -->|10| n_zone_common
+    n_split_wisdom -->|1| n_zone_common
 ```
 
 ## il
@@ -75,71 +30,73 @@ flowchart LR
 ```mermaid
 flowchart LR
     n_il["il (2)"]
-    n_il_isa["il/isa (3)"]
+    n_il_estimate["il/estimate (8)"]
+    n_il_isa["il/isa (2)"]
     n_il_isa_avx512["il/isa/avx512 (1)"]
-    n_il_planning["il/planning (3)"]
-    n_il_rank1["il/rank1 (12)"]
-    n_il_rank2["il/rank2 (7)"]
-    n_il_rank3["il/rank3 (1)"]
-    n_il_real["il/real (3)"]
-    n_il_wisdom["il/wisdom (3)"]
+    n_il_planning["il/planning (5)"]
+    n_il_rank1["il/rank1 (15)"]
+    n_il_rank2["il/rank2 (13)"]
+    n_il_rank3["il/rank3 (4)"]
+    n_il_real["il/real (17)"]
+    n_il_wisdom["il/wisdom (4)"]
     n_zone_common(["common"])
     n_il -->|2| n_il_rank1
     n_il -->|1| n_il_rank2
     n_il_isa -->|1| n_il_isa_avx512
-    n_il_isa_avx512 -->|1| n_il_isa
     n_il_planning -->|1| n_il_isa
     n_il_planning -->|5| n_il_rank1
     n_il_planning -->|1| n_il_wisdom
-    n_il_rank1 -->|4| n_il_isa
-    n_il_rank1 -->|1| n_il_wisdom
+    n_il_rank1 -->|3| n_il_isa
+    n_il_rank1 -->|2| n_il_wisdom
     n_il_rank2 -->|2| n_il_rank1
-    n_il_rank2 -->|1| n_il_wisdom
-    n_il_isa -->|2| n_zone_common
-    n_il_isa_avx512 -->|1| n_zone_common
-    n_il_planning -->|9| n_zone_common
-    n_il_rank1 -->|18| n_zone_common
-    n_il_rank2 -->|8| n_zone_common
-    n_il_real -->|3| n_zone_common
-    n_il_wisdom -->|6| n_zone_common
+    n_il_rank2 -->|2| n_il_wisdom
+    n_il_real -->|1| n_il_isa
+    n_il_real -->|7| n_il_rank1
+    n_il_real -->|2| n_il_wisdom
+    n_il -->|1| n_zone_common
+    n_il_isa -->|4| n_zone_common
+    n_il_isa_avx512 -->|3| n_zone_common
+    n_il_planning -->|10| n_zone_common
+    n_il_rank1 -->|26| n_zone_common
+    n_il_rank2 -->|9| n_zone_common
+    n_il_real -->|11| n_zone_common
+    n_il_wisdom -->|9| n_zone_common
 ```
 
 ## common
 
 ```mermaid
 flowchart LR
-    n_common_abi["common/abi (3)"]
-    n_common_math["common/math (3)"]
-    n_common_move["common/move (2)"]
-    n_common_plan["common/plan (1)"]
+    n_common["common (1)"]
+    n_common_abi["common/abi (2)"]
+    n_common_math["common/math (6)"]
+    n_common_move["common/move (1)"]
+    n_common_plan["common/plan (2)"]
     n_common_policy["common/policy (2)"]
-    n_common_support["common/support (11)"]
-    n_common_wisdom["common/wisdom (5)"]
+    n_common_support["common/support (15)"]
+    n_common_wisdom["common/wisdom (7)"]
+    n_common_abi -->|1| n_common
     n_common_move -->|2| n_common_support
+    n_common_plan -->|2| n_common
     n_common_plan -->|1| n_common_support
+    n_common_policy -->|1| n_common_plan
     n_common_wisdom -->|1| n_common_abi
 ```
 
-## bridge, wisdom2 and the front door
+## wisdom2 and the front door
 
 ```mermaid
 flowchart LR
-    n__core_["src/core (vfft.c, ...) (3)"]
-    n_bridge["bridge (2)"]
-    n_wisdom2["wisdom2 (5)"]
-    n_zone_bridge(["bridge"])
+    n__core_["src/core (vfft.c, ...) (8)"]
+    n_wisdom2["wisdom2 (1)"]
     n_zone_common(["common"])
     n_zone_il(["il"])
     n_zone_split(["split"])
     n_zone_wisdom2(["wisdom2"])
-    n__core_ -->|2| n_zone_bridge
-    n__core_ -->|8| n_zone_common
-    n__core_ -->|24| n_zone_il
-    n__core_ -->|38| n_zone_split
-    n__core_ -->|2| n_zone_wisdom2
-    n_bridge -->|1| n_zone_il
-    n_bridge -->|1| n_zone_split
-    n_wisdom2 -->|5| n_zone_common
+    n__core_ -->|12| n_zone_common
+    n__core_ -->|48| n_zone_il
+    n__core_ -->|8| n_zone_split
+    n__core_ -->|1| n_zone_wisdom2
+    n_wisdom2 -->|1| n_zone_common
     n_wisdom2 -->|1| n_zone_il
-    n_wisdom2 -->|4| n_zone_split
 ```

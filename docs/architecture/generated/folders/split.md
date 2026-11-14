@@ -13,11 +13,7 @@ flowchart LR
     n_split_split_create_h["split_create.h"]
     n_split_split_execute_h["split_execute.h"]
     n_dir_split_rank1("split/rank1/")
-    n_dir_split_rank2("split/rank2/")
-    n_dir_split_rank3("split/rank3/")
-    n_dir_split_trig("split/trig/")
+    n_dir_split_rankn("split/rankn/")
     n_split_split_create_h --> n_dir_split_rank1
-    n_split_split_create_h --> n_dir_split_rank2
-    n_split_split_create_h --> n_dir_split_rank3
-    n_split_split_create_h --> n_dir_split_trig
+    n_split_split_create_h --> n_dir_split_rankn
 ```

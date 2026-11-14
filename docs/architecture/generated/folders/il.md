@@ -12,8 +12,10 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 flowchart LR
     n_il_il_create_h["il_create.h"]
     n_il_il_execute_h["il_execute.h"]
+    n_dir_common("common/")
     n_dir_il_rank1("il/rank1/")
     n_dir_il_rank2("il/rank2/")
     n_il_il_create_h --> n_dir_il_rank1
     n_il_il_create_h --> n_dir_il_rank2
+    n_il_il_execute_h --> n_dir_common
 ```

@@ -6,18 +6,29 @@ Files of this folder and their includes. Includes of files in other folders are
 collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 
 - `vfft.c`: the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss at the chosen rigor -> build -> execute.
+- `vfft_api.h`: THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).
 - `vfft_execute.h`: THE execute entry point.
 - `vfft_fingerprint.h`: the create-time PLAN FINGERPRINT.
+- `vfft_measure.h`: the public measurement calls (vfft.h, "the measurement scope"): vfft_measure_configure, vfft_measure_begin, vfft_measure_end, vfft_measure_confine, vfft_measure_describe; and vf...
+- `vfft_memory.h`: the public memory calls (vfft.h, "memory"): vfft_malloc, vfft_free, vfft_alignment, vfft_plan_alloc and vfft_buffers_free.
+- `vfftf.c`: the FP32 library: the core's translation unit (vfft.c) compiled a second time for float data (common/vfft_prec.h).
+- `vfftf_names.h`: the external names of the FP32 unit (vfftf.c), included before vfft.c.
 
 ```mermaid
 flowchart LR
     n_vfft_c["vfft.c"]
+    n_vfft_api_h["vfft_api.h"]
     n_vfft_execute_h["vfft_execute.h"]
     n_vfft_fingerprint_h["vfft_fingerprint.h"]
-    n_dir_bridge("bridge/")
+    n_vfft_measure_h["vfft_measure.h"]
+    n_vfft_memory_h["vfft_memory.h"]
+    n_vfftf_c["vfftf.c"]
+    n_vfftf_names_h["vfftf_names.h"]
     n_dir_common_plan("common/plan/")
     n_dir_common_support("common/support/")
+    n_dir_common_wisdom("common/wisdom/")
     n_dir_il("il/")
+    n_dir_il_estimate("il/estimate/")
     n_dir_il_planning("il/planning/")
     n_dir_il_rank1("il/rank1/")
     n_dir_il_rank2("il/rank2/")
@@ -25,21 +36,13 @@ flowchart LR
     n_dir_il_real("il/real/")
     n_dir_il_wisdom("il/wisdom/")
     n_dir_split("split/")
-    n_dir_split_engine("split/engine/")
-    n_dir_split_natorder("split/natorder/")
-    n_dir_split_oop("split/oop/")
-    n_dir_split_planning("split/planning/")
-    n_dir_split_primes("split/primes/")
     n_dir_split_rank1("split/rank1/")
-    n_dir_split_rank2("split/rank2/")
-    n_dir_split_rank3("split/rank3/")
-    n_dir_split_real("split/real/")
-    n_dir_split_trig("split/trig/")
     n_dir_split_wisdom("split/wisdom/")
     n_dir_wisdom2("wisdom2/")
-    n_vfft_c --> n_dir_bridge
+    n_vfft_api_h --> n_dir_il_estimate
     n_vfft_c --> n_dir_common_plan
     n_vfft_c --> n_dir_common_support
+    n_vfft_c --> n_dir_common_wisdom
     n_vfft_c --> n_dir_il
     n_vfft_c --> n_dir_il_planning
     n_vfft_c --> n_dir_il_rank1
@@ -48,22 +51,17 @@ flowchart LR
     n_vfft_c --> n_dir_il_real
     n_vfft_c --> n_dir_il_wisdom
     n_vfft_c --> n_dir_split
-    n_vfft_c --> n_dir_split_engine
-    n_vfft_c --> n_dir_split_natorder
-    n_vfft_c --> n_dir_split_oop
-    n_vfft_c --> n_dir_split_planning
-    n_vfft_c --> n_dir_split_primes
     n_vfft_c --> n_dir_split_rank1
-    n_vfft_c --> n_dir_split_rank2
-    n_vfft_c --> n_dir_split_rank3
-    n_vfft_c --> n_dir_split_real
-    n_vfft_c --> n_dir_split_trig
     n_vfft_c --> n_dir_split_wisdom
     n_vfft_c --> n_dir_wisdom2
+    n_vfft_c --> n_vfft_api_h
     n_vfft_c --> n_vfft_execute_h
     n_vfft_c --> n_vfft_fingerprint_h
-    n_vfft_execute_h --> n_dir_bridge
+    n_vfft_c --> n_vfft_measure_h
+    n_vfft_c --> n_vfft_memory_h
     n_vfft_execute_h --> n_dir_common_plan
     n_vfft_execute_h --> n_dir_il
     n_vfft_execute_h --> n_dir_split
+    n_vfftf_c --> n_vfft_c
+    n_vfftf_c --> n_vfftf_names_h
 ```

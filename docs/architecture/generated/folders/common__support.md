@@ -7,32 +7,52 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 
 - `build_isa.h`: THE build's ISA, decided once.
 - `cpu_cache.h`: cache capacities and SMT width, discovered once at PLAN time.
+- `cpu_identity.h`: THE CPU IDENTITY: which CPU raced a wisdom row.
+- `cpu_topology.h`: which logical CPU is which: the physical cores, their hyperthread siblings, and which cores are P-cores.
 - `diag.h`: the loud-refusal helpers.
 - `env.h`: the runtime environment. Two parts:
 - `hugepage.h`: 2 MB pages for big data planes: vfft_alloc_huge / vfft_free_huge.
 - `race.h`: the one race body shared by the in-process racers.
+- `race_scope.h`: THE RACE SCOPE: the conditions every measurement runs under.
 - `race_timing.h`: THE monotonic clock: every racer and planner times with it.
 - `ref.h`: the benchmark reference-backend interface.
+- `sibling_guard.h`: THE SIBLING GUARDS: a waiting thread on the hyperthread sibling of each core the library times or runs on, so no other thread shares that core.
 - `slot_check.h`: the one SLOT-INVARIANT walk, shared by the form checkers.
-- `threads.h`: the thread pool.
+- `threads.h`: the thread pool, the one owner of every fork-join.
 - `zalloc.h`: THE allocator: 64-byte-aligned memory for every buffer, table and scratch arena in the library (the utilities merge, 2026-09-27).
 
 ```mermaid
 flowchart LR
     n_common_support_build_isa_h["build_isa.h"]
     n_common_support_cpu_cache_h["cpu_cache.h"]
+    n_common_support_cpu_identity_h["cpu_identity.h"]
+    n_common_support_cpu_topology_h["cpu_topology.h"]
     n_common_support_diag_h["diag.h"]
     n_common_support_env_h["env.h"]
     n_common_support_hugepage_h["hugepage.h"]
     n_common_support_race_h["race.h"]
+    n_common_support_race_scope_h["race_scope.h"]
     n_common_support_race_timing_h["race_timing.h"]
     n_common_support_ref_h["ref.h"]
+    n_common_support_sibling_guard_h["sibling_guard.h"]
     n_common_support_slot_check_h["slot_check.h"]
     n_common_support_threads_h["threads.h"]
     n_common_support_zalloc_h["zalloc.h"]
+    n_common_support_cpu_cache_h --> n_common_support_cpu_topology_h
+    n_common_support_cpu_identity_h --> n_common_support_build_isa_h
+    n_common_support_cpu_identity_h --> n_common_support_cpu_cache_h
+    n_common_support_cpu_identity_h --> n_common_support_cpu_topology_h
     n_common_support_env_h --> n_common_support_build_isa_h
     n_common_support_env_h --> n_common_support_zalloc_h
     n_common_support_hugepage_h --> n_common_support_zalloc_h
     n_common_support_race_h --> n_common_support_race_timing_h
+    n_common_support_race_scope_h --> n_common_support_cpu_cache_h
+    n_common_support_race_scope_h --> n_common_support_cpu_topology_h
+    n_common_support_race_scope_h --> n_common_support_race_timing_h
+    n_common_support_race_scope_h --> n_common_support_sibling_guard_h
+    n_common_support_race_scope_h --> n_common_support_threads_h
+    n_common_support_sibling_guard_h --> n_common_support_cpu_cache_h
+    n_common_support_sibling_guard_h --> n_common_support_cpu_topology_h
     n_common_support_threads_h --> n_common_support_cpu_cache_h
+    n_common_support_threads_h --> n_common_support_sibling_guard_h
 ```

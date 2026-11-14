@@ -12,4 +12,6 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 flowchart LR
     n_common_policy_policy_cache_h["policy_cache.h"]
     n_common_policy_policy_order_h["policy_order.h"]
+    n_dir_common_plan("common/plan/")
+    n_common_policy_policy_order_h --> n_dir_common_plan
 ```

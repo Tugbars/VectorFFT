@@ -8,7 +8,7 @@ and never edited by hand, so it always matches the tree it was generated from.
 
 | file | what it shows |
 |---|---|
-| [`generated/zones.md`](generated/zones.md) | The six zones and the include edges between them, checked against the dependency rules. Start here. |
+| [`generated/zones.md`](generated/zones.md) | The five zones and the include edges between them, checked against the dependency rules. Start here. |
 | [`generated/folders.md`](generated/folders.md) | One diagram per zone: its folders and the includes among them. |
 | [`generated/folders/`](generated/folders/) | One diagram per folder: its files, what each is for, and what they include. |
 | [`generated/calls/`](generated/calls/) | Call graphs: `create.md` and `execute.md` from the entry points, then one per side of the layout fork (`create_split`, `create_il`, `create_real`, `execute_split`, `execute_il`, `execute_real`). |
@@ -19,7 +19,7 @@ and never edited by hand, so it always matches the tree it was generated from.
 The diagrams are [Mermaid](https://mermaid.js.org/); GitHub, GitLab and VS Code
 render them inline. The same diagrams are also rendered as images in
 [`svg/`](svg/), same layout (`svg/zones.svg`, `svg/calls/create.svg`,
-`svg/folders/split__real.svg`; the per-zone sections of `folders.md` are
+`svg/folders/il__real.svg`; the per-zone sections of `folders.md` are
 `svg/folders-split.svg` and so on), for reading in any browser or image viewer.
 
 ## The zones in one paragraph
@@ -30,10 +30,10 @@ They never include each other. What both need lives in **common** (ABI types,
 math, support, the wisdom store core, the plan struct). The **front door**
 (`vfft.c`) is one translation unit: it validates a request and forks once into
 `split/split_create.h` or `il/il_create.h` (and `*_execute.h` at execute time).
-**bridge** is the one temporary place where the two layouts meet (1D real
-transforms, until the interleaved real engine exists), and **wisdom2** holds
-wisdom glue that spans both layouts (legacy readers, the migrator). The rules
-are enforced by `src/tools/baseline/hygiene.py`.
+The real transforms live in the interleaved library (`il/real/`), and
+**wisdom2** holds the front door's one wisdom include (the frozen legacy format
+and the interleaved record). The rules are enforced by
+`src/tools/baseline/hygiene.py`.
 
 ## Regenerating
 
@@ -51,7 +51,8 @@ python src/tools/archgraph.py --svg
 This needs [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) and a Chromium:
 set `MMDC` to its `mmdc`, put `mmdc` on PATH, or let the tool run
 `npx -y @mermaid-js/mermaid-cli` (needs Node). Set `CHROME` to a Chromium binary
-if puppeteer cannot find one. `svg/manifest.json` holds a hash of each diagram's
+if puppeteer cannot find or start its own; on Windows the installed Edge serves:
+`CHROME="C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"`. `svg/manifest.json` holds a hash of each diagram's
 source, so `--check` also reports SVGs that need re-rendering, without needing
 mermaid-cli itself.
 
@@ -62,9 +63,9 @@ Python 3.8+, standard library only.
 ## Asking for one part of the picture
 
 ```
-python src/tools/archgraph.py --focus split/real        # a folder
+python src/tools/archgraph.py --focus il/real           # a folder
 python src/tools/archgraph.py --focus ztt.h             # a file
-python src/tools/archgraph.py --focus bridge --depth 2  # a zone, two steps out
+python src/tools/archgraph.py --focus split --depth 2   # a zone, two steps out
 ```
 
 prints one Mermaid diagram of that part and its neighbours, plus the roles of the
