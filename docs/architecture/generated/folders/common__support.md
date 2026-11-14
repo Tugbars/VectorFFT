@@ -7,7 +7,7 @@ collapsed to that folder (a rounded node); the full lists are in `../map.md`.
 
 - `build_isa.h`: THE build's ISA, decided once.
 - `cpu_cache.h`: cache capacities and SMT width, discovered once at PLAN time.
-- `cpu_check.h`: THE CPU CHECK (owner 2026-11-14: "good idea"): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would othe...
+- `cpu_check.h`: THE CPU CHECK (owner 2026-11-14): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would otherwise stop th...
 - `cpu_identity.h`: THE CPU IDENTITY: which CPU raced a wisdom row.
 - `cpu_topology.h`: which logical CPU is which: the physical cores, their hyperthread siblings, and which cores are P-cores.
 - `diag.h`: the loud-refusal helpers.

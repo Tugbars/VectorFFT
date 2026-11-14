@@ -1,1 +1,1 @@
-gradient3d 64x64x64 in place, row pitch 66 doubles: max |error| d/dx1 1.21e-14, d/dx2 2.13e-14, d/dx3 3.73e-14, tolerance 1e-12: PASS
+gradient3d 64x64x64 in place, row pitch 66 doubles: max |error| d/dx1 1.22e-14, d/dx2 2.13e-14, d/dx3 3.73e-14, tolerance 1e-12: PASS

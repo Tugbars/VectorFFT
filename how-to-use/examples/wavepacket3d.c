@@ -53,14 +53,14 @@
  *
  *     gcc -O3 wavepacket3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o wavepacket3d
  *
- * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
+ * Run it:
  *
- *     VFFT_WISDOM_DIR=<dir> ./wavepacket3d
+ *     ./wavepacket3d
  *
- * A create that misses wisdom measures the cell's candidates once and saves the winner in that
- * store before it returns; later runs are served from it. In the repository the root CMake build
- * compiles it as well, and python gauntlet/build.py --src how-to-use/examples/wavepacket3d.c --vfft
- * --compile builds it beside this file.
+ * It plans with the estimate (VFFT_FLAG_ESTIMATE in its configuration): nothing is measured,
+ * and no wisdom is read or saved. To plan by measuring instead, delete that line: the first run
+ * then measures what the wisdom of this CPU lacks and saves the winners, and later runs read
+ * them (User Guide, chapter 10). In the repository the root CMake build compiles it as well.
  */
 #include <complex.h>
 #include <math.h>
@@ -126,12 +126,13 @@ int main(void)
     size_t i;
 
     /* one rank-3 C2C plan, in place; the zeroed fields are interleaved, natural order, one
-     * transform, one thread and the library's wisdom store */
+     * transform, one thread */
     memset(&c, 0, sizeof c);
     c.transform = VFFT_C2C;
     c.rank = 3;
     c.n[0] = c.n[1] = c.n[2] = N;
     c.placement = VFFT_PLACEMENT_IN;
+    c.flags = VFFT_FLAG_ESTIMATE; /* the estimate; delete this line to plan by measuring */
     plan = vfft_create(&c);
     if (!plan)
     {

@@ -1,10 +1,10 @@
 {
  "source": "poisson3d.c",
- "source_sha256": "d853a9995d2c413457ed9d3dfe0babcd466563f60abeacb1b2d8350a91f8ec45",
+ "source_sha256": "3dc03a3b6bf3a0aadbccb676637725ee212899c1567346a7113d2e0c980a968b",
  "exit": 0,
  "args": [],
  "env": {},
  "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
- "store_records_loaded": 27436,
- "measured_and_saved": true
+ "store_records_loaded": null,
+ "measured_and_saved": false
 }

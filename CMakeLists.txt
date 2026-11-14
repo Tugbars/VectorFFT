@@ -15,7 +15,7 @@
 #   MKL's include folder (src/shims/dfti/mkl_dfti.h).
 #
 # Configure, build, install (how-to-use/):
-#   cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_INSTALL_PREFIX=<prefix> -DVFFT_BUILD_GAUNTLET=OFF
+#   cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_INSTALL_PREFIX=<prefix>
 #   cmake --build build
 #   cmake --install build
 #   (-DVFFT_NATIVE=OFF for programs that run on other machines: -march=native is the default)
@@ -212,7 +212,7 @@ else()
 endif()
 if(VFFT_ISA STREQUAL "avx512" AND VFFT_HOST_AVX512 STREQUAL "no")
     message(WARNING "VFFT_ISA=avx512 on a CPU that does not run AVX-512: the library and every program "
-                    "built here need AVX-512 and stop with an illegal instruction on this machine.")
+                    "built here need AVX-512: on this machine the library refuses to run, and names the missing instructions.")
 endif()
 message(STATUS "VectorFFT codelet ISA: ${VFFT_ISA} (${_isa_why})")
 
@@ -852,7 +852,11 @@ message(STATUS " This machine    ${_vfft_cpu}, ${_vfft_pcores} cores / ${_vfft_l
 message(STATUS " Compiler        ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}  (${CMAKE_C_COMPILER})")
 message(STATUS " Build type      ${_vfft_bt}; ${_vfft_opt} ${VFFT_ISA_FLAGS_TXT}")
 message(STATUS " Codelets        ${_ncodelets} files from the ${VFFT_ISA} tree, compiled once for every target")
-message(STATUS " Library         VectorFFT::vfft = ${CMAKE_STATIC_LIBRARY_PREFIX}vfft${CMAKE_STATIC_LIBRARY_SUFFIX}, in ${PROJECT_BINARY_DIR}")
+if(VFFT_BUILD_SHARED)
+    message(STATUS " Library         VectorFFT::vfft = ${CMAKE_SHARED_LIBRARY_PREFIX}vfft${CMAKE_SHARED_LIBRARY_SUFFIX} (shared), in ${PROJECT_BINARY_DIR}")
+else()
+    message(STATUS " Library         VectorFFT::vfft = ${CMAKE_STATIC_LIBRARY_PREFIX}vfft${CMAKE_STATIC_LIBRARY_SUFFIX}, in ${PROJECT_BINARY_DIR}")
+endif()
 message(STATUS " Wisdom store    ${VFFT_LIB_STORE}  (compiled into the library)")
 if(NOT VFFT_IS_TOP_LEVEL)
     message(STATUS " Parts           the library alone (built inside ${CMAKE_PROJECT_NAME})")

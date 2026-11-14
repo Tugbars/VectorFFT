@@ -59,7 +59,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **common/support/cpu_cache.h** (595 lines): cache capacities and SMT width, discovered once at PLAN time.
   - includes: common/support/cpu_topology.h
   - included by: common/move/transpose.h, common/support/cpu_identity.h, common/support/race_scope.h, common/support/sibling_guard.h, common/support/threads.h, il/planning/dp_planner_il.h, il/planning/policy_il.h, vfft.c
-- **common/support/cpu_check.h** (164 lines): THE CPU CHECK (owner 2026-11-14: "good idea"): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would othe...
+- **common/support/cpu_check.h** (197 lines): THE CPU CHECK (owner 2026-11-14): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would otherwise stop th...
   - included by: common/support/diag.h
 - **common/support/cpu_identity.h** (88 lines): THE CPU IDENTITY: which CPU raced a wisdom row.
   - includes: common/support/cpu_cache.h, common/support/cpu_topology.h
@@ -317,7 +317,7 @@ includes (codelet registries, generated headers, the public API) are listed as s
 - **il/real/dst.h** (460 lines): DST-II and DST-III (VFFT_DST2, VFFT_DST3): 1D, N reals in and N reals out, any N, one transform, on the interleaved real FFT of the same length.
   - includes: common/math/tw_exact.h, il/real/real_child.h
   - included by: vfft.c
-- **il/real/odd_build.h** (763 lines): the real door's ODD-N engine pick (K=1, INTERLEAVED, both placements): env pin, the banked engine, or THE ODD REAL RACE.
+- **il/real/odd_build.h** (765 lines): the real door's ODD-N engine pick (K=1, INTERLEAVED, both placements): env pin, the banked engine, or THE ODD REAL RACE.
   - included by: vfft.c
 - **il/real/real_child.h** (99 lines): THE REAL FFT INSIDE A REAL-TO-REAL PLAN, CREATED AS A CHILD IN ROLE (owner, 2026-11-14).
   - includes: il/real/real_role.h, il/wisdom/wisdom2_real_il.h, il/wisdom/wisdom2_child.h

@@ -49,13 +49,11 @@ cd build-examples
 ```
 
 In PowerShell, run `.\poisson3d.exe`. Each example checks its own result, and its last line ends
-in `PASS`. The library keeps the wisdom it measures in its wisdom folder,
-`<prefix>/share/vectorfft/wisdom/`, which holds one folder for each CPU, and it picks the folder
-of your CPU by itself. On a CPU without shipped wisdom, the first run of an example measures
-each configuration it creates, for seconds, up to minutes for the largest configurations, and
-saves the winners there; later runs are served at once. Saving needs a `<prefix>` you can
-write: under a prefix only an administrator can write, nothing is saved and every run measures
-again (Chapter 10 of the guide). On Windows, a program built with MinGW-w64 needs
+in `PASS`. The examples plan with the estimate
+(`VFFT_FLAG_ESTIMATE` in their configurations): they measure nothing and read or save no wisdom.
+Delete that line in an example to plan by measuring: the library then keeps the winners it
+measures in its wisdom folder, `<prefix>/share/vectorfft/wisdom/`, in the folder of your CPU,
+which needs a `<prefix>` you can write (Chapter 10 of the guide). On Windows, a program built with MinGW-w64 needs
 `libwinpthread-1.dll`, from the compiler's `bin` folder, on `PATH` or beside it, unless it is
 linked with `-static` (Appendix A of the guide).
 

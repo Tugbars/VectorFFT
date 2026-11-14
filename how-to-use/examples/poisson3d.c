@@ -45,14 +45,14 @@
  *
  *     gcc -O3 poisson3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o poisson3d
  *
- * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
+ * Run it:
  *
- *     VFFT_WISDOM_DIR=<dir> ./poisson3d
+ *     ./poisson3d
  *
- * A create that misses wisdom measures the cell's candidates once and saves the winner in that
- * store before it returns; later runs are served from it. In the repository the root CMake build
- * compiles it as well, and python gauntlet/build.py --src how-to-use/examples/poisson3d.c --vfft
- * --compile builds it beside this file.
+ * It plans with the estimate (VFFT_FLAG_ESTIMATE in its configuration): nothing is measured,
+ * and no wisdom is read or saved. To plan by measuring instead, delete that line: the first run
+ * then measures what the wisdom of this CPU lacks and saves the winners, and later runs read
+ * them (User Guide, chapter 10). In the repository the root CMake build compiles it as well.
  */
 #include <math.h>
 #include <stdio.h>
@@ -110,6 +110,7 @@ static vfft_plan plan3d(vfft_transform_t transform)
     c.n[0] = N1;
     c.n[1] = N2;
     c.n[2] = N3;
+    c.flags = VFFT_FLAG_ESTIMATE; /* the estimate; delete this line to plan by measuring */
     p = vfft_create(&c);
     if (!p) /* read it now: the next create clears it */
         fprintf(stderr, "poisson3d: vfft_create: %s\n", vfft_error());

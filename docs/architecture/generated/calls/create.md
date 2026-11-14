@@ -20,8 +20,11 @@ flowchart LR
         n_fn_thread_pool_caller_arm["thread_pool_caller_arm<br/>threads.h"]
         n_fn_thread_pool_caller_release["thread_pool_caller_release<br/>threads.h"]
         n_fn_thread_pool_plan_retain["thread_pool_plan_retain +4<br/>threads.h"]
+        n_fn_vfft__cat["vfft__cat<br/>cpu_check.h"]
         n_fn_vfft__cpu_lacks["vfft__cpu_lacks<br/>cpu_check.h"]
         n_fn_vfft__cpu_lacks_compute["vfft__cpu_lacks_compute<br/>cpu_check.h"]
+        n_fn_vfft__cpuid["vfft__cpuid<br/>cpu_check.h"]
+        n_fn_vfft__errmsg["vfft__errmsg<br/>cpu_check.h"]
         n_fn_vfft_cpu_l1d_bytes["vfft_cpu_l1d_bytes<br/>cpu_cache.h"]
         n_fn_vfft_cpu_l1d_ways["vfft_cpu_l1d_ways<br/>cpu_cache.h"]
         n_fn_vfft_cpu_l2_bytes["vfft_cpu_l2_bytes<br/>cpu_cache.h"]
@@ -63,9 +66,13 @@ flowchart LR
     n_fn__vfft_create_estimate --> n_fn_vfft_cpu_l3_bytes
     n_fn__vfft_k1_go_mt --> n_fn_thread_pool_caller_arm
     n_fn__vfft_k1_go_mt --> n_fn_thread_pool_caller_release
+    n_fn_vfft__cpu_lacks --> n_fn_vfft__cat
     n_fn_vfft__cpu_lacks --> n_fn_vfft__cpu_lacks_compute
+    n_fn_vfft__cpu_lacks_compute --> n_fn_vfft__cpuid
+    n_fn_vfft__errmsg --> n_fn_vfft__cat
     n_fn_vfft_create --> n_fn__vfft_create_checked
     n_fn_vfft_create --> n_fn_vfft__cpu_lacks
+    n_fn_vfft_create --> n_fn_vfft__errmsg
     classDef entry stroke-width:3px
 ```
 

@@ -272,7 +272,8 @@ extern "C"
   /**
    * @brief Allocate a buffer at the alignment every plan was measured on
    *        (vfft_info().alignment bytes). Uninitialised; release with
-   *        vfft_free() only. NULL when memory runs out.
+   *        vfft_free() only. NULL when memory runs out, or on a CPU that
+   *        lacks an instruction set this build was compiled for.
    */
   VFFT_API void *vfft_malloc(size_t bytes);
   /** @brief Release a vfft_malloc() block. NULL is accepted. */
@@ -300,7 +301,8 @@ extern "C"
 
   /**
    * @brief Fill a plan's facts; with p == NULL, the library's facts only.
-   * @return 0, or -1 when out is NULL.
+   * @return 0, or -1 when out is NULL or the CPU lacks an instruction set
+   *         this build was compiled for (vfft_error() says which).
    */
   VFFT_API int vfft_info(vfft_plan p, vfft_info_t *out);
 

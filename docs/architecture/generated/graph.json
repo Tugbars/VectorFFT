@@ -243,8 +243,8 @@
     "common/support/diag.h"
    ],
    "includes": [],
-   "lines": 164,
-   "role": "THE CPU CHECK (owner 2026-11-14: \"good idea\"): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would othe...",
+   "lines": 197,
+   "role": "THE CPU CHECK (owner 2026-11-14): the library's entry points refuse to run on a CPU that lacks an instruction set this build was compiled for, where they would otherwise stop th...",
    "zone": "common"
   },
   "common/support/cpu_identity.h": {
@@ -1306,7 +1306,7 @@
     "vfft.c"
    ],
    "includes": [],
-   "lines": 763,
+   "lines": 765,
    "role": "the real door's ODD-N engine pick (K=1, INTERLEAVED, both placements): env pin, the banked engine, or THE ODD REAL RACE.",
    "zone": "il"
   },
@@ -10495,7 +10495,7 @@
     "vw2_real_il_lookup_zrf"
    ],
    "file": "il/real/odd_build.h",
-   "line": 675,
+   "line": 677,
    "refs": []
   },
   "_real_il_odd_race": {
@@ -10534,7 +10534,7 @@
     "vw2_real_il_key"
    ],
    "file": "il/real/odd_build.h",
-   "line": 510,
+   "line": 512,
    "refs": []
   },
   "_real_il_pair_band": {
@@ -14240,7 +14240,7 @@
     "vfft_zrb_name_inner"
    ],
    "file": "il/real/odd_build.h",
-   "line": 302,
+   "line": 304,
    "refs": [
     "_ilprime_inner_from_desc"
    ]
@@ -14289,7 +14289,7 @@
     "_ilprime_desc_parse"
    ],
    "file": "il/real/odd_build.h",
-   "line": 332,
+   "line": 334,
    "refs": []
   },
   "_zrb_m_cands": {
@@ -14301,7 +14301,7 @@
     "vfft_zrb_min_m"
    ],
    "file": "il/real/odd_build.h",
-   "line": 372,
+   "line": 374,
    "refs": []
   },
   "_zrb_mt_inner": {
@@ -14385,7 +14385,7 @@
     "vfft_k1fs_band"
    ],
    "file": "il/real/odd_build.h",
-   "line": 458,
+   "line": 460,
    "refs": []
   },
   "_zrb_try": {
@@ -14403,7 +14403,7 @@
     "vfft_zrb_str"
    ],
    "file": "il/real/odd_build.h",
-   "line": 402,
+   "line": 404,
    "refs": []
   },
   "_zrbl_build_plan": {
@@ -19965,6 +19965,16 @@
    "line": 665,
    "refs": []
   },
+  "vfft__cat": {
+   "callers": [
+    "vfft__cpu_lacks",
+    "vfft__errmsg"
+   ],
+   "calls": [],
+   "file": "common/support/cpu_check.h",
+   "line": 29,
+   "refs": []
+  },
   "vfft__child_tok": {
    "callers": [
     "vfft_child_row_has",
@@ -19983,19 +19993,44 @@
     "vfft_malloc"
    ],
    "calls": [
+    "vfft__cat",
     "vfft__cpu_lacks_compute"
    ],
    "file": "common/support/cpu_check.h",
-   "line": 136,
+   "line": 158,
    "refs": []
   },
   "vfft__cpu_lacks_compute": {
    "callers": [
     "vfft__cpu_lacks"
    ],
+   "calls": [
+    "vfft__cpuid"
+   ],
+   "file": "common/support/cpu_check.h",
+   "line": 51,
+   "refs": []
+  },
+  "vfft__cpuid": {
+   "callers": [
+    "vfft__cpu_lacks_compute"
+   ],
    "calls": [],
    "file": "common/support/cpu_check.h",
-   "line": 27,
+   "line": 45,
+   "refs": []
+  },
+  "vfft__errmsg": {
+   "callers": [
+    "vfft_create",
+    "vfft_info",
+    "vfft_malloc"
+   ],
+   "calls": [
+    "vfft__cat"
+   ],
+   "file": "common/support/cpu_check.h",
+   "line": 38,
    "refs": []
   },
   "vfft__fingerprint": {
@@ -20705,7 +20740,8 @@
    "callers": [],
    "calls": [
     "_vfft_create_checked",
-    "vfft__cpu_lacks"
+    "vfft__cpu_lacks",
+    "vfft__errmsg"
    ],
    "file": "vfft_api.h",
    "line": 284,
@@ -22428,7 +22464,8 @@
    "callers": [],
    "calls": [
     "_vfft_info_checked",
-    "vfft__cpu_lacks"
+    "vfft__cpu_lacks",
+    "vfft__errmsg"
    ],
    "file": "vfft_api.h",
    "line": 460,
@@ -22730,7 +22767,8 @@
    "callers": [],
    "calls": [
     "_vfft_malloc_checked",
-    "vfft__cpu_lacks"
+    "vfft__cpu_lacks",
+    "vfft__errmsg"
    ],
    "file": "vfft_memory.h",
    "line": 65,

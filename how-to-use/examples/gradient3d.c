@@ -51,14 +51,14 @@
  *
  *     gcc -O3 gradient3d.c -I<prefix>/include -L<prefix>/lib -lvfft -lm -o gradient3d
  *
- * Run it with a store of its own, an existing directory (PowerShell: $env:VFFT_WISDOM_DIR="<dir>"):
+ * Run it:
  *
- *     VFFT_WISDOM_DIR=<dir> ./gradient3d
+ *     ./gradient3d
  *
- * A create that misses wisdom measures the cell's candidates once and saves the winner in that
- * store before it returns; later runs are served from it. In the repository the root CMake build
- * compiles it as well, and python gauntlet/build.py --src how-to-use/examples/gradient3d.c --vfft
- * --compile builds it beside this file.
+ * It plans with the estimate (VFFT_FLAG_ESTIMATE in its configuration): nothing is measured,
+ * and no wisdom is read or saved. To plan by measuring instead, delete that line: the first run
+ * then measures what the wisdom of this CPU lacks and saves the winners, and later runs read
+ * them (User Guide, chapter 10). In the repository the root CMake build compiles it as well.
  */
 #include <math.h>
 #include <stdio.h>
@@ -98,6 +98,7 @@ static vfft_plan plan_in_place(vfft_transform_t t)
     c.rank = 3;
     c.n[0] = c.n[1] = c.n[2] = N;
     c.placement = VFFT_PLACEMENT_IN;
+    c.flags = VFFT_FLAG_ESTIMATE; /* the estimate; delete this line to plan by measuring */
     p = vfft_create(&c);
     if (!p)
         fprintf(stderr, "gradient3d: vfft_create(%s): %s\n",

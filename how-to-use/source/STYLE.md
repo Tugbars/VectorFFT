@@ -82,6 +82,9 @@ another chapter's files; report what you need instead.
   cannot plan (`ch10-sec-estimate`). Present it as the other method, for programs that must not
   measure or must not touch a wisdom store; never give a reason why measuring is the default,
   never recommend the estimate first, and say nothing about how long an estimate create takes.
+  The four examples of Part III plan with the estimate (`VFFT_FLAG_ESTIMATE` in their
+  configurations, the owner's choice): their chapters say so once and give "Plan by measuring"
+  as a variant.
   Every DFTI commit plans with the estimate (`ch16-sec-run`).
 - **Wisdom folder.** The library comes with its own wisdom folder, one folder per CPU
   (`src/wisdom/`; `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it

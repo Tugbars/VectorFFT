@@ -1,10 +1,10 @@
 {
  "source": "convolve3d.c",
- "source_sha256": "423e0757b4e6f1681db47aecb1ee52429c29c37cdf7f4011273b1c13299d8d06",
+ "source_sha256": "8ca5e8c83c0016ab9d6b6fb01436402882cdc6de2ae2089a0fe513cdf3876530",
  "exit": 0,
  "args": [],
  "env": {},
  "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
- "store_records_loaded": 27436,
- "measured_and_saved": true
+ "store_records_loaded": null,
+ "measured_and_saved": false
 }

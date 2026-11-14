@@ -1,10 +1,10 @@
 {
  "source": "gradient3d.c",
- "source_sha256": "6364e0dbbe5dbf0a2df632534af178a02d8ea445fb95d5251a1a0629648668f9",
+ "source_sha256": "44a0865344d9567eb3a9fbbed5e9b80eb81ce72141da661908d610cd57d432f1",
  "exit": 0,
  "args": [],
  "env": {},
  "store": "a fresh copy of src/wisdom/14900KF, VFFT_WISDOM_DIR=wisdom",
- "store_records_loaded": 27436,
- "measured_and_saved": true
+ "store_records_loaded": null,
+ "measured_and_saved": false
 }
