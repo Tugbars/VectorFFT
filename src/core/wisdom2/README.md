@@ -112,9 +112,9 @@ in `@quarantined` records is always the LAST token and its value runs to
 end-of-line (escape-free, so any legacy line survives verbatim).
 
 ```text
-@vw2 1.0
+@vw2 1.4
 @legend <one line per rule — writer-emitted, §3.5>
-@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
+@meta host=intel-f6m183 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 
 @cell t=c2c n=8192 q=* ord=* place=* | eng=split_oop sp_route=ccol chain=8.32.32 vars=t1s.flat.log3 | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=oop_wisdom.txt:119
 @cell t=c2c n=4096 q=1 ord=nat place=ip | mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) | ran=1 ns=8891.0 metric=fwd1 units=ns arms=2 src=race bin=vfft_create@ce40f78d date=2026-08-19
@@ -140,6 +140,7 @@ The key states what the caller asked for, never how it was served
 | `place=` | `ip` \| `oop`. |
 | `dir=` | `fwd` \| `bwd`. Absent = the verdict serves both directions from one plan, which is still the case for almost every cell. Present = this record is a per-direction verdict and is addressed separately. IN USE by the K=1 engine (`eng=k1`): the blocked kernel-variant verdict is directional, because the forward and backward slots are different kernels and measurably disagree, so the backward pick is a `dir=bwd` sibling of the forward cell rather than more `il_kv` bits. A reader that does not ask for a direction must skip records that carry one — a directional sibling shares every other key component, so an unguarded scan matches it by accident. |
 | `role=` | absent = the problem verdict at the key (v1.1). `comp` = an engine-internal COMPONENT recipe (every K=1 `eng=k1` row; the kind-4 component). `method` = the IL prime engine's METHOD verdict (`eng=rader\|bluestein` + its inner, 2026-10-22), keyed apart from the in-place scrambled cell's `role=comp` route row. Equality-matched; a binary that does not know a value carries the row opaque. |
+| `isa=` | the instruction set of the build that raced the row (v1.4): `avx2` \| `avx512`, written last in the key on every row. A store opened by a build holds only that build's rows in its table, so no lookup and no scan of the table can serve another build's verdict; the other builds' rows are set aside at load as text and written back at every save of their shard, taken from the disk's copy at that moment (that build may have re-raced a row since). A row without `isa=` (a file from before v1.4) is the build named by its file's `@meta`, else by the first stamped file of its store, else this build's. A part plan's rows (`rp_` ... `dct_`) carry none: they are their parent's build. An unknown value is carried opaque. Not compared by the matchers: the table never holds two builds. |
 | `nthreads=` | the thread count the verdict was raced at and serves (v1.3). Absent = one thread. A threaded plan's row is its own, complete on its own: the plain tokens are its verdict at that T. Equality-matched; a lookup never crosses thread counts. The K=1 family's route is thread-independent (serial kernels; threading is a flag on the route), so the route race banks the one-thread row and a plan at T > 1 gets its row as a copy of that route with its own threaded verdict (`il_mt` ...) raced at T; the 2D and 3D families race their whole verdict at T. |
 
 **Wildcards:** `q=*`, `ord=*`, `place=*` mark an axis-agnostic record. They
@@ -152,7 +153,7 @@ as cells re-race.
 **Layout (split vs interleaved) is never a key token.** It is a strategy
 property — an *output* of planning — and appears only in the payload.
 An unknown token in the KEY section makes the record invisible to lookup and
-is carried opaquely on resave: future key axes (`isa=`; `nthreads=` landed as v1.3) land as
+is carried opaquely on resave: future key axes (`nthreads=` landed as v1.3, `isa=` as v1.4) land as
 additive minor versions that older binaries can neither serve, strip, nor
 collapse.
 

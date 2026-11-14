@@ -19,6 +19,13 @@ EXE = ".exe" if os.name == "nt" else ""
 
 def shipped_folder(bin_dir=None):
     """(folder, identity) of the library's own store on this CPU"""
+    f, i, _ = shipped_folder_isa(bin_dir)
+    return f, i
+
+
+def shipped_folder_isa(bin_dir=None):
+    """(folder, identity, isa): also the instruction set of the build the tools were built for, the isa= of
+    the rows they bank (one folder holds the rows of both builds of its machine since v1.4)"""
     probe = os.path.join(bin_dir or HERE, "recal_1d_probe" + EXE)
     if not os.path.isfile(probe):
         raise SystemExit("missing %s -- build the gauntlet first (see gauntlet/README.md), or pass --bin-dir" % probe)
@@ -28,9 +35,9 @@ def shipped_folder(bin_dir=None):
     out = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
     if r.returncode != 0 or "folder" not in out:
         raise SystemExit("%s --where failed (exit %d): %s" % (probe, r.returncode, (r.stderr or r.stdout).strip()[-400:]))
-    return os.path.normpath(out["folder"]), out.get("identity", "")
+    return os.path.normpath(out["folder"]), out.get("identity", ""), out.get("isa", "")
 
 
 if __name__ == "__main__":
-    f, i = shipped_folder(sys.argv[1] if len(sys.argv) > 1 else None)
-    print("folder:   %s\nidentity: %s" % (f, i))
+    f, i, a = shipped_folder_isa(sys.argv[1] if len(sys.argv) > 1 else None)
+    print("folder:   %s\nidentity: %s\nbuild:    %s" % (f, i, a))

@@ -108,7 +108,8 @@ int main(int argc, char **argv)
      * re-deriving the selection. */
     if (argc > 1 && !strcmp(argv[1], "--where"))
     {
-        printf("folder=%s\nidentity=%s\nbuild=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity(), vfft_wisdom_build());
+        printf("folder=%s\nidentity=%s\nbuild=%s\nisa=%s\n", vfft_wisdom_folder(), vfft_wisdom_identity(),
+               vfft_wisdom_build(), vfft_isa());
         return 0;
     }
     /* --report [BUILD]: the library's own store by the build that raced each

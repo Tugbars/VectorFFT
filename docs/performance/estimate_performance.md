@@ -970,7 +970,7 @@ By rank and direction:
 > **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1
 > **Arms and method:** as at the top of this page, run through
 > [`benchmark_scripts/scripts/estimate_pow2.py`](../../benchmark_scripts/scripts/estimate_pow2.py). The measured plans are the rows of
-> [`src/wisdom/Zen4_avx512`](../../src/wisdom/Zen4_avx512) and [`src/wisdom/Zen4`](../../src/wisdom/Zen4), the rows these
+> [`src/wisdom/Zen4`](../../src/wisdom/Zen4) (its `isa=avx512` and `isa=avx2` rows; two folders until 2026-11-14), the rows these
 > runs found missing raced on the laptop first
 > **Cells:** the powers of two from 64 to 8,388,608; the 108 other lengths above 4,096 with a planner row in the 14900KF
 > store; the script's 29 2D and 21 3D shapes

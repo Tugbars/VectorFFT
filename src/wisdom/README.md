@@ -20,9 +20,8 @@ taken from another CPU's folder.
 
 | folder | holds |
 |---|---|
-| `14900KF/` | the rows raced on the Intel i9-14900KF |
-| `Zen4/` | the rows raced on the AMD Zen 4 laptop (Ryzen 5 PRO 8640HS) with the AVX2 build |
-| `Zen4_avx512/` | the rows raced on the same laptop with the AVX-512 build |
+| `14900KF/` | the rows raced on the Intel i9-14900KF (AVX2 build) |
+| `Zen4/` | the rows raced on the AMD Zen 4 laptop (Ryzen 5 PRO 8640HS), with the AVX2 build and with the AVX-512 build |
 | `6980P/` | the rows raced on an Intel Xeon 6980P (Granite Rapids, family 6 model 173, 2-vCPU KVM guest) with the AVX-512 build |
 | `new/` | the six shard files with headers only: the folder of the next CPU this store has not seen |
 
@@ -30,18 +29,26 @@ taken from another CPU's folder.
 Each shard opens with an `@meta` line carrying the CPU identity:
 
 ```
-@meta host=intel-f6m183 isa=avx2 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
+@meta host=intel-f6m183 l1d=49152 l2=2097152 l3=37748736 pcores=8 ecores=16
 ```
 
-vendor and model, the build's instruction set, the P-core's L1d and L2 and the
-L3 in bytes, and the number of P- and E-cores. Two machines share a folder only
-when every field is equal: a 14900K, a 14900KF and a 13900K are one identity; an
-i7-14700K (12 E-cores, 33 MB) is another. `vfft_wisdom_identity()` returns this
-machine's, `vfft_wisdom_folder()` the folder in use.
+vendor and model, the P-core's L1d and L2 and the L3 in bytes, and the number of
+P- and E-cores. Two machines share a folder only when every field is equal: a
+14900K, a 14900KF and a 13900K are one identity; an i7-14700K (12 E-cores,
+33 MB) is another. `vfft_wisdom_identity()` returns this machine's,
+`vfft_wisdom_folder()` the folder in use.
+
+**Every row names the build that raced it.** The last field of a row's key is
+the build's instruction set, `isa=avx2` or `isa=avx512`. The AVX2 build and the
+AVX-512 build of one machine use the same folder; each serves only its own rows
+and writes the other build's rows back as they are. A row raced by AVX2
+kernels says nothing about AVX-512 ones.
 
 The library selects the folder by itself:
 
-1. the folder whose stamp equals this CPU's identity;
+1. the folder whose stamp equals this CPU's identity (a stamp written before the
+   rows carried `isa=` also named the build, `isa=avx2`; it is this CPU's when it
+   differs from the identity only by that field);
 2. otherwise `new/`, while it is unstamped: the first saved winner stamps it,
    and it is this CPU's folder from then on. Rename it as you like;
 3. otherwise (`new/` already belongs to another CPU) a folder named after the

@@ -1093,6 +1093,8 @@ static int est_store_load(const char *dir, vw2_store_t *s)
         return -1;   /* the store's own path buffer (vw2_store_t.dir): a cut path would name another folder */
     snprintf(s->dir, sizeof s->dir, "%s", dir);
     s->writable = 0;
+    s->isa = (uint8_t)vw2__build_isa();                 /* this build's rows only, as vw2_open reads them (wisdom2 v1.4) */
+    s->stamp_isa = (uint8_t)vw2__dir_stamp_isa(dir);   /* the build of the rows of an unstamped shard of an older folder */
     for (i = 0; i < VW2_NSHARDS; i++)
     {
         (void)vw2__load_shard(s, i);

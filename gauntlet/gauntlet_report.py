@@ -71,12 +71,20 @@ def read_csv(path):
     return rows
 
 
-def read_prime_engines(store):
+def read_prime_engines(store, isa=""):
+    """N -> the prime engine banked for it; with isa, only that build's rows (a folder holds the rows of both
+    builds of its machine since v1.4; a row without isa= is from before it)"""
     p = os.path.join(store, "wisdom2_prime.txt")
     if not os.path.isfile(p):
         return {}
     t = io.open(p, encoding="utf-8", errors="ignore").read()
-    return {int(m.group(1)): m.group(2) for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 [^|\n]*\|[^\n]*?eng=(\w+)", t)}
+    out = {}
+    for m in re.finditer(r"@cell t=c2c n=(\d+) q=1 ([^|\n]*)\|[^\n]*?eng=(\w+)", t):
+        ma = re.search(r"\bisa=(\w+)", m.group(2))
+        if isa and ma and ma.group(1) != isa:
+            continue
+        out[int(m.group(1))] = m.group(3)
+    return out
 
 
 def read_calibrate_2d(path):
@@ -198,14 +206,14 @@ def build_2d(run_dir, sfx="_2d"):
     return "\n".join(out)
 
 
-def build(run_dir, sfx=""):
+def build(run_dir, sfx="", isa=""):
     if sfx.startswith("_2d") or sfx.startswith("_3d"):
         return build_2d(run_dir, sfx)
     rows = read_csv(os.path.join(run_dir, "gauntlet%s.csv" % sfx))
     cal = read_calibrate(os.path.join(run_dir, "calibrate%s.log" % sfx))
     ctl = [float(r["ratio_vs_mkl"]) for r in csv.DictReader(open(os.path.join(run_dir, "control%s.csv" % sfx), encoding="utf-8", errors="ignore"))] \
         if os.path.isfile(os.path.join(run_dir, "control%s.csv" % sfx)) else []
-    eng = read_prime_engines(os.path.join(run_dir, "store"))
+    eng = read_prime_engines(os.path.join(run_dir, "store"), isa)
     has_cmp = any(float(r.get("mkl_ns", 0) or 0) > 0 for rs in rows.values() for r in rs)
     cells = {}
     for n, rs in rows.items():

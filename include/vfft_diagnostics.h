@@ -247,9 +247,11 @@ extern "C"
   const char *vfft_wisdom_folder(void);
   /**
    * @brief This CPU's identity, as a store is stamped with it: vendor and
-   *        model, the build's instruction set, the P-core's L1d and L2 and
-   *        the L3 in bytes, and the counts of P- and E-cores.
-   * @return "host=... isa=... l1d=... l2=... l3=... pcores=... ecores=...".
+   *        model, the P-core's L1d and L2 and the L3 in bytes, and the
+   *        counts of P- and E-cores. It names the machine, not the build:
+   *        both builds of one CPU use one folder, and each row there names
+   *        the instruction set of the build that raced it (isa=).
+   * @return "host=... l1d=... l2=... l3=... pcores=... ecores=...".
    *         Static storage.
    */
   const char *vfft_wisdom_identity(void);

@@ -11,6 +11,7 @@
 
 #include <stdarg.h>
 #include "wisdom2.h"
+#include "wisdom2_folders.h"   /* T31: the folder choice reads a stamp from before v1.4 */
 
 #if defined(_WIN32)
 #  define VW2__MKDIR(d) _mkdir(d)
@@ -476,7 +477,8 @@ static inline int vw2_g0_selftest(const char *dir)
     }
     snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
     vw2__st_slurp(path, buf, sizeof buf);
-    VW2_ST_CHECK(strstr(buf, "place=ip | - | ran=2") != NULL, "empty section carries the '-' marker");
+    VW2_ST_CHECK(strstr(buf, "place=ip isa=") != NULL && strstr(buf, " | - | ran=2") != NULL,
+                 "empty section carries the '-' marker");
 
     /* ---- T16: shard routing (prime / trig) ----------------------------------- */
     printf("T16 routing:\n");
@@ -815,6 +817,227 @@ static inline int vw2_g0_selftest(const char *dir)
         VW2_ST_CHECK(vw2_lookup(&st, &q) != NULL, "the row saved after the release is on disk");
     }
     vw2_close(&st);
+
+    /* ---- T31: the build's instruction set on every row (isa=, v1.4) ------------ */
+    printf("T31 isa:\n");
+    {
+        const int me = vw2__build_isa(), other = me == VW2_ISA_AVX512 ? VW2_ISA_AVX2 : VW2_ISA_AVX512;
+        const char *mn = vw2_isa_name[me], *on = vw2_isa_name[other];
+        char line[1024], want[512];
+        FILE *f;
+        int i, n;
+        vw2__st_wipe(dir);
+
+        /* a bank writes this build's isa= into the key; a request (no isa=) finds it */
+        vw2_open(&st, dir, 1);
+        r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 512, 1, VW2_ORD_NAT, VW2_PL_OOP),
+                  "eng", 1, "k1", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-11-14", NULL);
+        VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank a row");
+        VW2_ST_CHECK(vw2_save(&st) == VW2_OK, "save");
+        vw2_close(&st);
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
+        vw2__st_slurp(path, buf, sizeof buf);
+        snprintf(want, sizeof want, "@cell t=c2c n=512 q=1 ord=nat place=oop isa=%s | eng=k1", mn);
+        VW2_ST_CHECK(strstr(buf, want) != NULL, "the banked row names this build, last in its key");
+        snprintf(want, sizeof want, "@vw2%s %d.%d\n", VW2_MAGIC[4] == 'f' ? "f" : "", VW2_MAJOR, VW2_MINOR);
+        VW2_ST_CHECK(!strncmp(buf, want, strlen(want)) && VW2_MINOR >= 4, "the file says v1.4");
+        vw2_open(&st, dir, 0);
+        {
+            vw2_key_t q = vw2__st_key(VW2_T_C2C, 512, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            const vw2_rec_t *hit = vw2_lookup(&st, &q);
+            VW2_ST_CHECK(hit && hit->key.isa == me, "a request without isa= finds this build's row");
+        }
+        vw2_close(&st);
+
+        /* rows without isa= (files from before v1.4): the stamp's build, else this build's */
+        vw2__st_wipe(dir);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.3\n@meta host=x-test isa=%s l1d=1\n", on);
+            fprintf(f, "@cell t=c2c n=600 q=1 ord=nat place=oop | eng=k1 il_route=ztt | ran=1 src=race\n");
+            fclose(f);
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_REAL]);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.3\n@meta host=x-test isa=%s l1d=1\n", mn);
+            fprintf(f, "@cell t=r2c n=600 q=1 ord=nat place=oop | eng=zr2c | ran=1 src=race\n");
+            fclose(f);
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_PRIME]);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.3\n");
+            fprintf(f, "@cell t=c2c n=601 q=1 ord=nat place=oop | eng=bluestein m=2048 | ran=1 src=race\n");
+            fclose(f);
+        }
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_3D]);
+        f = fopen(path, "wb");
+        if (f) {   /* unstamped, in a store whose first stamped file (oop) names the other build */
+            fprintf(f, VW2_MAGIC " 1.3\n");
+            fprintf(f, "@cell t=c2c n=8x8x8 q=1 ord=nat place=oop lay=il | chain=8 | ran=1 src=race\n");
+            fclose(f);
+        }
+        vw2_open(&st, dir, 1);
+        {
+            vw2_key_t q = vw2__st_key(VW2_T_C2C, 600, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            vw2_key_t q2 = vw2__st_key(VW2_T_R2C, 600, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            vw2_key_t q3 = vw2__st_key(VW2_T_C2C, 601, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "a row of a file stamped for the other build is not served");
+            VW2_ST_CHECK(st.nasd[VW2_SHARD_OOP] == 1, "... it is set aside");
+            VW2_ST_CHECK(vw2_lookup(&st, &q2) != NULL, "a row of a file stamped for this build is served");
+            VW2_ST_CHECK(vw2_lookup(&st, &q3) == NULL && st.nasd[VW2_SHARD_PRIME] == 1,
+                         "a row of an unstamped file takes the store's stamp (the other build's here)");
+            VW2_ST_CHECK(st.nasd[VW2_SHARD_3D] == 1, "... in every unstamped file of that store");
+            n = 0;
+            for (i = 0; i < st.nrec; i++) if (st.rec[i].key.isa == me) n++;
+            VW2_ST_CHECK(n == st.nrec, "every row in the table is this build's");
+        }
+        /* the same key banked by this build: two rows on disk, one per build */
+        r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 600, 1, VW2_ORD_NAT, VW2_PL_OOP),
+                  "eng", 1, "k1", "il_route", 1, "chain3", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-11-14", NULL);
+        VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank the other build's cell for this build");
+        VW2_ST_CHECK(vw2_save(&st) == VW2_OK, "save");
+        vw2_close(&st);
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
+        vw2__st_slurp(path, buf, sizeof buf);
+        snprintf(want, sizeof want, "@cell t=c2c n=600 q=1 ord=nat place=oop isa=%s | eng=k1 il_route=ztt", on);
+        VW2_ST_CHECK(strstr(buf, want) != NULL, "the other build's row is written back, its isa= written in");
+        snprintf(want, sizeof want, "@cell t=c2c n=600 q=1 ord=nat place=oop isa=%s | eng=k1 il_route=chain3", mn);
+        VW2_ST_CHECK(strstr(buf, want) != NULL, "this build's row of the same cell beside it");
+
+        /* a save writes the other build's rows as they are on disk, not its own older copy */
+        vw2_open(&st, dir, 1);
+        {   /* meanwhile the other build re-races its row: the file now holds a newer verdict */
+            char *edit = strstr(buf, "il_route=ztt");
+            if (edit) memcpy(edit, "il_route=2p ", 12);
+            f = fopen(path, "wb");
+            if (f) { fputs(buf, f); fclose(f); }
+        }
+        r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 602, 1, VW2_ORD_NAT, VW2_PL_OOP),
+                  "eng", 1, "k1", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-11-14", NULL);
+        vw2_bank(&st, &r);
+        VW2_ST_CHECK(vw2_save(&st) == VW2_OK, "this build saves after the other build did");
+        vw2_close(&st);
+        vw2__st_slurp(path, buf2, sizeof buf2);
+        snprintf(want, sizeof want, "place=oop isa=%s | eng=k1 il_route=2p", on);
+        VW2_ST_CHECK(strstr(buf2, want) != NULL, "the other build's newer row survives");
+        snprintf(want, sizeof want, "place=oop isa=%s | eng=k1 il_route=ztt", on);
+        VW2_ST_CHECK(strstr(buf2, want) == NULL, "its older copy is not written back");
+
+        /* a save into another directory carries the other build's rows */
+        vw2_open(&st, dir, 1);
+        snprintf(line, sizeof line, "%s/isa_copy", dir);
+        VW2__MKDIR(line);
+        vw2__st_wipe(line);
+        vw2_repoint(&st, line);
+        VW2_ST_CHECK(vw2_save(&st) == VW2_OK, "save into another directory");
+        vw2_close(&st);
+        snprintf(path, sizeof path, "%s/isa_copy/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
+        vw2__st_slurp(path, buf2, sizeof buf2);
+        snprintf(want, sizeof want, "place=oop isa=%s | eng=k1 il_route=2p", on);
+        VW2_ST_CHECK(strstr(buf2, want) != NULL, "the copy holds the other build's row");
+        vw2__st_wipe(line);
+        remove(line);
+
+        /* a store with no stamp at all: its rows are this build's */
+        vw2__st_wipe(dir);
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_PRIME]);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.3\n");
+            fprintf(f, "@cell t=c2c n=601 q=1 ord=nat place=oop | eng=bluestein m=2048 | ran=1 src=race\n");
+            fclose(f);
+        }
+        vw2_open(&st, dir, 0);
+        {
+            vw2_key_t q3 = vw2__st_key(VW2_T_C2C, 601, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            VW2_ST_CHECK(vw2_lookup(&st, &q3) != NULL, "a row of a store with no stamp at all is this build's");
+        }
+        vw2_close(&st);
+
+        /* an instruction set this reader does not know: carried as it is, never served */
+        vw2__st_wipe(dir);
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.4\n");
+            fprintf(f, "@cell t=c2c n=700 q=1 ord=nat place=oop isa=neon | eng=k1 | ran=1 src=race\n");
+            fclose(f);
+        }
+        vw2_open(&st, dir, 1);
+        {
+            vw2_key_t q = vw2__st_key(VW2_T_C2C, 700, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "an unknown isa= value is not served");
+        }
+        r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 701, 1, VW2_ORD_NAT, VW2_PL_OOP),
+                  "eng", 1, "k1", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-11-14", NULL);
+        vw2_bank(&st, &r);
+        vw2_save(&st);
+        vw2_close(&st);
+        vw2__st_slurp(path, buf, sizeof buf);
+        VW2_ST_CHECK(strstr(buf, "@cell t=c2c n=700 q=1 ord=nat place=oop isa=neon | eng=k1 | ran=1 src=race") != NULL,
+                     "... and carried verbatim");
+
+        /* the fallback tiers never reach another build's row */
+        vw2__st_wipe(dir);
+        f = fopen(path, "wb");
+        if (f) {
+            fprintf(f, VW2_MAGIC " 1.4\n");
+            fprintf(f, "@cell t=c2c n=800 q=* ord=nat place=oop isa=%s | eng=stride | ran=1 src=migrated from=t.txt:1\n", on);
+            fprintf(f, "@cell t=c2c n=801 q=1 ord=nat place=oop isa=%s | eng=k1 | ran=1 src=race\n", on);
+            fclose(f);
+        }
+        vw2_open(&st, dir, 0);
+        {
+            vw2_key_t q = vw2__st_key(VW2_T_C2C, 800, 4, VW2_ORD_NAT, VW2_PL_OOP);
+            vw2_key_t q2 = vw2__st_key(VW2_T_C2C, 801, 1, VW2_ORD_NAT, VW2_PL_OOP);
+            q2.lay = VW2_LAY_IL;   /* the lay=ANY fallback tier */
+            VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "the wildcard tier does not reach the other build's row");
+            VW2_ST_CHECK(vw2_lookup(&st, &q2) == NULL, "the lay fallback tier does not reach it");
+        }
+        vw2_close(&st);
+
+        /* a part plan's store names no build: its rows carry no isa= */
+        {
+            vw2_store_t part;
+            char kb[192];
+            memset(&part, 0, sizeof part);
+            part.writable = 1;
+            r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 256, 1, VW2_ORD_NAT, VW2_PL_IP),
+                      "eng", 1, "k1", "ran", 2, "1", "src", 2, "race", NULL);
+            VW2_ST_CHECK(vw2_bank(&part, &r) == VW2_OK, "bank into a part plan's store");
+            vw2__key_format(&part.rec[0].key, kb, sizeof kb);
+            VW2_ST_CHECK(strstr(kb, "isa=") == NULL, "its key names no build (it is the parent's)");
+            vw2_close(&part);
+        }
+
+        /* the stamp names the machine; an older stamp differs only by isa= */
+        VW2_ST_CHECK(vw2_meta_same_machine("host=x-test isa=avx2 l1d=1 pcores=2", "host=x-test l1d=1 pcores=2"),
+                     "an older stamp with isa= names the same machine");
+        VW2_ST_CHECK(vw2_meta_same_machine("host=x-test isa=avx512 l1d=1 pcores=2", "host=x-test l1d=1 pcores=2"),
+                     "... whichever build it names");
+        VW2_ST_CHECK(!vw2_meta_same_machine("host=x-test isa=avx2 l1d=2 pcores=2", "host=x-test l1d=1 pcores=2"),
+                     "a stamp of another machine does not");
+        VW2_ST_CHECK(vw2_meta_same_cpu("host=x-test isa=avx2 l1d=1", "host=x-test l1d=1 pcores=2"),
+                     "a stamp from before the core counts, same host");
+        {   /* the folder choice takes a folder stamped the older way */
+            char root[700], sub[760], name[128];
+            snprintf(root, sizeof root, "%s/isa_root", dir);
+            VW2__MKDIR(root);
+            snprintf(sub, sizeof sub, "%s/old", root);
+            VW2__MKDIR(sub);
+            snprintf(path, sizeof path, "%s/%s", sub, vw2_shard_name_f64[VW2_SHARD_OOP]);
+            f = fopen(path, "wb");
+            if (f) { fprintf(f, "@vw2 1.3\n@meta host=x-test isa=%s l1d=1 pcores=2\n", on); fclose(f); }
+            VW2_ST_CHECK(vw2__folder_find(root, "host=x-test l1d=1 pcores=2", name, sizeof name) && !strcmp(name, "old"),
+                         "the folder choice takes a folder of this machine stamped before v1.4");
+            remove(path);
+            remove(sub);
+            remove(root);
+        }
+        vw2__st_wipe(dir);
+    }
 
     printf("\n[wisdom2_g0] %s — %d failure(s)\n", vw2__st_fail ? "FAIL" : "ALL PASS", vw2__st_fail);
     return vw2__st_fail;

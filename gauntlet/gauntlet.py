@@ -31,7 +31,7 @@ import argparse, csv, ctypes, datetime, io, math, os, re, shutil, statistics, su
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from wisdom_folder import shipped_folder   # this CPU's folder of src/wisdom/, asked of the library (recal_1d_probe --where)
+from wisdom_folder import shipped_folder_isa   # this CPU's folder of src/wisdom/ and the tools' build, asked of the library (recal_1d_probe --where)
 RESULTS = os.path.join(HERE, "results")
 WISDOM_FILES = ("wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt", "wisdom2_2d.txt",
                 "wisdom2_3d.txt", "wisdom2_real.txt")
@@ -267,8 +267,14 @@ class Run:
         library itself serves from, so a run is seeded from and merged into the rows
         this machine raced, never another CPU's"""
         if not getattr(self, "_shipped", None):
-            self._shipped, self._identity = shipped_folder(self.bin)
+            self._shipped, self._identity, self._isa = shipped_folder_isa(self.bin)
         return self._shipped
+
+    def isa(self):
+        """the instruction set of the tools' build: the isa= of the rows this run reads and banks (a folder
+        holds the rows of both builds of its machine since v1.4)"""
+        self.shipped()
+        return self._isa
 
     def note(self, msg):
         line = "%s %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
@@ -323,7 +329,7 @@ def keep_awake(on):
 
 # ── the store's rows for one cell (raced / replayed / refused) ─────────────
 
-def cell_rows(store, n, ip, threads=1, real=None, k=1):
+def cell_rows(store, n, ip, threads=1, real=None, k=1, isa=""):
     """the wisdom rows that decide this cell: the K=1 rows at its placement (both
     order classes) and the prime row; for a 2D shape the wisdom2_2d rows at its
     placement; at threads > 1 the rows keyed nthreads=T (a threaded plan's row is
@@ -336,6 +342,10 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
     out = {}
     pl = "ip" if ip else "oop"
     want_t = int(threads) if int(threads) > 1 else 0
+
+    def other_build(key):   # a row of another build (isa=, v1.4); a row without the field is from before it
+        ma = re.search(r" isa=(\w+)", key)
+        return bool(isa and ma and ma.group(1) != isa)
     if real and not is2d(n) and int(k) > 1:
         p = os.path.join(store, "wisdom2_real.txt")
         if os.path.isfile(p):
@@ -343,7 +353,7 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
             for m in re.finditer(r"@cell t=%s n=%d q=%d [^|\n]*place=%s[^|\n]*\| (eng=tcb[^\n]*)" % (real, n, int(k), pl), t):
                 key = m.group(0).split(" | ")[0]
                 mt = re.search(r" nthreads=(\d+)", key)
-                if (int(mt.group(1)) if mt else 0) == want_t:
+                if (int(mt.group(1)) if mt else 0) == want_t and not other_build(key):
                     out[key] = re.sub(r" date=\S+", "", m.group(1))
     if real and is2d(n):
         # the direction-shared t=r2c row: wisdom2_2d.txt for a plane, wisdom2_3d.txt for a cube (the rank-3 real tier, 2026-10-07)
@@ -369,7 +379,7 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1):
         for m in re.finditer(pat, t):
             key = m.group(0).split(" | ")[0]
             mt = re.search(r" nthreads=(\d+)", key)
-            if (int(mt.group(1)) if mt else 0) != want_t:
+            if (int(mt.group(1)) if mt else 0) != want_t or other_build(key):
                 continue
             out[key] = re.sub(r" date=\S+", "", m.group(1))
     return out
@@ -420,7 +430,7 @@ def stage_calibrate(run, cells, recal):
     lines = list(io.open(run.cal_log, encoding="utf-8", errors="ignore")) if os.path.isfile(run.cal_log) else []
     t0 = time.time()
     for i, n in enumerate(todo, 1):
-        before = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k)
+        before = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k, run.isa())
         s0 = time.time()
         shape = (["--%dd" % len(n)] + [str(v) for v in n]) if is2d(n) else [str(n)]
         # a 1D real batch (--k K > 1): the probe creates the bench's batch, so the batch's own
@@ -431,7 +441,7 @@ def stage_calibrate(run, cells, recal):
         ms = int((time.time() - s0) * 1000)
         text = r.stdout + r.stderr
         status = "REFUSED" if "REFUSED" in text else ("banked" if "banked" in text else "ERROR")
-        after = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k)
+        after = cell_rows(run.store, n, run.ip, run.threads, run.real, run.k, run.isa())
         if status != "banked":
             served = "refused"
         elif after != before:
@@ -540,7 +550,7 @@ def stage_bench(run, cells):
 def stage_report(run):
     sys.path.insert(0, HERE)
     import gauntlet_report
-    text = gauntlet_report.build(run.dir, run.sfx)
+    text = gauntlet_report.build(run.dir, run.sfx, run.isa())
     path = os.path.join(run.dir, "report%s.md" % run.sfx)
     io.open(path, "w", encoding="utf-8").write(text)
     print(text)
@@ -577,10 +587,20 @@ def stage_merge(run):
         if not os.path.isfile(src) or not os.path.isfile(dst):
             continue
         def parse(p):
+            # a row from before v1.4 names no build: it takes the isa= of its file's stamp (owner, 2026-11-14:
+            # "add isa to those banked cells"), so it merges as the cell it is, not as a second copy of it
             head, rows, order = [], {}, []
-            for line in io.open(p, encoding="utf-8", errors="ignore").read().split("\n"):
+            text = io.open(p, encoding="utf-8", errors="ignore").read()
+            ms = re.search(r"^@meta [^\n]*\bisa=(\w+)", text, re.M)
+            stamp_isa = ms.group(1) if ms else ""
+            for line in text.split("\n"):
                 if line.startswith("@cell ") and " | " in line:
                     key = line.split(" | ")[0]
+                    if " isa=" not in key:
+                        if not stamp_isa:
+                            raise SystemExit("merge: %s holds a row without isa= and its stamp names no build: %s" % (p, key))
+                        line = key + " isa=" + stamp_isa + line[len(key):]
+                        key = key + " isa=" + stamp_isa
                     if key not in rows:
                         order.append(key)
                     rows[key] = line

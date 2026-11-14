@@ -740,8 +740,9 @@ static int row_tok(const char *key, const char *tok)
 }
 static void lm3dr_key(char *buf, size_t sz, const int *n, int K, int ip, int T)
 {
-    if (T > 1) snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm nthreads=%d |", n[0], n[1], n[2], K, ip ? "ip" : "oop", T);
-    else snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm |", n[0], n[1], n[2], K, ip ? "ip" : "oop");
+    /* the key ends with this build's isa= (wisdom2 v1.4) */
+    if (T > 1) snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm nthreads=%d isa=%s |", n[0], n[1], n[2], K, ip ? "ip" : "oop", T, vfft_isa());
+    else snprintf(buf, sz, "@cell t=r2c n=%dx%dx%d q=%d ord=nat place=%s lay=lm isa=%s |", n[0], n[1], n[2], K, ip ? "ip" : "oop", vfft_isa());
 }
 /* two padded volumes on their real columns only: the max relative difference, and bitwise or not */
 static double rel_rows(const double *a, const double *b, size_t rows, size_t rx, size_t pa, size_t pb, int *bitwise)

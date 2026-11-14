@@ -46,6 +46,12 @@
  *     path's vw2_save_banked writes only the rows THIS process banked
  *     (vw2_rec_t.own), so a copy loaded earlier never overwrites a row
  *     another process raced since.
+ *   - ONE BUILD'S ROWS ARE THE TABLE (isa=, v1.4; owner, 2026-11-14). Every
+ *     row names the instruction set of the build that raced it. A store
+ *     opened by a build holds only that build's rows in its table, so no
+ *     lookup and no scan of the table can serve another build's verdict;
+ *     the other builds' rows are set aside at load as text and written back
+ *     at every save of their shard, from the disk's copy as it is then.
  */
 #ifndef VFFT_WISDOM2_H
 #define VFFT_WISDOM2_H
@@ -56,6 +62,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <limits.h>
+#include "common/support/build_isa.h"   /* VFFT_ISA_NAME: the build whose rows a store serves */
 
 #if defined(_WIN32)
 #  include <windows.h>
@@ -83,9 +90,10 @@
 #define VW2_MAGIC        "@vw2"
 #endif
 #define VW2_MAJOR        1
-#define VW2_MINOR        3   /* 1.1: role= key axis;
+#define VW2_MINOR        4   /* 1.1: role= key axis;
                                 1.2: lay= key axis;
-                                1.3: nthreads= key axis */
+                                1.3: nthreads= key axis;
+                                1.4: isa= key axis */
 
 /* ------------------------------------------------------------ enumerations */
 
@@ -131,6 +139,24 @@ typedef enum { VW2_LAY_ANY = 0, VW2_LAY_SPLIT = 1, VW2_LAY_IL = 2,
                                * transform t at z[2 (e K + t)]): its own cell beside the
                                * transform-contiguous q = K row (docs/roadmap/lane_major_batch_design.md) */
 } vw2_lay_t;
+
+/* isa= (v1.4): the instruction set of the build that raced the row (common/support/build_isa.h).
+ * A build's store holds only its own rows in its table (vw2_open); 0 = a store or a key that names
+ * no build: the private store of a part plan, whose rows ride inside their parent's row and are
+ * always the parent's build, and every request key. Not matched by vw2_key_eq / vw2_key_serves:
+ * the table never holds two builds. An unknown value is carried opaque. */
+typedef enum { VW2_ISA_NONE = 0, VW2_ISA_AVX2 = 1, VW2_ISA_AVX512 = 2, VW2_ISA_SCALAR = 3 } vw2_isa_t;
+static const char *const vw2_isa_name[] = { "", "avx2", "avx512", "scalar" };
+/* the value of an isa= token, 0 = unknown */
+static inline int vw2__isa_parse(const char *v)
+{
+    int i;
+    for (i = 1; i < (int)(sizeof vw2_isa_name / sizeof vw2_isa_name[0]); i++)
+        if (!strcmp(v, vw2_isa_name[i])) return i;
+    return 0;
+}
+/* this build's */
+static inline int vw2__build_isa(void) { return vw2__isa_parse(VFFT_ISA_NAME); }
 
 /* src= merge rank (README §3.4/§4.2). Absent src = race (a fresh bank).
  * An UNKNOWN src value ranks LOWEST (refuse-don't-guess: a future source
@@ -189,6 +215,12 @@ typedef struct {
                                      (VW2__NT) in both matchers; a 1.2
                                      reader sees a threaded row as an
                                      unknown key token and carries it.   */
+    uint8_t isa;                  /* isa= (v1.4): vw2_isa_t, the build that
+                                     raced the row; 0 = none named (a part
+                                     plan's row, a request). Never compared
+                                     by the matchers: a store's table holds
+                                     one build's rows (vw2_open), and a
+                                     1.3 reader carries the row opaque.  */
 } vw2_key_t;
 
 /* the thread count a key states: absent = one */
@@ -272,6 +304,18 @@ typedef struct {
                                           accepted in memory)                */
     char       build[64];              /* this build's id: stamped as bld= on every
                                           row banked here ("" = no stamp)   */
+    uint8_t    isa;                    /* the build whose rows are the table (vw2_isa_t,
+                                          set by vw2_open; 0 = a store that names no
+                                          build: a part plan's, calloc'ed): stamped as
+                                          isa= on every row banked here            */
+    uint8_t    stamp_isa;              /* the isa= of the store's stamp, a stamp from
+                                          before v1.4 (the first shard file that has
+                                          one): the build of the rows without isa= in
+                                          a shard file that carries no stamp itself */
+    char     **aside[VW2_NSHARDS]; int nasd[VW2_NSHARDS], capasd[VW2_NSHARDS];
+                                       /* the rows of OTHER builds, as text with
+                                          their isa= written in: never in the table,
+                                          written back at every save of their shard */
     char       meta[256];              /* @meta payload; captured at load,
                                           settable via vw2_set_meta          */
 } vw2_store_t;
@@ -293,6 +337,7 @@ static const char *vw2_legend[] = {
     "eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)",
     "wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes",
     "role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)",
+    "isa: isa=avx2|avx512 keys the instruction set of the build that raced the row (v1.4); a build serves its own rows only and writes the others back as they are; absent = the isa= of the file's @meta (a file from before v1.4)",
     "evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv",
     "see src/core/wisdom2/README.md",
 };
@@ -455,7 +500,7 @@ static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
     for (i = 0; i < a->rank; i++) if (a->n[i] != b->n[i]) return 0;
     return a->q == b->q && a->ord == b->ord && a->pl == b->pl &&
            a->dir == b->dir && a->role == b->role && a->lay == b->lay &&
-           VW2__NT(a) == VW2__NT(b);
+           VW2__NT(a) == VW2__NT(b);   /* isa= is not compared: the table holds one build's rows */
 }
 
 /* Does record key R serve request key REQ, allowing R's wildcards?
@@ -674,6 +719,10 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 long t = strtol(v, &end, 10);
                 if (end == v || *end != '\0' || t < 1 || t > 255) return -1;
                 k->nthreads = (uint8_t)(t > 1 ? t : 0);
+            } else if (!strcmp(tok, "isa")) {
+                const int a = vw2__isa_parse(v);
+                if (!a) return 0;   /* an instruction set this reader does not know: opaque carry */
+                k->isa = (uint8_t)a;
             } else {
                 return 0;   /* unknown KEY token => invisible + opaque carry */
             }
@@ -703,6 +752,8 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
                                                                    : k->lay == VW2_LAY_SLM ? "slm" : "il");
     if (k->nthreads > 1)
         VW2__CAT(" nthreads=%d", (int)k->nthreads);
+    if (k->isa)
+        VW2__CAT(" isa=%s", vw2_isa_name[k->isa]);
 #undef VW2__CAT
 }
 
@@ -746,6 +797,38 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
     if (k->t == VW2_T_DST2 || k->t == VW2_T_DST3 || k->t == VW2_T_DST1 || k->t == VW2_T_DCT1)
         return VW2_SHARD_REAL;   /* the real-to-real cells: a real FFT in role (il/real/dst.h, dct1_dst1.h; owner, 2026-11-14) */
     return VW2_SHARD_STRIDE;   /* the other trig transforms */
+}
+
+/* ------------------------------------------------------------- aside */
+
+/* a row of another build, as text, into the shard's aside list */
+static inline int vw2__aside_push(vw2_store_t *s, int shard, const char *line)
+{
+    if (s->nasd[shard] == s->capasd[shard]) {
+        int nc = s->capasd[shard] ? s->capasd[shard] * 2 : 64;
+        char **np = (char **)realloc(s->aside[shard], (size_t)nc * sizeof *np);
+        if (!np) { vw2__oom(); return VW2_ENOMEM; }
+        s->aside[shard] = np; s->capasd[shard] = nc;
+    }
+    s->aside[shard][s->nasd[shard]] = vw2__strdup(line);
+    if (!s->aside[shard][s->nasd[shard]]) { vw2__oom(); return VW2_ENOMEM; }
+    s->nasd[shard]++;
+    return VW2_OK;
+}
+/* the length of a row's key text ("@cell <key>"), up to its first " | " */
+static inline size_t vw2__line_keylen(const char *line)
+{
+    const char *p = strstr(line, " | ");
+    return p ? (size_t)(p - line) : strlen(line);
+}
+/* is a row with this line's key text in the shard's aside list */
+static inline int vw2__aside_has_key(const vw2_store_t *s, int shard, const char *line)
+{
+    const size_t n = vw2__line_keylen(line);
+    int i;
+    for (i = 0; i < s->nasd[shard]; i++)
+        if (vw2__line_keylen(s->aside[shard][i]) == n && !strncmp(s->aside[shard][i], line, n)) return 1;
+    return 0;
 }
 
 /* ------------------------------------------------------------- opaque */
@@ -867,6 +950,36 @@ static inline char *vw2__readline(FILE *f, int *oom)
     return buf;
 }
 
+/* the isa= of a stamp from before v1.4: the first shard file of dir whose header carries an @meta with isa=;
+ * 0 = none. Only header lines are read. */
+static inline int vw2__dir_stamp_isa(const char *dir)
+{
+    int shard;
+    for (shard = 0; shard < VW2_NSHARDS; shard++) {
+        char path[640], line[1024];
+        FILE *f;
+        snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[shard]);
+        f = fopen(path, "rb");
+        if (!f) continue;
+        while (fgets(line, sizeof line, f)) {
+            const char *a;
+            if (!strncmp(line, "@cell ", 6)) break;
+            if (strncmp(line, "@meta ", 6) || !(a = strstr(line, " isa="))) continue;
+            {
+                char v[16];
+                size_t k = 0;
+                a += 5;
+                while (*a && *a != ' ' && *a != '\r' && *a != '\n' && k + 1 < sizeof v) v[k++] = *a++;
+                v[k] = '\0';
+                fclose(f);
+                return vw2__isa_parse(v);
+            }
+        }
+        fclose(f);
+    }
+    return 0;
+}
+
 /* Loads one shard file into the store. VW2_OK, VW2_EVERSION (poisoned),
  * VW2_ENOMEM; a missing file is VW2_OK with present=0. Never touches tmps
  * (sweeping happens at open only). */
@@ -876,6 +989,7 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
     char *line;
     FILE *f;
     int first = 1, oom = 0, rc = VW2_OK;
+    int file_isa = 0;   /* the instruction set this file's @meta names (a stamp from before v1.4) */
 
     vw2__path(s, shard, path, sizeof path);
     f = fopen(path, "rb");
@@ -914,6 +1028,17 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
         if (!strncmp(line, "@meta", 5) && (line[5] == ' ' || line[5] == '\0')) {
             if (!s->meta[0] && line[5] == ' ')
                 snprintf(s->meta, sizeof s->meta, "%s", line + 6);
+            {   /* isa= in a stamp from before v1.4: the build of this file's rows that name none */
+                const char *a = strstr(line, " isa=");
+                if (a) {
+                    char v[16];
+                    size_t k = 0;
+                    a += 5;
+                    while (*a && *a != ' ' && k + 1 < sizeof v) v[k++] = *a++;
+                    v[k] = '\0';
+                    file_isa = vw2__isa_parse(v);
+                }
+            }
             free(line);
             continue;
         }
@@ -922,7 +1047,25 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
             int r;
             memset(&rec, 0, sizeof rec);
             r = vw2__cell_parse(line, &rec);
-            if (r == 1) {
+            if (r == 1 && !rec.key.isa)   /* a row from before v1.4: its file's stamp's build, else its store's
+                                           * stamp's (a shard written unstamped), else this store's */
+                rec.key.isa = (uint8_t)(file_isa ? file_isa : s->stamp_isa ? s->stamp_isa : s->isa);
+            if (r == 1 && s->isa && rec.key.isa != s->isa) {
+                /* ANOTHER BUILD'S ROW: set aside as text, its isa= written into the key */
+                char *t = NULL;
+                const int had = strstr(line, " isa=") != NULL && strstr(line, " isa=") < strstr(line, " | ");
+                if (!had) {
+                    const size_t kl = vw2__line_keylen(line), ll = strlen(line);
+                    const char *nm = vw2_isa_name[rec.key.isa];
+                    t = (char *)malloc(ll + strlen(nm) + 6);
+                    if (!t) { vw2__oom(); vw2_rec_free(&rec); free(line); fclose(f); return VW2_ENOMEM; }
+                    memcpy(t, line, kl);
+                    sprintf(t + kl, " isa=%s%s", nm, line + kl);
+                }
+                vw2_rec_free(&rec);
+                if (vw2__aside_push(s, shard, t ? t : line) != VW2_OK) { free(t); free(line); fclose(f); return VW2_ENOMEM; }
+                free(t);
+            } else if (r == 1) {
                 if (s->nrec == s->caprec) {
                     int nc = s->caprec ? s->caprec * 2 : 64;
                     vw2_rec_t *nr = (vw2_rec_t *)realloc(s->rec, (size_t)nc * sizeof *nr);
@@ -1217,6 +1360,7 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
 {
     int i, worst = VW2_OK;
     memset(s, 0, sizeof *s);
+    s->isa = (uint8_t)vw2__build_isa();   /* this build's rows are the table; the others set aside */
     if (!dir || !dir[0]) {
         const char *e = getenv("VFFT_WISDOM_DIR");
         if (e && e[0]) dir = e;
@@ -1240,6 +1384,7 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
     }
     snprintf(s->dir, sizeof s->dir, "%s", dir);
     s->writable = (uint8_t)(writable ? 1 : 0);
+    s->stamp_isa = (uint8_t)vw2__dir_stamp_isa(s->dir);   /* for the rows of an unstamped shard file */
     vw2__sweep_tmps(s->dir);
     for (i = 0; i < VW2_NSHARDS; i++) {
         int r = vw2__load_shard(s, i);
@@ -1279,9 +1424,14 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
                             "own nthreads= rows (saved on next writable save)\n",
                     s->dir, split);
     }
-    fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s\n", s->dir, s->nrec,
-            s->writable ? ", writable" : ", read-only",
-            worst == VW2_EVERSION ? ", SOME FILES POISONED" : "");
+    {
+        int aside = 0;
+        for (i = 0; i < VW2_NSHARDS; i++) aside += s->nasd[i];
+        fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s%s\n", s->dir, s->nrec,
+                s->writable ? ", writable" : ", read-only",
+                worst == VW2_EVERSION ? ", SOME FILES POISONED" : "",
+                aside ? " (and rows of other builds, kept)" : "");
+    }
     return worst;
 }
 
@@ -1293,6 +1443,8 @@ static inline void vw2_close(vw2_store_t *s)
     for (j = 0; j < VW2_NSHARDS; j++) {
         for (i = 0; i < s->nopq[j]; i++) free(s->opaque[j][i]);
         free(s->opaque[j]);
+        for (i = 0; i < s->nasd[j]; i++) free(s->aside[j][i]);
+        free(s->aside[j]);
     }
     memset(s, 0, sizeof *s);
 }
@@ -1335,17 +1487,46 @@ static inline int vw2__meta_field(const char *meta, const char *key, char *out, 
     return 0;
 }
 
-/* Is `stamp` a stamp of the CPU `identity` names? Equal strings are; so is a
- * stamp from before the identity carried its caches and core counts (it has
- * no pcores= field) when its host= and isa= agree: that one names the same
- * CPU less completely, and the save replaces it with the full identity. */
+/* a stamp without its isa= field (the stamps from before v1.4 named the build too), into out */
+static inline void vw2__meta_without_isa(const char *meta, char *out, size_t n)
+{
+    size_t k = 0;
+    const char *p = meta;
+    if (!n) return;
+    while (*p) {
+        const char *w;
+        while (*p == ' ') p++;
+        if (!*p) break;
+        w = p;
+        while (*p && *p != ' ') p++;
+        if (!strncmp(w, "isa=", 4)) continue;
+        if (k && k + 1 < n) out[k++] = ' ';
+        while (w < p && k + 1 < n) out[k++] = *w++;
+    }
+    out[k] = '\0';
+}
+
+/* Do `stamp` and `identity` name the same machine? Equal strings do, and so do two that differ only by
+ * the isa= field the stamps from before v1.4 carried (the identity names the machine only). */
+static inline int vw2_meta_same_machine(const char *stamp, const char *identity)
+{
+    char a[256], b[256];
+    if (!strcmp(stamp, identity)) return 1;
+    vw2__meta_without_isa(stamp, a, sizeof a);
+    vw2__meta_without_isa(identity, b, sizeof b);
+    return !strcmp(a, b);
+}
+
+/* Is `stamp` a stamp of the CPU `identity` names? The same machine is (vw2_meta_same_machine); so is a
+ * stamp from before the identity carried its caches and core counts (it has no pcores= field) when its
+ * host= agrees: that one names the same CPU less completely, and the save replaces it with the full
+ * identity. */
 static inline int vw2_meta_same_cpu(const char *stamp, const char *identity)
 {
     char a[64], b[64];
-    if (!strcmp(stamp, identity)) return 1;
+    if (vw2_meta_same_machine(stamp, identity)) return 1;
     if (vw2__meta_field(stamp, "pcores", a, sizeof a)) return 0;
     if (!vw2__meta_field(stamp, "host", a, sizeof a) || !vw2__meta_field(identity, "host", b, sizeof b) || strcmp(a, b)) return 0;
-    if (!vw2__meta_field(stamp, "isa", a, sizeof a) || !vw2__meta_field(identity, "isa", b, sizeof b) || strcmp(a, b)) return 0;
     return 1;
 }
 
@@ -1518,6 +1699,7 @@ static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
         return VW2_EPOISON;
     }
     rec->own = 1;
+    rec->key.isa = s->isa;   /* the build that banked it (0 in a part plan's store: the parent's build) */
     if (s->build[0]) (void)vw2_rec_set(rec, 2, "bld", s->build);
     return vw2__bank_pinned(s, rec, shard);
 }
@@ -1624,6 +1806,8 @@ static inline int vw2__save(vw2_store_t *s, int own_only, int lock_wait_ms)
         memset(&disk, 0, sizeof disk);
         snprintf(disk.dir, sizeof disk.dir, "%s", s->dir);
         disk.writable = 1;
+        disk.isa = s->isa;   /* the disk's rows of other builds land in disk.aside, as they are now */
+        disk.stamp_isa = s->stamp_isa;
         lrc = vw2__load_shard(&disk, shard);
         if (lrc != VW2_OK) { vw2_close(&disk); rc = (lrc == VW2_EVERSION) ? VW2_EPOISON : lrc; continue; }
 
@@ -1659,6 +1843,12 @@ static inline int vw2__save(vw2_store_t *s, int own_only, int lock_wait_ms)
                 if (!strcmp(disk.opaque[shard][j], s->opaque[shard][i])) { dup = 1; break; }
             if (!dup && vw2__opaque_push(&disk, shard, s->opaque[shard][i]) != VW2_OK) err = 1;
         }
+        /* the other builds' rows: the disk's copy as it is now (that build may have re-raced a row
+         * since this store loaded it); mine only for a row the disk does not hold, as when saving
+         * into another directory */
+        for (i = 0; i < s->nasd[shard] && !err; i++)
+            if (!vw2__aside_has_key(&disk, shard, s->aside[shard][i]) &&
+                vw2__aside_push(&disk, shard, s->aside[shard][i]) != VW2_OK) err = 1;
         if (err) { vw2_close(&disk); rc = VW2_ENOMEM; continue; }
 
         /* the stamp: an unstamped file takes this store's; an older stamp of
@@ -1682,6 +1872,8 @@ static inline int vw2__save(vw2_store_t *s, int own_only, int lock_wait_ms)
         if (vw2__emit_header(f, &disk) != 0) err = 1;
         for (i = 0; i < disk.nrec && !err; i++)
             if (disk.rec[i].shard == shard && vw2__cell_emit(f, &disk.rec[i]) != 0) err = 1;
+        for (i = 0; i < disk.nasd[shard] && !err; i++)
+            if (fprintf(f, "%s\n", disk.aside[shard][i]) < 0) err = 1;
         for (i = 0; i < disk.nopq[shard] && !err; i++)
             if (fprintf(f, "%s\n", disk.opaque[shard][i]) < 0) err = 1;
         if (!err && (ferror(f) || fflush(f) != 0)) err = 1;

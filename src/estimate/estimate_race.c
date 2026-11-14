@@ -84,7 +84,8 @@ static void banked_real(const char *store, int t, int N, char *out, size_t cap)
     char key[160];
     const char *l;
     if (!g_real && !(g_real = load_shard(store, "wisdom2_real.txt"))) { snprintf(out, cap, "(no real shard)"); return; }
-    snprintf(key, sizeof key, "@cell t=%s n=%d q=1 ord=nat place=%s |", t == VFFT_R2C ? "r2c" : "c2r", N, PLACE_TOK);
+    snprintf(key, sizeof key, "@cell t=%s n=%d q=1 ord=nat place=%s isa=%s |", t == VFFT_R2C ? "r2c" : "c2r", N, PLACE_TOK,
+             vfft_isa());   /* this build's row (isa=, wisdom2 v1.4) */
     if (!(l = strstr(g_real, key))) { snprintf(out, cap, "(no row)"); return; }
     row_payload(l, out, cap);
 }
@@ -108,7 +109,7 @@ static void banked_tokens(const char *store, int N, char *out, size_t cap)
     char key[160];
     out[0] = 0;
     if (!g_oop && !(g_oop = load_shard(store, "wisdom2_oop.txt"))) { snprintf(out, cap, "(no oop shard)"); return; }
-    snprintf(key, sizeof key, "@cell t=c2c n=%d q=1 ord=nat place=%s role=comp lay=il |", N, PLACE_TOK);
+    snprintf(key, sizeof key, "@cell t=c2c n=%d q=1 ord=nat place=%s role=comp lay=il isa=%s |", N, PLACE_TOK, vfft_isa());
     const char *l = strstr(g_oop, key);
     if (!l) { snprintf(out, cap, "(no row)"); return; }
     const char *e = strchr(l, '\n');

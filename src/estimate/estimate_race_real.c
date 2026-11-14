@@ -90,10 +90,11 @@ static void banked_tokens(const char *store, const int *n, int rank, int T, char
     if (T > 1)
         snprintf(thr, sizeof thr, " nthreads=%d", T);
     if (rank == 3)
-        snprintf(key, sizeof key, "@cell t=r2c n=%dx%dx%d q=1 ord=nat place=%s lay=il%s |", n[0], n[1], n[2],
-                 g_ip ? "ip" : "oop", thr);
+        snprintf(key, sizeof key, "@cell t=r2c n=%dx%dx%d q=1 ord=nat place=%s lay=il%s isa=%s |", n[0], n[1], n[2],
+                 g_ip ? "ip" : "oop", thr, vfft_isa());   /* this build's row (isa=, wisdom2 v1.4) */
     else
-        snprintf(key, sizeof key, "@cell t=r2c n=%dx%d q=1 ord=nat place=%s lay=il%s |", n[0], n[1], g_ip ? "ip" : "oop", thr);
+        snprintf(key, sizeof key, "@cell t=r2c n=%dx%d q=1 ord=nat place=%s lay=il%s isa=%s |", n[0], n[1], g_ip ? "ip" : "oop", thr,
+                 vfft_isa());
     if (!(l = strstr(*sh, key))) { snprintf(out, cap, "(no row)"); return; }
     e = strstr(l + strlen(key), " | ");
     if (!e) e = strchr(l, '\n');

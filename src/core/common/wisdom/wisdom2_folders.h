@@ -14,7 +14,10 @@
  * carry no meaning; a user may rename theirs. Selection, for an identity:
  *
  *   1. the folder whose stamp EQUALS the identity (the first by name, should
- *      two ever carry one stamp);
+ *      two ever carry one stamp). A stamp from before v1.4 also named the
+ *      build's instruction set (isa=); it names this machine when it differs
+ *      from the identity only by that field. Both builds of one machine use
+ *      one folder: every row names its own build (isa=, wisdom2.h);
  *   2. else `new/`, while it is unstamped: the first save stamps it, and it is
  *      this CPU's folder from then on;
  *   3. else (`new/` is another CPU's by now, or the root has none) a folder
@@ -94,8 +97,9 @@ static inline int vw2__is_dir(const char *path)
 #endif
 }
 
-/* the name of the folder under root whose stamp equals identity, the first
- * by name; 1 = found */
+/* the name of the folder under root whose stamp names this machine (equal to
+ * identity, or a stamp from before v1.4 that differs only by its isa= field:
+ * vw2_meta_same_machine), the first by name; 1 = found */
 static inline int vw2__folder_find(const char *root, const char *identity, char *name, size_t n)
 {
     int found = 0;
@@ -120,7 +124,7 @@ static inline int vw2__folder_find(const char *root, const char *identity, char 
         if (!vw2__is_dir(path)) continue;
 #endif
         snprintf(path, sizeof path, "%s/%s", root, e);
-        if (!vw2_folder_stamp(path, stamp, sizeof stamp) || strcmp(stamp, identity) != 0) continue;
+        if (!vw2_folder_stamp(path, stamp, sizeof stamp) || !vw2_meta_same_machine(stamp, identity)) continue;
         if (!found || strcmp(e, name) < 0) snprintf(name, n, "%s", e);
         found = 1;
 #if defined(_WIN32)

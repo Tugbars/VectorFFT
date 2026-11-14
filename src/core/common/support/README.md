@@ -16,7 +16,7 @@ math here — this is the floor the engine stands on.
 | `cpu_topology.h` | which logical CPU is which: physical cores, hyperthread siblings, P-cores and E-cores, read from the OS once (`vfft_topology`, `vfft_topo_sibling`, `vfft_topo_pcore_cpu`) |
 | `sibling_guard.h` | **the hyperthread-sibling guards**: one waiting thread per logical CPU (TPAUSE / MWAITX), shared by the race scope (the racing core's sibling; every pool core's sibling once the scope uses the pool) and the pool (each used core's sibling while that core's worker is awake); none inside a virtual machine. Also the set the process may run on (`_vfs_allowed`). Included by `threads.h` |
 | `cpu_cache.h` | the P-core's L1d and L2, the L3 and the SMT width, read once at plan time **on a P-core** (the read moves the calling thread there and back); measured by default, `-DVFFT_L1D_DISCOVER=0` pins the old constants |
-| `cpu_identity.h` | **the CPU identity** (`host= isa= l1d= l2= l3= pcores= ecores=`): the stamp of a wisdom folder, and what selects this CPU's folder under the store's root (`common/wisdom/wisdom2_folders.h`) |
+| `cpu_identity.h` | **the CPU identity** (`host= l1d= l2= l3= pcores= ecores=`; the build's instruction set is on every row, `isa=`, since wisdom2 v1.4): the stamp of a wisdom folder, and what selects this CPU's folder under the store's root (`common/wisdom/wisdom2_folders.h`) |
 
 ---
 
