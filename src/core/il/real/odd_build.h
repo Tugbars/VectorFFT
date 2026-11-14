@@ -247,6 +247,8 @@ static int _zrf_chain_sweep(const vfft_cfg_t *cfg, int N, const double *a, const
     int seedR[2][VFFT_ILFD_MAX_K], seedK[2] = { 0, 0 }, seedm[2] = { 0, 0 }, nf;
     out[0] = out[1] = NULL;
     hc.cfg = cfg; hc.N = N; hc.a = a; hc.ref = ref; hc.s0 = s0; hc.b = b; hc.xs = xs; hc.nchk = nchk;
+    memset(&e, 0, sizeof e);   /* every field the engine reads: leadp (no fixed first stage) above all; left
+                                * unset, it held the stack's leftovers and the search pinned them as a stage */
     e.pool = VFFT_ZRF_POOL;
     e.npool = VFFT_ZRF_NPOOL;
     e.lead2 = 0;
