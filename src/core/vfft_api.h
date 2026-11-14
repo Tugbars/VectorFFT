@@ -205,10 +205,10 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
             return 0;
         }
         if (p->transform != VFFT_C2C && p->transform != VFFT_R2C && p->transform != VFFT_C2R &&
-            p->transform != VFFT_DST2 && p->transform != VFFT_DST3)
+            !_VFFT_IS_R2R_SERVED(p->transform))
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DST2 and VFFT_DST3 "
-                       "only, not VFFT_%s", _vfft_tname(p->transform));
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, "
+                       "VFFT_DST2 and VFFT_DST3 only, not VFFT_%s", _vfft_tname(p->transform));
             return 0;
         }
         if (p->rank > 3)
@@ -236,8 +236,8 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     c->dims = rank;
     memcpy(c->n, p->n, sizeof c->n);
     c->howmany = p->howmany ? p->howmany : 1;
-    if (p->transform == VFFT_DST2 || p->transform == VFFT_DST3)
-        c->layout = VFI_LAYOUT_IL;             /* reals in and out on the interleaved real FFT (il/real/dst.h) */
+    if (_VFFT_IS_R2R_SERVED(p->transform))
+        c->layout = VFI_LAYOUT_IL;             /* reals in and out on the interleaved real FFT (il/real/dst.h, dct1_dst1.h) */
     else
         c->layout = (trig || p->layout == VFFT_LAYOUT_SPLIT) ? VFI_LAYOUT_SPLIT : VFI_LAYOUT_IL;
     c->placement = p->placement == VFFT_PLACEMENT_IN ? VFFT_INPLACE : VFFT_OUTOFPLACE;
@@ -328,7 +328,7 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
         h->k1_alias(h, dir, in, out);
         return;
     }
-    if (h && h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->dst) && in && out && out != in &&
+    if (h && h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->dst || h->type1) && in && out && out != in &&
         (unsigned)dir <= (unsigned)VFFT_BACKWARD)
     {   /* PLACEMENT IS A COMMITMENT (vfft.h: in place, out == in), as on the real plans and the split
          * ones (_vfft_sig_bad). Refused at this door only: a composite runs its own in-place child

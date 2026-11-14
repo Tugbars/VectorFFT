@@ -793,6 +793,14 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
             thread_pool_plan_retain(((struct vfft_plan_s *)hd)->nthreads);
         return hd;
     }
+    if (cfg->transform == VFFT_DCT1 || cfg->transform == VFFT_DST1)
+    {   /* DCT-I / DST-I (il/real/dct1_dst1.h): its real FFT of the extended input planned here, as an R2C
+         * request; the plan around it measures nothing. The retain as above */
+        vfft_plan hd = _vfft_create_type1_il(cfg, NULL, 1);
+        if (hd)
+            thread_pool_plan_retain(((struct vfft_plan_s *)hd)->nthreads);
+        return hd;
+    }
 #endif
     memset(&m, 0, sizeof m);
     m.lanes = VFFT_IL_VW;

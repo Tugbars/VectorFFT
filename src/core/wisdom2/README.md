@@ -33,9 +33,10 @@ The lifecycle law, with no exceptions:
 src/wisdom/                                   (since 2026-09-24; per-host subtrees beside, e.g. Zen4/)
   wisdom2_oop.txt         1D c2c out-of-place verdicts + ALL 1D c2c order
                           (ord=nat) verdicts, both placements (2026-09-02)
-  wisdom2_scr.txt         1D c2c in-place SCRAMBLED chains + the other trig (dct, dst1, dst4, dht) verdicts
-  wisdom2_real.txt        1D r2c / c2r verdicts (routes + factorizations) + the DST-II / DST-III
-                          cells (t=dst2, t=dst3: eng=dst and the real FFT inside as a child in role, dst_)
+  wisdom2_scr.txt         1D c2c in-place SCRAMBLED chains + the other trig (dct2..dct4, dst4, dht) verdicts
+  wisdom2_real.txt        1D r2c / c2r verdicts (routes + factorizations) + the real-to-real cells
+                          (t=dst1, t=dst2, t=dst3: eng=dst and the real FFT inside as a child in role,
+                          dst_; t=dct1: eng=dct, dct_)
   wisdom2_prime.txt       Bluestein / Rader engine verdicts
   wisdom2_2d.txt          2D composite verdicts
   wisdom2_3d.txt          3D (and higher-rank) composite verdicts
@@ -218,7 +219,7 @@ the two rows are banked and read side by side.
 | `ns=` `metric=` `units=` | the number with EXPLICIT identity: `metric=fwd1` (forward-only per call) \| `bwd1` (backward-only per call) \| `joint2` (joint fwd+bwd); `units=ns` \| `cyc`. Numbers with different metric/units are never compared or converted — the module's compare helper refuses. Informational records carry no `ns=` token (absent ≠ 0.0). |
 | `arms=` | how many arms the race had. `arms=1` + `src=env:<VAR>` marks an env-shaped one-armed verdict; a later real race outranks it at merge. |
 | `src=` | `race` \| `env:<VAR>` \| `migrated` \| `seed` (a seed proposes candidates for a future race and is never served as a verdict). `migrated` serves like `race` (the number WAS raced); a fresh same-metric race outranks it. |
-| `rp_* turn_* csk_* tpc_* plane_* dst_*` | a 2D/3D row's CHILDREN in role (`il/wisdom/wisdom2_child.h`): row i of the child's private store as `<pre>k<i>=<key, spaces as commas>` plus `<pre><i>_<token>=<value>` per payload token; a 2D row nests whole under a 3D row's `plane_`. `dst_` (2026-11-14): the real FFT inside a DST-II or DST-III cell (`il/real/dst.h`), an R2C on the `t=dst2` row and a C2R on the `t=dst3` row, raced with every candidate timed as the whole DST (`il/real/real_role.h`); the row is stamped `place=oop` and serves both placements |
+| `rp_* turn_* csk_* tpc_* plane_* dst_* dct_*` | a 2D/3D row's CHILDREN in role (`il/wisdom/wisdom2_child.h`): row i of the child's private store as `<pre>k<i>=<key, spaces as commas>` plus `<pre><i>_<token>=<value>` per payload token; a 2D row nests whole under a 3D row's `plane_`. `dst_` (2026-11-14): the real FFT inside a DST-II or DST-III cell (`il/real/dst.h`), an R2C on the `t=dst2` row and a C2R on the `t=dst3` row, raced with every candidate timed as the whole DST (`il/real/real_role.h`); the row is stamped `place=oop` and serves both placements. The same for the real FFT inside a DST-I cell (`dst_` on the `t=dst1` row, an R2C at 2 (N + 1)) and inside a DCT-I cell (`dct_` on the `t=dct1` row, an R2C at 2 (N - 1)); `il/real/dct1_dst1.h` |
 | `bin= date= bld= host= l1d= from=` | writer binary + vintage, date (migrated records keep the original race date when known), host stamps, and lineage (`from=<file>:<line>` for records carried in from legacy stores). |
 
 ### 3.5 The header: legend + evolution rules

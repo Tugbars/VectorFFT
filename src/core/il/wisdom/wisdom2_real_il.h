@@ -67,34 +67,41 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
     k->nthreads = (uint8_t)(T > 1 ? T : 0);   /* a threaded plan's row is its own (v1.3) */
 }
 
-/* THE DST CELL (il/real/dst.h; owner, 2026-11-14): one row per mathematical transform in this shard,
+/* THE REAL-TO-REAL CELLS (owner, 2026-11-14): one row per mathematical transform in this shard,
  *     t=dst2|dst3 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=... dst_1_eng=... | ran=1 ns=...
+ *     t=dst1      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=t=r2c,n=<2(N+1)>,... | ran=1 ns=...
+ *     t=dct1      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct dct_k1=t=r2c,n=<2(N-1)>,... | ran=1 ns=...
  * A DST-II is a reorder pass, an R2C at N and a rotation pass; a DST-III a rotation pass, a C2R at N and a
- * reorder pass. The real FFT inside is a CHILD IN ROLE (il/wisdom/wisdom2_child.h): raced in the DST's own
- * private store, each candidate timed as the whole DST (il/real/real_role.h), and its rows ride here under
- * dst_ -- an R2C's on the dst2 row, a C2R's on the dst3 row. A DST never reads or writes an r2c or a c2r row.
- * The plan is placement-blind (its FFT runs out of place for either placement), so one row, stamped
- * place=oop, serves both, as the rank-2 rows do. A VFFT_DST2 plan and a VFFT_DST3 plan each read both rows:
- * one transform forward, the other backward. ns is one DST call, the race's winner. */
-static inline void vw2_dst_key(vw2_key_t *k, int N, int is_dst3, int T)
+ * reorder pass (il/real/dst.h). A DST-I is an R2C at 2 (N + 1) of the input extended odd and a DCT-I an R2C at
+ * 2 (N - 1) of the input extended even, each between the pass that extends and the pass that takes the
+ * outputs from the half spectrum (il/real/dct1_dst1.h). The real FFT inside is a CHILD IN ROLE
+ * (il/wisdom/wisdom2_child.h, il/real/real_child.h): raced in the cell's own private store, each candidate
+ * timed as the whole real-to-real transform (il/real/real_role.h), and its rows ride here under the cell's
+ * prefix -- dst_ on the sine cells' rows (an R2C's on dst2 and dst1, a C2R's on dst3), dct_ on the cosine
+ * cell's. A real-to-real create never reads or writes an r2c or a c2r row. The plans are placement-blind
+ * (the FFT runs out of place for either placement), so one row, stamped place=oop, serves both, as the
+ * rank-2 rows do. A VFFT_DST2 plan and a VFFT_DST3 plan each read both of their rows: one transform forward,
+ * the other backward; DCT-I and DST-I are their own inverses and have one row each. ns is one call of the
+ * whole transform, the race's winner. */
+static inline void vw2_r2r_key(vw2_key_t *k, int t, int N, int T)
 {
     memset(k, 0, sizeof *k);
-    k->t = is_dst3 ? VW2_T_DST3 : VW2_T_DST2;
+    k->t = (uint8_t)t;   /* VW2_T_DST2, VW2_T_DST3, VW2_T_DST1 or VW2_T_DCT1 */
     k->rank = 1; k->n[0] = N;
     k->q = 1; k->ord = VW2_ORD_NAT;
     k->pl = VW2_PL_OOP;
     k->nthreads = (uint8_t)(T > 1 ? T : 0);
 }
-/* the cell's row without its child (wisdom2_child.h puts the child's rows on it): eng=dst, and the time of one
- * DST call when the race gave one (ns > 0). Replaces whatever row held the cell. */
-static inline int vw2_dst_bank(vw2_store_t *s, int N, int is_dst3, int T, double ns)
+/* the cell's row without its child (wisdom2_child.h puts the child's rows on it): its eng= value, and the time
+ * of one call of the whole transform when the race gave one (ns > 0). Replaces whatever row held the cell. */
+static inline int vw2_r2r_bank(vw2_store_t *s, const vw2_key_t *key, const char *eng, double ns)
 {
     vw2_rec_t r;
     char b[48];
     int rc;
     memset(&r, 0, sizeof r);
-    vw2_dst_key(&r.key, N, is_dst3, T);
-    if (vw2_rec_set(&r, 1, "eng", "dst") != VW2_OK ||
+    r.key = *key;
+    if (vw2_rec_set(&r, 1, "eng", eng) != VW2_OK ||
         vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
     if (ns > 0.0) {

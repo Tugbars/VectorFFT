@@ -2,16 +2,18 @@
  * predictable").
  *
  * A plan that runs a 1D real FFT between passes of its own (il/real/dst.h: a reorder pass and a rotation pass
- * around an R2C or a C2R at N) picks that FFT by what the WHOLE plan costs, not by what the FFT costs alone:
+ * around an R2C or a C2R at N; il/real/dct1_dst1.h: a pass that extends the input and a pass that takes the
+ * outputs, around an R2C of twice the length) picks that FFT by what the WHOLE plan costs, not by what the FFT
+ * costs alone:
  * inside the plan the FFT's input was written a moment ago by one pass and its output is read at once by the
  * other. Such a plan sets the role around the create of its FFT; every timed run of a candidate in the real
  * door's races is then one run of the plan's whole pass with that candidate inside:
- *   - the even door's sweeps (ZTT-r's chains and tiles, the real four-step's splits), the half-length engine's
- *     two placements of its child, and the engine race among their winners (il/real/zr2c_build.h, zrp_build.h);
+ *   - the even door's sweeps (ZTT-r's chains and tiles, the real four-step's splits), zr2c's two placements
+ *     of its child, and the engine race among their winners (il/real/zr2c_build.h, zrp_build.h);
  *   - the odd door's sweeps (the flat chain, the real Bluestein) and its engine race (il/real/odd_build.h).
  * The checks against the reference before a candidate is timed run the transform alone, as do the races
- * below these: the complex child of the half-length engine (raced in that engine's own role, the child and the
- * fold) and the threaded arms' own races.
+ * below these: zr2c's complex child (raced in zr2c's own role, the child and the fold) and the threaded arms'
+ * own races.
  *
  * The role names the transform and N it was set for, so a create nested inside the FFT's own (a child of
  * another length, another transform) races its own way. One process static: creates take turns (the create

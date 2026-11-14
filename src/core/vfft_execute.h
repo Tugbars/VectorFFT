@@ -69,8 +69,9 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, vfft_real *sre,
 {
     const int il = (h->layout == (int)VFI_LAYOUT_IL);
     const char *tn = _vfft_tname(h->transform);
-    if (h->dst)
-    {   /* DST-II / DST-III (il/real/dst.h): N reals in, N reals out, either direction; out may be in */
+    if (h->dst || h->type1)
+    {   /* DST-II / DST-III (il/real/dst.h), DCT-I / DST-I (il/real/dct1_dst1.h): N reals in, N reals out,
+         * either direction; out may be in */
         if (sim || dim)
         {
             _vfft_warn("vfft_execute: a %s plan takes N reals in `in` and gives N reals in `out`; in_im and "
@@ -535,6 +536,7 @@ void vfft_destroy(vfft_plan h)
     vfft_zrbl_destroy(h->zrbl);     /* the lane Bluestein (il/real/zrb_lanes.h) */
 #ifndef VFFT_FLOAT
     _vfft_dst_destroy(h->dst);      /* DST-II / DST-III: its two real FFTs, tables and buffers (il/real/dst.h) */
+    _vfft_type1_destroy(h->type1);  /* DCT-I / DST-I: its real FFT and buffers (il/real/dct1_dst1.h) */
 #endif
     vfft_aligned_free(h->zr2c_aff); /* posix_memalign-backed */
     vfft_aligned_free(h->zr2c_scratch);

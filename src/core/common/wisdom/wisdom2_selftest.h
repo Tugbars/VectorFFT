@@ -484,7 +484,7 @@ static inline int vw2_g0_selftest(const char *dir)
               "eng", 1, "bluestein", "m", 1, "2048", "b", 1, "1",
               "ran", 2, "1", "src", 2, "race", "date", 2, "2026-08-19", NULL);
     VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank bluestein record");
-    r = vw2__st_rec(vw2__st_keyp(VW2_T_DCT1, 257, 4, VW2_ORD_NAT, VW2_PL_IP),
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_DCT2, 257, 4, VW2_ORD_NAT, VW2_PL_IP),
               "eng", 1, "stride", "chain", 1, "16.16",
               "ran", 2, "4", "src", 2, "migrated", "from", 2, "spike_wisdom.txt:10", NULL);
     VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank re-keyed trig record");
@@ -494,7 +494,7 @@ static inline int vw2_g0_selftest(const char *dir)
     VW2_ST_CHECK(strstr(buf, "n=1009") != NULL, "bluestein routed to the prime shard");
     snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
     vw2__st_slurp(path, buf, sizeof buf);
-    VW2_ST_CHECK(strstr(buf, "t=dct1 n=257") != NULL, "trig routed to the stride shard");
+    VW2_ST_CHECK(strstr(buf, "t=dct2 n=257") != NULL, "trig routed to the stride shard");
 
     /* ---- T17: unknown KEY token => invisible + opaque carry ------------------- */
     /* (nthreads= is a KNOWN key axis since v1.3: the row below parses as an

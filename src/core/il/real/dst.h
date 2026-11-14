@@ -31,7 +31,7 @@
  *
  * THE WISDOM (owner, 2026-11-14): a DST cell has its own rows in the real shard, one per mathematical
  * transform -- t=dst2|dst3 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst and its real FFT under dst_
- * (vw2_dst_key, il/wisdom/wisdom2_real_il.h). The real FFT is a CHILD IN ROLE (il/wisdom/wisdom2_child.h):
+ * (vw2_r2r_key, il/wisdom/wisdom2_real_il.h). The real FFT is a CHILD IN ROLE (il/real/real_child.h):
  * created against a private store seeded from the DST's row, it replays the recipe there or races, and what
  * it banked goes back onto the DST's row. A DST never reads or writes an r2c or a c2r row. Its race runs in
  * the DST's role (il/real/real_role.h): every candidate FFT is timed as one whole DST -- the reorder pass,
@@ -48,10 +48,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/math/tw_exact.h"     /* the rotation tables, each entry rounded once */
-#include "il/real/real_role.h"        /* the role the real FFT is raced in: the whole DST */
-#include "il/wisdom/wisdom2_real_il.h" /* the DST cell's row */
-#include "il/wisdom/wisdom2_child.h"  /* the real FFT as a child in role: its private store, its rows on the DST's row */
+#include "common/math/tw_exact.h"   /* the rotation tables, each entry rounded once */
+#include "il/real/real_child.h"     /* the real FFT as a child in role of the DST cell's row */
 
 typedef struct vfft_dst_s
 {
@@ -332,71 +330,26 @@ static void _vfft_dst_destroy(vfft_dst_t *d)
     free(d);
 }
 
-static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg);   /* il/estimate/c2c_estimate_il.h */
-
 /* One of the DST's two real FFTs at N, out of place: the R2C inside a DST-II (is_c2r = 0) or the C2R inside a
- * DST-III. est: planned by formulas. Else a child in role: its private store seeded from the DST cell's row
- * (empty when the row carries no recipe, or there is no store), the create against it with nothing persisted,
- * every candidate of a race timed as the whole DST on x and y; where the child raced, or the row did not carry
- * it yet, the cell's row is banked afresh -- the time of one DST call from the child's winner -- with the
- * child's rows under dst_ (*changed = 1: the caller saves). NULL: the real door's reason is on the record. */
+ * DST-III, on its row t=dst2 or t=dst3 under dst_ (il/real/real_child.h); a measured create times every
+ * candidate as the whole DST on x and y. NULL: the real door's reason is on the record. */
 static struct vfft_plan_s *_dst_child(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, vfft_dst_t *d, int is_c2r,
                                       int est, double *x, double *y, int *changed)
 {
-    vfft_cfg_t c = *cfg;
-    c.transform = is_c2r ? VFFT_C2R : VFFT_R2C;
-    c.dims = 1;
-    c.howmany = 1;
-    c.layout = VFI_LAYOUT_IL;
-    c.placement = VFFT_OUTOFPLACE;
-    c.order = VFI_ORDER_DEFAULT;
-    c.batch_geom = VFFT_BATCH_DEFAULT;
-    c.owned_buffers = 0;
-    c.destroy_input = 0;
-    if (est)
-        return (struct vfft_plan_s *)_vfft_create_estimate(&c);
-    {
-        const int T = _vfft_plan_threads(cfg), usable = W && !W->vw2_off_oop;
-        struct vfft_wisdom_s **Sp = is_c2r ? &d->S3 : &d->S2;
-        _dst_role_t role;
-        struct vfft_plan_s *ch;
-        vw2_key_t pk;
-        vw2_dst_key(&pk, d->N, is_c2r, T);
-        *Sp = vfft_child_store_for(usable ? &W->vw2 : NULL, &pk, "dst_");
-        if (!*Sp)
-        {
-            _vfft_warn("vfft_create: %s N=%d: out of memory (the real FFT's store)", _vfft_tname(cfg->transform), d->N);
-            return NULL;
-        }
-        c.wisdom = (vfft_wisdom *)*Sp;
-        c.wisdom_write = 0;   /* a private store's plan never saves (il/wisdom/wisdom2_child.h) */
-        role.d = d;
-        role.x = x;
-        role.y = y;
-        _real_il_role.run = is_c2r ? _dst3_role_run : _dst2_role_run;
-        _real_il_role.ctx = &role;
-        _real_il_role.transform = (int)c.transform;
-        _real_il_role.N = d->N;
-        ch = (struct vfft_plan_s *)_vfft_create_cfg(&c);
-        memset(&_real_il_role, 0, sizeof _real_il_role);
-        if (ch && usable && (*Sp)->vw2.nrec > 0 &&
-            (vfft_child_store_raced(*Sp) || !vfft_child_row_has(vfft_child_parent_row(&W->vw2, &pk), "dst_")))
-        {
-            vw2_key_t ck;
-            const vw2_rec_t *cr;
-            const char *nsv;
-            vw2_real_il_key(&ck, d->N, is_c2r, 0, T);
-            cr = vw2_lookup(&(*Sp)->vw2, &ck);
-            nsv = cr ? vw2_rec_get(cr, "ns") : NULL;
-            if (vw2_dst_bank(&W->vw2, d->N, is_c2r, T, nsv ? atof(nsv) : 0.0) == VW2_OK &&
-                vfft_child_row_update(&W->vw2, &pk, "dst_", *Sp))
-                *changed = 1;
-            else
-                fprintf(stderr, "vfft: DST verdict NOT banked at N=%d (%s) -- the cell will re-race\n", d->N,
-                        is_c2r ? "dst3" : "dst2");
-        }
-        return ch;
-    }
+    _dst_role_t role;
+    _real_child_t rc;
+    role.d = d;
+    role.x = x;
+    role.y = y;
+    rc.t = is_c2r ? VW2_T_DST3 : VW2_T_DST2;
+    rc.N = d->N;
+    rc.pre = "dst_";
+    rc.eng = "dst";
+    rc.n = d->N;
+    rc.is_c2r = is_c2r;
+    rc.run = is_c2r ? _dst3_role_run : _dst2_role_run;
+    rc.ctx = &role;
+    return _real_child_create(cfg, W, &rc, est, is_c2r ? &d->S3 : &d->S2, changed);
 }
 
 /* THE DST DOOR: a VFFT_DST2 or VFFT_DST3 request, 1D, one transform. est = 1 (VFFT_FLAG_ESTIMATE): the two

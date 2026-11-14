@@ -1478,9 +1478,9 @@ int main(int argc, char **argv)
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C; c.order = VFFT_ORDER_SCRAMBLED;
         refused("R2C scrambled", &c, "a real plan is natural order only");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DCT2;
-        refused("DCT2", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DST2 and VFFT_DST3 only, not VFFT_DCT2");
+        refused("DCT2", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 only, not VFFT_DCT2");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DHT;
-        refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DST2 and VFFT_DST3 only, not VFFT_DHT");
+        refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 only, not VFFT_DHT");
         memset(&c, 0, sizeof c); c.rank = 4; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8;
         refused("rank 4", &c, "plans ranks 1 to 3, not rank 4");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.order = VFFT_ORDER_SCRAMBLED;

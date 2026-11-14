@@ -77,6 +77,7 @@ struct vfft_wisdom_s
 
 struct vfft_zr2c_kid_s;   /* the zr2c child (il/real/zr2c_build.h) */
 struct vfft_dst_s;        /* DST-II / DST-III on the real FFT (il/real/dst.h) */
+struct vfft_type1_s;      /* DCT-I / DST-I on the real FFT (il/real/dct1_dst1.h) */
 /* the volume queue's GROUP BARRIER (il/rank2/plane_queue.h, 2026-10-19): the pool's
  * sense-reversing spin barrier (threads.h) on two cache lines of its own, so the K
  * groups' barriers never share a line (nor a line pair the spatial prefetcher
@@ -326,6 +327,10 @@ struct vfft_plan_s
      * reorder pass and a rotation pass; the plan holds an R2C and a C2R plan at N, the rotation tables and
      * two work buffers. dst != NULL is a VFFT_DST2 or VFFT_DST3 plan; its executors are bound at create. */
     struct vfft_dst_s *dst;         /* the DST plan (owned)                */
+    /* DCT-I / DST-I (2026-11-14, il/real/dct1_dst1.h): N reals in and out, one R2C at 2 (N - 1) or 2 (N + 1)
+     * of the input extended even or odd; the plan holds that R2C plan and two work buffers. type1 != NULL is
+     * a VFFT_DCT1 or VFFT_DST1 plan; its executors are bound at create. */
+    struct vfft_type1_s *type1;     /* the DCT-I / DST-I plan (owned)      */
     /* the REAL FLAT DIT (2026-09-30, il/real/zrf.h): the odd-N real transform
      * on the c2c flat DIT's stages -- a real leaf (r1c), the c2c stages on the
      * digit blocks 1..(R-1)/2, the real digit-0 run one level down to a mono;
