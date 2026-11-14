@@ -115,7 +115,7 @@ Measured with one-level Rader.
 
 ## Features
 
-![Transform coverage](src/tools/plots/vectorfft-coverage.svg)
+![Transform coverage](src/tools/plots/vectorfft-coverage-0.7.svg)
 
 A request names a contract: transform, layout, placement, order, length, batch,
 threads. A cell either has a native engine for it or refuses at create; a dot in
