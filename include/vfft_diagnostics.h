@@ -159,8 +159,8 @@ extern "C"
     return vfft_info(p, &i) == 0 ? i.route : "-";
   }
 
-  /* ── THE MEASUREMENT SCOPE AS A TOOL (moved here from vfft.h, 2026-10-07:
-   * docs/design/public_header_surface.md). Timing your own code under the
+  /* ── THE MEASUREMENT SCOPE AS A TOOL (moved here from vfft.h, 2026-10-07).
+   * Timing your own code under the
    * scope vfft_create() races in is benchmarking, not computing a transform.
    * Its settings are vfft_measure_configure() above. ─────────────────────────────────────────────── */
 
@@ -218,8 +218,8 @@ extern "C"
 
   /**
    * @brief The SIMD level this build was compiled for (a fact for logs; the
-   *        same fact is part of vfft_wisdom_identity(), and buffer alignment
-   *        comes from vfft_info()).
+   *        same name is the isa= token on every wisdom row this build saves,
+   *        and buffer alignment comes from vfft_info()).
    * @return "avx512", "avx2" or "scalar": a build-time fact, not runtime
    *         detection. Static storage.
    */

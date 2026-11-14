@@ -20,7 +20,7 @@ guide quotes what it printed. Writers follow `STYLE.md`.
 | pypdf, and pdftotext when present | the checks of the PDF | pypdf 6.16.2; pdftotext 4.00 from Git for Windows |
 | Node.js | KaTeX, run once per build | 22.13.1 |
 | Google Chrome | printing the PDF (Edge is not used) | 155 |
-| CMake 3.16 or newer, Ninja, GCC | building the listings | CMake 4.3.1, MinGW-w64 GCC 15.2.0 |
+| CMake 3.18 or newer, Ninja, GCC | building the listings | CMake 4.3.1, MinGW-w64 GCC 15.2.0 |
 | an installed VectorFFT | linking the listings (`find_package(VectorFFT)`) | the library built from this tree |
 
 KaTeX and the fonts are in `vendor/`; nothing is fetched while building.

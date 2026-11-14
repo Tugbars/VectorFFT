@@ -35,7 +35,7 @@ cmake_minimum_required(VERSION 3.18)
 if(POLICY CMP0126)
     cmake_policy(SET CMP0126 NEW)
 endif()
-project(VectorFFT_dag VERSION 2.0.0 LANGUAGES C)
+project(VectorFFT_dag VERSION 0.7.0 LANGUAGES C)   # the library's VFFT_VERSION_STRING (src/core/common/support/env.h)
 
 # ── Top level or a subproject (PROJECT_IS_TOP_LEVEL needs CMake 3.21) ────────
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -76,6 +76,13 @@ set(VFFT_MSVC_STYLE ${MSVC})
 set(VFFT_IS_ICX FALSE)
 if(CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM" OR CMAKE_C_COMPILER_ID STREQUAL "Intel")
     set(VFFT_IS_ICX TRUE)
+endif()
+# Microsoft's own compiler (cl) cannot build the library: stop here, before a long build fails on it. A plain
+# `cmake -S . -B build` on Windows picks it when Visual Studio is installed.
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    message(FATAL_ERROR "VectorFFT is built with GCC or Clang; Microsoft's C compiler (cl, ${CMAKE_C_COMPILER}) is not "
+                        "supported. On Windows, use MinGW-w64 GCC with Ninja: delete this build folder, then run "
+                        "cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc")
 endif()
 
 # ── Tree layout (mirrors build.py's DAG/DAG_CORE/DAG_GEN) ───────────────────
@@ -717,9 +724,32 @@ check_required_components(VectorFFT)
             DESTINATION ${VFFT_CMAKE_DIR})
 
     # runtime data: the shipped store (the live shards of every CPU folder, new/
-    # included; no backup, no lock, no README)
-    install(DIRECTORY "${PROJECT_SOURCE_DIR}/src/wisdom/" DESTINATION ${VFFT_DATA_DIR}/wisdom
-            FILES_MATCHING PATTERN "wisdom2_*.txt" PATTERN "wisdom2f_*.txt")
+    # included; no backup, no lock, no README). A file already installed is KEPT:
+    # the programs that use the installed library save the winners they measure
+    # into it, and a reinstall must not throw them away. To take the shipped files
+    # again, delete the installed wisdom folder and install.
+    install(CODE "set(_vfft_wsrc \"${PROJECT_SOURCE_DIR}/src/wisdom\")\nset(_vfft_wdata \"${VFFT_DATA_DIR}\")")
+    install(CODE [==[
+      if(IS_ABSOLUTE "${_vfft_wdata}")
+        set(_vfft_wdst "${_vfft_wdata}/wisdom")
+      else()
+        set(_vfft_wdst "${CMAKE_INSTALL_PREFIX}/${_vfft_wdata}/wisdom")
+      endif()
+      set(_vfft_wchk "${_vfft_wdst}")
+      if(DEFINED ENV{DESTDIR} AND NOT "$ENV{DESTDIR}" STREQUAL "")
+        string(REGEX REPLACE "^[A-Za-z]:" "" _vfft_wrel "${_vfft_wdst}")   # file(INSTALL) drops the drive under DESTDIR
+        set(_vfft_wchk "$ENV{DESTDIR}${_vfft_wrel}")
+      endif()
+      file(GLOB _vfft_wfiles RELATIVE "${_vfft_wsrc}" "${_vfft_wsrc}/*/wisdom2_*.txt" "${_vfft_wsrc}/*/wisdom2f_*.txt")
+      foreach(_vfft_wf IN LISTS _vfft_wfiles)
+        if(EXISTS "${_vfft_wchk}/${_vfft_wf}")
+          message(STATUS "Kept: ${_vfft_wdst}/${_vfft_wf} (installed before; it may hold wisdom measured on this machine)")
+        else()
+          get_filename_component(_vfft_wdir "${_vfft_wdst}/${_vfft_wf}" DIRECTORY)
+          file(INSTALL DESTINATION "${_vfft_wdir}" TYPE FILE FILES "${_vfft_wsrc}/${_vfft_wf}")
+        endif()
+      endforeach()
+    ]==])
 endif()
 
 # ── The gauntlet's tools (the test tool; top-level builds) ───────────────────

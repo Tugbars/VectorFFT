@@ -61,6 +61,7 @@
 #include <string.h>
 #include <direct.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* vfft_isa: the isa= token that ends every key this build banks */
 #include "ztt.h"
 #include "wisdom2.h"
 #include "il/rank1/k1_fourstep_band.h"
@@ -374,15 +375,16 @@ static vfft_plan mk(const char *W, int N, int ip) { return mk_ord(W, N, ip, VFFT
  * placement): route token, chain and tile. The store carries the OOP rows of
  * both classes and the in-place natural rows in wisdom2_oop.txt, the in-place
  * scrambled rows in wisdom2_scr.txt; the key's ord= and place= name the cell,
- * so both shards are read and the cell's own row alone matches (" lay=il | "
- * ends a one-thread key: a threaded row carries nthreads= after lay=il). */
+ * so both shards are read and the cell's own row alone matches (" lay=il isa=<build> | "
+ * ends a one-thread key: a threaded row carries nthreads= after lay=il, and isa= is the key's last token). */
 static int cell_row_of_store(const char *wisdir, int N, int scr, int ip, char *route, size_t rn, int *chain, int *nf, int *tile)
 {
     static const char *files[] = { "wisdom2_oop.txt", "wisdom2_scr.txt" };
-    char path[1024], line[4096], key[64], cell[48];
+    char path[1024], line[4096], key[64], cell[48], tail[48];
     snprintf(route, rn, "NOROW"); *nf = 0; *tile = 0;
     snprintf(key, sizeof key, "n=%d ", N);
     snprintf(cell, sizeof cell, "ord=%s place=%s ", scr ? "scr" : "nat", ip ? "ip" : "oop");
+    snprintf(tail, sizeof tail, " lay=il isa=%s | ", vfft_isa());
     for (int fi = 0; fi < 2; fi++)
     {
         FILE *f;
@@ -393,7 +395,7 @@ static int cell_row_of_store(const char *wisdir, int N, int scr, int ip, char *r
         {
             const char *r, *q;
             if (!strstr(line, "t=c2c") || !strstr(line, key) || !strstr(line, "q=1 ") || !strstr(line, cell)) continue;
-            if (!strstr(line, " lay=il | ") || strstr(line, "dir=bwd")) continue;
+            if (!strstr(line, tail) || strstr(line, "dir=bwd")) continue;
             if ((r = strstr(line, "il_route=")) == NULL) continue;
             sscanf(r + 9, "%15s", route);
             if ((q = strstr(line, "il_ztt=")) != NULL)
@@ -454,7 +456,7 @@ static int ip_door_is_zcasc(const char *wisdir, int N)
     FILE *f;
     int z = 0;
     snprintf(path, sizeof path, "%s/wisdom2_oop.txt", wisdir);
-    snprintf(key, sizeof key, "n=%d q=1 ord=nat place=ip lay=il | ", N);
+    snprintf(key, sizeof key, "n=%d q=1 ord=nat place=ip lay=il isa=%s | ", N, vfft_isa());
     f = fopen(path, "r");
     if (!f) return 0;
     while (fgets(line, sizeof line, f))

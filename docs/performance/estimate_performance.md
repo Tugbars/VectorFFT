@@ -92,8 +92,7 @@ length split into a column part and a row part, the column part run as a 2D colu
 
 Over the 13 lengths: 1.002 (geometric mean), 8 within 5%. The estimate keeps the row part short
 (at most 512, where the column chain then needs no radix above 32) and builds the column chain
-odd radices first, with no radix 21, 25 or 27
-([`docs/roadmap/codelet_trim_odd_radices.md`](../roadmap/codelet_trim_odd_radices.md)). The losses:
+odd radices first, with no radix 21, 25 or 27. The losses:
 480,000 (1.100) and 786,432 (1.058), where the planner picks another split (800 x 600 and
 3,072 x 256), and 1,179,648 (1.075), the same split with the column chain in another order
 (9.8.8.4 against the planner's 9.8.4.8).
@@ -167,8 +166,7 @@ Lengths the estimate serves with Bluestein's method on the whole length: 20 prim
 composites with a prime factor above 47. Their planner rows were raced on 2026-10-27. Of the lengths
 the planner races for the convolution (the power of two at or above 2N - 1, and the three smallest
 even lengths above 2N - 1 made of the factors 2, 3, 5 and 7), the estimate takes the smallest one
-whose inner runs ZTURN-T (a length divisible by 16) and that is at most 0.9 times the power of two
-([`docs/design/estimate_1d_sketch.md`](../design/estimate_1d_sketch.md), section 4.6).
+whose inner runs ZTURN-T (a length divisible by 16) and that is at most 0.9 times the power of two.
 
 | N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
 |---|---:|---:|---|---|
@@ -213,8 +211,7 @@ stages in another order (4.3.4.4.8.8 against 4.3.8.8.4.4).
 ## 1D: lengths with a radix 21, 25 or 27
 
 Lengths whose estimate plan holds a radix 21, 25 or 27 in a pair or a three-stage plan. Those slots
-run the odd-composite Cooley-Tukey kernels: the radix as stages inside one call
-([`docs/roadmap/codelet_trim_odd_radices.md`](../roadmap/codelet_trim_odd_radices.md)).
+run the odd-composite Cooley-Tukey kernels: the radix as stages inside one call.
 
 | N | Measured (ns) | Estimate (ns) | Estimate ÷ measured | Control ÷ measured |
 |---|---:|---:|---|---|
@@ -864,8 +861,7 @@ Not counted in the totals above. The estimate arm is
 serves one R2C or C2R transform at rank 2 and 3, natural order, either placement, any thread count), built through
 the same private store and replay as the library's C2C estimate, measuring nothing at create. Its column passes take
 the C2C formulas, its rows the 1D real estimate; the forms, the row engine, the chains of the tall and the threaded
-columns, the strips and axis 0 of a volume take the rules of the study in
-[`docs/roadmap/real_estimate_plan.md`](../roadmap/real_estimate_plan.md) (sections 9 and 10).
+columns, the strips and axis 0 of a volume take rules of their own, from a study of those cells.
 
 Measured on 2026-11-02 against every real 2D and 3D row banked in this machine's store, each at its row's thread
 count: out of place, R2C on every row and C2R where the row holds it (17 planes whose row held only the C2R side

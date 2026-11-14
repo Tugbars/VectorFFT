@@ -113,7 +113,7 @@ N ≤ 121).
 
 K transforms sample-major (element e of transform t at `e·K + t`, the lane-major
 geometry, `VFFT_BATCH_LANE_MAJOR`; the default for a real batch), out of place, natural
-order. Ours is the column pass down the K lanes (`docs/roadmap/lane_major_batch_design.md`);
+order. Ours is the column pass down the K lanes;
 r2c and c2r run it at N/2 between the pack and the fold. MKL's lane-major batch is its
 descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and strides K (the real ones DFTI
 REAL with CCE storage). The verdict is `MKL lm / ours lm`. Two reference arms run the same
@@ -187,7 +187,7 @@ counted in the timed executes).
 
 The same bench and protocol, the real batches after the fused strips landed: each strip
 of lanes is packed into a dense per-worker scratch, runs the chain there and is folded
-out, one dispatch per execute (`docs/roadmap/lane_major_batch_design.md`, section 3). The
+out, one dispatch per execute. The
 eight-thread cells that lost were the power-of-two ones, where the chain walked the
 scratch plane at a pitch that aliases in cache; the composite cells carry a Rader stage
 and were compute-bound. Every cell raced cold on a fresh scratch store.
@@ -245,7 +245,7 @@ the walk serves. Every cell raced cold on a fresh scratch store.
 #### The 2D lane-major batch (step 6, 2026-10-15)
 
 K planes of N1 x N2 side by side, element (r, c) of transform t at `z[2 ((r N2 + c) K + t)]`.
-Ours is the 2D batch door (`docs/roadmap/lane_major_batch_design.md`, section 8): the first axis
+Ours is the 2D batch door: the first axis
 one column pass over N2 K lanes, the last axis the 1D lane-major batch per block, in role.
 MKL's lane-major 2D batch is its 2D descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and
 strides {0, N2 K, K}; the verdict is `MKL lm / ours lm`. The reference arms run the same
@@ -283,7 +283,7 @@ eight-thread readings swung up to 3x between the two engine orders at 64x1024 (o
 
 K real planes of N1 x N2 side by side, real (r, c) of transform t at `x[(r N2 + c) K + t]`; the
 half spectrum is H = N2/2 + 1 bins wide, bin (r, h) of transform t at `z[2 ((r H + h) K + t)]`.
-Ours is the 2D real batch door (`docs/roadmap/lane_major_batch_design.md`, section 8): the last
+Ours is the 2D real batch door: the last
 axis the 1D real lane-major batch per row block (the fused strips), in role, then the first axis
 one complex column pass over H K lanes; C2R is the mirror (the column pass first, then the
 blocks) and out of place leaves the caller's bins untouched. MKL's lane-major 2D real batch is
@@ -337,8 +337,8 @@ one-plane real plan. Eight threads: MKL's lane-major 2D real batch does not scal
 #### The 3D lane-major batch (step 6, 2026-10-15)
 
 K volumes of N1 x N2 x N3 side by side, element (i, j, k) of transform t at
-`z[2 ((i N2 N3 + j N3 + k) K + t)]`. Ours is the 2D batch door one rank up
-(`docs/roadmap/lane_major_batch_design.md`, section 8): the first axis one column pass over
+`z[2 ((i N2 N3 + j N3 + k) K + t)]`. Ours is the 2D batch door one rank up:
+the first axis one column pass over
 N2 N3 K lanes, then N1 blocks of the lane-major 2D batch at (N2, N3, K) as the child in role.
 MKL's lane-major 3D batch is its 3D descriptor with `NUMBER_OF_TRANSFORMS = K`, distance 1 and
 strides {0, N2 N3 K, N3 K, K}; the verdict is `MKL lm / ours lm`. The reference arms run the
@@ -377,8 +377,8 @@ is level at the smooth cells (0.98x to 1.19x) and 2.2x at the prime first axis.
 
 K real volumes of N1 x N2 x N3 side by side, real (i, j, k) of transform t at
 `x[((i N2 + j) N3 + k) K + t]`; the half spectrum is H = N3/2 + 1 bins wide, bin (i, j, f) of
-transform t at `z[2 (((i N2 + j) H + f) K + t)]`. Ours is the 3D real batch door
-(`docs/roadmap/lane_major_batch_design.md`, section 8): the last two axes N1 blocks of the
+transform t at `z[2 (((i N2 + j) H + f) K + t)]`. Ours is the 3D real batch door:
+the last two axes N1 blocks of the
 lane-major 2D real batch at (N2, N3, K), the child in role, then the first axis one complex
 column pass over N2 H K lanes; C2R is the mirror (the column pass first, then the blocks) and
 out of place leaves the caller's bins untouched. MKL's lane-major 3D real batch is its REAL
@@ -675,8 +675,7 @@ Both engines at eight threads; the verdict column says how the plan ran.
 
 ### K=1 INTERLEAVED — HIGH N: non-power-of-two N above 262144 vs MKL, T=1 (2026-10-12)
 
-The four-step's non-power-of-two band (`docs/design/k1_fourstep_design.md`,
-"The non-power-of-two band"): a split with both sides in [64, 16384] raced
+The four-step's non-power-of-two band: a split with both sides in [64, 16384] raced
 against the flat DIT. Canonical bench `--k1noop` (natural order, out of place,
 one thread), pinned core 2 + HIGH with the sibling guard, pace 300 ms, cool
 300 ms, both flip orders (the two numbers per column), medians, the scratch
@@ -945,11 +944,11 @@ batched through one kernel call (8) or through the row child's two stages batche
 the skewed column pass (29, plus 12 and 11 with the batched rows); the turn route for the
 tall narrow planes (27). Below parity: 128×16 (0.76), 32×64 (0.79), 16×128 (0.90), 64×32
 (0.92), and seven planes at 0.93–0.99 within a run-to-run swing (16×16, 32×16, 32×32,
-16×64, 128×256, 512×2048, 4096×128). The design is `docs/design/il2d_c2c_strategy.md`.
+16×64, 128×256, 512×2048, 4096×128).
 
 ### 2D C2C at T=8 — the tile, the blocks, the skewed pass and the turn vs MKL at T=8 (2026-10-30)
 
-At 8 threads the column pass has four methods beside the strips (`docs/design/il2d_c2c_mt.md`):
+At 8 threads the column pass has four methods beside the strips:
 - **tile:** the first column stage across the plane, then each first-stage sub-problem on one worker;
 - **blocks:** the column chain walked in blocks;
 - **skewed pass:** the plane with few rows, threaded on groups of 16 columns;
@@ -1074,8 +1073,7 @@ column passes cost more than the residency saves.
 
 ### 2D and 3D, a prime above 47 on a column axis — the RADER COLUMN STAGE vs MKL, with the 1D real leaf (2026-10-14)
 
-The Rader stage at stage 0 of a column chain (`docs/roadmap/rader_leaf_design.md`
-section 13, phase A1): a prime above the kernel pool served as a vectorized Rader
+The Rader stage at stage 0 of a column chain (phase A1): a prime above the kernel pool served as a vectorized Rader
 convolution over the plane's lanes, the inner chain of p-1 from the column pool. The
 column chain is PINNED here (`VFFT_IL2D_CHAIN`): phase A1 gives the planner no Rader
 candidates yet, so the cell's other verdicts race and the chain is named. The 1D real

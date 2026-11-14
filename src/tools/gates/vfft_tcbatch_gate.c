@@ -249,13 +249,13 @@ static vfft_plan mkt(const char *W, int N, size_t K, int inplace, int nth)
 static int tcb_row(const char *W, int N, size_t K, int T, char *buf, size_t sz)
 {
     static char line[4096];
-    char path[1024], head[96], nt[32];
+    char path[1024], head[96], nt[48];
     FILE *f;
     int found = 0;
     buf[0] = 0;
     snprintf(path, sizeof path, "%s/wisdom2_oop.txt", W);
     snprintf(head, sizeof head, "@cell t=c2c n=%d q=%zu ", N, K);
-    snprintf(nt, sizeof nt, " nthreads=%d | ", T);
+    snprintf(nt, sizeof nt, " nthreads=%d isa=%s | ", T, vfft_isa());   /* isa= ends every key (v1.4) */
     if (!(f = fopen(path, "r")))
         return 0;
     while (fgets(line, sizeof line, f))

@@ -610,13 +610,13 @@ done:
 static int row_pq(int nd, const char *t, const char *shape, int K, int ip, int T, char *buf, size_t sz)
 {
     static char line[65536];
-    char path[1024], head[96], nt[24];
+    char path[1024], head[96], nt[48];
     FILE *f;
     int val = -1;
     buf[0] = 0;
     snprintf(path, sizeof path, "%s/wisdom2_%dd.txt", g_W, nd);
     snprintf(head, sizeof head, "@cell t=%s n=%s q=%d ", t, shape, K);
-    snprintf(nt, sizeof nt, " nthreads=%d", T);
+    snprintf(nt, sizeof nt, " nthreads=%d isa=%s", T, vfft_isa());
     f = fopen(path, "r");
     if (!f) return -1;
     while (fgets(line, sizeof line, f))
@@ -624,7 +624,7 @@ static int row_pq(int nd, const char *t, const char *shape, int K, int ip, int T
         char *bar = strstr(line, " | ");
         const char *m, *p, *end;
         if (strncmp(line, head, strlen(head)) || !bar) continue;
-        *bar = 0;   /* the key section alone: the placement, the layout, and T as its last token */
+        *bar = 0;   /* the key section alone: the placement, the layout, and T then isa= as its last tokens */
         m = strstr(line, nt);
         if (!strstr(line, ip ? " place=ip" : " place=oop") || !strstr(line, " lay=il") || !m || m[strlen(nt)] != 0) continue;
         p = bar + 3;
@@ -643,12 +643,12 @@ static int row_pq(int nd, const char *t, const char *shape, int K, int ip, int T
 static int row_int(int nd, const char *shape, int ip, int T, const char *name)
 {
     static char line[65536];
-    char path[1024], head[96], nt[24], key[40];
+    char path[1024], head[96], nt[48], key[40];
     FILE *f;
     int val = -1;
     snprintf(path, sizeof path, "%s/wisdom2_%dd.txt", g_W, nd);
     snprintf(head, sizeof head, "@cell t=r2c n=%s q=1 ", shape);
-    snprintf(nt, sizeof nt, " nthreads=%d", T);
+    snprintf(nt, sizeof nt, " nthreads=%d isa=%s", T, vfft_isa());
     snprintf(key, sizeof key, " %s=", name);
     f = fopen(path, "r");
     if (!f) return -1;

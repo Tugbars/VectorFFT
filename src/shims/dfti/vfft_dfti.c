@@ -749,7 +749,7 @@ MKL_LONG vfft_dfti_commit(DFTI_DESCRIPTOR_HANDLE desc)
                    "VectorFFT serves (tight strides for one transform or contiguous transforms; the lane-major batch "
                    "at ranks 1 to 3, strides times the batch count and distance 1; real data in place the same forms "
                    "on rows padded to 2(n/2+1), a contiguous batch at the padded transform's distance; "
-                   "docs/roadmap/dfti_shim_design.md section 3)",
+                   "the User Guide, chapter 17)",
                    real ? "real" : "complex", r, (long long)d->howmany, ip ? "in place" : "out of place");
         return DFTI_UNIMPLEMENTED;
     }

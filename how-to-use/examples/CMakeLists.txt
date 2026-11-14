@@ -6,7 +6,7 @@
 #
 #   cmake -S how-to-use/examples -B build-examples -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=<prefix>
 #   cmake --build build-examples
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(vfft_examples LANGUAGES C)
 
 # Built on its own, an unnamed build type is Release (in the repository the root sets it).

@@ -16,8 +16,8 @@
  * falls back silently. A create that misses wisdom measures the cell's
  * candidates and saves the winner before it returns (VFFT_FLAG_ESTIMATE
  * plans from formulas instead and measures nothing); execute is pure (no
- * allocation, no measurement, no decision). Which cells are served is the
- * front door's table: docs/design/vfft_front_door.md.
+ * allocation, no measurement, no decision). Which transforms are served: the
+ * User Guide, how-to-use/VectorFFT-Guide.html, chapters 6 to 8 and 18.
  */
 #ifndef VFFT_H
 #define VFFT_H

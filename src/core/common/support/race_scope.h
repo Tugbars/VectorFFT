@@ -500,11 +500,16 @@ static void _vfs_leave(void)
 }
 
 /* a clock is about to be read: inside a create that has not entered the
- * scope yet, enter it (the outermost vfft_create leaves it) */
+ * scope yet, enter it (the outermost vfft_create leaves it). That first read
+ * is where the create starts measuring: one line says so, as a create that
+ * measures can take seconds where a served one returns at once (an estimate
+ * reads no clock, and prints nothing). */
 static inline void _vfft_scope_touch(void)
 {
     if (_vfft_create_depth > 0 && _vfs.depth == 0)
     {
+        fprintf(stderr, "[measure] vfft_create is measuring this transform: seconds, up to minutes for the largest; "
+                        "a create that finds the winner in wisdom reads it at once\n");
         _vfs_enter();
         _vfs.auto_on = 1;
     }
