@@ -447,8 +447,11 @@ static inline int est_real(const est_machine_t *m, long long N, int c2r, int ip,
      * smaller factor first (the owner, 2026-11-01: 32 of the store's 34 pair rows, the most balanced pair 21;
      * at one thread 48 4.12, 64 4.16, 120 12.10, 160 16.10 against 6.8, 8.8, 10.12, 10.16: 1.07 - 1.28 ->
      * 0.95 - 1.03). The same at 8 lanes (2026-11-13, a 2-core Xeon at AVX-512, one thread: its planner banked the
-     * pair on 21 of its 32 rows at 32 - 160, this rule's pair on 20 of them; 128 took zr2c in all four cells) */
-    if (N <= 160)
+     * pair on 21 of its 32 rows at 32 - 160, this rule's pair on 20 of them; 128 took zr2c in all four cells), but
+     * for N = 128, which stays on zr2c (2026-11-14, the same Xeon, the estimate's plans timed against the day before:
+     * the pair 8.16 0.099 / 0.095 / 0.101 us against zr2c's 0.084 / 0.085 / 0.090 in R2C and C2R out of place and
+     * R2C in place, the AVX2 build's times steady between the two runs; C2R in place 0.102 against 0.114) */
+    if (N <= 160 && !(EST_REAL_VW == 8 && N == 128))
     {
         int lo = 0, hi = 0, pass;
         for (pass = 0; pass < 3 && !hi; pass++)
