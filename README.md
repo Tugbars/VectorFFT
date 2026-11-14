@@ -122,14 +122,23 @@ threads. A cell either has a native engine for it or refuses at create; a dot in
 the tree is a native engine, a dash a refusal by contract.
 
 - **Interleaved and split are two libraries**, each with its own engines and
-  wisdom; nothing is converted between them.
-- **Both placements in each layout**, in place and out of place, for the complex
-  transforms; real transforms run in place only under 1D interleaved.
-- **Order is a contract of c2c**: natural by default, scrambled on request, each
-  served by its own writers. Real and trigonometric transforms are natural by
-  construction.
-- **Any length, 1D to 3D, batches, threads.** Every plan is a measured verdict
-  kept in wisdom, never an estimate.
+  wisdom; nothing is converted between them. The split layout serves c2c; the
+  real and real-to-real transforms run interleaved.
+- **Both placements**, in place and out of place, for every transform in the
+  tree.
+- **Order is a contract of interleaved c2c**: natural by default, scrambled on
+  request, each served by its own writers. Split c2c and the real and
+  real-to-real transforms are natural by construction.
+- **Any length, 1D to 3D, batches, threads** in the interleaved layout; the split
+  layout serves the lengths its footnote lists.
+- **Two ways to plan.** By default a create measures: the winner of a race is
+  kept in wisdom, and a later create reads it back at once. With
+  `VFFT_FLAG_ESTIMATE` a create plans from formulas instead (the lengths, the
+  thread and batch count, the machine's caches and vector width): nothing is
+  measured, and no wisdom is read or written. The estimate plans interleaved
+  c2c, r2c and c2r in 1D to 3D (c2c at 2D and 3D in natural order), their
+  batches and threads, and the four real-to-real transforms; a split plan is
+  always measured.
 
 ![Wisdom planner](src/tools/plots/vectorfft-planner.svg)
 
