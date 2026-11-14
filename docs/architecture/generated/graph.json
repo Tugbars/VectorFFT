@@ -98,6 +98,7 @@
     "il/rank1/k1_fourstep.h",
     "il/rank1/ztt.h",
     "il/rank2/il2d_cols.h",
+    "il/real/dst.h",
     "il/real/zfsr.h",
     "il/real/zr2c.h",
     "il/real/zttr.h",
@@ -159,6 +160,7 @@
     "il/rank1/k1_commit.h",
     "il/rank2/il2d_tier.h",
     "il/rank2/plane_queue.h",
+    "il/real/real_role.h",
     "il/real/zr2c_build.h",
     "il/real/zrp_build.h",
     "il/wisdom/wisdom2_child.h",
@@ -170,7 +172,7 @@
     "common/support/zalloc.h",
     "common/plan/vfft_cfg.h"
    ],
-   "lines": 622,
+   "lines": 627,
    "role": "the three private handle types.",
    "zone": "common"
   },
@@ -466,7 +468,7 @@
     "split/wisdom/wisdom2_zts_split.h"
    ],
    "includes": [],
-   "lines": 1759,
+   "lines": 1760,
    "role": "THE VectorFFT wisdom store: the only parser and the only writer of the @vw2 grammar, everywhere (library, calibrators, benches, gates).",
    "zone": "common"
   },
@@ -563,7 +565,7 @@
     "il/estimate/real_estimate_nd_il.h",
     "il/estimate/real_estimate_lm_il.h"
    ],
-   "lines": 822,
+   "lines": 833,
    "role": "the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with nothing measu...",
    "zone": "il"
   },
@@ -623,7 +625,7 @@
     "il/estimate/c2c_estimate_il.h"
    ],
    "includes": [],
-   "lines": 1140,
+   "lines": 1143,
    "role": "the ESTIMATE create of a 1D REAL transform (VFFT_FLAG_ESTIMATE on R2C or C2R, rank 1, one transform): the real door's row written from the formulas and replayed by the door with...",
    "zone": "il"
   },
@@ -1254,6 +1256,22 @@
    "role": "THE LANE-MAJOR 3D REAL BATCH, r2c and c2r (docs/roadmap/lane_major_batch_design.md, step 6 one rank up, 2026-10-19): K real volumes of N1 x N2 x N3 side by side, x[((i N2 + j) N...",
    "zone": "il"
   },
+  "il/real/dst.h": {
+   "external": [],
+   "folder": "il/real",
+   "included_by": [
+    "vfft.c"
+   ],
+   "includes": [
+    "common/math/tw_exact.h",
+    "il/real/real_role.h",
+    "il/wisdom/wisdom2_real_il.h",
+    "il/wisdom/wisdom2_child.h"
+   ],
+   "lines": 507,
+   "role": "DST-II and DST-III (VFFT_DST2, VFFT_DST3): 1D, N reals in and N reals out, any N, one transform, on the interleaved real FFT of the same length.",
+   "zone": "il"
+  },
   "il/real/odd_build.h": {
    "external": [],
    "folder": "il/real",
@@ -1261,7 +1279,7 @@
     "vfft.c"
    ],
    "includes": [],
-   "lines": 757,
+   "lines": 763,
    "role": "the real door's ODD-N engine pick (K=1, INTERLEAVED, both placements): env pin, the banked engine, or THE ODD REAL RACE.",
    "zone": "il"
   },
@@ -1274,6 +1292,20 @@
    "includes": [],
    "lines": 461,
    "role": "the r2c / c2r CREATE, interleaved tier.",
+   "zone": "il"
+  },
+  "il/real/real_role.h": {
+   "external": [],
+   "folder": "il/real",
+   "included_by": [
+    "il/real/dst.h",
+    "il/real/zr2c_build.h"
+   ],
+   "includes": [
+    "common/plan/vfft_internal.h"
+   ],
+   "lines": 49,
+   "role": "THE ROLE OF THE REAL DOOR'S RACES (owner, 2026-11-14: \"the OOO engine makes everything non predictable\").",
    "zone": "il"
   },
   "il/real/zfsr.h": {
@@ -1328,9 +1360,10 @@
     "common/plan/vfft_internal.h",
     "il/real/zr2c.h",
     "il/wisdom/wisdom2_real_il.h",
+    "il/real/real_role.h",
     "common/support/race.h"
    ],
-   "lines": 832,
+   "lines": 835,
    "role": "the interleaved-CCE real route (\"kind 5\").",
    "zone": "il"
   },
@@ -1453,7 +1486,7 @@
     "il/wisdom/wisdom2_real_il.h",
     "common/support/race.h"
    ],
-   "lines": 1094,
+   "lines": 1097,
    "role": "the real pair's, ZTT-r's and the real mono's handles and the real door's engine race.",
    "zone": "il"
   },
@@ -1520,13 +1553,14 @@
    "folder": "il/wisdom",
    "included_by": [
     "il/rank1/k1_fourstep.h",
-    "il/rank2/il2d_tier.h"
+    "il/rank2/il2d_tier.h",
+    "il/real/dst.h"
    ],
    "includes": [
     "common/wisdom/wisdom2.h",
     "common/plan/vfft_internal.h"
    ],
-   "lines": 232,
+   "lines": 235,
    "role": "A CHILD PLAN IN ROLE (owner, 2026-10-02; the 2D and 3D tiers 2026-10-05).",
    "zone": "il"
   },
@@ -1552,6 +1586,7 @@
    "external": [],
    "folder": "il/wisdom",
    "included_by": [
+    "il/real/dst.h",
     "il/real/zr2c_build.h",
     "il/real/zrp_build.h"
    ],
@@ -1560,7 +1595,7 @@
     "common/wisdom/wisdom2_oop_rows.h",
     "il/wisdom/wisdom2_oop_il.h"
    ],
-   "lines": 718,
+   "lines": 760,
    "role": "the interleaved 1D real cell's ENGINE verdict.",
    "zone": "il"
   },
@@ -1809,6 +1844,7 @@
     "il/rank3/lm_batch3dr_il.h",
     "il/il_create.h",
     "il/real/real_create_il.h",
+    "il/real/dst.h",
     "il/rank2/plane_queue.h",
     "vfft_execute.h",
     "vfft_api.h",
@@ -1816,7 +1852,7 @@
     "vfft_measure.h",
     "vfft_fingerprint.h"
    ],
-   "lines": 2106,
+   "lines": 2110,
    "role": "the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss at the chosen rigor -> build -> execute.",
    "zone": "front"
   },
@@ -1829,7 +1865,7 @@
    "includes": [
     "il/estimate/c2c_estimate_il.h"
    ],
-   "lines": 466,
+   "lines": 471,
    "role": "THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).",
    "zone": "front"
   },
@@ -1844,7 +1880,7 @@
     "il/il_execute.h",
     "split/split_execute.h"
    ],
-   "lines": 526,
+   "lines": 545,
    "role": "THE execute entry point.",
    "zone": "front"
   },
@@ -2090,6 +2126,128 @@
    "line": 388,
    "refs": []
   },
+  "_dst2_role_run": {
+   "callers": [
+    "_dst_child"
+   ],
+   "calls": [
+    "_dst2_rotate",
+    "_dst_reorder",
+    "_real_il_exec_any"
+   ],
+   "file": "il/real/dst.h",
+   "line": 303,
+   "refs": []
+  },
+  "_dst2_rotate": {
+   "callers": [
+    "_dst2_role_run",
+    "_dst2_run"
+   ],
+   "calls": [],
+   "file": "il/real/dst.h",
+   "line": 152,
+   "refs": []
+  },
+  "_dst2_run": {
+   "callers": [
+    "_k1x_dst",
+    "_k1x_dst2"
+   ],
+   "calls": [
+    "_dst2_rotate",
+    "_dst_reorder",
+    "_vfft_exec6"
+   ],
+   "file": "il/real/dst.h",
+   "line": 243,
+   "refs": []
+  },
+  "_dst3_role_run": {
+   "callers": [
+    "_dst_child"
+   ],
+   "calls": [
+    "_dst3_rotate",
+    "_dst_unreorder",
+    "_real_il_exec_any"
+   ],
+   "file": "il/real/dst.h",
+   "line": 311,
+   "refs": []
+  },
+  "_dst3_rotate": {
+   "callers": [
+    "_dst3_role_run",
+    "_dst3_run"
+   ],
+   "calls": [],
+   "file": "il/real/dst.h",
+   "line": 194,
+   "refs": []
+  },
+  "_dst3_run": {
+   "callers": [
+    "_k1x_dst",
+    "_k1x_dst3"
+   ],
+   "calls": [
+    "_dst3_rotate",
+    "_dst_unreorder",
+    "_vfft_exec6"
+   ],
+   "file": "il/real/dst.h",
+   "line": 258,
+   "refs": []
+  },
+  "_dst_child": {
+   "callers": [
+    "_vfft_create_dst_il"
+   ],
+   "calls": [
+    "_vfft_create_cfg",
+    "_vfft_create_estimate",
+    "_vfft_plan_threads",
+    "_vfft_tname",
+    "_vfft_warn",
+    "vfft_child_parent_row",
+    "vfft_child_row_has",
+    "vfft_child_row_update",
+    "vfft_child_store_for",
+    "vfft_child_store_raced",
+    "vw2_dst_bank",
+    "vw2_dst_key",
+    "vw2_lookup",
+    "vw2_real_il_key",
+    "vw2_rec_get"
+   ],
+   "file": "il/real/dst.h",
+   "line": 345,
+   "refs": [
+    "_dst2_role_run",
+    "_dst3_role_run"
+   ]
+  },
+  "_dst_reorder": {
+   "callers": [
+    "_dst2_role_run",
+    "_dst2_run"
+   ],
+   "calls": [],
+   "file": "il/real/dst.h",
+   "line": 73,
+   "refs": []
+  },
+  "_dst_unreorder": {
+   "callers": [
+    "_dst3_role_run",
+    "_dst3_run"
+   ],
+   "calls": [],
+   "file": "il/real/dst.h",
+   "line": 110,
+   "refs": []
+  },
   "_exec_zfsr": {
    "callers": [
     "_k1x_zfsr",
@@ -2123,7 +2281,7 @@
     "thread_pool_workers_for"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 609,
+   "line": 610,
    "refs": []
   },
   "_exec_zrb": {
@@ -9132,6 +9290,40 @@
    "line": 374,
    "refs": []
   },
+  "_k1x_dst": {
+   "callers": [
+    "_vfft_create_dst_il"
+   ],
+   "calls": [
+    "_dst2_run",
+    "_dst3_run"
+   ],
+   "file": "il/real/dst.h",
+   "line": 284,
+   "refs": []
+  },
+  "_k1x_dst2": {
+   "callers": [
+    "_vfft_create_dst_il"
+   ],
+   "calls": [
+    "_dst2_run"
+   ],
+   "file": "il/real/dst.h",
+   "line": 271,
+   "refs": []
+  },
+  "_k1x_dst3": {
+   "callers": [
+    "_vfft_create_dst_il"
+   ],
+   "calls": [
+    "_dst3_run"
+   ],
+   "file": "il/real/dst.h",
+   "line": 277,
+   "refs": []
+  },
   "_k1x_fs": {
    "callers": [
     "_vfft_il_execute",
@@ -9848,7 +10040,8 @@
     "_exec_zrb",
     "_exec_zrbl",
     "_exec_zrf",
-    "_exec_zrm"
+    "_exec_zrm",
+    "_real_il_role_run"
    ],
    "file": "il/real/odd_build.h",
    "line": 58,
@@ -10054,11 +10247,13 @@
     "vw2_rec_free"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 964,
+   "line": 967,
    "refs": []
   },
   "_real_il_exec_any": {
    "callers": [
+    "_dst2_role_run",
+    "_dst3_role_run",
     "_il2d_rows_bwd_set",
     "_il2d_rows_fwd_set",
     "_il2d_rowx_body",
@@ -10075,7 +10270,16 @@
     "_exec_zttr"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 424,
+   "line": 426,
+   "refs": []
+  },
+  "_real_il_in_role": {
+   "callers": [
+    "_real_il_role_run"
+   ],
+   "calls": [],
+   "file": "il/real/real_role.h",
+   "line": 35,
    "refs": []
   },
   "_real_il_odd_admits": {
@@ -10119,7 +10323,7 @@
     "vw2_real_il_lookup_zrf"
    ],
    "file": "il/real/odd_build.h",
-   "line": 669,
+   "line": 675,
    "refs": []
   },
   "_real_il_odd_race": {
@@ -10158,7 +10362,7 @@
     "vw2_real_il_key"
    ],
    "file": "il/real/odd_build.h",
-   "line": 504,
+   "line": 510,
    "refs": []
   },
   "_real_il_pair_band": {
@@ -10167,7 +10371,7 @@
    ],
    "calls": [],
    "file": "il/real/zrp_build.h",
-   "line": 715,
+   "line": 718,
    "refs": []
   },
   "_real_il_race": {
@@ -10208,7 +10412,7 @@
     "vw2_real_il_bank_zttr"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 739,
+   "line": 742,
    "refs": []
   },
   "_real_il_ref": {
@@ -10225,7 +10429,7 @@
     "vfft_aligned_free"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 686,
+   "line": 689,
    "refs": []
   },
   "_real_il_ref_bluestein": {
@@ -10238,7 +10442,7 @@
     "vfft_aligned_free"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 586,
+   "line": 589,
    "refs": []
   },
   "_real_il_ref_dft": {
@@ -10254,7 +10458,25 @@
     "vfft_policy_prime_cell"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 628,
+   "line": 631,
+   "refs": []
+  },
+  "_real_il_role_run": {
+   "callers": [
+    "_odd_arm_run",
+    "_zfsr_sweep",
+    "_zr2c_arm_run",
+    "_zrb_try",
+    "_zrf_arm_run",
+    "_zrf_try",
+    "_zrpr_arm_run",
+    "_zttr_sweep"
+   ],
+   "calls": [
+    "_real_il_in_role"
+   ],
+   "file": "il/real/real_role.h",
+   "line": 42,
    "refs": []
   },
   "_t4x4": {
@@ -10300,7 +10522,7 @@
     "_zr2c_child_of_kid"
    ],
    "file": "vfft.c",
-   "line": 853,
+   "line": 854,
    "refs": []
   },
   "_tc_inner_mt_safe": {
@@ -10309,7 +10531,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 566,
+   "line": 567,
    "refs": []
   },
   "_tc_mt_decide": {
@@ -10329,7 +10551,7 @@
     "vw2_tcmt_lookup"
    ],
    "file": "vfft.c",
-   "line": 725,
+   "line": 726,
    "refs": [
     "_tc_mt_race_arm",
     "_tc_mt_reseed"
@@ -10343,7 +10565,7 @@
     "_vfft_exec6"
    ],
    "file": "vfft.c",
-   "line": 708,
+   "line": 709,
    "refs": []
   },
   "_tc_mt_reseed": {
@@ -10352,7 +10574,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 719,
+   "line": 720,
    "refs": []
   },
   "_tc_mt_tramp": {
@@ -10395,7 +10617,7 @@
     "vfft_zttr_mt_bind"
    ],
    "file": "vfft.c",
-   "line": 663,
+   "line": 664,
    "refs": []
   },
   "_tc_threaded_form": {
@@ -10405,7 +10627,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 656,
+   "line": 657,
    "refs": []
   },
   "_thread_pool_barrier_init": {
@@ -10709,12 +10931,13 @@
    ],
    "calls": [
     "_vfft_exec6",
+    "_vfft_tname",
     "_vfft_warn",
     "thread_pool_caller_arm",
     "thread_pool_caller_release"
    ],
    "file": "vfft_api.h",
-   "line": 312,
+   "line": 317,
    "refs": []
   },
   "_vfft_api_sizes": {
@@ -10723,7 +10946,7 @@
    ],
    "calls": [],
    "file": "vfft_api.h",
-   "line": 378,
+   "line": 383,
    "refs": []
   },
   "_vfft_api_stride": {
@@ -10732,7 +10955,7 @@
    ],
    "calls": [],
    "file": "vfft_api.h",
-   "line": 426,
+   "line": 431,
    "refs": []
   },
   "_vfft_api_translate": {
@@ -10745,7 +10968,7 @@
     "_vfft_warn"
    ],
    "file": "vfft_api.h",
-   "line": 109,
+   "line": 110,
    "refs": []
   },
   "_vfft_build_id": {
@@ -11012,6 +11235,7 @@
   },
   "_vfft_create_cfg": {
    "callers": [
+    "_dst_child",
     "_il2d_clone_set",
     "_il2d_rax_build",
     "_il2d_tpc_build",
@@ -11046,14 +11270,40 @@
     "vfft_destroy"
    ],
    "file": "vfft.c",
-   "line": 1603,
+   "line": 1607,
    "refs": []
+  },
+  "_vfft_create_dst_il": {
+   "callers": [
+    "_vfft_create_estimate",
+    "_vfft_create_inner"
+   ],
+   "calls": [
+    "_dst_child",
+    "_vfft_dst_destroy",
+    "_vfft_plan_threads",
+    "_vfft_tname",
+    "_vfft_warn",
+    "_vw2_persist",
+    "vfft_aligned_alloc",
+    "vfft_aligned_free",
+    "vfft_cs2pi_table"
+   ],
+   "file": "il/real/dst.h",
+   "line": 406,
+   "refs": [
+    "_k1x_dst",
+    "_k1x_dst2",
+    "_k1x_dst3"
+   ]
   },
   "_vfft_create_estimate": {
    "callers": [
+    "_dst_child",
     "vfft_create"
    ],
    "calls": [
+    "_vfft_create_dst_il",
     "_vfft_create_estimate_lm",
     "_vfft_create_estimate_lmr",
     "_vfft_create_estimate_nd",
@@ -11063,6 +11313,7 @@
     "est_build_c2c",
     "est_env_steers",
     "est_plan_1d",
+    "thread_pool_plan_retain",
     "vfft_cpu_l1d_bytes",
     "vfft_cpu_l1d_ways",
     "vfft_cpu_l2_bytes",
@@ -11130,7 +11381,7 @@
     "est_plan_real"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 1112,
+   "line": 1115,
    "refs": []
   },
   "_vfft_create_estimate_real_nd": {
@@ -11271,6 +11522,7 @@
     "_tc_threaded_form",
     "_thread_pool_ncpu",
     "_vfft_create_cfg",
+    "_vfft_create_dst_il",
     "_vfft_create_lm2dr_il",
     "_vfft_create_lm3dr_il",
     "_vfft_create_lmr_il",
@@ -11291,7 +11543,7 @@
     "vfft_policy_ilndr_ip_ok"
    ],
    "file": "vfft.c",
-   "line": 1036,
+   "line": 1037,
    "refs": []
   },
   "_vfft_create_lm2d_il": {
@@ -11484,7 +11736,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 1578,
+   "line": 1582,
    "refs": []
   },
   "_vfft_create_outer": {
@@ -11500,7 +11752,7 @@
     "vfft_policy_ilndr_ip_ok"
    ],
    "file": "vfft.c",
-   "line": 1527,
+   "line": 1531,
    "refs": []
   },
   "_vfft_create_pq_il": {
@@ -11618,18 +11870,34 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 1592,
+   "line": 1596,
+   "refs": []
+  },
+  "_vfft_dst_destroy": {
+   "callers": [
+    "_vfft_create_dst_il",
+    "vfft_destroy"
+   ],
+   "calls": [
+    "vfft_aligned_free",
+    "vfft_child_store_free",
+    "vfft_destroy"
+   ],
+   "file": "il/real/dst.h",
+   "line": 320,
    "refs": []
   },
   "_vfft_err_shared": {
    "callers": [],
    "calls": [],
    "file": "vfft_api.h",
-   "line": 463,
+   "line": 468,
    "refs": []
   },
   "_vfft_exec6": {
    "callers": [
+    "_dst2_run",
+    "_dst3_run",
     "_il2d_arm_axis",
     "_il2d_arm_exec",
     "_il2d_arm_exec_mt",
@@ -11668,7 +11936,7 @@
     "_vfft_execute_door"
    ],
    "file": "vfft_execute.h",
-   "line": 323,
+   "line": 339,
    "refs": []
   },
   "_vfft_execute_door": {
@@ -11680,7 +11948,7 @@
     "_vfft_execute_try"
    ],
    "file": "vfft_execute.h",
-   "line": 328,
+   "line": 344,
    "refs": []
   },
   "_vfft_execute_full": {
@@ -11696,7 +11964,7 @@
     "_vfft_warn"
    ],
    "file": "vfft_execute.h",
-   "line": 258,
+   "line": 274,
    "refs": []
   },
   "_vfft_execute_try": {
@@ -11707,7 +11975,7 @@
     "_vfft_execute_full"
    ],
    "file": "vfft_execute.h",
-   "line": 305,
+   "line": 321,
    "refs": []
   },
   "_vfft_guard_add": {
@@ -12168,7 +12436,7 @@
     "thread_pool_caller_release"
    ],
    "file": "vfft_api.h",
-   "line": 267,
+   "line": 272,
    "refs": []
   },
   "_vfft_ld_bluestein": {
@@ -12232,13 +12500,14 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 1843,
+   "line": 1847,
    "refs": []
   },
   "_vfft_plan_threads": {
    "callers": [
     "_c2c_ip_create_il",
     "_c2c_oop_create_k1_il",
+    "_dst_child",
     "_il2d_rowx_zr2c",
     "_k1_il_candidate",
     "_k1_il_mono_candidate",
@@ -12250,6 +12519,7 @@
     "_vfft_create_2d_il",
     "_vfft_create_c2c_blu_split",
     "_vfft_create_c2c_nd_split",
+    "_vfft_create_dst_il",
     "_vfft_create_fftnd_il",
     "_vfft_create_fftnd_real_il",
     "_vfft_create_inner",
@@ -12383,7 +12653,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 1708,
+   "line": 1712,
    "refs": []
   },
   "_vfft_save_enabled": {
@@ -12393,7 +12663,7 @@
    ],
    "calls": [],
    "file": "vfft.c",
-   "line": 1516,
+   "line": 1520,
    "refs": []
   },
   "_vfft_scope_create_done": {
@@ -12503,19 +12773,22 @@
     "_vfft_wisdom_load"
    ],
    "file": "vfft_api.h",
-   "line": 53,
+   "line": 54,
    "refs": []
   },
   "_vfft_tname": {
    "callers": [
+    "_dst_child",
     "_ilndr_oom",
     "_lm2d_clones_build",
     "_real_il_odd_race",
     "_real_il_race",
     "_tc_mt_decide",
+    "_vfft_api_execute_slow",
     "_vfft_api_translate",
     "_vfft_create_2d_il",
     "_vfft_create_cfg",
+    "_vfft_create_dst_il",
     "_vfft_create_fftnd_il",
     "_vfft_create_fftnd_real_il",
     "_vfft_create_inner",
@@ -12584,6 +12857,7 @@
     "_bundle_paths",
     "_c2c_ip_create_il",
     "_c2c_oop_create_k1_il",
+    "_dst_child",
     "_il2d_clone_set",
     "_il2d_col_build",
     "_il2d_enum_rec",
@@ -12614,6 +12888,7 @@
     "_vfft_create_c2c_oop_il",
     "_vfft_create_c2c_split",
     "_vfft_create_cfg",
+    "_vfft_create_dst_il",
     "_vfft_create_estimate",
     "_vfft_create_estimate_lm",
     "_vfft_create_estimate_lmr",
@@ -12682,7 +12957,7 @@
     "vw2_close"
    ],
    "file": "vfft.c",
-   "line": 1690,
+   "line": 1694,
    "refs": []
   },
   "_vfft_wisdom_load": {
@@ -12694,7 +12969,7 @@
     "_bundle_paths"
    ],
    "file": "vfft.c",
-   "line": 1657,
+   "line": 1661,
    "refs": []
   },
   "_vfft_wisdom_save": {
@@ -12705,7 +12980,7 @@
     "vw2_save"
    ],
    "file": "vfft.c",
-   "line": 1666,
+   "line": 1670,
    "refs": []
   },
   "_vfft_zts_create_ex": {
@@ -13026,7 +13301,7 @@
     "vw2_rec_get"
    ],
    "file": "vfft.c",
-   "line": 825,
+   "line": 826,
    "refs": []
   },
   "_vw2_persist": {
@@ -13061,6 +13336,7 @@
     "_real_il_race",
     "_tc_mt_decide",
     "_vfft_create_2d_il",
+    "_vfft_create_dst_il",
     "_vfft_create_fftnd_il",
     "_vfft_create_fftnd_real_il",
     "_vfft_create_lm2d_il",
@@ -13244,6 +13520,7 @@
    ],
    "calls": [
     "_exec_zfsr",
+    "_real_il_role_run",
     "_zfsr_build_plan",
     "_zrpr_relerr",
     "vfft_destroy",
@@ -13251,7 +13528,7 @@
     "vfft_now_ns"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 521,
+   "line": 524,
    "refs": []
   },
   "_zfsr_sweep_bwd_range": {
@@ -13296,10 +13573,11 @@
     "_zr2c_build"
    ],
    "calls": [
-    "_exec_zr2c"
+    "_exec_zr2c",
+    "_real_il_role_run"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 727,
+   "line": 728,
    "refs": []
   },
   "_zr2c_bank": {
@@ -13314,7 +13592,7 @@
     "vw2_real_il_bank_zr2c"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 680,
+   "line": 681,
    "refs": []
   },
   "_zr2c_build": {
@@ -13333,7 +13611,7 @@
     "vfft_race_run"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 738,
+   "line": 741,
    "refs": [
     "_zr2c_arm_run"
    ]
@@ -13358,7 +13636,7 @@
     "vfft_aligned_free"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 538,
+   "line": 539,
    "refs": []
   },
   "_zr2c_cand_of_child": {
@@ -13369,7 +13647,7 @@
    ],
    "calls": [],
    "file": "il/real/zr2c_build.h",
-   "line": 158,
+   "line": 159,
    "refs": []
   },
   "_zr2c_child_of_cand": {
@@ -13378,7 +13656,7 @@
    ],
    "calls": [],
    "file": "il/real/zr2c_build.h",
-   "line": 131,
+   "line": 132,
    "refs": []
   },
   "_zr2c_child_of_kid": {
@@ -13393,7 +13671,7 @@
     "_zr2c_fs_str"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 257,
+   "line": 258,
    "refs": []
   },
   "_zr2c_fold_bwd": {
@@ -13488,7 +13766,7 @@
     "_zr2c_fs_str"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 248,
+   "line": 249,
    "refs": []
   },
   "_zr2c_fs_store": {
@@ -13511,7 +13789,7 @@
     "vw2_rec_set"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 215,
+   "line": 216,
    "refs": []
   },
   "_zr2c_fs_str": {
@@ -13526,7 +13804,7 @@
     "vw2_rec_free"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 187,
+   "line": 188,
    "refs": []
   },
   "_zr2c_init_aff": {
@@ -13555,7 +13833,7 @@
     "_zr2c_kid_destroy"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 295,
+   "line": 296,
    "refs": []
   },
   "_zr2c_kid_cfg": {
@@ -13565,7 +13843,7 @@
    ],
    "calls": [],
    "file": "il/real/zr2c_build.h",
-   "line": 116,
+   "line": 117,
    "refs": []
   },
   "_zr2c_kid_destroy": {
@@ -13580,7 +13858,7 @@
     "vfft_ilprime_destroy"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 94,
+   "line": 95,
    "refs": []
   },
   "_zr2c_kid_exec": {
@@ -13592,7 +13870,7 @@
     "vfft_ilprime_execute_mt"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 106,
+   "line": 107,
    "refs": []
   },
   "_zr2c_kid_race": {
@@ -13621,7 +13899,7 @@
     "vfft_policy_prime_cell"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 424,
+   "line": 425,
    "refs": [
     "_zr2c_role_run"
    ]
@@ -13650,7 +13928,7 @@
     "_ilprime_desc_parse"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 277,
+   "line": 278,
    "refs": []
   },
   "_zr2c_replay": {
@@ -13668,7 +13946,7 @@
     "vw2_real_il_lookup_zr2c"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 697,
+   "line": 698,
    "refs": []
   },
   "_zr2c_role_run": {
@@ -13681,7 +13959,7 @@
     "_zr2c_fold_fwd"
    ],
    "file": "il/real/zr2c_build.h",
-   "line": 381,
+   "line": 382,
    "refs": []
   },
   "_zrb_build_plan": {
@@ -13700,7 +13978,7 @@
     "vfft_zrb_name_inner"
    ],
    "file": "il/real/odd_build.h",
-   "line": 297,
+   "line": 302,
    "refs": [
     "_ilprime_inner_from_desc"
    ]
@@ -13749,7 +14027,7 @@
     "_ilprime_desc_parse"
    ],
    "file": "il/real/odd_build.h",
-   "line": 327,
+   "line": 332,
    "refs": []
   },
   "_zrb_m_cands": {
@@ -13761,7 +14039,7 @@
     "vfft_zrb_min_m"
    ],
    "file": "il/real/odd_build.h",
-   "line": 367,
+   "line": 372,
    "refs": []
   },
   "_zrb_mt_inner": {
@@ -13845,7 +14123,7 @@
     "vfft_k1fs_band"
    ],
    "file": "il/real/odd_build.h",
-   "line": 452,
+   "line": 458,
    "refs": []
   },
   "_zrb_try": {
@@ -13854,6 +14132,7 @@
    ],
    "calls": [
     "_exec_zrb",
+    "_real_il_role_run",
     "_zrb_build_plan",
     "_zrpr_relerr",
     "vfft_destroy",
@@ -13862,7 +14141,7 @@
     "vfft_zrb_str"
    ],
    "file": "il/real/odd_build.h",
-   "line": 397,
+   "line": 402,
    "refs": []
   },
   "_zrbl_build_plan": {
@@ -13957,7 +14236,7 @@
    ],
    "calls": [],
    "file": "il/real/odd_build.h",
-   "line": 165,
+   "line": 170,
    "refs": []
   },
   "_zrf_arm_run": {
@@ -13965,10 +14244,11 @@
     "_zrf_heat"
    ],
    "calls": [
-    "_exec_zrf"
+    "_exec_zrf",
+    "_real_il_role_run"
    ],
    "file": "il/real/odd_build.h",
-   "line": 160,
+   "line": 163,
    "refs": []
   },
   "_zrf_build_plan": {
@@ -14021,7 +14301,7 @@
     "vfft_chain_str"
    ],
    "file": "il/real/odd_build.h",
-   "line": 235,
+   "line": 240,
    "refs": [
     "_zrf_heat"
    ]
@@ -14068,7 +14348,7 @@
     "vfft_race_run"
    ],
    "file": "il/real/odd_build.h",
-   "line": 170,
+   "line": 175,
    "refs": []
   },
   "_zrf_level_bwd": {
@@ -14265,6 +14545,7 @@
    ],
    "calls": [
     "_exec_zrf",
+    "_real_il_role_run",
     "_zrf_build_plan",
     "_zrpr_relerr",
     "vfft_destroy",
@@ -14274,7 +14555,7 @@
     "vfft_zrf_tiled"
    ],
    "file": "il/real/odd_build.h",
-   "line": 77,
+   "line": 79,
    "refs": []
   },
   "_zrm_build_plan": {
@@ -14344,7 +14625,8 @@
     "_exec_zr2c",
     "_exec_zrm",
     "_exec_zrp",
-    "_exec_zttr"
+    "_exec_zttr",
+    "_real_il_role_run"
    ],
    "file": "il/real/zrp_build.h",
    "line": 410,
@@ -14370,7 +14652,7 @@
    ],
    "calls": [],
    "file": "il/real/zrp_build.h",
-   "line": 564,
+   "line": 567,
    "refs": []
   },
   "_zts_arm_run": {
@@ -15545,6 +15827,7 @@
    ],
    "calls": [
     "_exec_zttr",
+    "_real_il_role_run",
     "_vfft_plan_threads",
     "_zrpr_relerr",
     "_zttr_build_plan",
@@ -15554,7 +15837,7 @@
     "vfft_zttr_mt_bind"
    ],
    "file": "il/real/zrp_build.h",
-   "line": 444,
+   "line": 446,
    "refs": []
   },
   "_zttr_t0h8": {
@@ -15629,7 +15912,7 @@
    ],
    "calls": [],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 709,
+   "line": 712,
    "refs": []
   },
   "est__batch_ok": {
@@ -15842,7 +16125,7 @@
     "est_refuse"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 956,
+   "line": 959,
    "refs": []
   },
   "est__child_1d": {
@@ -16048,7 +16331,7 @@
    ],
    "calls": [],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 715,
+   "line": 718,
    "refs": []
   },
   "est__flat_plane": {
@@ -16697,7 +16980,7 @@
     "vfft_zrm_fn"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 865,
+   "line": 868,
    "refs": []
   },
   "est__prime_inner_len_ok": {
@@ -16816,7 +17099,7 @@
     "vfft_policy_prime_cell"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 648,
+   "line": 651,
    "refs": []
   },
   "est__real_copies": {
@@ -16827,7 +17110,7 @@
    ],
    "calls": [],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 613,
+   "line": 616,
    "refs": []
   },
   "est__real_nd_batch_whole": {
@@ -16845,7 +17128,7 @@
    ],
    "calls": [],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 640,
+   "line": 643,
    "refs": []
   },
   "est__real_zr2c": {
@@ -16862,7 +17145,7 @@
     "est_serial"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 554,
+   "line": 557,
    "refs": []
   },
   "est__replay": {
@@ -17141,7 +17424,7 @@
    ],
    "calls": [],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 729,
+   "line": 732,
    "refs": []
   },
   "est__zttr_legal": {
@@ -17363,7 +17646,7 @@
     "vw2_tcmt_bank"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 1009,
+   "line": 1012,
    "refs": []
   },
   "est_build_real_2d": {
@@ -18275,7 +18558,7 @@
     "est_refuse"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 665,
+   "line": 668,
    "refs": []
   },
   "est_prime_route": {
@@ -18492,7 +18775,7 @@
     "vw2_rec_set"
    ],
    "file": "il/estimate/real_estimate_il.h",
-   "line": 768,
+   "line": 771,
    "refs": []
   },
   "est_rader_flat_chain": {
@@ -19245,7 +19528,8 @@
   },
   "thread_pool_plan_retain": {
    "callers": [
-    "_vfft_create_cfg"
+    "_vfft_create_cfg",
+    "_vfft_create_estimate"
    ],
    "calls": [
     "_thread_pool_lock",
@@ -19427,7 +19711,7 @@
    ],
    "calls": [],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 55,
+   "line": 58,
    "refs": []
   },
   "vfft__fingerprint": {
@@ -19436,7 +19720,7 @@
     "vfft__fp_node"
    ],
    "file": "vfft.c",
-   "line": 2075,
+   "line": 2079,
    "refs": []
   },
   "vfft__fp_child": {
@@ -19447,14 +19731,14 @@
     "vfft__fp_node"
    ],
    "file": "vfft.c",
-   "line": 1938,
+   "line": 1942,
    "refs": []
   },
   "vfft__fp_counters": {
    "callers": [],
    "calls": [],
    "file": "vfft.c",
-   "line": 2093,
+   "line": 2097,
    "refs": []
   },
   "vfft__fp_node": {
@@ -19472,7 +19756,7 @@
     "vfft_ztt_chain_str"
    ],
    "file": "vfft.c",
-   "line": 1947,
+   "line": 1951,
    "refs": []
   },
   "vfft__ztt_mt_probe": {
@@ -19557,6 +19841,7 @@
     "_tc_mt_decide",
     "_vfft_create_2d_il",
     "_vfft_create_cfg",
+    "_vfft_create_dst_il",
     "_vfft_create_fftnd_il",
     "_vfft_create_fftnd_real_il",
     "_vfft_create_lm2dr_il",
@@ -19664,11 +19949,13 @@
     "_real_il_ref_dft",
     "_tc_mt_decide",
     "_vfft_create_2d_il",
+    "_vfft_create_dst_il",
     "_vfft_create_fftnd_il",
     "_vfft_create_fftnd_real_il",
     "_vfft_create_lmr_il",
     "_vfft_create_pq_il",
     "_vfft_create_real_lanes",
+    "_vfft_dst_destroy",
     "_zr2c_build",
     "_zr2c_build_route",
     "_zr2c_kid_race",
@@ -19822,6 +20109,7 @@
   },
   "vfft_child_parent_row": {
    "callers": [
+    "_dst_child",
     "vfft_child_row_update",
     "vfft_child_store_for"
    ],
@@ -19829,11 +20117,12 @@
     "vw2_key_eq"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 148,
+   "line": 151,
    "refs": []
   },
   "vfft_child_row_has": {
    "callers": [
+    "_dst_child",
     "_k1fs_child_row_store",
     "vfft_child_row_update"
    ],
@@ -19841,11 +20130,12 @@
     "vfft__child_tok"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 83,
+   "line": 86,
    "refs": []
   },
   "vfft_child_row_update": {
    "callers": [
+    "_dst_child",
     "_il2d_children_put",
     "_il2d_real_children_put",
     "_vfft_create_fftnd_il",
@@ -19873,11 +20163,12 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 181,
+   "line": 184,
    "refs": []
   },
   "vfft_child_store_for": {
    "callers": [
+    "_dst_child",
     "_il2d_rax_build",
     "_il2d_real_rowplan_dir",
     "_il2d_tpc_build",
@@ -19895,7 +20186,7 @@
     "vfft_child_store_from_row"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 159,
+   "line": 162,
    "refs": []
   },
   "vfft_child_store_free": {
@@ -19907,6 +20198,7 @@
     "_vfft_create_lm2dr_il",
     "_vfft_create_lm3d_il",
     "_vfft_create_lm3dr_il",
+    "_vfft_dst_destroy",
     "est__put_child",
     "est_build_c2c",
     "est_build_lm",
@@ -19930,7 +20222,7 @@
     "_vfft_wisdom_free"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 48,
+   "line": 51,
    "refs": []
   },
   "vfft_child_store_from_row": {
@@ -19949,7 +20241,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 100,
+   "line": 103,
    "refs": []
   },
   "vfft_child_store_new": {
@@ -19972,11 +20264,12 @@
    ],
    "calls": [],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 41,
+   "line": 44,
    "refs": []
   },
   "vfft_child_store_raced": {
    "callers": [
+    "_dst_child",
     "_ilprime_fs_inner_build",
     "_k1fs_build_own",
     "_zfsr_build_plan",
@@ -19984,7 +20277,7 @@
    ],
    "calls": [],
    "file": "il/wisdom/wisdom2_child.h",
-   "line": 165,
+   "line": 168,
    "refs": []
   },
   "vfft_cpu_cache": {
@@ -20131,7 +20424,7 @@
     "_vfft_warn"
    ],
    "file": "vfft_api.h",
-   "line": 276,
+   "line": 281,
    "refs": [
     "_vfft_k1_go_mt"
    ]
@@ -20197,6 +20490,7 @@
   },
   "vfft_cs2pi_table": {
    "callers": [
+    "_vfft_create_dst_il",
     "_zr2c_init_aff",
     "vfft_zttr_create"
    ],
@@ -20233,6 +20527,7 @@
     "_vfft_create_lm3dr_il",
     "_vfft_create_pq_il",
     "_vfft_create_real_lanes",
+    "_vfft_dst_destroy",
     "_zfsr_sweep",
     "_zr2c_build",
     "_zrb_try",
@@ -20260,6 +20555,7 @@
     "_il2d_rcsk_free",
     "_il2d_tf_free",
     "_lm2d_clones_drop",
+    "_vfft_dst_destroy",
     "_zr2c_kid_destroy",
     "thread_pool_plan_release",
     "vfft_aligned_free",
@@ -20282,7 +20578,7 @@
     "vfft_zttr_destroy"
    ],
    "file": "vfft_execute.h",
-   "line": 374,
+   "line": 390,
    "refs": []
   },
   "vfft_dft_ld": {
@@ -20327,7 +20623,7 @@
    "callers": [],
    "calls": [],
    "file": "vfft_api.h",
-   "line": 460,
+   "line": 465,
    "refs": []
   },
   "vfft_execute": {
@@ -20336,7 +20632,7 @@
     "_vfft_api_execute_slow"
    ],
    "file": "vfft_api.h",
-   "line": 345,
+   "line": 350,
    "refs": []
   },
   "vfft_execute_split": {
@@ -20348,7 +20644,7 @@
     "thread_pool_caller_release"
    ],
    "file": "vfft_api.h",
-   "line": 359,
+   "line": 364,
    "refs": []
   },
   "vfft_free": {
@@ -21853,7 +22149,7 @@
     "vfft_topology"
    ],
    "file": "vfft_api.h",
-   "line": 441,
+   "line": 446,
    "refs": []
   },
   "vfft_is_prime": {
@@ -21883,7 +22179,7 @@
    "callers": [],
    "calls": [],
    "file": "vfft.c",
-   "line": 1836,
+   "line": 1840,
    "refs": []
   },
   "vfft_k1_mono_il_alias_fn": {
@@ -22337,7 +22633,7 @@
    "callers": [],
    "calls": [],
    "file": "vfft.c",
-   "line": 1823,
+   "line": 1827,
    "refs": []
   },
   "vfft_policy_admits": {
@@ -22992,7 +23288,7 @@
     "thread_pool_size"
    ],
    "file": "vfft.c",
-   "line": 1821,
+   "line": 1825,
    "refs": []
   },
   "vfft_powmod": {
@@ -23010,14 +23306,14 @@
    "callers": [],
    "calls": [],
    "file": "vfft.c",
-   "line": 1493,
+   "line": 1497,
    "refs": []
   },
   "vfft_pq_mt_passes": {
    "callers": [],
    "calls": [],
    "file": "vfft.c",
-   "line": 1489,
+   "line": 1493,
    "refs": []
   },
   "vfft_primitive_root": {
@@ -23621,7 +23917,7 @@
     "_vfft_build_id"
    ],
    "file": "vfft.c",
-   "line": 1699,
+   "line": 1703,
    "refs": []
   },
   "vfft_wisdom_folder": {
@@ -23630,7 +23926,7 @@
     "_default_wisdom"
    ],
    "file": "vfft.c",
-   "line": 1697,
+   "line": 1701,
    "refs": []
   },
   "vfft_wisdom_identity": {
@@ -23639,7 +23935,7 @@
     "vfft_cpu_identity"
    ],
    "file": "vfft.c",
-   "line": 1698,
+   "line": 1702,
    "refs": []
   },
   "vfft_wisdom_report": {
@@ -23653,7 +23949,7 @@
     "vw2_rec_get"
    ],
    "file": "vfft.c",
-   "line": 1740,
+   "line": 1744,
    "refs": []
   },
   "vfft_wisdom_reread": {
@@ -23664,7 +23960,7 @@
     "_vfft_wisdom_free"
    ],
    "file": "vfft_api.h",
-   "line": 88,
+   "line": 89,
    "refs": []
   },
   "vfft_zfsr_band": {
@@ -25397,7 +25693,7 @@
     "vw2_rec_get"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1463,
+   "line": 1464,
    "refs": []
   },
   "vw2__cell_emit": {
@@ -25408,7 +25704,7 @@
     "vw2__key_format"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 813,
+   "line": 814,
    "refs": []
   },
   "vw2__cell_parse": {
@@ -25425,7 +25721,7 @@
     "vw2_rec_set"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 772,
+   "line": 773,
    "refs": []
   },
   "vw2__dedup_loaded": {
@@ -25438,7 +25734,7 @@
     "vw2_rec_free"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1187,
+   "line": 1188,
    "refs": []
   },
   "vw2__emit_header": {
@@ -25447,7 +25743,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1557,
+   "line": 1558,
    "refs": []
   },
   "vw2__folder_find": {
@@ -25647,7 +25943,7 @@
     "vw2_rec_free"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 872,
+   "line": 873,
    "refs": []
   },
   "vw2__lock": {
@@ -25659,7 +25955,7 @@
     "vw2__lock_ex"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1118,
+   "line": 1119,
    "refs": []
   },
   "vw2__lock_ex": {
@@ -25669,7 +25965,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1080,
+   "line": 1081,
    "refs": []
   },
   "vw2__lookup_phase": {
@@ -25685,7 +25981,7 @@
     "vw2_key_serves"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1402,
+   "line": 1403,
    "refs": []
   },
   "vw2__merge_allows": {
@@ -25707,7 +26003,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1318,
+   "line": 1319,
    "refs": []
   },
   "vw2__migrate_nthreads": {
@@ -25724,7 +26020,7 @@
     "vw2_rec_set"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 973,
+   "line": 974,
    "refs": []
   },
   "vw2__n_format": {
@@ -25753,7 +26049,7 @@
     "vw2_rec_get"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 960,
+   "line": 961,
    "refs": []
   },
   "vw2__oom": {
@@ -25900,6 +26196,7 @@
   },
   "vw2__oop_stamp_date": {
    "callers": [
+    "vw2_dst_bank",
     "vw2_oop_bank_k1_il",
     "vw2_oop_bank_zr2c_slot",
     "vw2_prime_method_bank",
@@ -25929,7 +26226,7 @@
     "vw2__strdup"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 752,
+   "line": 753,
    "refs": []
   },
   "vw2__path": {
@@ -25939,7 +26236,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 839,
+   "line": 840,
    "refs": []
   },
   "vw2__pq_key": {
@@ -25974,7 +26271,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 847,
+   "line": 848,
    "refs": []
   },
   "vw2__rec_del": {
@@ -25997,7 +26294,7 @@
     "vw2_ref_parse"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1381,
+   "line": 1382,
    "refs": []
   },
   "vw2__replace_file": {
@@ -26006,7 +26303,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1567,
+   "line": 1568,
    "refs": []
   },
   "vw2__rl_name": {
@@ -26063,7 +26360,7 @@
     "vw2_rec_set"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1594,
+   "line": 1595,
    "refs": []
   },
   "vw2__src_rank": {
@@ -26150,7 +26447,7 @@
     "vw2__unlock"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1143,
+   "line": 1144,
    "refs": []
   },
   "vw2__t_parse": {
@@ -26235,7 +26532,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1123,
+   "line": 1124,
    "refs": []
   },
   "vw2__wild_q_only": {
@@ -26253,7 +26550,7 @@
    ],
    "calls": [],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 410,
+   "line": 452,
    "refs": []
   },
   "vw2_bank": {
@@ -26267,6 +26564,7 @@
     "vfft_il_dp_emit_wisdom",
     "vw2__2d_bank",
     "vw2__tcmt_bank_key",
+    "vw2_dst_bank",
     "vw2_g0_selftest",
     "vw2_oop_bank_k1_il",
     "vw2_oop_bank_zr2c_slot",
@@ -26291,7 +26589,7 @@
     "vw2_shard_route"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1505,
+   "line": 1506,
    "refs": []
   },
   "vw2_close": {
@@ -26304,7 +26602,7 @@
     "vw2_rec_free"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1287,
+   "line": 1288,
    "refs": []
   },
   "vw2_disown": {
@@ -26322,7 +26620,32 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1528,
+   "line": 1529,
+   "refs": []
+  },
+  "vw2_dst_bank": {
+   "callers": [
+    "_dst_child"
+   ],
+   "calls": [
+    "vw2__oop_stamp_date",
+    "vw2_bank",
+    "vw2_dst_key",
+    "vw2_rec_free",
+    "vw2_rec_set"
+   ],
+   "file": "il/wisdom/wisdom2_real_il.h",
+   "line": 91,
+   "refs": []
+  },
+  "vw2_dst_key": {
+   "callers": [
+    "_dst_child",
+    "vw2_dst_bank"
+   ],
+   "calls": [],
+   "file": "il/wisdom/wisdom2_real_il.h",
+   "line": 80,
    "refs": []
   },
   "vw2_field_class": {
@@ -26701,6 +27024,7 @@
   },
   "vw2_lookup": {
    "callers": [
+    "_dst_child",
     "_ilndr_borrow_2d",
     "_ilprime_create_banked",
     "_k1_il_fs_warm",
@@ -26742,7 +27066,7 @@
     "vw2_key_has_wildcard"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1425,
+   "line": 1426,
    "refs": []
   },
   "vw2_meta_same_cpu": {
@@ -26754,7 +27078,7 @@
     "vw2__meta_field"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1341,
+   "line": 1342,
    "refs": []
   },
   "vw2_oop_bank_k1_il": {
@@ -26972,7 +27296,7 @@
     "vw2_shard_route"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1215,
+   "line": 1216,
    "refs": []
   },
   "vw2_pq_bank": {
@@ -27053,7 +27377,7 @@
     "vw2__lex_ok"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1726,
+   "line": 1727,
    "refs": []
   },
   "vw2_real_il_bank_eng": {
@@ -27068,7 +27392,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 131,
+   "line": 173,
    "refs": []
   },
   "vw2_real_il_bank_zfsr": {
@@ -27085,7 +27409,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 617,
+   "line": 659,
    "refs": []
   },
   "vw2_real_il_bank_zr2c": {
@@ -27103,7 +27427,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 425,
+   "line": 467,
    "refs": []
   },
   "vw2_real_il_bank_zrb": {
@@ -27115,7 +27439,7 @@
     "vw2_real_il_bank_zrb_q"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 302,
+   "line": 344,
    "refs": []
   },
   "vw2_real_il_bank_zrb_q": {
@@ -27131,7 +27455,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 268,
+   "line": 310,
    "refs": []
   },
   "vw2_real_il_bank_zrbl": {
@@ -27146,7 +27470,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 350,
+   "line": 392,
    "refs": []
   },
   "vw2_real_il_bank_zrf": {
@@ -27162,7 +27486,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 200,
+   "line": 242,
    "refs": []
   },
   "vw2_real_il_bank_zrm": {
@@ -27175,7 +27499,7 @@
     "vw2_real_il_bank_eng"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 152,
+   "line": 194,
    "refs": []
   },
   "vw2_real_il_bank_zrp": {
@@ -27191,7 +27515,7 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 102,
+   "line": 144,
    "refs": []
   },
   "vw2_real_il_bank_zttr": {
@@ -27207,11 +27531,12 @@
     "vw2_rec_set"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 685,
+   "line": 727,
    "refs": []
   },
   "vw2_real_il_key": {
    "callers": [
+    "_dst_child",
     "_real_il_odd_build",
     "_real_il_odd_race",
     "est_put_rows_real",
@@ -27244,7 +27569,7 @@
     "vw2_real_il_key"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 309,
+   "line": 351,
    "refs": []
   },
   "vw2_real_il_lookup": {
@@ -27259,7 +27584,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 77,
+   "line": 119,
    "refs": []
   },
   "vw2_real_il_lookup_zfsr": {
@@ -27275,7 +27600,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 582,
+   "line": 624,
    "refs": []
   },
   "vw2_real_il_lookup_zr2c": {
@@ -27293,7 +27618,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 499,
+   "line": 541,
    "refs": []
   },
   "vw2_real_il_lookup_zrb": {
@@ -27304,7 +27629,7 @@
     "vw2_real_il_lookup_zrb_q"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 260,
+   "line": 302,
    "refs": []
   },
   "vw2_real_il_lookup_zrb_q": {
@@ -27320,7 +27645,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 234,
+   "line": 276,
    "refs": []
   },
   "vw2_real_il_lookup_zrbl": {
@@ -27334,7 +27659,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 316,
+   "line": 358,
    "refs": []
   },
   "vw2_real_il_lookup_zrf": {
@@ -27348,7 +27673,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 162,
+   "line": 204,
    "refs": []
   },
   "vw2_real_il_lookup_zttr": {
@@ -27362,7 +27687,7 @@
     "vw2_rec_get"
    ],
    "file": "il/wisdom/wisdom2_real_il.h",
-   "line": 649,
+   "line": 691,
    "refs": []
   },
   "vw2_rec_free": {
@@ -27389,6 +27714,7 @@
     "vw2__save",
     "vw2__tcmt_bank_key",
     "vw2_close",
+    "vw2_dst_bank",
     "vw2_g0_selftest",
     "vw2_ilcol_chain_bank",
     "vw2_oop_bank_k1_il",
@@ -27418,6 +27744,7 @@
   },
   "vw2_rec_get": {
    "callers": [
+    "_dst_child",
     "_ilfd_mt_replay_or_race",
     "_ilpr_mt_replay_or_race",
     "_k1fs_mt_replay_or_race",
@@ -27495,6 +27822,7 @@
     "vw2__st_rec",
     "vw2__tcmt_bank_key",
     "vw2_bank",
+    "vw2_dst_bank",
     "vw2_g0_selftest",
     "vw2_ilcol_chain_bank",
     "vw2_oop_bank_zr2c_slot",
@@ -27542,7 +27870,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1364,
+   "line": 1365,
    "refs": []
   },
   "vw2_save": {
@@ -27554,7 +27882,7 @@
     "vw2__save"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1709,
+   "line": 1710,
    "refs": []
   },
   "vw2_save_banked": {
@@ -27566,14 +27894,14 @@
     "vw2__save"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1715,
+   "line": 1716,
    "refs": []
   },
   "vw2_scan": {
    "callers": [],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1452,
+   "line": 1453,
    "refs": []
   },
   "vw2_set_build": {
@@ -27582,7 +27910,7 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1312,
+   "line": 1313,
    "refs": []
   },
   "vw2_set_meta": {
@@ -27592,14 +27920,14 @@
    ],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1301,
+   "line": 1302,
    "refs": []
   },
   "vw2_set_writable": {
    "callers": [],
    "calls": [],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1355,
+   "line": 1356,
    "refs": []
   },
   "vw2_shard_route": {
@@ -27689,7 +28017,7 @@
     "vw2_rec_set"
    ],
    "file": "common/wisdom/wisdom2.h",
-   "line": 1537,
+   "line": 1538,
    "refs": []
   },
   "vw2_zts_bank": {

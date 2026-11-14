@@ -37,7 +37,7 @@ flowchart LR
     n_il_rank1["il/rank1 (15)"]
     n_il_rank2["il/rank2 (13)"]
     n_il_rank3["il/rank3 (4)"]
-    n_il_real["il/real (17)"]
+    n_il_real["il/real (19)"]
     n_il_wisdom["il/wisdom (4)"]
     n_zone_common(["common"])
     n_il -->|2| n_il_rank1
@@ -52,14 +52,14 @@ flowchart LR
     n_il_rank2 -->|2| n_il_wisdom
     n_il_real -->|1| n_il_isa
     n_il_real -->|7| n_il_rank1
-    n_il_real -->|2| n_il_wisdom
+    n_il_real -->|4| n_il_wisdom
     n_il -->|1| n_zone_common
     n_il_isa -->|4| n_zone_common
     n_il_isa_avx512 -->|3| n_zone_common
     n_il_planning -->|10| n_zone_common
     n_il_rank1 -->|26| n_zone_common
     n_il_rank2 -->|9| n_zone_common
-    n_il_real -->|11| n_zone_common
+    n_il_real -->|13| n_zone_common
     n_il_wisdom -->|9| n_zone_common
 ```
 
@@ -94,7 +94,7 @@ flowchart LR
     n_zone_split(["split"])
     n_zone_wisdom2(["wisdom2"])
     n__core_ -->|12| n_zone_common
-    n__core_ -->|48| n_zone_il
+    n__core_ -->|49| n_zone_il
     n__core_ -->|8| n_zone_split
     n__core_ -->|1| n_zone_wisdom2
     n_wisdom2 -->|1| n_zone_common
