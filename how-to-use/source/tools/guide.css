@@ -13,7 +13,7 @@
   --blue:#2457c5; --red:#c8322b;                                  /* the book's two accents */
   --link-rule:#8a8a8a;                                            /* in-text links, 3.45:1 */
   /* code (owner, 2026-11-15): a light grey box, and four colours that mean something inside code only */
-  --code-bg:#f4f5f7; --code-bar:#e6e8eb; --code-line:#cfd2d6; --code-edge:#8c8c8c;
+  --code-bg:#f4f5f7; --code-bar:#e6e8eb; --code-line:#cfd2d6; --code-edge:#8c8c8c; --code-word:#eceef1;
   --code-k:#0b55b5; --code-s:#a3271f; --code-n:#7a3e9d; --code-c:#3b7a3b;
   --serif:'CMU Serif',Georgia,'Times New Roman',serif;
   --mono:'CMU Typewriter Text',Consolas,'DejaVu Sans Mono',Menlo,monospace;
@@ -43,6 +43,14 @@ span.ref-ext{border-bottom:1px dotted var(--link-rule)}   /* a chapter build: th
 span.ref-missing{color:var(--muted);font-family:var(--mono)}
 :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 code{font-family:var(--mono);font-size:1em;hyphens:none}
+/* a code word inside a sentence, a table or a caption stands on the code box's grey (owner,
+   2026-11-15), as a forum shades it; a word that wraps keeps the grey at both ends. Not where the
+   code already has a ground of its own (a code block, a listing's bar, a signature), and not in
+   the two tables of contents. The grey is exactly as wide as the word: with room added at its
+   sides, tables outgrow the column and pages break differently (tried 2026-11-15: two pages more,
+   a figure pushed overleaf). */
+code{background:var(--code-word);padding:.06em 0;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+pre code,.listing .file code,.api .sig code,nav.toc code,.contents code{background:none;padding:0}
 .nw{white-space:nowrap}
 
 /* title block: the site's wordmark, centred; only the title, parts and chapter openers are centred */
@@ -280,7 +288,7 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   .listing .file{padding:.2rem .7em}
   /* the grey of a code box is printed (a browser leaves backgrounds out of a print otherwise), plain:
      nothing scrolls on paper; a box that goes on overleaf is closed and opened again at the break */
-  pre.code,pre.output,pre.quote,.listing .file,.api .sigs{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  pre.code,pre.output,pre.quote,.listing .file,.api .sigs,code{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   pre.code,pre.output,pre.quote{background:var(--code-bg);-webkit-box-decoration-break:clone;box-decoration-break:clone}
   th,td{font-size:8.9pt;padding-top:.15rem;padding-bottom:.15rem}
   th wbr,td wbr{display:none}   /* an identifier breaks after "_" on screen only */
