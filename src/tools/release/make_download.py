@@ -14,11 +14,16 @@ them), LICENSE, README.txt, and the check: check.c with check.bat or check.sh, a
     python src/tools/release/make_download.py                  build in <repo>/build-download, pack there
     python src/tools/release/make_download.py --float          with the FP32 library (vfftf.h)
     python src/tools/release/make_download.py --build <dir>    another build folder (keep its path short on Windows)
+    python src/tools/release/make_download.py --out <dir>      where the archive goes (default: the build folder)
     python src/tools/release/make_download.py --pack-only      pack an existing build again
+
+Beside the archive it writes <archive>.sha256. The GitHub workflow (.github/workflows/benchmark-programs.yml)
+runs it for a pushed version tag and attaches both to that release.
 
 Needs CMake, Ninja, GCC and, on Windows, Python 3 for the build itself. The Linux archive runs on a Linux whose
 C library is at least as new as the one that built it; the script prints the version it needs."""
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -146,7 +151,9 @@ def check(folder, compiler, with_float, keep_exe):
     """Build check.c against the folder and run it there; returns the program's output."""
     flags = ["-DCHECK_FLOAT"] if with_float else []
     if WINDOWS:
-        cmd = [compiler, "-O2", "check.c"] + flags + ["-I.", "-L.", "-lvfft", "-o", "check.exe"]
+        # the compiler's own runtime inside the program (-static): it is shipped, and must start on a PC that
+        # has no compiler; -static looks for no import library by itself, so libvfft's is named
+        cmd = [compiler, "-O2", "check.c"] + flags + ["-I.", "libvfft.dll.a", "-static", "-o", "check.exe"]
         exe = folder / "check.exe"
     else:
         cmd = [compiler, "-O2", "check.c"] + flags + ["-I.", "-L.", "-lvfft", "-lm", "-Wl,-rpath,$ORIGIN", "-o", "check"]
@@ -160,6 +167,26 @@ def check(folder, compiler, with_float, keep_exe):
     if not keep_exe:
         exe.unlink()
     return r.stdout
+
+
+def foreign_dlls(folder):
+    """Windows: the DLLs of a compiler (libgcc, libwinpthread, ...) that a shipped file would ask for at start;
+    a user's PC does not have them."""
+    bad = []
+    for f in sorted(folder.glob("*.dll")) + sorted(folder.glob("*.exe")):
+        out = subprocess.run(["objdump", "-p", str(f)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout
+        for dll in re.findall(r"DLL Name:\s*(\S+)", out):
+            if dll.lower().startswith("lib") and not dll.lower().startswith("libvfft"):
+                bad.append("%s needs %s" % (f.name, dll))
+    return bad
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def needs_glibc(folder):
@@ -177,11 +204,14 @@ def needs_glibc(folder):
 def main():
     ap = argparse.ArgumentParser(description="Build and pack the ready-built download of VectorFFT.")
     ap.add_argument("--build", default=str(ROOT / "build-download"), help="the build folder")
+    ap.add_argument("--out", help="where the archive and its .sha256 go (default: the build folder)")
     ap.add_argument("--float", action="store_true", help="with the FP32 library (vfftf.h)")
     ap.add_argument("--compiler", default="gcc")
     ap.add_argument("--pack-only", action="store_true", help="the build folder is built already")
     a = ap.parse_args()
     build = Path(a.build).resolve()
+    dest = Path(a.out).resolve() if a.out else build
+    dest.mkdir(parents=True, exist_ok=True)
     ver = version()
     v = ".".join(ver)
     name = "vectorfft-%s-%s-x64" % (v, "windows" if WINDOWS else "linux")
@@ -208,10 +238,14 @@ def main():
     check(trial, a.compiler, a.float, keep_exe=True)
     if WINDOWS:     # the ready check program, for a PC without a compiler
         shutil.copy2(trial / "check.exe", folder / "check.exe")
+        bad = foreign_dlls(folder)
+        if bad:
+            raise SystemExit("make_download: a shipped file needs a DLL of the compiler, which a user's PC lacks:\n  "
+                             + "\n  ".join(bad))
 
     print("== pack", flush=True)
     if WINDOWS:
-        archive = build / (name + ".zip")
+        archive = dest / (name + ".zip")
         if archive.exists():
             archive.unlink()
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -219,13 +253,16 @@ def main():
                 if f.is_file():
                     z.write(f, Path("vectorfft") / f.relative_to(folder))
     else:
-        archive = build / (name + ".tar.gz")
+        archive = dest / (name + ".tar.gz")
         if archive.exists():
             archive.unlink()
         with tarfile.open(archive, "w:gz") as t:
             t.add(folder, arcname="vectorfft")
+    digest = sha256(archive)
+    Path(str(archive) + ".sha256").write_text("%s  %s\n" % (digest, archive.name), encoding="utf-8", newline="\n")
     files = sorted(p.name for p in folder.iterdir())
     print("%s  (%.1f MB)" % (archive, archive.stat().st_size / 1048576.0))
+    print("sha256 %s" % digest)
     print("in it: vectorfft/ with %s; wisdom: %d shards" % (", ".join(files), shards))
     if not WINDOWS:
         print("this archive needs a Linux with the C library (glibc) %s or newer" % needs_glibc(folder))

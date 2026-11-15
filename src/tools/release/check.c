@@ -20,28 +20,9 @@
 #ifdef CHECK_FLOAT
 #include "vfftf.h"
 #endif
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <time.h>
-#endif
 
 #define PI 3.14159265358979323846
 static int failed, ran;
-
-static double now_ns(void)
-{
-#if defined(_WIN32)
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&c);
-    return 1e9 * (double)c.QuadPart / (double)f.QuadPart;
-#else
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return 1e9 * (double)t.tv_sec + (double)t.tv_nsec;
-#endif
-}
 
 static void line(const char *what, double err, double tol)
 {
@@ -222,51 +203,19 @@ static void float_check(const char *what, int n)
 }
 #endif
 
-/* nanoseconds for one forward transform of 1024 complex points: the fastest of 9 batches */
-static double speed_ns(void)
-{
-    vfft_config_t c;
-    vfft_plan p;
-    double *x, *X, best = 0.0, t0, t;
-    int rep, i, reps = 2000;
-    memset(&c, 0, sizeof c);
-    c.transform = VFFT_C2C;
-    c.n[0] = 1024;
-    c.flags = VFFT_FLAG_ESTIMATE;
-    p = vfft_create(&c);
-    if (!p)
-        return 0.0;
-    x = vfft_malloc(2048 * sizeof(double));
-    X = vfft_malloc(2048 * sizeof(double));
-    for (i = 0; i < 2048; i++)
-        x[i] = wave((size_t)i);
-    for (rep = 0; rep < 9; rep++)
-    {
-        t0 = now_ns();
-        for (i = 0; i < reps; i++)
-            vfft_execute(p, VFFT_FORWARD, x, X);
-        t = (now_ns() - t0) / reps;
-        if (rep == 0 || t < best)
-            best = t;
-    }
-    vfft_free(x);
-    vfft_free(X);
-    vfft_destroy(p);
-    return best;
-}
-
 int main(void)
 {
     vfft_info_t lib;
     int threads;
     const char *isa;
+    setvbuf(stdout, NULL, _IONBF, 0);            /* in step with what the library prints on stderr */
     if (vfft_info(NULL, &lib) != 0)
     {
         printf("VectorFFT could not start: %s\n", vfft_error());
         return 2;
     }
     isa = vfft_isa();
-    printf("VectorFFT %s check\n", lib.version);
+    printf("VectorFFT %s check (build %s)\n", lib.version, vfft_wisdom_build());
     printf("  library loaded    %s%s\n", isa, getenv("VFFT_ISA") ? "  (VFFT_ISA is set)" : "  (chosen by the CPU)");
     printf("  this CPU          %s\n", vfft_wisdom_identity());
     printf("  wisdom folder     %s\n", vfft_wisdom_folder());
@@ -289,7 +238,6 @@ int main(void)
     float_check("1D complex, 1024 points", 1024);
 #endif
 
-    printf("speed, for information: 1D complex, 1024 points, forward: %.0f ns\n", speed_ns());
     if (failed)
         printf("%d of %d FAILED on the %s library\n", failed, ran, isa);
     else
