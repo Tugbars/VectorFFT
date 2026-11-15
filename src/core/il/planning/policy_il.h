@@ -282,16 +282,59 @@ static inline int vfft_policy_lm_tile_ok(int w, int K, int nat)
 /* -- the 2D real lane-major batch's ROW GROUP (il/rank2/lm_batch2dr_il.h) --------
  * The row pass takes G row blocks (N2 points over K lanes each) through one dense
  * scratch of N2 / 2 rows of G K complexes: the chain sees G K lanes, and a row's
- * setup is paid once a group. The group's size, in blocks (1 = a block at a time):
+ * setup is paid once a group. The group's size, in blocks (1 = a block at a time),
+ * has one law per instruction set; both end at G <= N1, and both leave a block of
+ * fewer than 2 lanes, a row shorter than 4 points or a plane of one row alone.
+ *
+ * AVX2 (a register: four reals; timed on an i9-14900KF):
  *   - the scratch (8 N2 G K bytes) stays within a quarter of L1d, so every stage of
  *     the chain runs in L1 beside the blocks' own lines;
  *   - at most 32 lanes a group: past that the gain is flat and the scratch only grows;
  *   - below eight lanes a block the group fills whole registers of four lanes (two
  *     blocks at 2 or 6 lanes, four at an odd count), whatever the row's length: a
  *     block of 2 or 3 lanes alone leaves every register half empty;
- *   - a block of more than 16 lanes goes alone (two of them pass the lane cap). */
+ *   - a block of more than 16 lanes goes alone (two of them pass the lane cap).
+ *
+ * AVX-512 (a register: eight reals; timed on a Xeon 6 with a 48 KB L1d and a 2 MB L2,
+ * lm_group_sweep, every group size against G = 1 at N x N, N = 8 .. 512, K = 2 .. 64):
+ *   - the scratch stays within an eighth of L1d: at rows of 16 to 64 points, where the
+ *     budget decides, the measured best scratch is 4 to 16 KB, and an eighth fits the
+ *     whole table better than a quarter;
+ *   - at most 64 lanes a group of three blocks or more (twice the AVX2 cap, as the
+ *     register is twice as wide): past that the gain is flat or falls;
+ *   - below sixteen lanes a block the group fills whole registers of eight lanes (two
+ *     blocks at 4 or 12 lanes, four at 2, 6, 10 or 14, eight at an odd count below 8),
+ *     whatever the row's length; an odd count from 9 to 15 cannot fill them within the
+ *     lane cap and takes the budget's group;
+ *   - a block of up to 64 lanes goes at least in a PAIR, even where the budget allows
+ *     no group (a pair gains 1.1x to 1.6x at 24 to 64 lanes), unless the block already
+ *     fills eight registers a row (32 lanes or more) and the pair is what pushes the
+ *     work out of L1: when such a block's reals fit in half the L1d and the pair's
+ *     scratch does not (L1d / 4 < 8 N2 K <= L1d / 2), the block goes alone (a pair
+ *     there was 3 to 6 percent slower; below 32 lanes it was no slower there). A block
+ *     of more than 64 lanes goes alone (not measured past 64). With L1d unknown
+ *     (l1d <= 0) no pair is forced. */
 static inline int vfft_policy_lm_row_group(int N1, int N2, size_t K, long l1d)
 {
+#if defined(__AVX512F__)
+    const size_t cap = 64, cut = 64, L = l1d > 0 ? (size_t)l1d : 0;
+    size_t unit, G, blk;
+    if (N1 < 2 || N2 < 4 || K < 2 || K > cut)
+        return 1;
+    blk = 8 * (size_t)N2 * K;                                   /* one block's reals, bytes */
+    unit = (K >= 16 || !(K & 7)) ? 1 : (K & 1) ? (K < 8 ? 8 : 1) : (K & 2) ? 4 : 2;
+    G = (L / 8) / blk;
+    if (G > cap / K)
+        G = cap / K;
+    G -= G % unit;
+    if (G < unit)
+        G = unit;
+    if (G < 2 && L > 0)
+        G = (K >= 32 && blk > L / 4 && blk <= L / 2) ? 1 : 2;
+    if (G > (size_t)N1)
+        G = (size_t)N1;
+    return G >= 2 ? (int)G : 1;
+#else
     const size_t cap = 32;
     size_t unit, G;
     if (N1 < 2 || N2 < 4 || K < 2 || K > cap / 2)
@@ -306,6 +349,7 @@ static inline int vfft_policy_lm_row_group(int N1, int N2, size_t K, long l1d)
     if (G > (size_t)N1)
         G = (size_t)N1;
     return G >= 2 ? (int)G : 1;
+#endif
 }
 
 static inline int vfft_policy_il2d_rader_prime(int N1)
