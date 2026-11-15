@@ -313,8 +313,10 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 }
 /* THE ROOT OF THE LIBRARY'S OWN STORE, for a create that names no directory while VFFT_WISDOM_DIR is unset. A
  * shared library looks for a folder named wisdom beside its own file first, so a library unpacked or copied
- * anywhere brings its wisdom along; then the path the build compiled in (VFFT_WISDOM_DIR_DEFAULT). A static
- * library has no file of its own and uses the compiled path alone. NULL: this build knows no store. */
+ * anywhere brings its wisdom along; then the path the build compiled in (VFFT_WISDOM_DIR_DEFAULT). When neither
+ * folder exists (a library copied without its wisdom folder) it makes the folder beside itself, so what it
+ * measures is saved and read back from the next run on. A static library has no file of its own and uses the
+ * compiled path alone. NULL: this build knows no store. */
 static const char *_vfft_store_root(char *buf, size_t cap)
 {
 #ifdef VFFT_SHARED_BUILD
@@ -361,6 +363,17 @@ static const char *_vfft_store_root(char *buf, size_t cap)
     if (cut && (size_t)(cut - buf) + sizeof "/wisdom" <= cap)
     {
         memcpy(cut, "/wisdom", sizeof "/wisdom");
+        if (vw2__is_dir(buf))
+            return buf;
+#ifdef VFFT_WISDOM_DIR_DEFAULT
+        if (vw2__is_dir(VFFT_WISDOM_DIR_DEFAULT))
+            return VFFT_WISDOM_DIR_DEFAULT;
+#endif
+#if defined(_WIN32)
+        (void)CreateDirectoryA(buf, NULL);
+#else
+        (void)mkdir(buf, 0777);
+#endif
         if (vw2__is_dir(buf))
             return buf;
     }
