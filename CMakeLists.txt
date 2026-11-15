@@ -19,6 +19,7 @@
 #   cmake --build build
 #   cmake --install build
 #   (-DVFFT_NATIVE=OFF for programs that run on other machines: -march=native is the default)
+#   (-DVFFT_BUILD_FRONT=ON for the ready-built set: libvfft in front of libvfft_avx2 and libvfft_avx512)
 # The gauntlet: cmake --build build --target vfft-gauntlet (gauntlet/README.md).
 # Run (Windows): for mingw, put libwinpthread-1.dll on PATH (or link with -static);
 #   for the gauntlet's MKL arm, MKL's bin (mkl_rt*.dll) as well.
@@ -56,6 +57,19 @@ option(VFFT_ENABLE_FLOAT   "Also build the FP32 library (vfftf_*, include/vfftf.
 # on Windows, in place of the static archive: one kind per build. It exports the functions of the public headers
 # alone (VFFT_API, include/vfft.h). Off by default.
 option(VFFT_BUILD_SHARED   "Build VectorFFT::vfft as a shared library (libvfft.so, libvfft.dll) in place of libvfft.a" OFF)
+# THE READY-BUILT SET (owner 2026-11-15): three shared libraries that run on any CPU with AVX2 and FMA. A program
+# links libvfft (src/front/vfft_front.c: no transform code, plain x86-64); on its first call it loads
+# libvfft_avx512 or libvfft_avx2 from its own folder, by what the CPU runs (the environment variable VFFT_ISA
+# names one instead). This build makes the library of VFFT_ISA; a second build, in <build>/front_<isa>, makes
+# the other. The front passes on every function of vfft.h and vfft_diagnostics.h, and with VFFT_ENABLE_FLOAT
+# those of vfftf.h. It implies VFFT_BUILD_SHARED=ON and VFFT_NATIVE=OFF. Off by default.
+option(VFFT_BUILD_FRONT    "Build the ready-built set: libvfft (the front) with libvfft_avx2 and libvfft_avx512 behind it" OFF)
+option(VFFT_FRONT_SUBBUILD "internal: this build is the second instruction set's library of a VFFT_BUILD_FRONT build" OFF)
+mark_as_advanced(VFFT_FRONT_SUBBUILD)
+if(VFFT_BUILD_FRONT)
+    set(VFFT_BUILD_SHARED ON)
+    set(VFFT_NATIVE OFF)
+endif()
 
 # A subproject never sets its parent's (cache-wide) build type.
 if(VFFT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -210,7 +224,7 @@ else()
     set(VFFT_ISA "avx2")
     set(_isa_why "unknown VFFT_ISA value")
 endif()
-if(VFFT_ISA STREQUAL "avx512" AND VFFT_HOST_AVX512 STREQUAL "no")
+if(VFFT_ISA STREQUAL "avx512" AND VFFT_HOST_AVX512 STREQUAL "no" AND NOT VFFT_BUILD_FRONT AND NOT VFFT_FRONT_SUBBUILD)
     message(WARNING "VFFT_ISA=avx512 on a CPU that does not run AVX-512: the library and every program "
                     "built here need AVX-512: on this machine the library refuses to run, and names the missing instructions.")
 endif()
@@ -613,8 +627,10 @@ if(VFFT_BUILD_SHARED)
     add_library(vectorfft_vfft SHARED "${PROJECT_BINARY_DIR}/vfft_shared_unit.c")
     target_link_libraries(vectorfft_vfft PRIVATE -Wl,--whole-archive vectorfft_vfft_objs -Wl,--no-whole-archive)
     target_compile_definitions(vectorfft_vfft INTERFACE VFFT_SHARED)   # a program that links it: dllimport (VFFT_API)
-    set_target_properties(vectorfft_vfft PROPERTIES VERSION ${PROJECT_VERSION}
-                          SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+    if(NOT VFFT_BUILD_FRONT AND NOT VFFT_FRONT_SUBBUILD)   # behind the front: no version in the file's name
+        set_target_properties(vectorfft_vfft PROPERTIES VERSION ${PROJECT_VERSION}
+                              SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+    endif()
     if(WIN32)
         target_link_options(vectorfft_vfft PRIVATE -static)   # libgcc and winpthread inside: the DLL needs Windows' own DLLs alone
     endif()
@@ -622,11 +638,69 @@ else()
     set(_vfft_lib vectorfft_vfft)
     add_library(vectorfft_vfft STATIC ${VFFT_CORE_SRCS} $<TARGET_OBJECTS:dagcodelets>)
 endif()
-add_library(VectorFFT::vfft ALIAS vectorfft_vfft)
+# The target a program links, VectorFFT::vfft: the library itself, or the front of the ready-built set.
+set(_vfft_api vectorfft_vfft)
+if(VFFT_BUILD_FRONT)
+    # THE FRONT (src/front/vfft_front.c): libvfft, built for plain x86-64 so that it starts on any CPU. The two
+    # libraries it loads lie beside it: this build's (libvfft_<VFFT_ISA>) and the other instruction set's, made
+    # by a second build of this tree and copied here.
+    set(_vfft_api vectorfft_front)
+    add_library(vectorfft_front SHARED "${PROJECT_SOURCE_DIR}/src/front/vfft_front.c")
+    target_compile_options(vectorfft_front PRIVATE -march=x86-64 -mtune=generic)
+    target_compile_definitions(vectorfft_front INTERFACE VFFT_SHARED)
+    if(VFFT_ENABLE_FLOAT)
+        target_compile_definitions(vectorfft_front PRIVATE VFFT_ENABLE_FLOAT)   # it passes on vfftf.h as well
+    endif()
+    set_target_properties(vectorfft_front PROPERTIES VERSION ${PROJECT_VERSION}
+                          SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+                          BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")   # Linux: it finds the two in its own folder
+    if(WIN32)
+        target_link_options(vectorfft_front PRIVATE -static)   # it needs Windows' own DLLs alone
+    else()
+        target_link_libraries(vectorfft_front PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    if(VFFT_ISA STREQUAL "avx512")
+        set(_vfft_other avx2)
+    else()
+        set(_vfft_other avx512)
+    endif()
+    set(_vfft_other_dir "${PROJECT_BINARY_DIR}/front_${_vfft_other}")
+    set(_vfft_other_lib "${CMAKE_SHARED_LIBRARY_PREFIX}vfft_${_vfft_other}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # the same store and prefix as this build, so both libraries carry the same compiled paths
+    set(_vfft_other_args -DVFFT_ISA=${_vfft_other} -DVFFT_FRONT_SUBBUILD=ON -DVFFT_BUILD_SHARED=ON -DVFFT_NATIVE=OFF
+                         -DVFFT_BUILD_GAUNTLET=OFF -DVFFT_BUILD_EXAMPLES=OFF -DVFFT_INSTALL=${VFFT_INSTALL}
+                         -DVFFT_ENABLE_FLOAT=${VFFT_ENABLE_FLOAT}
+                         -DVFFT_WISDOM=${VFFT_WISDOM} -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+                         -DCMAKE_INSTALL_DATADIR=${CMAKE_INSTALL_DATADIR} -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER})
+    foreach(_v CMAKE_BUILD_TYPE CMAKE_MAKE_PROGRAM Python3_EXECUTABLE)
+        if(${_v})
+            list(APPEND _vfft_other_args "-D${_v}=${${_v}}")
+        endif()
+    endforeach()
+    include(ExternalProject)
+    ExternalProject_Add(vfft_front_${_vfft_other}
+        PREFIX "${PROJECT_BINARY_DIR}/front_ep"
+        SOURCE_DIR "${PROJECT_SOURCE_DIR}"
+        BINARY_DIR "${_vfft_other_dir}"
+        CMAKE_ARGS ${_vfft_other_args}
+        BUILD_COMMAND ${CMAKE_COMMAND} --build "${_vfft_other_dir}" --target vectorfft_vfft
+        INSTALL_COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_vfft_other_dir}/${_vfft_other_lib}"
+                        "${PROJECT_BINARY_DIR}"
+        BUILD_ALWAYS TRUE          # the second build follows every change of the sources (its own make decides what to redo)
+        USES_TERMINAL_BUILD TRUE)
+    add_dependencies(vectorfft_front vectorfft_vfft vfft_front_${_vfft_other})
+    # the three in one folder, whatever output folders a parent project sets
+    set_target_properties(vectorfft_front vectorfft_vfft PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}" LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+endif()
+add_library(VectorFFT::vfft ALIAS ${_vfft_api})
 # a target name of its own (a consumer may own a target called vfft); the file is
 # libvfft.a (libvfft.so, libvfft.dll) and the exported name VectorFFT::vfft
-set_target_properties(vectorfft_vfft PROPERTIES OUTPUT_NAME vfft EXPORT_NAME vfft)
-target_include_directories(vectorfft_vfft
+set_target_properties(${_vfft_api} PROPERTIES OUTPUT_NAME vfft EXPORT_NAME vfft)
+if(VFFT_BUILD_FRONT OR VFFT_FRONT_SUBBUILD)   # behind the front the library's file names its instruction set
+    set_target_properties(vectorfft_vfft PROPERTIES OUTPUT_NAME vfft_${VFFT_ISA})
+endif()
+target_include_directories(${_vfft_api}
     PUBLIC  "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
             "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 target_include_directories(${_vfft_lib} PRIVATE ${VFFT_INCLUDE_DIRS})
@@ -681,8 +755,17 @@ if(VFFT_INSTALL)
     set(VFFT_CMAKE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/VectorFFT")
     set(VFFT_DATA_DIR  "${CMAKE_INSTALL_DATADIR}/vectorfft")   # relative: VectorFFT_DATA_DIR follows the files
 
-    install(TARGETS vectorfft_vfft EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    install(TARGETS ${_vfft_api} EXPORT VectorFFTTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(VFFT_BUILD_FRONT)   # the two libraries behind the front, beside it
+        if(WIN32)
+            set(_vfft_beside ${CMAKE_INSTALL_BINDIR})
+        else()
+            set(_vfft_beside ${CMAKE_INSTALL_LIBDIR})
+        endif()
+        install(PROGRAMS "$<TARGET_FILE:vectorfft_vfft>" "${_vfft_other_dir}/${_vfft_other_lib}"
+                DESTINATION ${_vfft_beside})
+    endif()
     install(FILES "${PROJECT_SOURCE_DIR}/include/vfft.h" "${PROJECT_SOURCE_DIR}/include/vfft_diagnostics.h"
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     if(VFFT_ENABLE_FLOAT)
@@ -856,7 +939,9 @@ message(STATUS " This machine    ${_vfft_cpu}, ${_vfft_pcores} cores / ${_vfft_l
 message(STATUS " Compiler        ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}  (${CMAKE_C_COMPILER})")
 message(STATUS " Build type      ${_vfft_bt}; ${_vfft_opt} ${VFFT_ISA_FLAGS_TXT}")
 message(STATUS " Codelets        ${_ncodelets} files from the ${VFFT_ISA} tree, compiled once for every target")
-if(VFFT_BUILD_SHARED)
+if(VFFT_BUILD_FRONT)
+    message(STATUS " Library         VectorFFT::vfft = ${CMAKE_SHARED_LIBRARY_PREFIX}vfft${CMAKE_SHARED_LIBRARY_SUFFIX} (the front), which loads ${CMAKE_SHARED_LIBRARY_PREFIX}vfft_avx512${CMAKE_SHARED_LIBRARY_SUFFIX} or ${CMAKE_SHARED_LIBRARY_PREFIX}vfft_avx2${CMAKE_SHARED_LIBRARY_SUFFIX} by the CPU; all three in ${PROJECT_BINARY_DIR}")
+elseif(VFFT_BUILD_SHARED)
     message(STATUS " Library         VectorFFT::vfft = ${CMAKE_SHARED_LIBRARY_PREFIX}vfft${CMAKE_SHARED_LIBRARY_SUFFIX} (shared), in ${PROJECT_BINARY_DIR}")
 else()
     message(STATUS " Library         VectorFFT::vfft = ${CMAKE_STATIC_LIBRARY_PREFIX}vfft${CMAKE_STATIC_LIBRARY_SUFFIX}, in ${PROJECT_BINARY_DIR}")
