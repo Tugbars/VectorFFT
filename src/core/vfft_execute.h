@@ -404,6 +404,7 @@ void vfft_destroy(vfft_plan h)
             }
             _il2d_col_free(&h->il2d_col);
             vfft_aligned_free(h->lm_W);
+            vfft_aligned_free(h->lm_gscr);
             vfft_aligned_free(h->lm_tw);
             free(h->lm_perm);
             free(h);

@@ -279,6 +279,35 @@ static inline int vfft_policy_lm_tile_ok(int w, int K, int nat)
     return w < K || nat;
 }
 
+/* -- the 2D real lane-major batch's ROW GROUP (il/rank2/lm_batch2dr_il.h) --------
+ * The row pass takes G row blocks (N2 points over K lanes each) through one dense
+ * scratch of N2 / 2 rows of G K complexes: the chain sees G K lanes, and a row's
+ * setup is paid once a group. The group's size, in blocks (1 = a block at a time):
+ *   - the scratch (8 N2 G K bytes) stays within a quarter of L1d, so every stage of
+ *     the chain runs in L1 beside the blocks' own lines;
+ *   - at most 32 lanes a group: past that the gain is flat and the scratch only grows;
+ *   - below eight lanes a block the group fills whole registers of four lanes (two
+ *     blocks at 2 or 6 lanes, four at an odd count), whatever the row's length: a
+ *     block of 2 or 3 lanes alone leaves every register half empty;
+ *   - a block of more than 16 lanes goes alone (two of them pass the lane cap). */
+static inline int vfft_policy_lm_row_group(int N1, int N2, size_t K, long l1d)
+{
+    const size_t cap = 32;
+    size_t unit, G;
+    if (N1 < 2 || N2 < 4 || K < 2 || K > cap / 2)
+        return 1;
+    unit = (K >= 8 || !(K & 3)) ? 1 : (K & 1) ? 4 : 2;
+    G = (size_t)(l1d > 0 ? l1d / 4 : 0) / (8 * (size_t)N2 * K);
+    if (G > cap / K)
+        G = cap / K;
+    G -= G % unit;
+    if (G < unit)
+        G = unit;
+    if (G > (size_t)N1)
+        G = (size_t)N1;
+    return G >= 2 ? (int)G : 1;
+}
+
 static inline int vfft_policy_il2d_rader_prime(int N1)
 {
     int p, r;

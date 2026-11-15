@@ -988,6 +988,14 @@ int main(int argc, char **argv)
     cell_lm2d_real(131, 16, 8, 1);
     cell_lm2d_real(32, 256, 8, 1);
     cell_lm2d_real(256, 32, 4, 1);
+    /* the row groups' lane steps: 2 lanes a block (the one-permute form), an odd count, eight and more with a
+     * remainder of 4, 2 and 1, and a last group shorter than the others */
+    cell_lm2d_real(10, 16, 2, 1);
+    cell_lm2d_real(9, 24, 3, 1);
+    cell_lm2d_real(7, 32, 5, 1);
+    cell_lm2d_real(6, 8, 7, 1);
+    cell_lm2d_real(5, 16, 12, 1);
+    cell_lm2d_real(4, 8, 15, 1);
     cell_lm2d_real(256, 256, 8, 8);
     cell_lm2d_real(64, 1024, 8, 8);
     /* R2: the real batch, r2c, even N: a small cell vs naive, a Rader M, a prime M (Bluestein), smooth, K = 3, wide */

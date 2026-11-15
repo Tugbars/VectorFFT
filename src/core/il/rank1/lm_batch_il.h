@@ -420,6 +420,22 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
  * real (each phase a whole dispatch). The c2r twin is its own piece. The three phases over the plane
  * are the form for a prime M (the Bluestein and turned axes) and for a width past the scratch; the
  * plain chain runs the FUSED STRIPS below (the dense strip arm with the pack and the fold around it). */
+#if defined(__AVX2__)
+/* A batch of two lanes: a block's two rows are four reals in a line, so the pack and the unpack are one
+ * permute a row (a0 a1 b0 b1 <-> a0 b0 a1 b1). */
+static void _lmr_pack2(const vfft_real *x, vfft_real *W, size_t Wp, size_t wk, size_t M)
+{
+    size_t m;
+    for (m = 0; m < M; m++)
+        _mm256_storeu_pd(W + 2 * (m * Wp + wk), _mm256_permute4x64_pd(_mm256_loadu_pd(x + 4 * m), 0xD8));
+}
+static void _lmc_unpack2(const vfft_real *W, size_t Wp, size_t wk, vfft_real *x, size_t M)
+{
+    size_t m;
+    for (m = 0; m < M; m++)
+        _mm256_storeu_pd(x + 4 * m, _mm256_permute4x64_pd(_mm256_loadu_pd(W + 2 * (m * Wp + wk)), 0xD8));
+}
+#endif
 static void _lmr_pack(const vfft_real *x, size_t K, vfft_real *W, size_t Wp, size_t wk, size_t M, size_t k0, size_t k1)
 {
     size_t m, n;
@@ -585,6 +601,379 @@ static void _lmc_unpack(const vfft_real *W, size_t Wp, size_t wk, vfft_real *x, 
         }
     }
 }
+/* ── THE GROUP KERNELS (the 2D real batch's row pass, rank2/lm_batch2dr_il.h): the pack, the fold, the
+ * unfold and the unpack over a GROUP of G row blocks at once. A block is K lanes wide; the blocks sit xs
+ * (the reals) or zs (the bins) doubles apart; the group's packed plane is one dense scratch of M rows of
+ * G K complexes, block g's lanes at [g K, g K + K). The row loop is outside and the blocks inside: a row's
+ * twiddle and permutation are set once a group, and the chain between the kernels runs once over G K
+ * lanes. A block's lanes go in whole-register steps (eight reals or four complexes at AVX-512, four or
+ * two at AVX2), then a half register, then one lane: no scalar loop where the vectors exist. The
+ * arithmetic is the block kernels' above, lane for lane; the fold carries its halves in the twiddle and in
+ * the fused multiply-adds (a product by 0.5 is exact, so a lane's bins are those of the block kernel's
+ * vector step bit for bit; a block kernel's odd lane goes through its plain loop and may differ in the
+ * last bit). ── */
+static void _lmr_pack_grp(const vfft_real *x, size_t xs, size_t G, size_t K, vfft_real *scr, size_t M)
+{
+    const size_t W = G * K;
+    size_t m, g, n;
+#if defined(__AVX512F__)
+    const __m512i i0 = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11), i1 = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+#endif
+#if defined(__AVX2__)
+    if (K == 2)
+    {   /* a block's two rows are four reals in a line, a0 a1 b0 b1 -> a0 b0 a1 b1: one permute */
+        for (m = 0; m < M; m++)
+        {
+            const vfft_real *a = x + 4 * m;
+            vfft_real *w = scr + 2 * m * W;
+            for (g = 0; g < G; g++, a += xs, w += 4)
+                _mm256_storeu_pd(w, _mm256_permute4x64_pd(_mm256_loadu_pd(a), 0xD8));
+        }
+        return;
+    }
+#endif
+    for (m = 0; m < M; m++)
+    {
+        const vfft_real *a = x + 2 * m * K;
+        vfft_real *w = scr + 2 * m * W;
+        for (g = 0; g < G; g++, a += xs, w += 2 * K)
+        {
+            const vfft_real *b = a + K;
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 8 <= K; n += 8)
+            {
+                const __m512d va = _mm512_loadu_pd(a + n), vb = _mm512_loadu_pd(b + n);
+                _mm512_storeu_pd(w + 2 * n, _mm512_permutex2var_pd(va, i0, vb));
+                _mm512_storeu_pd(w + 2 * n + 8, _mm512_permutex2var_pd(va, i1, vb));
+            }
+#endif
+#if defined(__AVX2__)
+            for (; n + 4 <= K; n += 4)
+            {
+                const __m256d va = _mm256_loadu_pd(a + n), vb = _mm256_loadu_pd(b + n);
+                const __m256d lo = _mm256_unpacklo_pd(va, vb), hi = _mm256_unpackhi_pd(va, vb);
+                _mm256_storeu_pd(w + 2 * n, _mm256_permute2f128_pd(lo, hi, 0x20));
+                _mm256_storeu_pd(w + 2 * n + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+            }
+            if (n + 2 <= K)
+            {
+                const __m128d va = _mm_loadu_pd(a + n), vb = _mm_loadu_pd(b + n);
+                _mm_storeu_pd(w + 2 * n, _mm_unpacklo_pd(va, vb));
+                _mm_storeu_pd(w + 2 * n + 2, _mm_unpackhi_pd(va, vb));
+                n += 2;
+            }
+            if (n < K)
+                _mm_storeu_pd(w + 2 * n, _mm_unpacklo_pd(_mm_load_sd(a + n), _mm_load_sd(b + n)));
+#else
+            for (; n < K; n++)
+            {
+                w[2 * n] = a[n];
+                w[2 * n + 1] = b[n];
+            }
+#endif
+        }
+    }
+}
+static void _lmr_fold_grp(const vfft_real *scr, size_t G, size_t K, vfft_real *z, size_t zs, size_t M, const int *perm,
+                          const vfft_real *tw)
+{
+    const size_t W = G * K;
+    size_t k, g, n;
+#if defined(__AVX512F__)
+    const __m512d cj8 = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0), half8 = _mm512_set1_pd(0.5);
+#endif
+#if defined(__AVX2__)
+    const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0), half = _mm256_set1_pd(0.5);
+    const __m256d re = _mm256_castsi256_pd(_mm256_setr_epi64x(-1, 0, -1, 0));
+    const __m128d cj1 = _mm_setr_pd(0.0, -0.0), half1 = _mm_set1_pd(0.5), re1 = _mm_castsi128_pd(_mm_set_epi64x(0, -1));
+#endif
+    {   /* bins 0 and N / 2: Re Z[0] + Im Z[0] and Re Z[0] - Im Z[0], real */
+        const vfft_real *Z0 = scr + 2 * (perm ? (size_t)perm[0] : 0) * W;
+        vfft_real *A0 = z, *AM = z + 2 * M * K;
+        for (g = 0; g < G; g++, Z0 += 2 * K, A0 += zs, AM += zs)
+        {
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 4 <= K; n += 4)
+            {
+                const __m512d Z = _mm512_loadu_pd(Z0 + 2 * n), P = _mm512_permute_pd(Z, 0x55);
+                _mm512_storeu_pd(A0 + 2 * n, _mm512_maskz_add_pd(0x55, Z, P));
+                _mm512_storeu_pd(AM + 2 * n, _mm512_maskz_sub_pd(0x55, Z, P));
+            }
+#endif
+#if defined(__AVX2__)
+            for (; n + 2 <= K; n += 2)
+            {
+                const __m256d Z = _mm256_loadu_pd(Z0 + 2 * n), P = _mm256_permute_pd(Z, 0x5);
+                _mm256_storeu_pd(A0 + 2 * n, _mm256_and_pd(_mm256_add_pd(Z, P), re));
+                _mm256_storeu_pd(AM + 2 * n, _mm256_and_pd(_mm256_sub_pd(Z, P), re));
+            }
+            if (n < K)
+            {
+                const __m128d Z = _mm_loadu_pd(Z0 + 2 * n), P = _mm_permute_pd(Z, 1);
+                _mm_storeu_pd(A0 + 2 * n, _mm_and_pd(_mm_add_pd(Z, P), re1));
+                _mm_storeu_pd(AM + 2 * n, _mm_and_pd(_mm_sub_pd(Z, P), re1));
+            }
+#else
+            for (; n < K; n++)
+            {
+                const double r = Z0[2 * n], i = Z0[2 * n + 1];
+                A0[2 * n] = r + i;
+                A0[2 * n + 1] = 0.0;
+                AM[2 * n] = r - i;
+                AM[2 * n + 1] = 0.0;
+            }
+#endif
+        }
+    }
+    for (k = 1; 2 * k <= M; k++)
+    {
+        const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
+        const vfft_real *Pk = scr + 2 * rk * W, *Pm = scr + 2 * rm * W;
+        const int mirror = (2 * k < M);
+        vfft_real *Ak = z + 2 * k * K, *Am = z + 2 * (M - k) * K;
+#if defined(__AVX2__)
+        const double hwr = 0.5 * tw[2 * k], hwi = 0.5 * tw[2 * k + 1];   /* w^k / 2 */
+        const __m256d vwr = _mm256_setr_pd(hwr, -hwr, hwr, -hwr), vwi = _mm256_set1_pd(hwi);
+        const __m128d vwr1 = _mm256_castpd256_pd128(vwr), vwi1 = _mm256_castpd256_pd128(vwi);
+#if defined(__AVX512F__)
+        const __m512d vwr8 = _mm512_setr_pd(hwr, -hwr, hwr, -hwr, hwr, -hwr, hwr, -hwr), vwi8 = _mm512_set1_pd(hwi);
+#endif
+#else
+        const double wr = tw[2 * k], wi = tw[2 * k + 1];
+#endif
+        for (g = 0; g < G; g++, Pk += 2 * K, Pm += 2 * K, Ak += zs, Am += zs)
+        {
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 4 <= K; n += 4)
+            {
+                const __m512d P = _mm512_loadu_pd(Pk + 2 * n), Q = _mm512_xor_pd(_mm512_loadu_pd(Pm + 2 * n), cj8);
+                const __m512d S = _mm512_add_pd(P, Q), D = _mm512_sub_pd(P, Q);
+                const __m512d T = _mm512_fmadd_pd(_mm512_permute_pd(D, 0x55), vwr8, _mm512_mul_pd(D, vwi8));
+                _mm512_storeu_pd(Ak + 2 * n, _mm512_fmadd_pd(S, half8, T));
+                if (mirror)
+                    _mm512_storeu_pd(Am + 2 * n, _mm512_xor_pd(_mm512_fmsub_pd(S, half8, T), cj8));
+            }
+#endif
+#if defined(__AVX2__)
+            for (; n + 2 <= K; n += 2)
+            {   /* S = P + Q, D = P - Q, T = w^k (-i D) / 2: A[k] = S / 2 + T, A[M-k] = conj(S / 2 - T) */
+                const __m256d P = _mm256_loadu_pd(Pk + 2 * n), Q = _mm256_xor_pd(_mm256_loadu_pd(Pm + 2 * n), cj);
+                const __m256d S = _mm256_add_pd(P, Q), D = _mm256_sub_pd(P, Q);
+                const __m256d T = _mm256_fmadd_pd(_mm256_permute_pd(D, 0x5), vwr, _mm256_mul_pd(D, vwi));
+                _mm256_storeu_pd(Ak + 2 * n, _mm256_fmadd_pd(S, half, T));
+                if (mirror)
+                    _mm256_storeu_pd(Am + 2 * n, _mm256_xor_pd(_mm256_fmsub_pd(S, half, T), cj));
+            }
+            if (n < K)
+            {
+                const __m128d P = _mm_loadu_pd(Pk + 2 * n), Q = _mm_xor_pd(_mm_loadu_pd(Pm + 2 * n), cj1);
+                const __m128d S = _mm_add_pd(P, Q), D = _mm_sub_pd(P, Q);
+                const __m128d T = _mm_fmadd_pd(_mm_permute_pd(D, 1), vwr1, _mm_mul_pd(D, vwi1));
+                _mm_storeu_pd(Ak + 2 * n, _mm_fmadd_pd(S, half1, T));
+                if (mirror)
+                    _mm_storeu_pd(Am + 2 * n, _mm_xor_pd(_mm_fmsub_pd(S, half1, T), cj1));
+            }
+#else
+            for (; n < K; n++)
+            {
+                const double pr = Pk[2 * n], pi = Pk[2 * n + 1], qr = Pm[2 * n], qi = -Pm[2 * n + 1];
+                const double er = 0.5 * (pr + qr), ei = 0.5 * (pi + qi), dr = 0.5 * (pr - qr), di = 0.5 * (pi - qi);
+                const double orr = di, oi = -dr;   /* -i D */
+                const double tr = orr * wr - oi * wi, ti = orr * wi + oi * wr;
+                Ak[2 * n] = er + tr;
+                Ak[2 * n + 1] = ei + ti;
+                if (mirror)
+                {
+                    Am[2 * n] = er - tr;
+                    Am[2 * n + 1] = -(ei - ti);
+                }
+            }
+#endif
+        }
+    }
+}
+/* the c2r twins: the bins of G blocks (zs apart) -> the scratch at the rows the backward chain reads, and the
+ * scratch -> the reals of G blocks (xs apart) */
+static void _lmc_unfold_grp(const vfft_real *z, size_t zs, size_t G, size_t K, vfft_real *scr, size_t M, const int *perm,
+                            const vfft_real *tw)
+{
+    const size_t W = G * K;
+    size_t k, g, n;
+#if defined(__AVX512F__)
+    const __m512d cj8 = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0);
+    const __m512d ci8 = _mm512_setr_pd(-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0);
+#endif
+#if defined(__AVX2__)
+    const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0), ci = _mm256_setr_pd(-0.0, 0.0, -0.0, 0.0);
+    const __m128d cj1 = _mm_setr_pd(0.0, -0.0), ci1 = _mm_setr_pd(-0.0, 0.0);
+#endif
+    {   /* Z[0] = (A[0] + A[M]) + i (A[0] - A[M]), from the real parts */
+        vfft_real *Z0 = scr + 2 * (perm ? (size_t)perm[0] : 0) * W;
+        const vfft_real *A0 = z, *AM = z + 2 * M * K;
+        for (g = 0; g < G; g++, Z0 += 2 * K, A0 += zs, AM += zs)
+        {
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 4 <= K; n += 4)
+                _mm512_storeu_pd(Z0 + 2 * n, _mm512_add_pd(_mm512_movedup_pd(_mm512_loadu_pd(A0 + 2 * n)),
+                                                           _mm512_xor_pd(_mm512_movedup_pd(_mm512_loadu_pd(AM + 2 * n)), cj8)));
+#endif
+#if defined(__AVX2__)
+            for (; n + 2 <= K; n += 2)
+                _mm256_storeu_pd(Z0 + 2 * n, _mm256_add_pd(_mm256_movedup_pd(_mm256_loadu_pd(A0 + 2 * n)),
+                                                           _mm256_xor_pd(_mm256_movedup_pd(_mm256_loadu_pd(AM + 2 * n)), cj)));
+            if (n < K)
+                _mm_storeu_pd(Z0 + 2 * n, _mm_add_pd(_mm_movedup_pd(_mm_loadu_pd(A0 + 2 * n)),
+                                                     _mm_xor_pd(_mm_movedup_pd(_mm_loadu_pd(AM + 2 * n)), cj1)));
+#else
+            for (; n < K; n++)
+            {
+                const double a0 = A0[2 * n], am = AM[2 * n];
+                Z0[2 * n] = a0 + am;
+                Z0[2 * n + 1] = a0 - am;
+            }
+#endif
+        }
+    }
+    for (k = 1; 2 * k <= M; k++)
+    {
+        const size_t rk = perm ? (size_t)perm[k] : k, rm = perm ? (size_t)perm[M - k] : M - k;
+        const vfft_real *Ak = z + 2 * k * K, *Am = z + 2 * (M - k) * K;
+        vfft_real *Zk = scr + 2 * rk * W, *Zm = scr + 2 * rm * W;
+        const double wr = tw[2 * k], wi = -tw[2 * k + 1];   /* conj(w^k) */
+        const int mirror = (2 * k < M);
+#if defined(__AVX2__)
+        const __m256d vwr = _mm256_set1_pd(wr), vwi = _mm256_setr_pd(-wi, wi, -wi, wi);
+        const __m128d vwr1 = _mm256_castpd256_pd128(vwr), vwi1 = _mm256_castpd256_pd128(vwi);
+#if defined(__AVX512F__)
+        const __m512d vwr8 = _mm512_set1_pd(wr), vwi8 = _mm512_setr_pd(-wi, wi, -wi, wi, -wi, wi, -wi, wi);
+#endif
+#endif
+        for (g = 0; g < G; g++, Ak += zs, Am += zs, Zk += 2 * K, Zm += 2 * K)
+        {
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 4 <= K; n += 4)
+            {
+                const __m512d P = _mm512_loadu_pd(Ak + 2 * n), Q = _mm512_xor_pd(_mm512_loadu_pd(Am + 2 * n), cj8);
+                const __m512d E = _mm512_add_pd(P, Q), D = _mm512_sub_pd(P, Q);
+                const __m512d O = _mm512_fmadd_pd(D, vwr8, _mm512_mul_pd(_mm512_permute_pd(D, 0x55), vwi8));
+                const __m512d iO = _mm512_xor_pd(_mm512_permute_pd(O, 0x55), ci8);
+                _mm512_storeu_pd(Zk + 2 * n, _mm512_add_pd(E, iO));
+                if (mirror)
+                    _mm512_storeu_pd(Zm + 2 * n, _mm512_xor_pd(_mm512_sub_pd(E, iO), cj8));
+            }
+#endif
+#if defined(__AVX2__)
+            for (; n + 2 <= K; n += 2)
+            {   /* E = A[k] + conj A[M-k], O = conj(w^k) (A[k] - conj A[M-k]): Z[k] = E + i O, Z[M-k] = conj(E - i O) */
+                const __m256d P = _mm256_loadu_pd(Ak + 2 * n), Q = _mm256_xor_pd(_mm256_loadu_pd(Am + 2 * n), cj);
+                const __m256d E = _mm256_add_pd(P, Q), D = _mm256_sub_pd(P, Q);
+                const __m256d O = _mm256_fmadd_pd(D, vwr, _mm256_mul_pd(_mm256_permute_pd(D, 0x5), vwi));
+                const __m256d iO = _mm256_xor_pd(_mm256_permute_pd(O, 0x5), ci);
+                _mm256_storeu_pd(Zk + 2 * n, _mm256_add_pd(E, iO));
+                if (mirror)
+                    _mm256_storeu_pd(Zm + 2 * n, _mm256_xor_pd(_mm256_sub_pd(E, iO), cj));
+            }
+            if (n < K)
+            {
+                const __m128d P = _mm_loadu_pd(Ak + 2 * n), Q = _mm_xor_pd(_mm_loadu_pd(Am + 2 * n), cj1);
+                const __m128d E = _mm_add_pd(P, Q), D = _mm_sub_pd(P, Q);
+                const __m128d O = _mm_fmadd_pd(D, vwr1, _mm_mul_pd(_mm_permute_pd(D, 1), vwi1));
+                const __m128d iO = _mm_xor_pd(_mm_permute_pd(O, 1), ci1);
+                _mm_storeu_pd(Zk + 2 * n, _mm_add_pd(E, iO));
+                if (mirror)
+                    _mm_storeu_pd(Zm + 2 * n, _mm_xor_pd(_mm_sub_pd(E, iO), cj1));
+            }
+#else
+            for (; n < K; n++)
+            {
+                const double pr = Ak[2 * n], pi = Ak[2 * n + 1], qr = Am[2 * n], qi = -Am[2 * n + 1];
+                const double er = pr + qr, ei = pi + qi, dr = pr - qr, di = pi - qi;
+                const double orr = dr * wr - di * wi, oi = dr * wi + di * wr;   /* conj(w^k) D */
+                const double ior = -oi, ioi = orr;                               /* i O */
+                Zk[2 * n] = er + ior;
+                Zk[2 * n + 1] = ei + ioi;
+                if (mirror)
+                {
+                    Zm[2 * n] = er - ior;
+                    Zm[2 * n + 1] = -(ei - ioi);
+                }
+            }
+#endif
+        }
+    }
+}
+static void _lmc_unpack_grp(const vfft_real *scr, size_t G, size_t K, vfft_real *x, size_t xs, size_t M)
+{
+    const size_t W = G * K;
+    size_t m, g, n;
+#if defined(__AVX512F__)
+    const __m512i ir = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14), ii = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+#endif
+#if defined(__AVX2__)
+    if (K == 2)
+    {   /* re0 im0 re1 im1 -> re0 re1 im0 im1, the block's two rows in a line: one permute */
+        for (m = 0; m < M; m++)
+        {
+            const vfft_real *w = scr + 2 * m * W;
+            vfft_real *a = x + 4 * m;
+            for (g = 0; g < G; g++, a += xs, w += 4)
+                _mm256_storeu_pd(a, _mm256_permute4x64_pd(_mm256_loadu_pd(w), 0xD8));
+        }
+        return;
+    }
+#endif
+    for (m = 0; m < M; m++)
+    {
+        const vfft_real *w = scr + 2 * m * W;
+        vfft_real *a = x + 2 * m * K;
+        for (g = 0; g < G; g++, a += xs, w += 2 * K)
+        {
+            vfft_real *b = a + K;
+            n = 0;
+#if defined(__AVX512F__)
+            for (; n + 8 <= K; n += 8)
+            {
+                const __m512d w0 = _mm512_loadu_pd(w + 2 * n), w1 = _mm512_loadu_pd(w + 2 * n + 8);
+                _mm512_storeu_pd(a + n, _mm512_permutex2var_pd(w0, ir, w1));
+                _mm512_storeu_pd(b + n, _mm512_permutex2var_pd(w0, ii, w1));
+            }
+#endif
+#if defined(__AVX2__)
+            for (; n + 4 <= K; n += 4)
+            {
+                const __m256d w0 = _mm256_loadu_pd(w + 2 * n), w1 = _mm256_loadu_pd(w + 2 * n + 4);
+                const __m256d lo = _mm256_permute2f128_pd(w0, w1, 0x20), hi = _mm256_permute2f128_pd(w0, w1, 0x31);
+                _mm256_storeu_pd(a + n, _mm256_unpacklo_pd(lo, hi));
+                _mm256_storeu_pd(b + n, _mm256_unpackhi_pd(lo, hi));
+            }
+            if (n + 2 <= K)
+            {
+                const __m128d w0 = _mm_loadu_pd(w + 2 * n), w1 = _mm_loadu_pd(w + 2 * n + 2);
+                _mm_storeu_pd(a + n, _mm_unpacklo_pd(w0, w1));
+                _mm_storeu_pd(b + n, _mm_unpackhi_pd(w0, w1));
+                n += 2;
+            }
+            if (n < K)
+            {
+                const __m128d v = _mm_loadu_pd(w + 2 * n);
+                _mm_store_sd(a + n, v);
+                _mm_storeh_pd(b + n, v);
+            }
+#else
+            for (; n < K; n++)
+            {
+                a[n] = w[2 * n];
+                b[n] = w[2 * n + 1];
+            }
+#endif
+        }
+    }
+}
 /* the lane-range dispatch of the elementwise passes across the workers: phase 0 pack, 1 fold
  * (r2c), 2 unfold, 3 unpack (c2r) */
 typedef struct { struct vfft_plan_s *h; const vfft_real *x; vfft_real *z; size_t k0, k1; int phase; } _lmr_arg_t;
@@ -648,7 +1037,14 @@ static void _lmr_strip(struct vfft_plan_s *h, const vfft_real *x, vfft_real *z, 
             memcpy(scr + 2 * m * w, h->lm_W + 2 * (m * K + k), 2 * w * sizeof(vfft_real));
     }
     else if (!c2r)
-        _lmr_pack(x, K, scr, w, 0, M, k, k + w);
+    {
+#if defined(__AVX2__)
+        if (K == 2 && w == 2)
+            _lmr_pack2(x, scr, w, 0, M);   /* the whole batch of two lanes: one permute a row */
+        else
+#endif
+            _lmr_pack(x, K, scr, w, 0, M, k, k + w);
+    }
     else
         _lmc_unfold(x, K, scr, w, 0, M, h->lm_perm, h->lm_tw, k, k + w);
     if (!c2r)
@@ -659,7 +1055,12 @@ static void _lmr_strip(struct vfft_plan_s *h, const vfft_real *x, vfft_real *z, 
     else
     {
         _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->b, c->tb, 1);
-        _lmc_unpack(scr, w, 0, z, K, M, k, k + w);
+#if defined(__AVX2__)
+        if (K == 2 && w == 2)
+            _lmc_unpack2(scr, w, 0, z, M);
+        else
+#endif
+            _lmc_unpack(scr, w, 0, z, K, M, k, k + w);
     }
 }
 typedef struct { struct vfft_plan_s *h; const vfft_real *x; vfft_real *z; size_t lo, hi, sw; int tid, c2r, from_W; } _lmf_arg_t;

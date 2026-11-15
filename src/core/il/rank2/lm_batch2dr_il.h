@@ -11,6 +11,11 @@
  *        batch. Out of place the caller's spectrum must survive, so the column pass moves it into
  *        a scratch of the spectrum's size (lm_W) and the blocks read from there; in place both
  *        passes run on the one padded plane (N1 blocks of (N2 + 2) K doubles).
+ * The blocks go in GROUPS (_lm2dr_rows_grp): policy's count of blocks at a time through one dense scratch,
+ * the group kernels around the child's chain, so a batch of few lanes still fills the registers and a short
+ * row's setup is paid once a group; threaded, every worker groups its own blocks on its own scratch. Where
+ * policy names no group (a long row of four lanes or more, a wide batch) and where the child runs a Rader,
+ * Bluestein or turned chain, the blocks go one at a time through the child's door.
  * Threaded: the column pass through its raced forms, the blocks over the workers on clones of the
  * row child, one threaded verdict (cmt=) raced with the column pass's arms (the arms run the whole
  * executor). The row: t=r2c n=N1xN2 q=K on the lay=lm axis, direction-shared as the 1D real row is,
@@ -20,14 +25,52 @@
 #ifndef VFFT_IL_LM_BATCH2DR_IL_H
 #define VFFT_IL_LM_BATCH2DR_IL_H
 
-/* the row blocks: worker t runs blocks [lo, hi) through its own row plan, block r of the input at
- * in + r sblk, of the output at out + r dblk (the same base and block in place) */
+/* THE ROW BLOCKS IN GROUPS (the 2D batch whose child is the 1D real batch): blocks [lo, hi), lm_G at a
+ * time, through one dense scratch -- the group kernels (rank1/lm_batch_il.h) around the row child's own
+ * chain, run once over the group's lanes. A group consumes its blocks whole before it writes one, so the
+ * in-place plane (the bins over the reals, block by block) needs nothing more. The group is policy's
+ * (vfft_policy_lm_row_group); the chain, its permutation and its twiddles are the child's and are only
+ * read, so every worker runs them on a scratch of its own. The bins are the block-at-a-time form's within
+ * the last bit (bit for bit at an even lane count). */
+static void _lm2dr_rows_grp(struct vfft_plan_s *h, const vfft_real *in, vfft_real *out, size_t sblk, size_t dblk, int c2r,
+                            size_t lo, size_t hi, vfft_real *scr)
+{
+    const struct vfft_plan_s *rp = h->lm_row;
+    const vfft_ilcol_t *c = &rp->il2d_col;
+    const size_t K = h->K, M = (size_t)rp->lm_M, G = (size_t)h->lm_G;
+    size_t r;
+    for (r = lo; r < hi; r += G)
+    {
+        const size_t gn = hi - r < G ? hi - r : G, w = gn * K;
+        if (!c2r)
+        {
+            _lmr_pack_grp(in + r * sblk, sblk, gn, K, scr, M);
+            _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->f, c->tf, 0);
+            _lmr_fold_grp(scr, gn, K, out + r * dblk, dblk, M, rp->lm_perm, rp->lm_tw);
+        }
+        else
+        {
+            _lmc_unfold_grp(in + r * sblk, sblk, gn, K, scr, M, rp->lm_perm, rp->lm_tw);
+            _il2d_col_pass_range(scr, scr, (int)M, w, 0, w, c->nst, c->R, c->L, c->b, c->tb, 1);
+            _lmc_unpack_grp(scr, gn, K, out + r * dblk, dblk, M);
+        }
+    }
+}
+/* the row blocks: worker t runs blocks [lo, hi) -- in groups on its own scratch where the plan has a group,
+ * else through its own row plan -- block r of the input at in + r sblk, of the output at out + r dblk (the
+ * same base and block in place) */
 typedef struct { struct vfft_plan_s *h; const vfft_real *in; vfft_real *out; size_t sblk, dblk, lo, hi; vfft_dir_t dir; int tid; } _lm2dr_rows_arg_t;
 static void _lm2dr_rows_tramp(void *v)
 {
     _lm2dr_rows_arg_t *a = (_lm2dr_rows_arg_t *)v;
     struct vfft_plan_s *rp = a->tid > 0 ? a->h->lm_roww[a->tid - 1] : a->h->lm_row;
     size_t r;
+    if (a->h->lm_G > 1)
+    {
+        _lm2dr_rows_grp(a->h, a->in, a->out, a->sblk, a->dblk, a->dir == VFFT_BACKWARD, a->lo, a->hi,
+                        a->h->lm_gscr + (size_t)a->tid * a->h->lm_gscr_sz);
+        return;
+    }
     for (r = a->lo; r < a->hi; r++)
         _vfft_exec6((vfft_plan)rp, a->dir, (vfft_real *)a->in + r * a->sblk, NULL, a->out + r * a->dblk, NULL);
 }
@@ -39,6 +82,8 @@ static void _lm2dr_rows(struct vfft_plan_s *h, const vfft_real *in, vfft_real *o
     int t;
     if (T > h->lm_roww_n + 1)
         T = h->lm_roww_n + 1;
+    if (h->lm_G > 1 && T > h->lm_gscr_n)
+        T = h->lm_gscr_n;   /* a scratch a worker */
     if ((size_t)T > N1)
         T = (int)N1;
     for (t = 0; t < (T < 2 ? 1 : T); t++)
@@ -176,6 +221,25 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
             _il2d_col_free(&h->il2d_col);
             free(h);
             return NULL;
+        }
+    }
+    {   /* the row pass in groups: policy's group, where the row child runs the plain chain (the chain the
+         * group kernels wrap: no Rader stage, no Bluestein or turned axis); built before the race, whose
+         * arms run this plan's executor */
+        const vfft_ilcol_t *rcol = &h->lm_row->il2d_col;
+        const int G = vfft_policy_lm_row_group(N1, N2, K, vfft_cpu_l1d_bytes());
+        if (G > 1 && rcol->nst > 0 && !rcol->nat && !rcol->blu && !rcol->tpc && rcol->wl <= 0 &&
+            (c2r ? rcol->b[0] : rcol->f[0]) != NULL)
+        {   /* a scratch a worker, each a whole number of cache lines */
+            const size_t sz = ((size_t)N2 * (size_t)G * K + 8 + 7) & ~(size_t)7;
+            const int ns = T > 1 ? T : 1;
+            h->lm_gscr = (vfft_real *)vfft_aligned_alloc((size_t)ns * sz * sizeof(vfft_real));
+            if (h->lm_gscr)
+            {
+                h->lm_G = G;
+                h->lm_gscr_sz = sz;
+                h->lm_gscr_n = ns;
+            }
         }
     }
     if (T > 1)

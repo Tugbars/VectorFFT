@@ -2781,6 +2781,8 @@ static int g_kzb = 0;
 static int g_lm2d = 0;   /* --lm2d (2) / --lm3d (3): the lane-major 2D / 3D c2c batch cell (2026-10-15), the rank */
 static int g_lm2dr = 0;  /* --lm2dr2c (1) / --lm2dc2r (2): the lane-major 2D real batch cell (2026-10-15) */
 static int g_lm3dr = 0;  /* --lm3dr2c (1) / --lm3dc2r (2): the lane-major 3D real batch cell (2026-10-19) */
+static int g_est = 0;    /* --est beside a 2D / 3D real batch cell (2026-11-15): our two plans by VFFT_FLAG_ESTIMATE
+                          * (formulas, nothing measured, no wisdom read or saved); MKL's arms as always */
 static int g_kzbr = 0;   /* --lmr2c = 1, --lmc2r = 2: the lane-major 1D REAL batch cells (2026-10-15), the
                           * same four arms as --kzb / --lmc2c over the real batch door (lm_batch_il.h) */
 
@@ -3566,6 +3568,8 @@ static void run_lm2dr_cell(int N1, int N2, int K, int c2r, FILE *out, int cool_m
     cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* the named geometry: the 2D real batch door */
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and the one-plane plans of the loop */
     h = vfft_create(&cfg);
     if (!h)
     {
@@ -3856,6 +3860,8 @@ static void run_lm3dr_cell(const int *n, int K, int c2r, FILE *out, int cool_ms,
     cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* the named geometry: the 3D real batch door */
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and the volume queue's */
     h = vfft_create(&cfg);
     if (!h)
     {
@@ -5876,6 +5882,8 @@ int main(int argc, char **argv)
             g_lm2d = 2;   /* the lane-major 2D c2c batch cell (2026-10-15), the shape N1xN2 in the N argument */
         else if (strcmp(argv[1], "--lm3d") == 0)
             g_lm2d = 3;   /* the lane-major 3D c2c batch cell, the shape N1xN2xN3 */
+        else if (strcmp(argv[1], "--est") == 0)
+            g_est = 1;    /* the 2D / 3D real batch cell planned by the estimate */
         else if (strcmp(argv[1], "--lm2dr2c") == 0)
             g_lm2dr = 1;  /* the lane-major 2D real batch cell, r2c */
         else if (strcmp(argv[1], "--lm2dc2r") == 0)
