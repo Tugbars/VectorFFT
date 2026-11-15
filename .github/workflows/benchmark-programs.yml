@@ -17,7 +17,7 @@
 #
 # The packages hold the FFTW programs only: every program runs one bench, and a bench linked to Intel MKL does not
 # start on a machine without MKL. The comparison with MKL is built from source (benchmark_scripts/README.md).
-name: Benchmark programs
+name: Release files
 
 on:
   push:
