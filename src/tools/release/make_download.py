@@ -134,7 +134,11 @@ def stage(build, out, ver, with_float):
     else:
         text = (HERE / "check.sh").read_text(encoding="utf-8").replace("\r\n", "\n")
         (out / "check.sh").write_text(text, encoding="utf-8", newline="\n")
-        os.chmod(out / "check.sh", 0o755)
+        for f in out.rglob("*"):                 # libraries and the script run; everything else is read
+            if f.is_symlink():
+                continue
+            runs = f.is_dir() or f.name == "check.sh" or f.name.startswith("libvfft")
+            os.chmod(f, 0o755 if runs else 0o644)
     return shards
 
 

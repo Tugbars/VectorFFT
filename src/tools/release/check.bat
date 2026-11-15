@@ -6,8 +6,8 @@ setlocal
 cd /d "%~dp0"
 set VFFT_ISA=
 set CHECK_FLOAT=
-if exist vfftf.h set CHECK_FLOAT=-DCHECK_FLOAT
-if not exist check.exe (
+if exist "%~dp0vfftf.h" set CHECK_FLOAT=-DCHECK_FLOAT
+if not exist "%~dp0check.exe" (
     where gcc >nul 2>nul
     if errorlevel 1 (
         echo check.exe is missing and gcc was not found: install MinGW-w64 GCC and put its bin folder on PATH.
@@ -20,15 +20,15 @@ if not exist check.exe (
     )
 )
 echo ==== the library this CPU gets by itself
-check.exe > check_result.txt 2>&1
+"%~dp0check.exe" > "%~dp0check_result.txt" 2>&1
 set RESULT=%errorlevel%
-type check_result.txt
-findstr /c:"library loaded    avx512" check_result.txt >nul
+type "%~dp0check_result.txt"
+findstr /c:"library loaded    avx512" "%~dp0check_result.txt" >nul
 if not errorlevel 1 (
     echo.
     echo ==== the same CPU, forced to the AVX2 library
     set VFFT_ISA=avx2
-    check.exe
+    "%~dp0check.exe"
     if errorlevel 1 set RESULT=1
 )
 echo.
