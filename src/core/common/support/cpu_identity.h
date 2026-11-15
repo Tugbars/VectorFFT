@@ -26,6 +26,13 @@
  * the folder choice reads such a stamp as this machine's when it differs only
  * by that field.
  *
+ * A VIRTUAL MACHINE passes the CPU's model and caches through and shows a
+ * core layout of its own (WSL shows the i9-14900KF's 8 + 16 cores as 16
+ * alike), so its two core counts name no hardware. Its identity ends in vm=1,
+ * and the folder choice then takes a folder of the same host and caches
+ * whatever its core counts (vw2_meta_same_machine, wisdom2.h): the folder of
+ * the CPU the virtual machine runs on, which keeps its own stamp.
+ *
  * The string is the store's `@meta` stamp: space-separated key=value, no
  * whitespace inside a value. An IDENTITY, not a capability: nothing branches
  * on its fields; it selects a folder and is compared whole.
@@ -38,6 +45,21 @@
 #include <stdio.h>
 #include "cpu_cache.h"
 #include "cpu_topology.h"
+
+/* 1 inside a virtual machine: Linux on a CPU that reports a hypervisor (CPUID
+ * leaf 1, ECX bit 31). Linux only: Windows reports the same flag on real
+ * hardware whenever Hyper-V is on (WSL turns it on), and there its core
+ * counts are the machine's own. */
+static inline int vfft_cpu_virtual(void)
+{
+#if defined(__linux__) && VFFT_CPU_HAVE_CPUID
+    unsigned r[4];
+    _vfft_cpuid(1, 0, r);
+    return (int)((r[2] >> 31) & 1u);
+#else
+    return 0;
+#endif
+}
 
 /* this CPU's identity (cached). A probe that needs another one defines
  * VFFT_IDENTITY_PROBE as an expression yielding a string, or NULL for the
@@ -55,8 +77,9 @@ static inline const char *vfft_cpu_identity(void)
     if (!done) {
         const vfft_cpu_cache_t *c = vfft_cpu_cache();
         const vfft_topology_t *t = vfft_topology();
-        snprintf(id, sizeof id, "host=%s l1d=%ld l2=%ld l3=%ld pcores=%d ecores=%d",
-                 vfft_cpu_host_tag(), c->l1d_used, c->l2_used, c->l3_seen, t->n_p, t->n_e);
+        snprintf(id, sizeof id, "host=%s l1d=%ld l2=%ld l3=%ld pcores=%d ecores=%d%s",
+                 vfft_cpu_host_tag(), c->l1d_used, c->l2_used, c->l3_seen, t->n_p, t->n_e,
+                 vfft_cpu_virtual() ? " vm=1" : "");
         done = 1;
     }
     return id;

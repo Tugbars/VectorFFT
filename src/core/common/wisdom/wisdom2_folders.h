@@ -17,7 +17,9 @@
  *      two ever carry one stamp). A stamp from before v1.4 also named the
  *      build's instruction set (isa=); it names this machine when it differs
  *      from the identity only by that field. Both builds of one machine use
- *      one folder: every row names its own build (isa=, wisdom2.h);
+ *      one folder: every row names its own build (isa=, wisdom2.h). The
+ *      identity of a virtual machine (vm=) takes the folder of the same host
+ *      and caches, whatever its core counts: the CPU it runs on;
  *   2. else `new/`, while it is unstamped: the first save stamps it, and it is
  *      this CPU's folder from then on;
  *   3. else (`new/` is another CPU's by now, or the root has none) a folder

@@ -311,6 +311,69 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     }
     snprintf(W->dir, sizeof W->dir, "%s", d);
 }
+/* THE ROOT OF THE LIBRARY'S OWN STORE, for a create that names no directory while VFFT_WISDOM_DIR is unset. A
+ * shared library looks for a folder named wisdom beside its own file first, so a library unpacked or copied
+ * anywhere brings its wisdom along; then the path the build compiled in (VFFT_WISDOM_DIR_DEFAULT). A static
+ * library has no file of its own and uses the compiled path alone. NULL: this build knows no store. */
+static const char *_vfft_store_root(char *buf, size_t cap)
+{
+#ifdef VFFT_SHARED_BUILD
+    static const char anchor = 1;   /* an address inside the library's file */
+    char *cut = NULL, *p;
+    buf[0] = 0;
+#if defined(_WIN32)
+    {
+        HMODULE hm = NULL;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)&anchor, &hm) && hm)
+        {
+            const DWORD l = GetModuleFileNameA(hm, buf, (DWORD)cap);
+            if (!l || l >= cap)
+                buf[0] = 0;
+        }
+        for (p = buf; *p; p++)
+            if (*p == '\\' || *p == '/')
+                cut = p;
+    }
+#else
+    {   /* the line of /proc/self/maps whose address range holds the anchor ends in the file's path */
+        FILE *f = fopen("/proc/self/maps", "r");
+        char line[4400];
+        const unsigned long long at = (unsigned long long)(uintptr_t)&anchor;
+        while (f && fgets(line, sizeof line, f))
+        {
+            unsigned long long lo, hi;
+            if (sscanf(line, "%llx-%llx", &lo, &hi) != 2 || at < lo || at >= hi)
+                continue;
+            p = strchr(line, '/');
+            if (p && strlen(p) < cap)
+            {
+                snprintf(buf, cap, "%s", p);
+                buf[strcspn(buf, "\n")] = 0;
+            }
+            break;
+        }
+        if (f)
+            fclose(f);
+        cut = strrchr(buf, '/');
+    }
+#endif
+    if (cut && (size_t)(cut - buf) + sizeof "/wisdom" <= cap)
+    {
+        memcpy(cut, "/wisdom", sizeof "/wisdom");
+        if (vw2__is_dir(buf))
+            return buf;
+    }
+#else
+    (void)buf;
+    (void)cap;
+#endif
+#ifdef VFFT_WISDOM_DIR_DEFAULT
+    return VFFT_WISDOM_DIR_DEFAULT;
+#else
+    return NULL;
+#endif
+}
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     /* wisdom2 (the live store). A bank always lands in memory, and a
@@ -345,17 +408,14 @@ static void _bundle_load(struct vfft_wisdom_s *W)
             const char *id = vfft_cpu_identity();
             const char *env = getenv("VFFT_WISDOM_DIR");
             const char *open_dir = dir_known ? W->dir : NULL;
-#ifdef VFFT_WISDOM_DIR_DEFAULT
-            char folder[512], id_name[160];
-            if (!dir_known && !(env && env[0]))
+            char folder[512], id_name[160], rootbuf[512];
+            const char *root = (!dir_known && !(env && env[0])) ? _vfft_store_root(rootbuf, sizeof rootbuf) : NULL;
+            if (root)
             {
                 vfft_cpu_identity_folder_name(id, id_name, sizeof id_name);
-                vw2_folder_select(VFFT_WISDOM_DIR_DEFAULT, id, id_name, folder, sizeof folder);
+                vw2_folder_select(root, id, id_name, folder, sizeof folder);
                 open_dir = folder;
             }
-#else
-            (void)env;
-#endif
             if (W->dir_too_long)
                 vw2_open(&W->vw2, NULL, 0); /* in memory, read-only: the path named could not be held */
             else
@@ -372,7 +432,9 @@ static void _bundle_load(struct vfft_wisdom_s *W)
                 vw2_set_meta(&W->vw2, id);
             else if (strcmp(W->vw2.meta, id) != 0)
             {
-                if (vw2_meta_same_cpu(W->vw2.meta, id))
+                if (vfft_cpu_virtual() && vw2_meta_same_machine(W->vw2.meta, id))
+                    ;   /* a virtual machine on this CPU: the folder keeps the stamp of the machine itself */
+                else if (vw2_meta_same_cpu(W->vw2.meta, id))
                     vw2_set_meta(&W->vw2, id);
                 else
                     fprintf(stderr,

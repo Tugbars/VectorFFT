@@ -1021,6 +1021,16 @@ static inline int vw2_g0_selftest(const char *dir)
                      "a stamp of another machine does not");
         VW2_ST_CHECK(vw2_meta_same_cpu("host=x-test isa=avx2 l1d=1", "host=x-test l1d=1 pcores=2"),
                      "a stamp from before the core counts, same host");
+        /* a virtual machine shows core counts of its own: its identity (vm=) names the CPU of the same host and caches */
+        VW2_ST_CHECK(vw2_meta_same_machine("host=x-test l1d=1 l2=2 l3=3 pcores=8 ecores=16",
+                                           "host=x-test l1d=1 l2=2 l3=3 pcores=16 ecores=0 vm=1"),
+                     "a virtual machine's identity names the CPU of the same host and caches, whatever its core counts");
+        VW2_ST_CHECK(!vw2_meta_same_machine("host=x-test l1d=1 l2=2 l3=4 pcores=8 ecores=16",
+                                            "host=x-test l1d=1 l2=2 l3=3 pcores=16 ecores=0 vm=1"),
+                     "... but not a CPU with another cache");
+        VW2_ST_CHECK(!vw2_meta_same_machine("host=x-test l1d=1 l2=2 l3=3 pcores=8 ecores=16",
+                                            "host=x-test l1d=1 l2=2 l3=3 pcores=16 ecores=0"),
+                     "a real machine's identity does not: its core counts are compared");
         {   /* the folder choice takes a folder stamped the older way */
             char root[700], sub[760], name[128];
             snprintf(root, sizeof root, "%s/isa_root", dir);

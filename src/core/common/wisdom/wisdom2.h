@@ -1507,14 +1507,23 @@ static inline void vw2__meta_without_isa(const char *meta, char *out, size_t n)
 }
 
 /* Do `stamp` and `identity` name the same machine? Equal strings do, and so do two that differ only by
- * the isa= field the stamps from before v1.4 carried (the identity names the machine only). */
+ * the isa= field the stamps from before v1.4 carried (the identity names the machine only). The identity
+ * of a virtual machine (it carries vm=) shows core counts of the virtual machine's own: a stamp of the
+ * same host and caches names the CPU it runs on. */
 static inline int vw2_meta_same_machine(const char *stamp, const char *identity)
 {
+    static const char *const hw[] = { "host", "l1d", "l2", "l3" };
     char a[256], b[256];
+    int i;
     if (!strcmp(stamp, identity)) return 1;
     vw2__meta_without_isa(stamp, a, sizeof a);
     vw2__meta_without_isa(identity, b, sizeof b);
-    return !strcmp(a, b);
+    if (!strcmp(a, b)) return 1;
+    if (!vw2__meta_field(identity, "vm", a, sizeof a)) return 0;
+    for (i = 0; i < 4; i++)
+        if (!vw2__meta_field(stamp, hw[i], a, sizeof a) || !vw2__meta_field(identity, hw[i], b, sizeof b) || strcmp(a, b))
+            return 0;
+    return 1;
 }
 
 /* Is `stamp` a stamp of the CPU `identity` names? The same machine is (vw2_meta_same_machine); so is a

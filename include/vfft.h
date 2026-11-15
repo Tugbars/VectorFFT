@@ -209,7 +209,11 @@ extern "C"
                                      this count (measured, or by formulas under
                                      VFFT_FLAG_ESTIMATE). */
     unsigned flags;             /**< VFFT_FLAG_* */
-    const char *wisdom_dir;     /**< a wisdom store directory; NULL = the library's own */
+    const char *wisdom_dir;     /**< a wisdom store directory; NULL = the library's own: the
+                                     directory VFFT_WISDOM_DIR names, else this CPU's folder
+                                     in the library's wisdom folder (a shared library looks
+                                     for a folder named wisdom beside its own file first,
+                                     then at the path compiled in when it was built) */
   } vfft_config_t;
 
   /* ── create, execute, destroy ───────────────────────────────────────── */
