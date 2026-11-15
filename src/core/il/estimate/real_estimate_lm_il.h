@@ -141,7 +141,7 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
          * column at one thread and the C2C threaded test after the turned pass is cleared */
         if (lanes > INT_MAX)
             return est_refuse(why, whylen, "a lane-major real batch of %lld lanes: past the doors' lane count", lanes);
-        if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, 0, p, why, whylen))
+        if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, out->T > 1 ? EST_LM_MT : 0, p, why, whylen))
             return -1;
         p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
         p->T = out->T;

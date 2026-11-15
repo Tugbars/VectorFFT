@@ -13,9 +13,11 @@
  * child under rp_.
  *
  * THE RECIPE (est_plan_lm), the 2D plane's formulas carried over, with the three rules below:
- *   - the column pass: est_col_plan at w = the lanes (K, N2 K, N2 N3 K), natural for a natural request (the
- *     first axis leaves the cell's class, vfft_policy_lm_axis_nat), unbanded (the doors run no band); at rank 1
- *     past the L1d the unbanded walk's chain; a Rader-stage column on few lanes as Bluestein with the turned pass;
+ *   - the column pass: est_col_plan_r at w = the lanes (K, N2 K, N2 N3 K), natural for a natural request (the
+ *     first axis leaves the cell's class, vfft_policy_lm_axis_nat), unbanded (the doors run no band); a natural
+ *     pass's set filter by the lane-major count (EST_ND_R_LMSET, estimate_nd_il.h est__col_crowds), on one thread
+ *     with its one-stage form (EST_ND_R_LMONE); at rank 1 past the L1d the unbanded walk's chain, except a natural
+ *     power of two the set filter reads; a Rader-stage column on few lanes as Bluestein with the turned pass;
  *   - the serial lane tile: sw = 0, the walk (the owner, 2026-11-01: no width rule beat it);
  *   - at T > 1, est_mt_2d's test: threaded once the plane, 16 N1 lanes bytes, passes
  *     L1d / EST_ND_MT_SERIAL_L1_DIV, except a column of 2 and a column through the turned prime pass; then the
@@ -48,7 +50,10 @@
  *     at 8 threads: 1.019 (strips wherever no Bluestein: 1.188; at K = 4 the strips ran 3.5 - 7 times slower).
  *   - THE 1D CHAIN past the L1d: the unbanded walk's pick (est__col_unbanded) where the batch passes the L1d. Over the
  *     40 one-thread cells where the picks differ: 1.091 -> 1.018 against the better; at 8 threads 1.046 -> 1.042.
- *     Below the L1d est_col_plan's chain stays (the unbanded pick lost 1.215 there). */
+ *     Below the L1d est_col_plan's chain stays (the unbanded pick lost 1.215 there). A natural power of two on
+ *     rows within one L1d way keeps the set filter's chain too (2026-11-15): the same pass as the first axis of a
+ *     2D or 3D batch over those rows and lanes, picked by the lane-major count (est__col_crowds: 1.13 times
+ *     faster than the unbanded pick over 137 one-thread passes, 0.98 - 1.11 at 8 threads). */
 #define EST_LM_TPC_DIV 128
 #define EST_LM_STRIP_MIN 8
 
@@ -126,9 +131,11 @@ static inline void est__lm_threaded(const est_machine_t *m, est_planlm_t *p, lon
 /* est__plan_lm: est_plan_lm's body under opts: EST_LM_TPC the prime column's switch to the turned prime pass (its door
  * admits the pass: a c2c axis 0 only, il2d_tier.h _il2d_tpc_admits; without it a Rader column keeps its stage at every
  * lane count), EST_LM_UNB the rank-1 batch's unbanded chain pick past the L1d (a rank-1 pass of its own; the first
- * axis of a 2D or 3D batch never takes it) */
+ * axis of a 2D or 3D batch never takes it), EST_LM_MT a pass planned here at T = 1 that its caller threads (the real
+ * batch's first axis): no one-thread form for it (EST_ND_R_LMONE) */
 #define EST_LM_TPC 1
 #define EST_LM_UNB 2
+#define EST_LM_MT 4
 static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
                                int opts, est_planlm_t *out, char *why, size_t whylen);
 /* est_plan_lm: the lane-major batch's recipe (the header's list). Returns 0 with *out filled (its block child
@@ -142,6 +149,7 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
                                int opts, est_planlm_t *out, char *why, size_t whylen)
 {
     long long lanes;
+    unsigned rules = 0u;
     memset(out, 0, sizeof *out);
     if (est__machine_ok(m, why, whylen))
         return -1;
@@ -159,9 +167,14 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
     lanes = est__lm_lanes(out);
     if (lanes > INT_MAX)
         return est_refuse(why, whylen, "a lane-major batch of %lld lanes: past the doors' lane count", lanes);
-    if (est_col_plan(m, N1, lanes, nat, &out->col, why, whylen))
+    if (nat)   /* a natural pass: the lane-major set count, and on one thread its one-stage form (est__col_chain_r) */
+        rules = EST_ND_R_LMSET | ((out->T > 1 || (opts & EST_LM_MT)) ? 0u : EST_ND_R_LMONE);
+    if (est_col_plan_r(m, N1, lanes, nat, rules, &out->col, why, whylen))
         return -1;
-    if (rank == 1 && (opts & EST_LM_UNB) && 16LL * N1 * lanes > m->l1d)
+    /* the rank-1 batch past the L1d: the unbanded pick, except a natural power of two the set filter reads -- its
+     * chain is the lane-major count's, the first axis's of a 2D or 3D batch over the same rows and lanes */
+    if (rank == 1 && (opts & EST_LM_UNB) && 16LL * N1 * lanes > m->l1d &&
+        !(nat && est_is_pow2(N1) && est__col_set_reach(m, N1, lanes)))
         (void)est__col_unbanded(m, &out->col);
     if ((opts & EST_LM_TPC) && out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) &&
         est__col_blu(m, &out->col, why, whylen))

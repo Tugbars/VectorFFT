@@ -195,6 +195,11 @@ typedef struct est_plan3d_s
 #define EST_ND_2D_R_LEAF 0x80u
 #define EST_ND_R_WIDE 0x100u
 #define EST_ND_R_WIDE_ON (EST_ND_2D_RULE_WIDE ? EST_ND_R_WIDE : 0u)
+/* LMSET: the column is a lane-major batch's pass (est__plan_lm sets it on a natural one): the set filter counts by
+ * est__col_crowds' lane-major form. LMONE with it, on a pass that runs on one thread: one stage serves wherever it
+ * crowds no set (est__col_chain_r) */
+#define EST_ND_R_LMSET 0x200u
+#define EST_ND_R_LMONE 0x400u
 #define EST_ND_2D_RULES ((EST_ND_2D_RULE_ORDER ? EST_ND_2D_R_ORDER : 0u) | (EST_ND_2D_RULE_CSK ? EST_ND_2D_R_CSK : 0u) | \
                          (EST_ND_2D_RULE_ROWS ? EST_ND_2D_R_ROWS : 0u) | (EST_ND_2D_RULE_TURN ? EST_ND_2D_R_TURN : 0u) | \
                          (EST_ND_2D_RULE_BAND ? EST_ND_2D_R_BAND : 0u) | (EST_ND_2D_RULE_CSK32 ? EST_ND_2D_R_CSK32 : 0u) | \
@@ -434,8 +439,23 @@ static inline long long est__l1_way(const est_machine_t *m)
  * ways. Stage s reads R[s] legs N / (R[0] ... R[s]) rows apart (il2d_cols.h:265-283); they fall into
  * way / gcd(stride, way) sets, R[s] min(lowbit(stride), way) / way legs to a set, and stage 0 holds them twice: it
  * moves the plane out of place, src to the scratch (il2d_cols.h:633-655; the scrambled pass src to dst). The leaf's
- * scattered stores are staged (il2d_cols.h:297) */
-static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, int nst, long long w)
+ * scattered stores are staged (il2d_cols.h:297).
+ * lm = 1, THE LANE-MAJOR BATCH'S NATURAL PASS (2026-11-15; est__col_chain_r under EST_ND_R_LMSET). Its plan carries no
+ * staging (lm_batch_il.h _lm_cols), so the last stage of two or more writes its R rows N / R rows apart straight into
+ * the destination: those stores count as a stage's legs do. And stage 0 counts once. Timed on the 14900KF, one
+ * thread, every chain of the pool (827) at 36 passes of 64 - 2048 rows over 20 - 224 lanes, planes past the L1d:
+ *   - the leaf's stores: a chain whose largest count is 16 or more ran 1.4 - 1.6 times the pass's fastest (two stages:
+ *     1.57 at 16 against 1.12 - 1.14 at 4 - 8); 512 rows through 4.8.16 ran 1.52 - 1.63 ns a point at every lane
+ *     count that is a multiple of 8 and 0.91 - 1.00 at every one that is 4 past it (21 of 21), 64 rows through 4.16
+ *     1.30 at 64, 128, 192 lanes and 0.66 at 96, 160, 224;
+ *   - stage 0: the source congruent to the plan's scratch modulo 4 KiB against half a way apart, 1.00 - 1.02 at every
+ *     stage-0 count from 2 to 64 lines (819 chains);
+ *   - the pick: on 137 further passes (16 - 4096 rows over 6 - 250 lanes) the chain picked by this count, one stage
+ *     where est__col_chain_r lets it serve, ran 1.15 times faster than the chain picked by the count above and 1.13
+ *     times faster than the 1D batch's unbanded pick (geometric means over all 137; slower by 3 % or more at 17 and
+ *     at 4 of them, the worst 0.78: 512 rows at a lane count 4 past a multiple of 8, 8.8.8 where the count above
+ *     left 4.8.16). At 8 threads, 11 passes of 64 - 4096 rows: 0.98 - 1.11 against the unbanded pick. */
+static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, int nst, long long w, int lm)
 {
     const long long way = est__l1_way(m), ways = est__l1_ways(m);
     long long L = N;
@@ -445,9 +465,15 @@ static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, i
         L /= R[s];
         {
             const long long st = 16 * L * w, low = st & -st;
-            if ((long long)R[s] * (low < way ? low : way) * (s == 0 ? 2 : 1) > ways * way)
+            if ((long long)R[s] * (low < way ? low : way) * (s == 0 && !lm ? 2 : 1) > ways * way)
                 return 1;
         }
+    }
+    if (lm && nst > 1)
+    {   /* the leaf's stores, N / R rows apart */
+        const long long st = 16 * (long long)(N / R[nst - 1]) * w, low = st & -st;
+        if ((long long)R[nst - 1] * (low < way ? low : way) > ways * way)
+            return 1;
     }
     return 0;
 }
@@ -459,6 +485,12 @@ static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, i
  * 10-24 % faster at 64x64, 128x32, 256x32, 128x128 (4.16 -> 8.8, 4.32 -> 8.16, 4.64 -> 16.16, 4.4.8 -> 8.16), the
  * planes whose chain is the same unchanged. So the filter applies only where a vector load is less than a line. */
 #define EST_ND_VEC_FILLS_LINE (VFFT_IL_VW * 8 >= 64)
+/* the planes the set filter reads: a row within one L1d way on a plane past the L1d, where a vector load is less than
+ * a line */
+static inline int est__col_set_reach(const est_machine_t *m, int N, long long w)
+{
+    return !EST_ND_VEC_FILLS_LINE && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d;
+}
 /* THE SET COUNT (2026-11-09): how many stages of R put more lines into one L1d set than it has ways, the first and
  * the last stage counted twice while two planes fit the L2 (the first reads one buffer and writes another at one
  * pitch, the last reads the scratch and writes the staging block; past 2P = L2 the refills hide behind the L3
@@ -705,9 +737,18 @@ static inline int est_col_lead(const est_machine_t *m)
  * are within one L1d way, the chains that crowd no set (sets = 1; a plane within the L1d is a cheap pass whatever
  * its sets, and the lane-major batches' are); a power of two from 2^s1 on wider rows led by est_col_lead; else the
  * pick above. sets = 0: the pick's own regime chain (the real 3D axis-0 rule asks for the narrow and the wide
- * regime's by their row widths). 0 = the pool holds no chain at N (the door's column Bluestein). */
+ * regime's by their row widths). 0 = the pool holds no chain at N (the door's column Bluestein).
+ * A LANE-MAJOR BATCH'S NATURAL PASS (rules & EST_ND_R_LMSET, 2026-11-15): the set filter counts by est__col_crowds'
+ * lane-major form. On a pass that runs on one thread (EST_ND_R_LMONE), where the filter reads the plane, one stage
+ * serves while it crowds no set, whatever the plane's size: it is one pass over the plane where a chain is two or
+ * more. On the 14900KF, one thread, one stage of 16, 32 or 64 against the two stages of before at the 26 passes of
+ * 16 - 64 rows over 52 - 250 lanes where it crowds no set: 1.21 - 1.80 times faster at every one (16 rows 1.64, 32
+ * rows 1.63, 64 rows 1.34); where its legs hold 16 or 32 lines in a set it ran 1.10 - 1.13 times the fastest chain.
+ * At 8 threads the two stages ran faster at 25 of the 26 (to 1.84 times): one stage is the one-thread form. */
 static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, int nat, int sets, unsigned rules, int *R)
 {
+    const int filt = sets && est__col_set_reach(m, N, w), lm = nat && (rules & EST_ND_R_LMSET) != 0;
+    const int lm1 = lm && filt && (rules & EST_ND_R_LMONE) != 0;
     est_pool_t P, Q;
     int k, i, pre[1] = { 0 }, one = 0;
     est__pool(N, &P);
@@ -726,19 +767,21 @@ static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, i
     for (i = 0; i < P.n; i++)
         if (P.len[i] == 1)
             one = 1;
-    if (one && (est__single_ok(m, N, w, nat) || (N <= 64 && est__wide_fit(m, N, w, rules))) && !est__spills_single(N))
-    {   /* one stage: within the L1d, or (rule WIDE, AVX-512) a power of two up to 64 whose plane fits the L2 */
+    if (one && (est__single_ok(m, N, w, nat) || (N <= 64 && est__wide_fit(m, N, w, rules)) ||
+                (lm1 && !est__col_crowds(m, N, &N, 1, w, 1))) && !est__spills_single(N))
+    {   /* one stage: within the L1d, or (rule WIDE, AVX-512) a power of two up to 64 whose plane fits the L2, or a
+         * lane-major batch's natural pass on one thread that crowds no set */
         R[0] = N;
         return 1;
     }
-    if (sets && !EST_ND_VEC_FILLS_LINE && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d)
+    if (filt)
     {   /* a row within one way: the chains that crowd no set, where one exists; a power of two from 2^s1 led by the
          * largest first radix among them (4 on both machines), the rest picked as N / R0's own column, so that the
          * radix-16 regime's few stages do not end on a radix of 32 or 64 (2048 x 120 4.8.64, 4096 x 62 4.32.32
          * against the planners' four-stage 8.16.16, 8.8.8.8 and the timed 4.8.8.8, 4.8.8.16, 0.98 - 1.05 x) */
         Q.n = 0;
         for (i = 0; i < P.n; i++)
-            if (!est__col_crowds(m, N, P.c[i], P.len[i], w))
+            if (!est__col_crowds(m, N, P.c[i], P.len[i], w, lm))
             {
                 memcpy(Q.c[Q.n], P.c[i], sizeof Q.c[0]);
                 Q.len[Q.n++] = P.len[i];
