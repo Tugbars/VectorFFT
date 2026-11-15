@@ -32,7 +32,7 @@ program needs.
 
 ## Build and run the examples
 
-Install the library first, as Chapter 1 of the guide describes, and note the folder you
+Install the library first, as Appendix C of the guide describes, and note the folder you
 installed it to, `<prefix>`. Then build the four examples against it, from the root of your
 VectorFFT clone:
 

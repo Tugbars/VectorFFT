@@ -3,6 +3,8 @@
    corners or sans faces. Two accents with one meaning each (figures/style.py): blue #2457c5,
    yours / input / before, and red #c8322b, the library's / output / after; they colour figures,
    the chart, a note's rule and a warning's rule, and the status glyphs, nothing else.
+   Code is the one exception (owner, 2026-11-15): every code block stands in a light grey box
+   and is coloured by kind, as a forum sets code; those four colours mean nothing outside code.
    Apparatus: Oppenheim & Schafer: hanging section numbers,
    numbered equations, "Figure 1.1" captions, tables ruled above and below. Light only, like the
    site. Every number on the page is text written by build.py. */
@@ -10,6 +12,9 @@
   --paper:#fff; --ink:#101010; --muted:#6a6a6a; --rule:#dcdcdc;   /* the site's tokens */
   --blue:#2457c5; --red:#c8322b;                                  /* the book's two accents */
   --link-rule:#8a8a8a;                                            /* in-text links, 3.45:1 */
+  /* code (owner, 2026-11-15): a light grey box, and four colours that mean something inside code only */
+  --code-bg:#f4f5f7; --code-bar:#e6e8eb; --code-line:#cfd2d6; --code-edge:#8c8c8c;
+  --code-k:#0b55b5; --code-s:#a3271f; --code-n:#7a3e9d; --code-c:#3b7a3b;
   --serif:'CMU Serif',Georgia,'Times New Roman',serif;
   --mono:'CMU Typewriter Text',Consolas,'DejaVu Sans Mono',Menlo,monospace;
   --measure:36rem;   /* figures are drawn for this column: 1 unit = 1 pt in print */
@@ -103,18 +108,31 @@ h4 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
    formula in a scrolled table cell does not widen the page on a phone */
 .eq .math,figure .frame,.table,pre.code,pre.output,pre.quote{position:relative}
 
-/* listings: monochrome, comments muted and upright; hairline rules like the site's hr */
+/* code stands in a light grey box (owner, 2026-11-15), the file name of a listing in a bar on top; the
+   box keeps the edge rules of a block that scrolls sideways, their covers in the box's own grey */
+pre.code,pre.output,pre.quote{background:
+  linear-gradient(var(--code-bg),var(--code-bg)) left center / 4px 100% no-repeat local,
+  linear-gradient(var(--code-bg),var(--code-bg)) right center / 4px 100% no-repeat local,
+  linear-gradient(var(--muted),var(--muted)) left center / 2px 100% no-repeat scroll,
+  linear-gradient(var(--muted),var(--muted)) right center / 2px 100% no-repeat scroll;
+  background-color:var(--code-bg)}
 .listing{margin:1.1rem 0}
-.listing .file{font-family:var(--mono);font-size:.78rem;line-height:1.3;color:var(--muted);margin:0 0 .25rem;text-indent:0}
+.listing .file{font-family:var(--mono);font-size:.78rem;line-height:1.3;color:var(--ink);margin:0;text-indent:0;
+  padding:.32rem .7rem;background:var(--code-bar);border:1px solid var(--code-line);border-bottom:0}
 pre.code{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:0;
-  padding:.6rem 0 .6rem 1.1rem;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+  padding:.7rem .25rem .7rem .7rem;border:1px solid var(--code-line);
   overflow-x:auto;white-space:pre;tab-size:4}
 pre.code code{font-size:inherit}
-pre.code .c,pre.code .elide{color:var(--muted)}
-/* what a program printed, and a quote of it (a ```text block): the same face, a grey rule at
-   the left instead of above and below */
+pre.code .elide{color:var(--muted)}
+/* coloured by kind (build.py, highlight): a comment, a keyword, a string, a number */
+pre.code .c,.api .sig .c{color:var(--code-c)}
+pre.code .k,.api .sig .k{color:var(--code-k)}
+pre.code .s,.api .sig .s{color:var(--code-s)}
+pre.code .n,.api .sig .n{color:var(--code-n)}
+/* what a program printed, and a quote of it (a ```text block): the same box and face, uncoloured,
+   with a dark rule at the left in place of the border */
 pre.output,pre.quote{font-family:var(--mono);font-size:.84rem;line-height:1.42;margin:1rem 0;
-  padding:.35rem 0 .35rem 1rem;border-left:2px solid var(--rule);overflow-x:auto;white-space:pre}
+  padding:.55rem .25rem .55rem .7rem;border-left:3px solid var(--code-edge);overflow-x:auto;white-space:pre}
 pre.output code,pre.quote code{font-size:inherit}
 /* one span per line (build.py, --i its indentation): where a line wraps, on a wide screen and in
    print, the rest hangs under the line's own start, 4 columns further in */
@@ -157,9 +175,11 @@ td code,th code{font-size:1em}
 
 /* API block: the signature verbatim from include/vfft.h, then the parameters */
 .api{margin:1.3rem 0;border-top:1.2px solid var(--ink);border-bottom:1px solid var(--rule);padding:.55rem 0 .5rem}
+.api .sigs{background:var(--code-bg);border:1px solid var(--code-line);padding:.45rem .7rem .35rem}
 .api .sig{font-family:var(--mono);font-size:.9rem;line-height:1.4;margin:0 0 .15rem;
   padding-left:4ch;text-indent:-4ch;white-space:pre-wrap}
 .api .sig b{font-weight:700}
+.api .sigs + p{text-indent:0}
 .api dl{margin:.55rem 0 0;display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:1.1rem;row-gap:.25rem}
 .api dt{font-size:.94rem}
 .api dd{margin:0;font-size:.94rem}
@@ -253,9 +273,15 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   figure{margin:.9rem 0} .table,.api,.note,.warning{margin:.9rem 0}
   ol.steps{margin:.5rem 0 .6rem} ol.steps > li{margin:.15rem 0}
   .listing{margin:.7rem 0}
-  pre.code{font-size:9pt;line-height:1.27;padding:.4rem 0 .4rem 1em;overflow:visible;
+  pre.code{font-size:9pt;line-height:1.27;padding:.4rem .3em .4rem .7em;overflow:visible;
     white-space:pre-wrap;overflow-wrap:anywhere}          /* never clipped: a long line wraps */
-  pre.output,pre.quote{font-size:9pt;line-height:1.27;margin:.7rem 0;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+  pre.output,pre.quote{font-size:9pt;line-height:1.27;margin:.7rem 0;padding:.35rem .3em .35rem .7em;
+    overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+  .listing .file{padding:.2rem .7em}
+  /* the grey of a code box is printed (a browser leaves backgrounds out of a print otherwise), plain:
+     nothing scrolls on paper; a box that goes on overleaf is closed and opened again at the break */
+  pre.code,pre.output,pre.quote,.listing .file,.api .sigs{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  pre.code,pre.output,pre.quote{background:var(--code-bg);-webkit-box-decoration-break:clone;box-decoration-break:clone}
   th,td{font-size:8.9pt;padding-top:.15rem;padding-bottom:.15rem}
   th wbr,td wbr{display:none}   /* an identifier breaks after "_" on screen only */
   h1,h2,h3,h4,caption,.listing .file{break-after:avoid}
@@ -282,7 +308,8 @@ footer .colophon{max-width:34rem;margin:.6rem auto 0}
   a,a.ref{text-decoration:none;border-bottom:0}
   span.ref-ext{border-bottom:0}
   figure .frame,.eq .math,.table{overflow:visible}
-  .eq .math,figure .frame,.table,pre.code,pre.output,pre.quote{background:none}
+  .eq .math,figure .frame,.table{background:none}
+  pre.code,pre.output,pre.quote{background:var(--code-bg)}   /* the box's grey, without the edge rules of a screen */
   figure .frame > img{max-height:200mm;min-width:0 !important;object-fit:contain}
   .katex .katex-mathml{display:none}
 }

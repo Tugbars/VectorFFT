@@ -5,14 +5,14 @@ the source beside the result (section 9).
 
 ## 1. Files and numbers
 
-`book.yml` fixes the order of the book and numbers it: chapters 1 to 19, appendices A and B.
+`book.yml` fixes the order of the book and numbers it: chapters 1 to 19, appendices A to C.
 A chapter file never states its own number. Each file name starts with the file's **key**.
 
 | Key | File in `chapters/` | Title (the file's `#` line) | Part |
 | --- | --- | --- | --- |
 | fm1 | `fm1_using-this-guide.md` | How to use this guide | front matter |
 | fm2 | `fm2_notation.md` | Notation | front matter |
-| ch01 | `ch01_building.md` | Building and installing VectorFFT | I Getting started |
+| ch01 | `ch01_make-it-work.md` | Make it work | I Getting started |
 | ch02 | `ch02_first-transform.md` | Your first transform | I |
 | ch03 | `ch03_describing.md` | Describing a transform | II Using the API |
 | ch04 | `ch04_plans.md` | Plans: create, execute, destroy | II |
@@ -33,6 +33,7 @@ A chapter file never states its own number. Each file name starts with the file'
 | ch19 | `ch19_environment.md` | Environment variables | V |
 | appa | `appA_windows.md` | Notes for Windows and MinGW | V (Appendix A) |
 | appb | `appB_troubleshooting.md` | Troubleshooting | V (Appendix B) |
+| appc | `appC_building.md` | Building and installing VectorFFT | V (Appendix C) |
 
 The title page ("VectorFFT", "User Guide", "v0.7 beta") and the contents come from
 `book.yml`; nobody writes them. Names a chapter owns, all lower case:
@@ -71,7 +72,7 @@ another chapter's files; report what you need instead.
   transforms `VFFT_DCT1`, `VFFT_DST1`, `VFFT_DST2` and `VFFT_DST3` are part of the release:
   chapter 18 describes them. Never in a task chapter: `VFFT_DCT2` to `VFFT_DCT4`, `VFFT_DHT`,
   rank 4, `VFFT_FLAG_EXHAUSTIVE`, `vfft_diagnostics.h`. Chapter 18 lists them once, as not
-  part of this release; Table 1.2 also names the installed `vfft_diagnostics.h`,
+  part of this release; Table C.2 also names the installed `vfft_diagnostics.h`,
   as not part of this release.
 - **Planning.** A create plans one of two ways. Measuring is the default, and
   `VFFT_FLAG_PATIENT` names it: a create that misses wisdom measures for seconds, up to minutes
@@ -87,14 +88,24 @@ another chapter's files; report what you need instead.
   as a variant.
   Every DFTI commit plans with the estimate (`ch16-sec-run`).
 - **Wisdom folder.** The library comes with its own wisdom folder, one folder per CPU
-  (`src/wisdom/`; `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it
+  (`wisdom/` beside the library in the ready-built download; `src/wisdom/` in the sources;
+  `<prefix>/share/vectorfft/wisdom/` installed), and with no store named it
   picks the folder of this CPU by itself, serves from it and saves into it. A program is run
   with no setup: never tell the reader to create an empty directory or to set
   `VFFT_WISDOM_DIR` in order to run a program. Naming a store (`wisdom_dir`,
   `VFFT_WISDOM_DIR`) is a special case that Chapter 10 explains once
   (`ch10-sec-own-store`); other chapters say it in one sentence and refer there.
 - **Version.** Write "v0.7 beta". No listing prints `vfft_info().version`.
-- **Building.** The route is the library target: CMake `find_package(VectorFFT)`,
+- **Chapter 1 makes it work.** Its reader wants the library running at once and will not read
+  paragraphs (owner, 2026-11-15). It gives the shortest route only: the ready-built download,
+  a program to copy, one compiler line for each system, what the program prints, the wisdom
+  folder beside the library, a table of what goes wrong, and one figure for building the
+  library yourself. One thing to copy per section, then a short list; whatever the reader
+  does not need for that step goes to Appendix C or another chapter. Its figures are black
+  line art: ink only, no accent colour.
+- **Building.** A reader's first route is the ready-built download of Chapter 1. Building the
+  library from its sources is Appendix C's. There the route is the library target: CMake
+  `find_package(VectorFFT)`,
   `add_subdirectory`, `FetchContent`, or one compiler line against an installed package.
   `gauntlet/build.py` is never a user's route; at most one plain line says the gauntlet is the
   tool for testing the library on your own machine.
@@ -243,7 +254,7 @@ outside cells: a brace's words, a row's name. Lettering inside a tinted cell sta
 never carries meaning alone: a coloured cell also carries a word, a glyph or a hatch, so a
 greyscale print loses nothing. The notices carry the same rules: a `{note}` has a blue border
 and label word, a `{warning}` a red one, and their text stays ink. Nothing else on a page is
-coloured.
+coloured, but code (section 7): its colours mean something inside a code block only.
 
 ## 7. Code
 
@@ -254,6 +265,13 @@ coloured.
 cmake --build build
 ```
 ````
+
+Every piece of code stands in a light grey box and is coloured by kind, as a forum sets code
+(owner, 2026-11-15): keywords, types, shell builtins and CMake commands blue, strings red,
+numbers purple, comments green; a listing's file name stands in a bar on the box. The build
+does it (`tools/build.py`, `highlight`; the colours are in `tools/guide.css`): a chapter writes
+nothing for it. What a program printed (`{output}`, a `text` block) has the same box,
+uncoloured, with a dark rule at its left.
 
 The languages are `sh` (Git Bash or Linux), `powershell`, `cmake`, `text`, `ini`, `json`.
 A `text` block is what a program printed, quoted by hand (the store line with its
@@ -388,7 +406,7 @@ The terms, in the header's words; use each with this meaning only:
 | estimate | `VFFT_FLAG_ESTIMATE`: planning by formulas from the lengths and this machine's caches and vector width, with nothing measured and no wisdom read or saved |
 | execute | the call `vfft_execute()`: it runs a plan on your buffers, and allocates, measures and decides nothing |
 | wisdom | the record of the plan that won when a configuration was measured |
-| wisdom folder | the folder of wisdom that comes with the library, with one folder in it for each CPU: `src/wisdom/` in the sources, `<prefix>/share/vectorfft/wisdom/` once installed |
+| wisdom folder | the folder of wisdom that comes with the library, with one folder in it for each CPU: `wisdom/` beside the library in the ready-built download, `src/wisdom/` in the sources, `<prefix>/share/vectorfft/wisdom/` once installed |
 | store | the directory a create reads wisdom from and saves winners into: the folder of this CPU in the library's wisdom folder, or a directory that `wisdom_dir` or `VFFT_WISDOM_DIR` names |
 | miss | a create whose configuration has no wisdom in the store: it measures, then saves the winner |
 | refusal | a configuration or call the library does not serve: `vfft_create()` returns `NULL`, and `vfft_error()` says why; nothing is converted and nothing falls back |

@@ -38,7 +38,7 @@ from markdown_it import MarkdownIt
 from markdown_it.renderer import RendererHTML
 from pygments import lex
 from pygments.lexers import get_lexer_by_name
-from pygments.token import Comment
+from pygments.token import Comment, Keyword, Name, Number, String
 from pygments.util import ClassNotFound
 
 HERE = Path(__file__).resolve().parent            # how-to-use/source/tools
@@ -243,17 +243,49 @@ class Renderer(RendererHTML):
         return "".join(out)
 
 
+CODE_NUMBER = re.compile(r"(\b\d+(?:\.\d+)?(?:[eE][-+]?\d+)?\b)")
+
+
 def highlight(src, lang):
-    """Monochrome, as on the site: comments muted and upright, nothing else coloured."""
+    """Code coloured by kind, as a forum sets it (owner, 2026-11-15; guide.css gives the colours):
+    c a comment; k a keyword, a type, a shell builtin, a CMake command or a preprocessor word;
+    s a string or an included file; n a number. Everything else stays ink."""
     try:
         lexer = get_lexer_by_name(lang)
     except ClassNotFound:
         return html.escape(src, quote=False).rstrip("\n")
     out = []
+
+    def put(cls, value):
+        body = value.rstrip("\n")                 # a span never ends in a newline
+        if cls and body.strip():
+            out.append('<span class="{}">{}</span>'.format(cls, html.escape(body, quote=False)))
+            out.append(value[len(body):])
+        else:
+            out.append(html.escape(value, quote=False))
+
     for ttype, value in lex(src, lexer):
-        esc = html.escape(value, quote=False)
-        out.append('<span class="c">{}</span>'.format(esc) if ttype in Comment and ttype not in
-                   (Comment.Preproc, Comment.PreprocFile) else esc)
+        if ttype in Comment.PreprocFile:
+            put("s", value)
+        elif ttype in Comment.Preproc:
+            # "#", "include", or "define PI 3.14": the directive's word, then what follows it
+            m = re.match(r"(\s*(?:#|\w+))(.*)\Z", value, re.S)
+            head, rest = m.groups() if m else ("", value)
+            put("k", head)
+            for part in CODE_NUMBER.split(rest):
+                put("n" if CODE_NUMBER.fullmatch(part) else None, part)
+        elif ttype in Comment:
+            put("c", value)
+        elif ttype in Keyword or ttype in Name.Builtin:
+            put("k", value)
+        elif ttype in String.Escape and lang in ("bash", "powershell"):
+            put(None, value)                      # a shell's backslash at a line's end is no string
+        elif ttype in String and not (lang == "cmake" and ttype is String):   # CMake: quoted strings only
+            put("s", value)
+        elif ttype in Number:
+            put("n", value)
+        else:
+            put(None, value)
     return "".join(out).rstrip("\n")
 
 
@@ -397,9 +429,10 @@ def line_spans(body):
     """One <span class="ln"> per line of a code or output block, the newline kept inside it, so the
     text is unchanged: --i is the line's indentation, under which a wrapped line hangs, and "cont"
     marks a code line whose statement goes on in the next (the print keeps the two together). A
-    comment that runs over several lines is closed and reopened at each newline."""
-    body = re.sub(r'<span class="c">(.*?)</span>',
-                  lambda m: '<span class="c">' + m.group(1).replace("\n", '</span>\n<span class="c">') + "</span>",
+    comment or a string that runs over several lines is closed and reopened at each newline."""
+    body = re.sub(r'<span class="([cksn])">(.*?)</span>',
+                  lambda m: '<span class="{0}">{1}</span>'.format(
+                      m.group(1), m.group(2).replace("\n", '</span>\n<span class="{}">'.format(m.group(1)))),
                   body, flags=re.S)
     lines = body.split("\n")
     out = []
@@ -725,9 +758,10 @@ def api_block(c, env, body, nested_render):
         c.fail("{api} starts with the signature lines")
     lines = []
     for line in sig.strip().splitlines():
-        esc = html.escape(line.strip(), quote=False)
+        esc = highlight(line.strip() + "\n", "c")      # coloured as every other piece of C
         lines.append(re.sub(r"^(.*?)(\w+)(\()", r"\1<b>\2</b>\3", esc, count=1))
-    out = ['<div class="api">', "".join('<p class="sig"><code>{}</code></p>'.format(l) for l in lines)]
+    out = ['<div class="api">', '<div class="sigs">{}</div>'.format(
+        "".join('<p class="sig"><code>{}</code></p>'.format(l) for l in lines))]
     paras = [p for p in re.split(r"\n\s*\n", rest.strip()) if p.strip()]
     dl = []
     for p in paras:

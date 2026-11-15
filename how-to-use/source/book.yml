@@ -1,5 +1,5 @@
 # The VectorFFT User Guide: what is in the book, in order. build.py numbers the chapters by
-# their place here (1 to 19, appendices A and B); a chapter file never states its own number.
+# their place here (1 to 19, appendices A to C); a chapter file never states its own number.
 # A file name starts with its key (fm1, ch07, appA), and every label in the file starts with
 # that key in lower case (ch07-..., appa-...). The titles are the plan's; a chapter's # title
 # repeats its title here.
@@ -19,7 +19,7 @@ front:
 parts:
   - title: Getting started
     chapters:
-      - {file: ch01_building.md, title: "Building and installing VectorFFT"}
+      - {file: ch01_make-it-work.md, title: "Make it work"}
       - {file: ch02_first-transform.md, title: "Your first transform"}
   - title: Using the API
     chapters:
@@ -49,3 +49,4 @@ parts:
     appendices:
       - {file: appA_windows.md, title: "Notes for Windows and MinGW"}
       - {file: appB_troubleshooting.md, title: "Troubleshooting"}
+      - {file: appC_building.md, title: "Building and installing VectorFFT"}
