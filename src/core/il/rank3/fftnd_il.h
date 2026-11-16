@@ -1200,7 +1200,7 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     key1.axis = 1;
     if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2],
                          vfft_policy_rankn_axis_nat(3, 1, key1.ord), &d->ax1,
-                         d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL))
         return 0;
     if (!d->rowS)
     {   /* the row plan in role: its own store, its recipe from this cell's row (rp_*) */
@@ -1478,7 +1478,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     key0.nthreads = nthr;   /* the plan's own row (v1.3) */
     if (!_il2d_col_build(W, cfg, &key0, N1, d->plane,
                          vfft_policy_rankn_axis_nat(3, 0, key0.ord), &d->ax0,
-                         d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL))
     {
         free(d);
         return NULL;

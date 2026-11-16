@@ -96,8 +96,9 @@ static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin,
  * (one at T = 1) of M x swcap complexes, swcap the widest ladder width at this T or a worker's whole
  * range where that fits L2, or the whole plane at one thread. The real batch's fused strips (serial tiles
  * and threaded sub-strips), the c2c batch's serial dense tiles (both orders) and its scrambled blocks run
- * in it; the natural chain's threaded blocks keep their own builder (its leaf). */
-static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
+ * in it; the natural chain's threaded blocks keep their own builder (its leaf). K is the lane count, size_t;
+ * a width the L2 holds (vfft_policy_fits_l2_lanes) is far below INT_MAX, so swcap stays an int. */
+static int _lm_sscr_build(vfft_ilcol_t *c, int M, size_t K, int T)
 {
     int lad[6], nl, k, swcap = 0, t;
     const int Tb = T > 1 ? T : 1;
@@ -106,10 +107,11 @@ static int _lm_sscr_build(vfft_ilcol_t *c, int M, int K, int T)
     nl = _il2d_sw_ladder(M, K, T, lad, 6);
     for (k = 0; k < nl; k++)
         if (lad[k] > swcap) swcap = lad[k];
-    if (T > 1 && K / T >= 8 && vfft_policy_fits_l2((long)M * (K / T + 8) * VFFT_CX_BYTES) && K / T + 8 > swcap)
-        swcap = K / T + 8;   /* a worker's whole range, its bounds cut at 8 lanes */
-    if (T <= 1 && K >= 2 && vfft_policy_fits_l2((long)M * K * VFFT_CX_BYTES) && K > swcap)
-        swcap = K;           /* the whole plane as one tile */
+    if (T > 1 && K / (size_t)T >= 8 && vfft_policy_fits_l2_lanes((size_t)M, K / (size_t)T + 8) &&
+        K / (size_t)T + 8 > (size_t)swcap)
+        swcap = (int)(K / (size_t)T + 8);   /* a worker's whole range, its bounds cut at 8 lanes */
+    if (T <= 1 && K >= 2 && vfft_policy_fits_l2_lanes((size_t)M, K) && K > (size_t)swcap)
+        swcap = (int)K;                      /* the whole plane as one tile */
     if (swcap < 2)
         return 0;
     c->natsscr = (vfft_real **)calloc((size_t)Tb, sizeof *c->natsscr);
@@ -171,15 +173,18 @@ static void _lm_arm_run(void *v)
     else
         _lm_cols(a->h, a->z, a->zo, 0);
 }
-static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
-                     const vw2_ilcol_key_t *key, int bcmt)
+/* Returns 0, or -1 OUT OF MEMORY (the race's planes could not be allocated; the reason recorded): the caller
+ * refuses the plan */
+static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
+                    const vw2_ilcol_key_t *key, int bcmt)
 {
     vfft_ilcol_t *c = &h->il2d_col;
     /* the pass's rows and lanes: the descriptor's (a 2D batch's first axis runs N2 K lanes). In place the
      * arms run on one buffer re-laid from a seed: a c2c batch's pass, and a real batch of rank 2 or 3,
      * whose blocks go through the child's door (an in-place plan takes one buffer there); the 1D real
      * batch's executor is called directly and takes any pair, so it is timed on two */
-    const int N = c->N, K = (int)c->rn, T = h->nthreads;
+    const int N = c->N, T = h->nthreads;
+    const size_t K = c->rn;   /* the lanes the pass walks: every arm's plane and width is sized on them */
     const int ip = h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->N2 > 0);
     const int workers = T > 1 ? thread_pool_workers_for(T) : 1;
     const int usable = W && !W->vw2_off_2d && !cfg->recalibrate;
@@ -193,7 +198,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     const int crowned = plain && c->lmsw >= 0;
     /* the arms' planes: the chain's M x K for a c2c batch; a real batch's arm runs its executor, whose
      * spectrum side is (M + 1) rows of K bins (2 K doubles more than the N K reals) */
-    const size_t PN = 2 * (size_t)N * (size_t)K + (h->transform != VFFT_C2C ? 2 * (size_t)K : 0);
+    const size_t PN = 2 * (size_t)N * K + (h->transform != VFFT_C2C ? 2 * K : 0);
     _lm_arm_t ac[14];
     vfft_race_arm_t arms[14];
     double ns[14];
@@ -228,17 +233,19 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
                 _vw2_persist(W, cfg);
         }
         if (crowned && getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[lm] %d x %d T=%d %s: the chain race's serial form sw=%d, no race here\n", N, K, T,
+            fprintf(stderr, "[lm] %d x %zu T=%d %s: the chain race's serial form sw=%d, no race here\n", N, K, T,
                     h->placement == VFFT_INPLACE ? "ip" : "oop", c->wc);
-        return;
+        return 0;
     }
     z = (vfft_real *)vfft_aligned_alloc((PN + 8) * sizeof(vfft_real));
     zo = ip ? z : (vfft_real *)vfft_aligned_alloc((PN + 8) * sizeof(vfft_real));
     if (ip) seed = (vfft_real *)vfft_aligned_alloc((PN + 8) * sizeof(vfft_real));
     if (!z || !zo || (ip && !seed))
-    {
+    {   /* OUT OF MEMORY: the race's planes -- refused with that cause, never a plan served unmeasured */
         vfft_aligned_free(z); if (!ip) vfft_aligned_free(zo); vfft_aligned_free(seed);
-        return;
+        _vfft_warn("vfft_create: lane-major interleaved batch %d x %zu: out of memory (measuring its lane tile and "
+                   "threads needs %.1f MB of planes)", N, K, 2.0 * (double)(PN + 8) * sizeof(vfft_real) / 1048576.0);
+        return -1;
     }
     for (q = 0; q < PN + 8; q++)
         z[q] = 1.0 + 1e-6 * (double)(q & 1023);
@@ -328,7 +335,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     _lm_sscr_settle(h);   /* the dense scratch stays for the verdicts that run in it */
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[lm] %d x %d T=%d %s:", N, K, T, ip ? "ip" : "oop");
+        fprintf(stderr, "[lm] %d x %zu T=%d %s:", N, K, T, ip ? "ip" : "oop");
         for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f%s", ac[i].name, ns[i], ac[i].ok ? "" : "(x)");
         fprintf(stderr, " -> %s (sw=%d cmt=%d mtarm=%d msw=%d)\n", ac[best].name, c->wc, c->colmt, c->natarm, c->msw);
     }
@@ -345,6 +352,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
         if (changed) _vw2_persist(W, cfg);
     }
     vfft_aligned_free(z); if (!ip) vfft_aligned_free(zo); vfft_aligned_free(seed);
+    return 0;
 }
 
 /* ── THE DOOR: the lane-major 1D batch's create ─────────────────────────── */
@@ -357,7 +365,7 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
     vw2_ilcol_key_t ck;
     vfft_ilcol_t col;
     char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1;
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0;
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
@@ -367,19 +375,20 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
         return NULL;
     }
     memset(&ck, 0, sizeof ck);
-    ck.rank = 1; ck.n0 = N; ck.n1 = (int)K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;
+    ck.rank = 1; ck.n0 = N; ck.n1 = K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;   /* the row at q = K, K whole */
     /* the Bluestein inner's chain provider for this create, as the 2D create sets it */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
-    _il2d_blu_ctx.N2 = (int)K;
+    _il2d_blu_ctx.N2 = K;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     memset(&col, 0, sizeof col);
     forms[0] = 0;
     if (!_il2d_col_build(W, cfg, &ck, N, K, nat, &col, forms, sizeof forms,
-                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, &oom))
     {
-        _vfft_warn("vfft_create: lane-major interleaved C2C batch N=%d x K=%zu: no column pass serves N "
-                   "(the column builder refused); unsupported", N, K);
+        if (!oom)   /* out of memory: the builder's reason stands */
+            _vfft_warn("vfft_create: lane-major interleaved C2C batch N=%d x K=%zu: no column pass serves N "
+                       "(the column builder refused); unsupported", N, K);
         return NULL;
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -404,8 +413,14 @@ static vfft_plan _vfft_create_lm_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s 
     h->il2d_col.tfuse = 0;
     h->il2d_col.wc = 0;
     if (T <= 1 && !h->il2d_col.blu && !h->il2d_col.tpc)
-        (void)_lm_sscr_build(&h->il2d_col, N, (int)K, 1);   /* the serial dense tiles' scratch, raced below */
-    _lm_race(h, W, cfg, &ck, bcmt);
+        (void)_lm_sscr_build(&h->il2d_col, N, K, 1);   /* the serial dense tiles' scratch, raced below */
+    if (_lm_race(h, W, cfg, &ck, bcmt))
+    {   /* OUT OF MEMORY in the race (its reason recorded). Not retained yet (the front door retains the plan it
+         * returns): its own release is skipped */
+        h->nthreads = 1;
+        vfft_destroy((vfft_plan)h);
+        return NULL;
+    }
     if (W && !W->vw2_off_2d && h->il2d_col.tpcS)
     {   /* the turned prime pass's child recipe onto the cell's row (the 2D create's last act;
          * without it the replay re-races the 1D prime cell and lands elsewhere) */
@@ -1276,7 +1291,7 @@ static void _lm_sscr_keep_one(vfft_ilcol_t *c)
 }
 static int _lm_chain_open(_il2d_lmform_t *f, int N1, size_t rn, int nat_req)
 {
-    const int K = (int)rn;
+    const size_t K = rn;
     memset(&f->sscr, 0, sizeof f->sscr);
     memset(&f->snat, 0, sizeof f->snat);
     f->W = f->tw = NULL;
@@ -1328,7 +1343,7 @@ static void _lm_chain_close(_il2d_lmform_t *f)
 static int _lm_chain_forms(const _il2d_lmform_t *f, int N1, size_t rn, const int *R, int nat, int *wcs)
 {
     int lad[6], nl, i, n = 0;
-    nl = _il2d_sw_ladder(N1, (int)rn, 1, lad, 6);
+    nl = _il2d_sw_ladder(N1, rn, 1, lad, 6);
     if (f->kind != 0)
     {
         wcs[n++] = 0;
@@ -1338,7 +1353,7 @@ static int _lm_chain_forms(const _il2d_lmform_t *f, int N1, size_t rn, const int
     }
     if (vfft_policy_lm_serial_tiles(VFFT_IL2D_RADER_RADIX(R[0])))
         for (i = 0; i < nl; i++)
-            if (vfft_policy_lm_tile_ok(lad[i], (int)rn, nat))
+            if (vfft_policy_lm_tile_ok(lad[i], rn, nat))
                 wcs[n++] = lad[i];
     if (n == 0)
         wcs[n++] = 0;
@@ -1431,7 +1446,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     vw2_ilcol_key_t ck;
     vfft_ilcol_t col;
     char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1;
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0;
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
@@ -1442,18 +1457,19 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
         return NULL;
     }
     memset(&ck, 0, sizeof ck);
-    ck.rank = 1; ck.n0 = N; ck.n1 = (int)K; ck.ord = VW2_ORD_NAT; ck.real = 1; ck.nthreads = T; ck.lm = 1;
+    ck.rank = 1; ck.n0 = N; ck.n1 = K; ck.ord = VW2_ORD_NAT; ck.real = 1; ck.nthreads = T; ck.lm = 1;
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
-    _il2d_blu_ctx.N2 = (int)K;
+    _il2d_blu_ctx.N2 = K;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     memset(&col, 0, sizeof col);
     forms[0] = 0;
     if (!_il2d_col_build(W, cfg, &ck, M, K, /*nat_req=*/0, &col, forms, sizeof forms,
-                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, &oom))
     {
-        _vfft_warn("vfft_create: lane-major interleaved R2C batch N=%d x K=%zu: no column pass serves the packed "
-                   "length M=%d (the column builder refused); unsupported", N, K, M);
+        if (!oom)   /* out of memory: the builder's reason stands */
+            _vfft_warn("vfft_create: lane-major interleaved R2C batch N=%d x K=%zu: no column pass serves the packed "
+                       "length M=%d (the column builder refused); unsupported", N, K, M);
         return NULL;
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -1494,7 +1510,9 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     h->lm_W = (vfft_real *)vfft_aligned_alloc((2 * (size_t)M * K + 8) * sizeof(vfft_real));
     h->lm_tw = (vfft_real *)vfft_aligned_alloc(2 * ((size_t)M + 1) * sizeof(vfft_real));
     if (!h->lm_W || !h->lm_tw)
-    {
+    {   /* OUT OF MEMORY: the packed plane (M x K complexes) or the fold's twiddles -- refused with that cause */
+        _vfft_warn("vfft_create: lane-major interleaved %s batch N=%d x K=%zu: out of memory (its packed plane needs "
+                   "%.1f MB)", _vfft_tname(cfg->transform), N, K, (2.0 * (double)M * (double)K + 8.0) * sizeof(vfft_real) / 1048576.0);
         vfft_aligned_free(h->lm_W); vfft_aligned_free(h->lm_tw); free(h->lm_perm);
         _il2d_col_free(&h->il2d_col);
         free(h);
@@ -1502,8 +1520,14 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     }
     _lmr_tw_fill(h->lm_tw, M, N);
     if (!h->il2d_col.blu && !h->il2d_col.tpc)
-        (void)_lm_sscr_build(&h->il2d_col, M, (int)K, T);   /* the fused strips' scratch, raced below */
-    _lm_race(h, W, cfg, &ck, bcmt);
+        (void)_lm_sscr_build(&h->il2d_col, M, K, T);   /* the fused strips' scratch, raced below */
+    if (_lm_race(h, W, cfg, &ck, bcmt))
+    {   /* OUT OF MEMORY in the race (its reason recorded). Not retained yet (the front door retains the plan it
+         * returns): its own release is skipped */
+        h->nthreads = 1;
+        vfft_destroy((vfft_plan)h);
+        return NULL;
+    }
     h->k1_exec = c2r ? _lmc_exec : _lmr_exec;   /* the lean door: the direction's own executor, the other refused by the door */
     h->k1_go[VFFT_FORWARD] = c2r ? NULL : _lmr_exec;
     h->k1_go[VFFT_BACKWARD] = c2r ? _lmc_exec : NULL;

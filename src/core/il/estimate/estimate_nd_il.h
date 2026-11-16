@@ -1332,11 +1332,11 @@ static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d
  * the transform's in and out fit the L2, the widest within that fraction of the L1d; else the widest whose
  * strip's in and out, 32 N1 w B, fit the L2; the narrowest when none does; 0 (each worker's whole range) on
  * an empty ladder */
-static inline int est__msw_2d(const est_machine_t *m, int N1, int N2, int T)
-{
+static inline int est__msw_2d(const est_machine_t *m, int N1, long long N2, int T)
+{   /* N2: the pass's lanes -- a 2D cell's rows, or a lane-major batch's lanes, which may pass INT_MAX */
     int lad[6], n, i, w = 0;
     const int l1 = 16LL * N1 * EST_ND_MT_SW_MIN <= m->l1d / EST_ND_MT_SW_L1_DIV && 32LL * N1 * N2 <= m->l2;
-    if ((n = _il2d_sw_ladder(N1, N2, T, lad, 6)) < 1)
+    if ((n = _il2d_sw_ladder(N1, (size_t)N2, T, lad, 6)) < 1)
         return 0;
     for (i = 0; i < n; i++)
         if (l1 ? 16LL * N1 * lad[i] <= m->l1d / EST_ND_MT_SW_L1_DIV : 32LL * N1 * lad[i] <= m->l2)

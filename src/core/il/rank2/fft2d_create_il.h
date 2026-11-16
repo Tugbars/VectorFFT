@@ -408,7 +408,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             if (!_il2d_col_build(W, cfg, &ck, N1, (size_t)N2,
                                  vfft_policy_rankn_axis_nat(2, 0, il2d_ord), &col,
                                  il2d_fm, sizeof il2d_fm, &il2d_bwl, &il2d_btf,
-                                 &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu))
+                                 &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu, NULL))
                 return NULL;
             /* the plan's thread count is in the row's key (v1.3): a threaded
              * plan reads its own row, complete on its own, through the same
@@ -789,7 +789,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             rok = _il2d_col_build(W, cfg, &ck, N1, il2d_ip ? il2d_ipP : il2d_hp,   /* the column pass over the plane's width */
                                   vfft_policy_rankn_axis_nat(2, 0, il2d_ord), &col,
                                   il2d_fm, sizeof il2d_fm, &bwl_, &btf_, &bro_,
-                                  &bcmt_, &bcmtt_, &il2d_bblu);
+                                  &bcmt_, &bcmtt_, &il2d_bblu, NULL);
             if (rok)
             {
                 /* the copy-out, as in the c2c branch */

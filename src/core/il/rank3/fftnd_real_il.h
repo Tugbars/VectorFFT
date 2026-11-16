@@ -1403,7 +1403,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     /* ── axis 0: the plain chain (raced over the pool on a miss; creates the row; direction-shared) ── */
     forms0[0] = 0;
     if (!_il2d_col_build(W, cfg, &key0, N1, d->plane, 0, &d->ax0, forms0, sizeof forms0,
-                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL))
     {
         vfft_ilndr_destroy(d);
         return NULL;
@@ -1445,7 +1445,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
         char fb[64];
         fb[0] = 0;
         if (_il2d_col_build(W, cfg, &key0, N1, d->plane, 1, &d->ax0n, fb, sizeof fb,
-                            &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                            &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL))
             d->ax0n_on = 1;
         else if (!strips_ok)
         {
@@ -1462,7 +1462,7 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     {
         forms1[0] = 0;
         if (_il2d_col_build(W, cfg, &key1, N2, (size_t)d->hp3, 0, &d->ax1, forms1, sizeof forms1,
-                            &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu) && !d->ax1.blu && !d->ax1.tpc)
+                            &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL) && !d->ax1.blu && !d->ax1.tpc)
         {
             d->ax1_on = 1;
             d->nat1 = _ilndr_nat_perm(d->ax1.R, d->ax1.nst, N2);

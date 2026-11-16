@@ -736,9 +736,11 @@ static int _real_il_pair_band(int N)
  * warns and refuses). bank = 0 (the store off, or an env switch keeping an
  * engine out of the field) races without banking. out_zrp / out_zrm keep the
  * pairs / the mono out (VFFT_ZRP=0 / VFFT_ZRM=0); the four-step's own switch
- * (VFFT_ZFSR=0) is read here. */
+ * (VFFT_ZFSR=0) is read here. *oom = 1 (NULL returned) when zr2c's child race
+ * ran out of memory: the reason is recorded, no other engine is raced, and the
+ * create refuses. */
 static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W,
-                                         int bank, int out_zrp, int out_zrm)
+                                         int bank, int out_zrp, int out_zrm, int *oom)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
@@ -752,6 +754,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
     double *b = (double *)vfft_aligned_alloc(xs * sizeof(double));
     double *ref = (double *)vfft_aligned_alloc(xs * sizeof(double));
     const double *s0 = ip ? b : a;
+    *oom = 0;
     if (!a || !b || !ref)
     {
         vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
@@ -790,8 +793,13 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
     } while (0)
     /* zr2c, and its threaded fold at T > 1 (the same child route) */
     {
-        struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
+        struct vfft_plan_s *hz = _zr2c_build(cfg, N, W, oom);
         struct vfft_plan_s *hzm = NULL;
+        if (*oom)
+        {   /* out of memory: refused with its reason, the other engines are not raced */
+            vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
+            return NULL;
+        }
         if (hz && Tk > 1 && N >= 64)
         {
             hzm = _zr2c_build_route(cfg, N, hz->zr2c_route, &hz->zr2c_kid->c, &hz->zr2c_kid->pr,
@@ -961,15 +969,17 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
  * VFFT_ZRM=0, VFFT_ZFSR=0) keeps that engine out of the field, and a race run
  * with an engine out never banks (a verdict of a partial field is not the
  * cell's). A banked row naming an engine that no longer builds, or one kept
- * out, is a miss: the race. NULL = no engine builds at N. */
+ * out, is a miss: the race. NULL = no engine builds at N, or (*oom = 1) the
+ * race ran out of memory, its reason recorded. */
 static struct vfft_plan_s *_real_il_build(const vfft_cfg_t *cfg, int N,
-                                          struct vfft_wisdom_s *W)
+                                          struct vfft_wisdom_s *W, int *oom)
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
     int out_zrp = 0;
     const int out_zrm = _zrm_env() == 0;
     int out_zfsr;
+    *oom = 0;
     {
         int e1 = 0, e2 = 0;
         out_zfsr = _zfsr_env(&e1, &e2) == 0;
@@ -1091,7 +1101,7 @@ static struct vfft_plan_s *_real_il_build(const vfft_cfg_t *cfg, int N,
         /* any other row (an engine kept out, a recipe that no longer builds):
          * the race, which overwrites it */
     }
-    return _real_il_race(cfg, N, W, !out_zrp && !out_zrm && !out_zfsr, out_zrp, out_zrm);
+    return _real_il_race(cfg, N, W, !out_zrp && !out_zrm && !out_zfsr, out_zrp, out_zrm, oom);
 }
 
 #endif /* VFFT_TRANSFORMS_REAL_ZRP_BUILD_H */

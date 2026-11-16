@@ -816,10 +816,32 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
  * prime arms, the order swap, the backward forms — and banks its verdicts
  * (the kind-3 lay=il row, the dir=bwd row) before the create replays them.
  * What serves was measured. A cold cell takes seconds; the planner logs on
- * entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
+ * entry. VFFT_NO_K1PLAN=1 skips it (probe hook). Returns the lines banked,
+ * 0 when no race ran, or -1 OUT OF MEMORY: the planner's four planes could
+ * not be held. They are secured on entry, before the row warm and the prime
+ * cell, so then nothing was warmed, raced or banked; the reason is recorded
+ * and the caller refuses the create (never the default plan). */
 static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
 static int _k1_il_dp_ctx_ready = 0;
 static int _k1_il_dp_busy = 0;                  /* a race in progress: nested calls refuse */
+/* the planner's planes for a race at N: held in *h unless the context already
+ * covers N, at the size this door gives the context (the first create's, or
+ * grown for the flat DIT's cells and the four-step's). 0, or -1 OUT OF MEMORY
+ * (the reason recorded; nothing held). Allocates nothing when *h already
+ * holds them. */
+static int _k1_il_dp_hold(vfft_il_dp_planes_t *h, int N)
+{
+    int pn;
+    if ((_k1_il_dp_ctx_ready && N <= _k1_il_dp_ctx.max_N) || h->max_N)
+        return 0;
+    pn = N <= VFFT_K1_IL_PLAN_MAX_N ? VFFT_K1_IL_PLAN_MAX_N
+       : N > VFFT_K1_IL_PLAN_ODD_MAX_N ? N : VFFT_K1_IL_PLAN_ODD_MAX_N;
+    if (vfft_il_dp_planes_alloc(h, pn) == 0)
+        return 0;
+    _vfft_warn("vfft_create: C2C N=%d: out of memory (measuring needs %.1f MB of planes)",
+               N, (double)vfft_il_dp_planes_bytes(pn) / 1048576.0);
+    return -1;
+}
 /* the race CEILINGS live in planning/policy.h (L9) */
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N)
 {
@@ -827,6 +849,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
     int lines;
     struct vfft_wisdom_s *fsS;   /* the four-step candidates' children race into it (k1_fourstep.h) */
     vfft_cfg_t fscfg;
+    vfft_il_dp_planes_t planes;  /* the planner's planes, held from entry until the context takes them */
     /* WISDOM OR RACE, never a fallback: a request names (N, layout, order,
      * placement); the door looks that cell up and on a miss RACES the
      * interleaved planner's pool, banks the winner and serves it. Which N
@@ -848,9 +871,20 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
      * winner's child is banked on its K=1 row (vfft_il_dp_emit_wisdom). */
     if (_k1_il_dp_busy)
         return 0;
+    /* THE PLANES FIRST: out of memory refuses here, before anything is
+     * warmed, raced or banked. They are held apart from the context: the
+     * nested creates below share it, and it is not touched until the check
+     * after them, so they find it (and its candidate cache) as the last create left it. */
+    memset(&planes, 0, sizeof planes);
+    if (_k1_il_dp_hold(&planes, N) != 0)
+        return -1;
     fsS = _k1fs_store_new();
     if (!fsS)
-        return 0;
+    {   /* OUT OF MEMORY: the four-step candidates' private store -- refused with that cause, never the default plan */
+        vfft_il_dp_planes_free(&planes);
+        _vfft_warn("vfft_create: C2C N=%d: out of memory (the four-step candidates' store)", N);
+        return -1;
+    }
     fscfg = *cfg;
     fscfg.wisdom = (vfft_wisdom *)fsS;
     fscfg.wisdom_write = 0;
@@ -869,19 +903,30 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
         _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL);
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
     }
-    _k1fs_ctx.W = fsS;
-    _k1fs_ctx.cfg = &fscfg;
-    if (!_k1_il_dp_ctx_ready)
+    /* CHECK AGAIN: the row warm and the prime cell ran creates through this
+     * door on the same context. A create only grows it (it installs planes
+     * larger than the context it found, and a create that cannot hold them
+     * leaves the context as it was), so a context that covered N on entry
+     * still does and this check allocates nothing: the planes held since
+     * entry are kept for the context below, or freed. */
+    if (_k1_il_dp_hold(&planes, N) != 0)
     {
-        vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
+        _vfft_wisdom_free((vfft_wisdom *)fsS);
+        _k1pr_release();
+        return -1;
+    }
+    if (_k1_il_dp_ctx_ready && N <= _k1_il_dp_ctx.max_N)
+        vfft_il_dp_planes_free(&planes);   /* the context covers N: entry's, or grown past N by a nested create */
+    else
+    {   /* the first create's context, or grown for the flat DIT's cells and
+         * the four-step's (the candidate cache restarts, wisdom is the memory) */
+        if (_k1_il_dp_ctx_ready)
+            vfft_il_dp_destroy(&_k1_il_dp_ctx);
+        vfft_il_dp_init_held(&_k1_il_dp_ctx, &planes);
         _k1_il_dp_ctx_ready = 1;
     }
-    if (N > _k1_il_dp_ctx.max_N)
-    {   /* the flat DIT's cells and the four-step's: grow the scratch planes
-         * on demand — the candidate cache restarts, wisdom is the memory */
-        vfft_il_dp_destroy(&_k1_il_dp_ctx);
-        vfft_il_dp_init(&_k1_il_dp_ctx, N > VFFT_K1_IL_PLAN_ODD_MAX_N ? N : VFFT_K1_IL_PLAN_ODD_MAX_N);
-    }
+    _k1fs_ctx.W = fsS;
+    _k1fs_ctx.cfg = &fscfg;
     if (cfg->rigor != VFFT_MEASURE)
         vfft_il_dp_set_patient(&_k1_il_dp_ctx);
     else
@@ -938,7 +983,8 @@ static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int 
  * Such a row is EMPTY (owner, 2026-10-04): what was built here from the
  * pair/default path is not the cell's plan, and the door races the cell from
  * scratch (a recalibrating second call). 0 = built as the row says, or the
- * cell has no row. */
+ * cell has no row. -1 = OUT OF MEMORY in the plan race (_k1_il_plan_race):
+ * nothing built, the reason recorded; the caller refuses the create. */
 static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             int N,
                             vfft_il2p_plan_t **il2p_out,
@@ -996,7 +1042,10 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
          (ke->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N)) ||   /* a prime verdict where a chain carries N: stale, the chains race */
          _k1fs_row_stale(W, N, scr_req, ip_req, T, ke)))   /* a four-step verdict without its child: stale */
     {
-        if (_k1_il_plan_race(W, cfg, N) > 0)
+        const int lines = _k1_il_plan_race(W, cfg, N);
+        if (lines < 0)
+            return -1;   /* out of memory: nothing built, the caller refuses the create */
+        if (lines > 0)
         {
             if (T > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
                 _vw2_persist(W, cfg);

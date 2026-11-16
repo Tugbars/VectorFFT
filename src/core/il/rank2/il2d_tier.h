@@ -1972,8 +1972,8 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const vfft_real *sre,
         if (phlog)
         {
             ph3 = vfft_now_ns();
-            fprintf(stderr, "[il2d-phases] %dx%d T=%d wl=%d cut=%d nst=%d tfuse=%d: prefix=%.0f bands=%.0f rows=%.0f ns\n",
-                    h->N, (int)rn, T, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.tfuse,
+            fprintf(stderr, "[il2d-phases] %dx%zu T=%d wl=%d cut=%d nst=%d tfuse=%d: prefix=%.0f bands=%.0f rows=%.0f ns\n",
+                    h->N, rn, T, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.tfuse,
                     ph1 - ph0, ph2 - ph1, ph3 - ph2);
         }
         if (!fwd && h->il2d_col.cut > 0)
@@ -2195,15 +2195,16 @@ static void _il2d_arm_exec_mt_sw(void *v)
  * 4-column groups 256). One thread (the serial walk's tile) keeps sw a
  * divisor of N2. 8 is on it because at N1 = 8192 the 16-column dense
  * strip is the whole L2 and streams every stage through L3 (8192x128
- * measured 0.76 at T=8); the column kernels take any count >= 1. */
-static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max)
+ * measured 0.76 at T=8); the column kernels take any count >= 1. N2 is
+ * size_t: a lane-major batch's column count is its lane count. */
+static int _il2d_sw_ladder(int N1, size_t N2, int T, int *out, int max)
 {
     static const int SW[] = { 8, 16, 32, 64, 128, 256 };
     int i, n = 0;
     for (i = 0; i < 6 && n < max; i++)
     {
         const int w = SW[i];
-        if (w > N2 || (T > 1 ? w > N2 / T : N2 % w != 0)) continue;
+        if ((size_t)w > N2 || (T > 1 ? (size_t)w > N2 / (size_t)T : N2 % (size_t)w != 0)) continue;
         if (!vfft_policy_fits_l2((long)N1 * w * VFFT_CX_BYTES)) continue;
         out[n++] = w;
     }
@@ -2321,7 +2322,7 @@ static void _il2d_arm_chain_mt(void *v)
 /* the band widths the chain race offers a candidate: the serving law's own
  * admission (the axis race's) -- the ladder under the tcut law, the stage
  * spans that fit L2; a VFFT_IL2D_WL pin narrows it to that width (a probe) */
-static int _il2d_race_widths(int N1, int N2, int nst, const int *Ls, int *wlc, int cap)
+static int _il2d_race_widths(int N1, size_t N2, int nst, const int *Ls, int *wlc, int cap)
 {
     int nwl = 0, p, s2;
     for (p = 0; p < VFFT_IL2D_WL_LADDER_N && nwl < cap; p++)
@@ -2333,7 +2334,8 @@ static int _il2d_race_widths(int N1, int N2, int nst, const int *Ls, int *wlc, i
         int dup = 0, p2;
         if (!vfft_policy_il2d_band_ok(N1, nst, Ls, w))
             continue;
-        if (!vfft_policy_fits_l2((long)w * N2 * VFFT_CX_BYTES))
+        if (!vfft_policy_fits_l2_lanes((size_t)w, N2))   /* w x N2 complexes, formed in size_t: a band past 2 GiB, or a
+                                                           * 3D axis-0 plane past INT_MAX lanes, never wraps */
             continue;
         for (p2 = 0; p2 < nwl; p2++)
             if (wlc[p2] == w)
@@ -2667,7 +2669,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
 static struct {
     struct vfft_wisdom_s *W;
     const vfft_cfg_t *cfg;
-    int N2;
+    size_t N2;   /* the axis's row length in complexes: a lane-major batch's lanes, size_t */
     /* the column-axis Bluestein's INNER chain at M is the
      * cell's verdict and banks on THE CELL'S OWN row -- never on the
      * (M, N2) row, which is the row a user's own scrambled M x N2 cell owns.
@@ -2680,10 +2682,11 @@ static struct {
     int rep_nst;
     int commit;
 } _il2d_blu_ctx;
-static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
+#define VFFT_IL2D_RACE_OOM (-2)   /* _il2d_race_chains: its planes could not be allocated (out of memory, recorded) */
+static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat, int banded, int *best_wl, int T,
                              _il2d_lmform_t *lm);
-static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
+static int _il2d_race_forms(int N1, size_t N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz, int half, int T, int nat, int lm);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
@@ -2703,11 +2706,11 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
 {
     struct vfft_wisdom_s *W = _il2d_blu_ctx.W;
     const vfft_cfg_t *cfg = _il2d_blu_ctx.cfg;
-    const int N2 = _il2d_blu_ctx.N2;
+    const size_t N2 = _il2d_blu_ctx.N2;
     const vw2_ilcol_key_t *key = _il2d_blu_ctx.key;
     vfft_il2p_fn ff[8], fb[8];
     forms[0] = 0;
-    if (!W || W->vw2_off_2d || N2 <= 0 || !key) return 0;
+    if (!W || W->vw2_off_2d || N2 == 0 || !key) return 0;
     /* REPLAY -- the M chain THE CELL'S OWN row carries, read by the builder
      * (which checked prod == blu) and handed over here. Never the (M, N2,
      * scr) row: that is a user's own scrambled M x N2 cell, and a bank there
@@ -2721,9 +2724,9 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
                (size_t)_il2d_blu_ctx.rep_nst * sizeof(int));
         *nst = _il2d_blu_ctx.rep_nst;
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
+            fprintf(stderr, "[il2d] blu inner M=%d x %zu: replay chain src=wisdom\n", M, N2);
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
+            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, N2,
                                   Rs, *nst, ff, fb, forms, fsz, 1, 0);
         return 1;
     }
@@ -2734,6 +2737,8 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
         if (ncand < 1) return 0;   /* (a capped pool warns from inside the enumerator) */
         win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0, /*banded=*/0, NULL, 1, NULL) : 0;   /* the inner runs unbanded */
+        if (win == VFFT_IL2D_RACE_OOM)
+            return -1;   /* out of memory (the race recorded it): no verdict on M's chains */
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
         *nst = lens[win];
@@ -2748,12 +2753,12 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
             _vw2_persist(W, cfg);
         }
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] blu inner M=%d x %d: chain race -> %d candidates,"
+            fprintf(stderr, "[il2d] blu inner M=%d x %zu: chain race -> %d candidates,"
                             " winner %s\n", M, N2, ncand,
                     _il2d_blu_ctx.commit ? "banked on the cell's row"
                                          : "(N-arm arm, unbanked)");
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, (size_t)N2,
+            _il2d_forms_serve_key(W, cfg, key, "bluforms", M, N2,
                                   Rs, *nst, ff, fb, forms, fsz, 1, 0);
         return 1;
     }
@@ -2794,7 +2799,7 @@ static void _il2d_arm_forms_mt(void *v)
     if (!_il2d_cols_mt_desc(&cv, c->N1, c->z, c->z, 0, c->T, c->nat ? c->nstage : NULL, -1))
         _il2d_arm_chain(v);
 }
-static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
+static int _il2d_race_forms(int N1, size_t N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz, int half, int Tw, int nat, int lm)
 {
@@ -2842,7 +2847,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         perm = _il2d_nat_perm(Rs, nst, N1);
         nscr = (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real));
         if (!lm)
-            nstage = (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * (size_t)Tw * sizeof(vfft_real));
+            nstage = (vfft_real *)vfft_aligned_alloc(2 * 64 * N2 * (size_t)Tw * sizeof(vfft_real));
         if (!perm || !nscr || (!lm && !nstage))
         {   /* no natural pass to time: the scrambled strips stand in */
             free(perm); vfft_aligned_free(nscr); vfft_aligned_free(nstage);
@@ -2882,7 +2887,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
             rc[na].z = z;
             rc[na].ok = 1;
             rc[na].N1 = N1;
-            rc[na].N2 = (size_t)N2;
+            rc[na].N2 = N2;
             rc[na].nst = nst;
             rc[na].R = Rs;
             rc[na].Ls = Ls;
@@ -2911,7 +2916,7 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
         fb[s] = fba[win][s];
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d%s:", N1, N2, s, Rs[s],
+            fprintf(stderr, "[il2d] forms %dx%zu stage %d r%d%s:", N1, N2, s, Rs[s],
                     Tw > 1 ? (perm ? " (the threaded natural pass)" : " (the threaded pass)") : "");
             for (f = 0; f < na; f++)
                 fprintf(stderr, " %s %.0f ns%s", an[f], ns[f], f == win ? "*" : "");
@@ -2970,7 +2975,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
  * race: the lane-major race (_lm_race) times them after, on the winning chain.
  * The winner's candidate index, -1 when none builds; *wns its ns, *wwl its
  * width. */
-static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, const int *idx, int n,
+static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, const int *idx, int n,
                            int nat, vfft_real *z, const vfft_real *zseed, vfft_real *nscr, vfft_real *nstage, double *wns,
                            vfft_real *zo, int banded, int *wwl, int T, _il2d_lmform_t *lm, size_t zn)
 {   /* zseed: z's seed, re-laid before every sample where the arms run in place (banded = 0, or a lane-major cell in
@@ -3013,10 +3018,10 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
         if (lm)
         {   /* the serial forms the door serves this chain with, on a plan carrying it; a chain the door cannot
              * carry (the real batch's fold order does not derive for it) is no candidate */
-            cb[nc].lmh = _lm_chain_plan(lm, N1, (size_t)N2, lens[ci], cand[ci], cb[nc].Ls, cb[nc].ff, cb[nc].fb,
+            cb[nc].lmh = _lm_chain_plan(lm, N1, N2, lens[ci], cand[ci], cb[nc].Ls, cb[nc].ff, cb[nc].fb,
                                         cb[nc].tf, cb[nc].tb, nat && perm != NULL, perm, nscr);
             if (cb[nc].lmh)
-                nwl = _lm_chain_forms(lm, N1, (size_t)N2, cand[ci], nat && perm != NULL, wlc);
+                nwl = _lm_chain_forms(lm, N1, N2, cand[ci], nat && perm != NULL, wlc);
         }
         else if (banded)
             nwl = _il2d_race_widths(N1, N2, lens[ci], cb[nc].Ls, wlc, 14);
@@ -3095,7 +3100,7 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
         }
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[il2d] chain race %dx%d (%s%s): %d chain(s), %d arm(s)", N1, N2,
+            fprintf(stderr, "[il2d] chain race %dx%zu (%s%s): %d chain(s), %d arm(s)", N1, N2,
                     nat ? "nat" : "scr",
                     lm ? (lm->ip ? ", the lane-major serial forms, in place" : ", the lane-major serial forms")
                        : (T > 1 && banded) ? ", the threaded pass" : "", nc, na);
@@ -3131,12 +3136,14 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
  * balanced heats of at most VFFT_IL2D_HEAT chains, the heat winners raced
  * again the same way until one stands -- for every pool in reach the heats
  * and one final. Returns the winner's index (its ns in *best_ns, from the
- * last race it ran), -1 = race impossible. */
-static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
+ * last race it ran), -1 = no arm built, VFFT_IL2D_RACE_OOM = its planes could
+ * not be allocated: OUT OF MEMORY, the reason recorded, nothing raced. */
+static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns, int nat, int banded, int *best_wl, int Tw,
                              _il2d_lmform_t *lm)
 {   /* lm: a lane-major batch's cell, every candidate in the serial forms its door serves it with, in the cell's
-     * placement (_il2d_race_heat); the winner's lane tile comes back in lm->wc. NULL: every other cell. */
+     * placement (_il2d_race_heat); the winner's lane tile comes back in lm->wc. NULL: every other cell. N2: the
+     * lanes, size_t */
     const size_t T = (size_t)N1 * N2;
     /* the planes, in doubles: a lane-major 1D real batch's arm runs its executor, whose spectrum side is M + 1
      * rows of K bins (2 K doubles past the N K reals) */
@@ -3147,7 +3154,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     vfft_real *zo = !banded ? NULL : lmip ? z : (vfft_real *)vfft_aligned_alloc(zn * sizeof(vfft_real));   /* the serving forms' destination plane */
     vfft_real *zseed = (banded && !lmip) ? NULL : (vfft_real *)vfft_aligned_alloc(zn * sizeof(vfft_real));   /* the arms run in place: the reset's seed */
     vfft_real *nscr = nat ? (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real)) : NULL;   /* aligned like every plane the door serves */
-    vfft_real *nstage = (nat && !lm) ? (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * nslot * sizeof(vfft_real)) : NULL;   /* R_last <= 64 */
+    vfft_real *nstage = (nat && !lm) ? (vfft_real *)vfft_aligned_alloc(2 * 64 * N2 * nslot * sizeof(vfft_real)) : NULL;   /* R_last <= 64 */
     int *surv = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     int *next = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     /* the heat's chain count: VFFT_IL2D_HEAT, or what the arm budget holds when
@@ -3162,9 +3169,14 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     double wns = 1e300;
     size_t q;
     if (best_wl) *best_wl = 0;
-    if (!z || (banded && !zo) || ((!banded || lmip) && !zseed) || (nat && !nscr) || !surv || !next ||
-        (lm && !_lm_chain_open(lm, N1, (size_t)N2, nat)))
-    {
+    if (!z || (banded && !zo) || ((!banded || lmip) && !zseed) || (nat && !nscr) || (nat && !lm && !nstage) ||
+        !surv || !next || (lm && !_lm_chain_open(lm, N1, N2, nat)))
+    {   /* OUT OF MEMORY: the planes the arms run on (z, its destination or its seed, nscr when natural; a lane-major
+         * cell's door scratch, and the 1D real batch's plane and twiddles) and the staging -- refused with that
+         * cause, nothing raced (a race without the staging would time a form the cell does not serve) */
+        const double mb = (2.0 * (double)zn + (nat ? 2.0 * (double)T : 0.0) + ((lm && lm->kind == 1) ? 2.0 * (double)T : 0.0)) *
+                              (double)sizeof(vfft_real) / 1048576.0 +
+                          ((nat && !lm) ? 64.0 * (double)N2 * (double)nslot * (double)VFFT_CX_BYTES / 1048576.0 : 0.0);
         vfft_aligned_free(z);
         if (zo != z) vfft_aligned_free(zo);
         vfft_aligned_free(zseed);
@@ -3172,7 +3184,9 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         vfft_aligned_free(nstage);
         free(surv);
         free(next);
-        return -1;
+        _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (measuring its chains needs %.1f MB of planes)",
+                   N1, N2, mb);
+        return VFFT_IL2D_RACE_OOM;
     }
     for (q = 0; q < zn; q++)
         z[q] = 1.0 + 1e-6 * (double)(q & 1023);
@@ -3209,7 +3223,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         wns = 1e300;
     }
     if (getenv("VFFT_IL2D_LOG") && heats > 1)
-        fprintf(stderr, "[il2d] chain race %dx%d (%s): %d chain(s) in %d heat(s) over %d round(s)\n",
+        fprintf(stderr, "[il2d] chain race %dx%zu (%s): %d chain(s) in %d heat(s) over %d round(s)\n",
                 N1, N2, nat ? "nat" : "scr", ncand, heats, rounds);
     if (best_wl) *best_wl = wwl;
     if (lm)
@@ -3272,7 +3286,7 @@ static void _il2d_tpc_drop(vfft_ilcol_t *c);
 /* the strips' DENSE per-worker scratch: T blocks of N x swcap
  * complexes, swcap = the widest strip a worker runs (the ladder's widest
  * admissible width, and the unsized whole range when it fits L2) */
-static int _il2d_sw_ladder(int N1, int N2, int T, int *out, int max);
+static int _il2d_sw_ladder(int N1, size_t N2, int T, int *out, int max);
 static void _il2d_nat_sscr_free(vfft_ilcol_t *c)
 {
     int t;
@@ -3286,8 +3300,8 @@ static void _il2d_nat_sscr_free(vfft_ilcol_t *c)
     c->nnatsscr = 0;
     c->natswcap = 0;
 }
-static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
-{
+static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, size_t N2, int T)
+{   /* N2: the columns, size_t (a lane-major batch's lanes); a width the L2 holds is an int */
     int lad[6], nl, k, swcap = 0, t;
     if (!c->nat || T < 2 || c->natsscr)
         return c->natsscr != NULL;
@@ -3297,9 +3311,9 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, int N2, int T)
     {   /* the unsized walk (msw 0) runs a worker's whole block: the blocks split N2 as N2 t / T, so the
          * widest is N2 / T rounded up (100 columns on 8 workers: 13; sized down, those workers left
          * the dense scratch for the in-place walk, 2-4x slower) */
-        const int wmax = (N2 + T - 1) / T;
-        if (wmax >= 2 && vfft_policy_fits_l2((long)N1 * wmax * VFFT_CX_BYTES) && wmax > swcap)
-            swcap = wmax;
+        const size_t wmax = N2 / (size_t)T + (N2 % (size_t)T != 0);
+        if (wmax >= 2 && vfft_policy_fits_l2_lanes((size_t)N1, wmax) && wmax > (size_t)swcap)
+            swcap = (int)wmax;
     }
     if (swcap < 2)
         return 0;
@@ -3453,7 +3467,7 @@ static int _il2d_col_rd0_attach(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     {
         char d[64]; int w = 0;
         _ilrd_col0_desc(c->rd0, d, sizeof d, &w);
-        fprintf(stderr, "[il2d] rader %dx%d: stage 0 p=%d inner %s W=%d %s\n", N, (int)rn, p, d, w,
+        fprintf(stderr, "[il2d] rader %dx%zu: stage 0 p=%d inner %s W=%d %s\n", N, rn, p, d, w,
                 nreq ? "src=wisdom" : "(the default; the race follows)");
     }
     _ilrd_col0_ctx_set(c->rd0, N);
@@ -3479,7 +3493,7 @@ static void _il2d_col_rd0_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     if (b1 && vw2_ilcol_forms_bank_base(&W->vw2, key, "rdw", wb))
         _vw2_persist(W, cfg);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[il2d] rader %dx%d: %s -> inner %s W=%d, %s\n", N, (int)rn, how, d, w,
+        fprintf(stderr, "[il2d] rader %dx%zu: %s -> inner %s W=%d, %s\n", N, rn, how, d, w,
                 b1 ? "banked" : "not banked (no chain row)");
 }
 typedef struct { _il2d_n1arm_ctx_t *h; vfft_ilrd_t *rd; char name[40]; } _il2d_rd0_arm_t;
@@ -3503,14 +3517,14 @@ static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     const size_t scn = 2 * (size_t)N * rn;
     vfft_real *sc, *scs;
     int n, na = 0, i, best, nst_w, Rs_w[VFFT_ILRD_MAX_NST];
-    size_t W_w, wc[4];
+    size_t W_w, wc[4], q;
     const int p = cur ? cur->p : 0;
     if (!cur || !c->tf[0] || !c->tb[0] || c->blu)
         return;
     sc = (vfft_real *)vfft_aligned_alloc(scn * sizeof(vfft_real));
     scs = (vfft_real *)vfft_aligned_alloc(scn * sizeof(vfft_real));
     if (!sc || !scs) { vfft_aligned_free(sc); vfft_aligned_free(scs); return; }
-    for (i = 0; i < (int)scn; i++) sc[i] = 1.0 + 1e-6 * (double)(i & 511);
+    for (q = 0; q < scn; q++) sc[q] = 1.0 + 1e-6 * (double)(q & 511);   /* the whole plane: scn is size_t */
     memcpy(scs, sc, scn * sizeof(vfft_real));
     memset(&h, 0, sizeof h);
     h.sc = sc; h.N1 = N; h.N2 = rn; h.nst = c->nst; h.R = c->R; h.L = c->L; h.f = c->f; h.tf = c->tf;
@@ -3541,7 +3555,7 @@ static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     if (best < 0) best = 0;
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[il2d] rader %dx%d p=%d inner race (reps=%d):", N, (int)rn, p, proto.reps);
+        fprintf(stderr, "[il2d] rader %dx%zu p=%d inner race (reps=%d):", N, rn, p, proto.reps);
         for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", cx[i].name, ns[i]);
         fprintf(stderr, " -> %s\n", cx[best].name);
     }
@@ -3573,7 +3587,7 @@ static void _il2d_col_rd0_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
         if (best < 0) best = 0;
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[il2d] rader %dx%d p=%d width race:", N, (int)rn, p);
+            fprintf(stderr, "[il2d] rader %dx%zu p=%d width race:", N, rn, p);
             for (i = 0; i < na; i++) fprintf(stderr, " %s=%.0f", cx[i].name, ns[i]);
             fprintf(stderr, " -> %s\n", cx[best].name);
         }
@@ -3625,8 +3639,8 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
         if (_il2d_apply_forms(Rs, nst, pin, ff, fb))
             snprintf(forms, fsz, "%s", pin);
         else
-            _vfft_warn("VFFT_IL2D_FORMS=%s does not fit chain at %dx%d - ignored",
-                       pin, N, (int)rn);
+            _vfft_warn("VFFT_IL2D_FORMS=%s does not fit chain at %dx%zu - ignored",
+                       pin, N, rn);
         return;
     }
     if (!W || W->vw2_off_2d)
@@ -3637,20 +3651,20 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
         if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
         {
             if (getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d] %s %dx%d: replay %s src=wisdom\n", base, N, (int)rn, forms);
+                fprintf(stderr, "[il2d] %s %dx%zu: replay %s src=wisdom\n", base, N, rn, forms);
             return;
         }
-        _vfft_warn("banked %s=%s does not fit chain at %dx%d - re-racing",
-                   base, forms, N, (int)rn);
+        _vfft_warn("banked %s=%s does not fit chain at %dx%zu - re-racing",
+                   base, forms, N, rn);
         (void)_il2d_resolve(Rs, nst, ff, fb);
     }
-    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half, T, nat, key->lm) && forms[0])
+    if (_il2d_race_forms(N, rn, Rs, nst, ff, fb, forms, fsz, half, T, nat, key->lm) && forms[0])
     {
         const int banked = vw2_ilcol_forms_bank_base(&W->vw2, key, base, forms);
         if (banked)
             _vw2_persist(W, cfg);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] %s %dx%d: raced -> %s, %s\n", base, N, (int)rn, forms,
+            fprintf(stderr, "[il2d] %s %dx%zu: raced -> %s, %s\n", base, N, rn, forms,
                     banked ? "banked" : "NOT banked yet (no chain row; the create re-banks once it lands)");
     }
 }
@@ -3777,8 +3791,8 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     vfft_aligned_free(zo);
     c->tpc = (tt < tb);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[il2d] tpc race at N=%d x %lu lanes: blu %.0f us, turned %.0f us -> %s\n",
-                N, (unsigned long)rn, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
+        fprintf(stderr, "[il2d] tpc race at N=%d x %zu lanes: blu %.0f us, turned %.0f us -> %s\n",
+                N, rn, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
     vw2_ilcol_tok_seti(&W->vw2, key, "tpc", c->tpc);
     _vw2_persist(W, cfg);
     if (c->tpc)
@@ -3829,17 +3843,20 @@ static void _il2d_lmform_of(const vw2_ilcol_key_t *key, const vfft_cfg_t *cfg, _
  * it per column axis with a rank-3 key and the axis as the token suffix.
  * The banked axis verdicts (band width, fusion, row route, column MT + its
  * T, the N1-arm verdict) come back through the out-parameters, -1 = unraced.
- * Returns 1; 0 = REFUSED (loud), the descriptor freed. */
+ * Returns 1; 0 = REFUSED (loud), the descriptor freed. *oom (may be NULL) = 1
+ * when the refusal is OUT OF MEMORY (the chain race's planes): the recorded
+ * reason is that cause, and a caller keeps it rather than writing its own. */
 static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
                            vfft_ilcol_t *c, char *forms, size_t fsz,
-                           int *bwl, int *btf, int *bro, int *bcmt, int *bcmtt, int *bblu)
+                           int *bwl, int *btf, int *bro, int *bcmt, int *bcmtt, int *bblu, int *oom)
 {
     int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1;
     int il2d_bcmt = -1, il2d_bcmtt = -1, il2d_bblu = -1;
     int il2d_tbl_done = 0;
     int il2d_rd_replayed = 0;   /* the Rader stage's inner and width came from the row (no race) */
-    _il2d_blu_ctx.N2 = (int)rn;   /* the Bluestein inner's chain provider: this axis's row length */
+    if (oom) *oom = 0;
+    _il2d_blu_ctx.N2 = rn;        /* the Bluestein inner's chain provider: this axis's row length (size_t, the lanes) */
     _il2d_blu_ctx.key = key;      /* ... and the row its verdict belongs on */
     _il2d_blu_ctx.rep_R = NULL;
     _il2d_blu_ctx.rep_nst = 0;
@@ -3882,8 +3899,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 !_il2d_col_rd0_attach(W, cfg, key, c, cand[0][0], N, rn, key->nthreads, NULL))
             {   /* every candidate is a leaf chain at this one prime (the enumerator's law):
                  * the engine before the race, so every arm's table set names it */
-                _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d could not be "
-                           "built; unsupported", N, (int)rn, cand[0][0]);
+                _vfft_warn("vfft_create: IL column pass %dx%zu - the Rader stage at %d could not be "
+                           "built; unsupported", N, rn, cand[0][0]);
                 _il2d_col_free(c);
                 return 0;
             }
@@ -3894,10 +3911,17 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 _il2d_lmform_t lmf;
                 if (key->lm)
                     _il2d_lmform_of(key, cfg, &lmf);
-                int win = _il2d_race_chains(N, (int)rn, ncand, cand,
+                int win = _il2d_race_chains(N, rn, ncand, cand,
                                             lens, &bns, nat_req, /*banded=*/1, &bwl,
                                             key->lm ? 1 : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass */
                                             key->lm ? &lmf : NULL);   /* a lane-major batch: its door's serial forms in its placement, the winner's lane tile kept (its threaded forms are raced after) */
+                if (win == VFFT_IL2D_RACE_OOM)
+                {   /* OUT OF MEMORY: the race's planes could not be allocated (its reason recorded). That is no
+                     * verdict on N's chains: refused with that cause, no other route tried */
+                    if (oom) *oom = 1;
+                    _il2d_col_free(c);
+                    return 0;
+                }
                 /* nat_req, NOT key->ord: key->ord is the ROW LABEL, nat_req
                  * is which PASS this build will run. They are equal at the 2D
                  * tier and at the 3D tier's axis 1; they are NOT equal at the
@@ -3918,11 +3942,11 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     if (getenv("VFFT_IL2D_LOG"))
                     {
                         if (key->lm)
-                            fprintf(stderr, "[il2d] chain race %dx%d: the winner served best at sw=%d (%.0f ns; the lane-major race keeps the tile)\n",
-                                    N, (int)rn, lmf.wc, bns);
+                            fprintf(stderr, "[il2d] chain race %dx%zu: the winner served best at sw=%d (%.0f ns; the lane-major race keeps the tile)\n",
+                                    N, rn, lmf.wc, bns);
                         else
-                            fprintf(stderr, "[il2d] chain race %dx%d: the winner's serving form had wl=%d (%.0f ns; the axis race re-races the width)\n",
-                                    N, (int)rn, bwl, bns);
+                            fprintf(stderr, "[il2d] chain race %dx%zu: the winner's serving form had wl=%d (%.0f ns; the axis race re-races the width)\n",
+                                    N, rn, bwl, bns);
                     }
                     vw2_ilcol_chain_bank(&W->vw2, key,
                                          c->R, c->nst,
@@ -3944,8 +3968,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     if (chain_ok && il2d_bblu <= 0 && c->nst >= 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) &&
         !_il2d_col_rd0_attach(W, cfg, key, c, c->R[0], N, rn, key->nthreads, &il2d_rd_replayed))
     {   /* the Rader stage's engine, before any table set for this chain */
-        _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d could not be "
-                   "built; unsupported", N, (int)rn, c->R[0]);
+        _vfft_warn("vfft_create: IL column pass %dx%zu - the Rader stage at %d could not be "
+                   "built; unsupported", N, rn, c->R[0]);
         _il2d_col_free(c);
         return 0;
     }
@@ -3964,14 +3988,21 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
          * emitted, that means prime / unexpressible N.
          * n1 comes out NATURAL by construction, so ALL order
          * spellings are served. */
+        int bluoom = 0;
         _il2d_blu_ctx.commit = 1;   /* no chain exists: this build IS the cell's plan */
         c->blu = _il2d_blu_build(N, rn, c->R,
                                    c->L, c->f, c->b,
                                    c->tf, c->tb, &c->nst,
                                    &c->bluchf, &c->bluchb,
                                    &c->blukf, &c->blukb,
-                                   &c->bluscr);
+                                   &c->bluscr, &bluoom);
         _il2d_blu_ctx.commit = 0;
+        if (!c->blu && bluoom)
+        {   /* OUT OF MEMORY building the Bluestein route (its reason recorded): refused with that cause */
+            if (oom) *oom = 1;
+            _il2d_col_free(c);
+            return 0;
+        }
         if (c->blu)
         {
             chain_ok = 1;
@@ -3995,17 +4026,26 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
         c->natperm = _il2d_nat_perm(c->R, c->nst, N);
         if (c->natperm)
             c->natscr = (vfft_real *)vfft_aligned_alloc(   /* 64-B aligned: the strip workers' pieces of a row must not share a line */
-            
-                2 * (size_t)N * (int)rn * sizeof(vfft_real));
-        if (!c->natperm || !c->natscr)
+
+                2 * (size_t)N * rn * sizeof(vfft_real));
+        if (c->natperm && !c->natscr)
+        {   /* OUT OF MEMORY: the natural leaf's plane-sized scratch -- refused with that cause */
+            free(c->natperm);
+            c->natperm = NULL;
+            _vfft_warn("vfft_create: IL column pass %dx%zu order=NATURAL: out of memory (the natural leaf's scratch "
+                       "needs %.1f MB)", N, rn, 2.0 * (double)N * (double)rn * sizeof(vfft_real) / 1048576.0);
+            if (oom) *oom = 1;
+            { _il2d_col_free(c); return 0; }
+        }
+        if (!c->natperm)
         {
             free(c->natperm);
             c->natperm = NULL;
-            _vfft_warn("vfft_create: IL 2D c2c %dx%d "
+            _vfft_warn("vfft_create: IL 2D c2c %dx%zu "
                        "order=NATURAL - the natural leaf "
                        "permutation could not be built for "
                        "this chain; unsupported",
-                       N, (int)rn);
+                       N, rn);
             { _il2d_col_free(c); return 0; }
         }
         c->nat = 1;
@@ -4018,7 +4058,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
         {
             if (_il2d_build_tables(N, c->nst, c->R, c->L, c->tf, c->tb))
             {
-                _vfft_warn("vfft_create: IL column pass %dx%d - stage tables failed; unsupported", N, (int)rn);
+                _vfft_warn("vfft_create: IL column pass %dx%zu - stage tables failed; unsupported", N, rn);
                 _il2d_col_free(c);
                 return 0;
             }
@@ -4073,13 +4113,21 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
             /* the replayed row's chain IS the M chain (the lookup above
              * checked prod == blu): hand it to the provider rather than have
              * it re-read a row of its own */
+            int bluoom = 0;
             _il2d_blu_ctx.rep_R = c->R;
             _il2d_blu_ctx.rep_nst = c->nst;
             M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
                                  btf, btb, &bnst, &bchf, &bchb,
-                                 &bkf, &bkb, &bscr);
+                                 &bkf, &bkb, &bscr, &bluoom);
             _il2d_blu_ctx.rep_R = NULL;
             _il2d_blu_ctx.rep_nst = 0;
+            if (!M2 && bluoom)
+            {   /* OUT OF MEMORY rebuilding the banked Bluestein (its reason recorded): refused with that cause.
+                 * The descriptor holds the row's M chain here, never N's: nothing may run on past this */
+                if (oom) *oom = 1;
+                _il2d_col_free(c);
+                return 0;
+            }
             if (M2 == il2d_bblu)
             {
                 memcpy(c->R, bR, sizeof bR);
@@ -4106,9 +4154,9 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     c->nat = 0;
                 }
                 if (getenv("VFFT_IL2D_LOG"))
-                    fprintf(stderr, "[il2d] N-arm %dx%d (c2c): "
+                    fprintf(stderr, "[il2d] N-arm %dx%zu (c2c): "
                                     "replay BLUESTEIN M=%d src=wisdom\n",
-                            N, (int)rn, M2);
+                            N, rn, M2);
                 hasodd = 0;            /* verdict served */
             }
             else
@@ -4124,8 +4172,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
         else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
         {
             if (getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[il2d] N-arm %dx%d (c2c): replay "
-                                "chain src=wisdom\n", N, (int)rn);
+                fprintf(stderr, "[il2d] N-arm %dx%zu (c2c): replay "
+                                "chain src=wisdom\n", N, rn);
             hasodd = 0;                /* the chain won: no race */
         }
         if (hasodd && (!be || atoi(be) == 1) &&
@@ -4137,22 +4185,61 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
             vfft_il2p_fn bf[8], bb[8];
             vfft_real *btf[8], *btb[8];
             vfft_real *bchf, *bchb, *bkf, *bkb, *bscr;
+            int bluoom = 0;
             memset(btf, 0, sizeof btf);
             memset(btb, 0, sizeof btb);
             M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
                                  btf, btb, &bnst, &bchf, &bchb,
-                                 &bkf, &bkb, &bscr);
+                                 &bkf, &bkb, &bscr, &bluoom);
+            if (!M2 && bluoom)
+            {   /* OUT OF MEMORY building the Bluestein arm (its reason recorded): the race cannot run, and a chain kept
+                 * because memory ran out is no verdict -- refused with that cause */
+                if (oom) *oom = 1;
+                _il2d_col_free(c);
+                return 0;
+            }
             if (M2)
             {
                 vfft_real *sc = (vfft_real *)vfft_aligned_alloc(
-                    2 * (size_t)N * (int)rn * sizeof(vfft_real));
+                    2 * (size_t)N * rn * sizeof(vfft_real));
                 double tc = 1e300, tbu = 1e300;
                 int rr, use_blu = (be != NULL); /* env pin */
                 size_t i3;
+                if (!sc && !use_blu)
+                {   /* OUT OF MEMORY: the race's plane -- refused with that cause, never a chain banked unmeasured */
+                    _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (racing the chain against the "
+                               "Bluestein needs %.1f MB of planes)", N, rn, 2.0 * 2.0 * (double)N * (double)rn *
+                               sizeof(vfft_real) / 1048576.0);
+                    for (s3 = 0; s3 < bnst; s3++)
+                    {
+                        vfft_aligned_free(btf[s3]);
+                        vfft_aligned_free(btb[s3]);
+                    }
+                    vfft_aligned_free(bchf); vfft_aligned_free(bchb); vfft_aligned_free(bkf); vfft_aligned_free(bkb); vfft_aligned_free(bscr);
+                    if (oom) *oom = 1;
+                    _il2d_col_free(c);
+                    return 0;
+                }
                 if (sc && !use_blu)
                 {
-                    const size_t scn = 2 * (size_t)N * (int)rn;
+                    const size_t scn = 2 * (size_t)N * rn;
                     vfft_real *scs = (vfft_real *)vfft_aligned_alloc(scn * sizeof(vfft_real));   /* the arms run in place: the reset's seed */
+                    if (!scs)
+                    {   /* OUT OF MEMORY: the reset's seed plane -- the same refusal */
+                        _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (racing the chain against the "
+                                   "Bluestein needs %.1f MB of planes)", N, rn, 2.0 * 2.0 * (double)N * (double)rn *
+                                   sizeof(vfft_real) / 1048576.0);
+                        vfft_aligned_free(sc);
+                        for (s3 = 0; s3 < bnst; s3++)
+                        {
+                            vfft_aligned_free(btf[s3]);
+                            vfft_aligned_free(btb[s3]);
+                        }
+                        vfft_aligned_free(bchf); vfft_aligned_free(bchb); vfft_aligned_free(bkf); vfft_aligned_free(bkb); vfft_aligned_free(bscr);
+                        if (oom) *oom = 1;
+                        _il2d_col_free(c);
+                        return 0;
+                    }
                     for (i3 = 0; i3 < scn; i3++)
                         sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
                     if (scs)
@@ -4181,10 +4268,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 if (!use_blu)
                     use_blu = (tbu < tc);
                 if (getenv("VFFT_IL2D_LOG"))
-                    fprintf(stderr, "[il2d] N-arm race %dx%d "
+                    fprintf(stderr, "[il2d] N-arm race %dx%zu "
                                     "(c2c %s): chain=%.0f blu=%.0f "
                                     "-> %s\n",
-                            N, (int)rn, c->nat ? "nat" : "scr",
+                            N, rn, c->nat ? "nat" : "scr",
                             tc, tbu,
                             use_blu ? "BLUESTEIN" : "chain");
                 if (!use_blu && !be && c->nst == 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) && c->rd0 &&
@@ -4219,8 +4306,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             if (t2 - t1 < ttp) ttp = t2 - t1;
                         }
                         if (getenv("VFFT_IL2D_LOG"))
-                            fprintf(stderr, "[il2d] tpc vs the Rader chain at %dx%d: chain %.0f us, turned %.0f us -> %s\n",
-                                    N, (int)rn, tch / 1e3, ttp / 1e3, ttp < tch ? "TURNED" : "rader chain");
+                            fprintf(stderr, "[il2d] tpc vs the Rader chain at %dx%zu: chain %.0f us, turned %.0f us -> %s\n",
+                                    N, rn, tch / 1e3, ttp / 1e3, ttp < tch ? "TURNED" : "rader chain");
                         if (ttp < tch)
                             use_blu = 2;   /* the turned pass serves: the Bluestein marker, tpc = 1 */
                         else
@@ -4307,10 +4394,10 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     {
         /* Split is NOT a fallback of IL — no convert wrapper.
          * An inexpressible N refuses loudly. */
-        _vfft_warn("vfft_create: IL 2D c2c %dx%d — N has no "
+        _vfft_warn("vfft_create: IL 2D c2c %dx%zu — N has no "
                    "native column chain (radices 4..64, no "
                    "leftover factor)%s",
-                   N, (int)rn,
+                   N, rn,
                    " and the Bluestein column route could "
                    "not be built");
         { _il2d_col_free(c); return 0; }
@@ -4319,15 +4406,15 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     if (!c->blu && !il2d_tbl_done &&
         _il2d_build_tables(N, c->nst, c->R, c->L, c->tf, c->tb))
     {
-        _vfft_warn("vfft_create: IL column pass %dx%d — stage tables failed; unsupported",
-                   N, (int)rn);
+        _vfft_warn("vfft_create: IL column pass %dx%zu — stage tables failed; unsupported",
+                   N, rn);
         _il2d_col_free(c);
         return 0;
     }
     if (!c->blu && c->nst >= 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) && (!c->rd0 || !c->tf[0] || !c->tb[0]))
     {   /* the chain's Rader stage must have its engine and the descriptor's tags */
-        _vfft_warn("vfft_create: IL column pass %dx%d - the Rader stage at %d has no engine on the plan; unsupported",
-                   N, (int)rn, c->R[0]);
+        _vfft_warn("vfft_create: IL column pass %dx%zu - the Rader stage at %d has no engine on the plan; unsupported",
+                   N, rn, c->R[0]);
         _il2d_col_free(c);
         return 0;
     }

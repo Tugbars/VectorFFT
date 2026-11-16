@@ -410,7 +410,9 @@ static int _zr2c_dp_ready = 0;
  * class: the fold reads natural bins), each candidate gated (its forward
  * against the planner's own reference; a c2r child's backward by roundtrip)
  * and timed inside the composite's pass. Banks nothing; returns the winner's
- * in-role ns, 1e18 when nothing built. `pr` receives the winner's prime cell
+ * in-role ns, 1e18 when nothing built, -1 when the planner's planes were
+ * refused (out of memory: the reason recorded, nothing raced; the create
+ * refuses). `pr` receives the winner's prime cell
  * (its method and inner) when the winner is PRIME, zero otherwise; `fs_out`
  * the race's private store when the winner is a four-step (its child's rows
  * are in it), NULL otherwise. `pcell` (may be NULL) carries the prime cell
@@ -448,9 +450,20 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
     role.aff = aff;
     if (!_zr2c_dp_ready || n + 8 > _zr2c_dp_ctx.max_N)
     {   /* the planes hold the CCE plane (N/2 + 1 complex) the fold writes */
+        const int pn = n + 8 > 4096 ? n + 8 : 4096;
         if (_zr2c_dp_ready)
             vfft_il_dp_destroy(&_zr2c_dp_ctx);
-        vfft_il_dp_init(&_zr2c_dp_ctx, n + 8 > 4096 ? n + 8 : 4096);
+        _zr2c_dp_ready = 0;
+        if (vfft_il_dp_init(&_zr2c_dp_ctx, pn) != 0)
+        {   /* OUT OF MEMORY: the context is empty and not ready (the next
+             * create starts it again); nothing raced, the create refuses */
+            vfft_aligned_free(aff);
+            vfft_aligned_free(role.scr);
+            _vfft_wisdom_free((vfft_wisdom *)S);
+            _vfft_warn("vfft_create: %s N=%d: out of memory (measuring the c2c(%d) child needs %.1f MB of planes)",
+                       _vfft_tname(cfg->transform), N, n, (double)vfft_il_dp_planes_bytes(pn) / 1048576.0);
+            return -1.0;
+        }
         _zr2c_dp_ready = 1;
     }
     if (cfg->rigor != VFFT_MEASURE)
@@ -543,8 +556,12 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int r
     struct vfft_zr2c_kid_s *kid;
     if (!child)
     {
+        double ns;
         _vfft_wisdom_free((vfft_wisdom *)fsS);
-        if (_zr2c_kid_race(cfg, N, route, &raced, &rpr, &fsS, NULL) >= 1e17)
+        ns = _zr2c_kid_race(cfg, N, route, &raced, &rpr, &fsS, NULL);
+        if (ns < 0.0)
+            return NULL;   /* out of memory: the race recorded the reason */
+        if (ns >= 1e17)
         {
             _vfft_warn("vfft_create: zr2c child c2c(%d) has no plan in the real role", half);
             return NULL;
@@ -735,10 +752,12 @@ static void _zr2c_arm_run(void *v)
  * child raced in the real role, then the two FULL composites through
  * _exec_zr2c, the faster one taken. Banks
  * nothing: the door's engine race banks the cell's winner (zrp_build.h), zr2c
- * included. */
+ * included. *oom = 1 (NULL returned) when a route's child race ran out of
+ * memory: the reason is recorded and the create refuses. */
 static struct vfft_plan_s *_zr2c_build(const vfft_cfg_t *cfg, int N,
-                                       struct vfft_wisdom_s *W)
+                                       struct vfft_wisdom_s *W, int *oom)
 {
+    *oom = 0;
     _zr2c_race_W = (W && !W->vw2_off_oop) ? W : NULL;   /* the child's four-step candidates borrow from here */
     /* 1. env — the racing hook. Beats wisdom, never banks. */
     {
@@ -764,8 +783,23 @@ static struct vfft_plan_s *_zr2c_build(const vfft_cfg_t *cfg, int N,
     _zr2c_prime_t p0, p1, pc;   /* pc: the prime cell, raced once for both routes */
     struct vfft_wisdom_s *f0, *f1;
     memset(&pc, 0, sizeof pc);
-    struct vfft_plan_s *h0 = _zr2c_kid_race(cfg, N, 0, &c0, &p0, &f0, &pc) < 1e17 ? _zr2c_build_route(cfg, N, 0, &c0, &p0, f0) : NULL;
-    struct vfft_plan_s *h1 = _zr2c_kid_race(cfg, N, 1, &c1, &p1, &f1, &pc) < 1e17 ? _zr2c_build_route(cfg, N, 1, &c1, &p1, f1) : NULL;
+    struct vfft_plan_s *h0 = NULL, *h1 = NULL;
+    double kns = _zr2c_kid_race(cfg, N, 0, &c0, &p0, &f0, &pc);
+    if (kns < 0.0)
+    {   /* out of memory: refused with its reason */
+        *oom = 1;
+        return NULL;
+    }
+    h0 = kns < 1e17 ? _zr2c_build_route(cfg, N, 0, &c0, &p0, f0) : NULL;
+    kns = _zr2c_kid_race(cfg, N, 1, &c1, &p1, &f1, &pc);
+    if (kns < 0.0)
+    {
+        if (h0)
+            vfft_destroy((vfft_plan)h0);
+        *oom = 1;
+        return NULL;
+    }
+    h1 = kns < 1e17 ? _zr2c_build_route(cfg, N, 1, &c1, &p1, f1) : NULL;
     if (!h0 || !h1) /* one route builds: it serves */
         return h0 ? h0 : h1;
 

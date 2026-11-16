@@ -35,7 +35,8 @@ static vfft_plan _c2c_oop_finish_il(struct vfft_plan_s *h, int zt_mt,
  * its route names is not the one built, or a form names a kernel this build
  * does not have. Such a row is EMPTY (owner, 2026-10-04) and the caller races
  * the cell from scratch; what this call built from the default paths is not
- * the cell's plan. */
+ * the cell's plan. *stale = -1 (NULL returned) when the plan race ran out of
+ * memory: the reason is recorded and the caller refuses the create. */
 static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
                                                  struct vfft_wisdom_s *W,
                                                  int N, int *stale)
@@ -88,7 +89,13 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
          (ki->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N)) ||   /* a prime verdict where a chain carries N: stale, the chains race */
          _k1fs_row_stale(W, N, scr_req, 0, _vfft_plan_threads(cfg), ki)))   /* a four-step verdict without its child: stale */
     {
-        if (_k1_il_plan_race(W, cfg, N) > 0)
+        const int lines = _k1_il_plan_race(W, cfg, N);
+        if (lines < 0)
+        {   /* out of memory: refused with its reason, never the IL default */
+            *stale = -1;
+            return NULL;
+        }
+        if (lines > 0)
         {
             if (_vfft_plan_threads(cfg) > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
                 _vw2_persist(W, cfg);   /* the race banked the one-thread row: its copy at T */
@@ -427,6 +434,8 @@ static vfft_plan _vfft_create_c2c_oop_il(const vfft_cfg_t *cfg,
     {
         int stale = 0;
         struct vfft_plan_s *hk = _c2c_oop_create_k1_il(cfg, W, N, &stale);
+        if (stale < 0)
+            return NULL;   /* out of memory: refused with its reason (_k1_il_plan_race) */
         if (stale && !cfg->recalibrate)
         {   /* THE BANKED ROW IS EMPTY (owner, 2026-10-04: "that entry is
              * obsoleted ... should be re-raced and the winner has to be picked
@@ -439,6 +448,12 @@ static vfft_plan _vfft_create_c2c_oop_il(const vfft_cfg_t *cfg,
             fprintf(stderr, "[wisdom2] c2c N=%d out of place: the banked row does not build in this "
                             "library -- the cell is raced from scratch\n", N);
             h2 = _c2c_oop_create_k1_il(&rc, W, N, &stale2);
+            if (stale2 < 0)
+            {   /* out of memory in the re-race: refused with its reason, not the stale build */
+                if (hk)
+                    vfft_destroy((vfft_plan)hk);
+                return NULL;
+            }
             if (h2)
             {
                 if (hk)

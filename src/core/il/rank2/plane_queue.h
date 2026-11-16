@@ -102,6 +102,15 @@ static void _pq_grp_tramp(void *v)
     _ilndr_execute_group(a->plan->ilndr, a->src, a->dst, a->member, a->G, a->bar);
 }
 
+/* the shared plane counter: 64 bits, as the plane count (pq_n, size_t) is -- a batch may hold more than
+ * 2^31 planes, and a 32-bit counter (Windows' LONG) wraps there: it went negative and every worker
+ * stopped, so no plane from 2^31 on was run */
+#ifdef _WIN32
+typedef LONG64 _pq_counter_t;
+#else
+typedef long long _pq_counter_t;
+#endif
+
 typedef struct
 {
     struct vfft_plan_s *plan; /* this worker's serial clone */
@@ -109,7 +118,7 @@ typedef struct
     vfft_dir_t dir;
     const double *src;
     double *dst;
-    volatile long *next;      /* the shared plane counter */
+    volatile _pq_counter_t *next;   /* the shared plane counter */
 } _pq_arg;
 
 static void _pq_tramp(void *v)
@@ -119,15 +128,15 @@ static void _pq_tramp(void *v)
     for (;;)
     {
 #ifdef _WIN32
-        const long p = InterlockedIncrement(a->next) - 1;
+        const size_t p = (size_t)(InterlockedIncrement64(a->next) - 1);
 #else
-        const long p = __sync_fetch_and_add(a->next, 1);
+        const size_t p = (size_t)__sync_fetch_and_add(a->next, 1);
 #endif
-        if ((size_t)p >= P)
+        if (p >= P)
             return;
         _vfft_exec6((vfft_plan)a->plan, a->dir,
-                     (double *)(a->src + (size_t)p * a->h->pq_sdist), NULL,
-                     a->dst + (size_t)p * a->h->pq_ddist, NULL);
+                     (double *)(a->src + p * a->h->pq_sdist), NULL,
+                     a->dst + p * a->h->pq_ddist, NULL);
     }
 }
 
@@ -165,7 +174,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
     else if (h->pq_mt == 1 && h->pq_wn > 0)
     {
         _pq_arg a[THREAD_POOL_MAX_DISPATCH];
-        volatile long next = 0;
+        volatile _pq_counter_t next = 0;
         /* pq_wn = the clones built at create (the plan's own snapshot); the
          * pool's one clamp bounds it by the LIVE pool too, so a pool that
          * shrank since create can no longer be over-dispatched. */

@@ -139,8 +139,6 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
     if (rank >= 2)
     {   /* the first axis over the spectrum's lanes, natural: the C2C rank-2 and rank-3 batch's (no unbanded pick), its
          * column at one thread and the C2C threaded test after the turned pass is cleared */
-        if (lanes > INT_MAX)
-            return est_refuse(why, whylen, "a lane-major real batch of %lld lanes: past the doors' lane count", lanes);
         if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, out->T > 1 ? EST_LM_MT : 0, p, why, whylen))
             return -1;
         p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
@@ -163,11 +161,11 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
          * at one thread (8: 6 cells faster, 12 slower, 1.145 against the walk; 16: 1.054) */
         if (top && p->col.nst > 1 && !p->col.rd_n && p->col.blu <= 0 && 16LL * N1 * lanes > (long long)m->l1d)
         {
-            int lad[6], n = _il2d_sw_ladder(N1, (int)lanes, 1, lad, 6), i;
+            int lad[6], n = _il2d_sw_ladder(N1, (size_t)lanes, 1, lad, 6), i;
             for (i = 0; i < n; i++)
                 if (lad[i] > p->sw && lad[i] <= EST_LMR_TILE_MAX && (long long)lad[i] < lanes &&
                     16LL * N1 * lad[i] <= (long long)m->l2 &&
-                    vfft_policy_lm_tile_ok(lad[i], (int)lanes, p->col.nat && p->col.nst > 1))
+                    vfft_policy_lm_tile_ok(lad[i], (size_t)lanes, p->col.nat && p->col.nst > 1))
                     p->sw = lad[i];
         }
         if (!(out->child = (est_planlmr_t *)calloc(1, sizeof *out->child)))
@@ -206,10 +204,10 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
     }
     if (K >= EST_LMR_TILE_K && !p->col.rd_n && p->col.blu <= 0)
     {
-        int lad[6], n = _il2d_sw_ladder((int)M, (int)K, 1, lad, 6), i;
+        int lad[6], n = _il2d_sw_ladder((int)M, K, 1, lad, 6), i;
         for (i = 0; i < n; i++)
             if (lad[i] > p->sw && lad[i] <= EST_LMR_TILE_MAX && (size_t)lad[i] < K && 16 * M * lad[i] <= (long long)m->l2 &&
-                vfft_policy_lm_tile_ok(lad[i], (int)K, 0))
+                vfft_policy_lm_tile_ok(lad[i], K, 0))
                 p->sw = lad[i];
     }
     return 0;
@@ -234,17 +232,17 @@ static inline void est__lmr_key(vw2_ilcol_key_t *ck, const est_planlmr_t *p)
     ck->rank = p->rank;
     ck->n0 = p->N1;
     if (p->rank == 1)
-        ck->n1 = (int)p->K;
+        ck->n1 = p->K;
     else if (p->rank == 2)
     {
-        ck->n1 = p->N2;
-        ck->n2 = (int)p->K;
+        ck->n1 = (size_t)p->N2;
+        ck->n2 = p->K;
     }
     else
     {
-        ck->n1 = p->N2;
-        ck->n2 = p->N3;
-        ck->q = (int)p->K;
+        ck->n1 = (size_t)p->N2;
+        ck->n2 = (size_t)p->N3;
+        ck->q = p->K;
         ck->ip = p->ip;
     }
     ck->ord = VW2_ORD_NAT;

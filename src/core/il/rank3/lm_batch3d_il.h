@@ -30,7 +30,7 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     vfft_ilcol_t col;
     vfft_cfg_t rc;
     char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1;
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0;
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
@@ -40,19 +40,20 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
         return NULL;
     }
     memset(&ck, 0, sizeof ck);
-    ck.rank = 3; ck.n0 = N1; ck.n1 = N2; ck.n2 = N3; ck.q = (int)K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;
+    ck.rank = 3; ck.n0 = N1; ck.n1 = (size_t)N2; ck.n2 = (size_t)N3; ck.q = K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;
     /* the Bluestein inner's chain provider for this create, as the 2D create sets it: the lanes are the width */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
-    _il2d_blu_ctx.N2 = (int)lanes;
+    _il2d_blu_ctx.N2 = lanes;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     memset(&col, 0, sizeof col);
     forms[0] = 0;
     if (!_il2d_col_build(W, cfg, &ck, N1, lanes, vfft_policy_lm_axis_nat(ord), &col, forms, sizeof forms,
-                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, &oom))
     {
-        _vfft_warn("vfft_create: lane-major interleaved 3D batch %dx%dx%d x %zu: no column pass serves the first axis "
-                   "(the column builder refused); unsupported", N1, N2, N3, K);
+        if (!oom)   /* out of memory: the builder's reason stands */
+            _vfft_warn("vfft_create: lane-major interleaved 3D batch %dx%dx%d x %zu: no column pass serves the first axis "
+                       "(the column builder refused); unsupported", N1, N2, N3, K);
         return NULL;
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -97,9 +98,10 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     rc.recalibrate = cfg->recalibrate;
     h->lm_row = h->lm_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
     if (!h->lm_row)
-    {
-        _vfft_warn("vfft_create: lane-major interleaved 3D batch %dx%dx%d x %zu: the child (the lane-major 2D batch at "
-                   "%dx%d x %zu) did not build; unsupported", N1, N2, N3, K, N2, N3, K);
+    {   /* the child's own reason first (an out of memory among them), then whose child it was */
+        char why[VFFT_ERR_CAP];
+        snprintf(why, sizeof why, "%s", h->lm_rowS ? _vfft_err_buf : "vfft_create: out of memory (the child's store)");
+        _vfft_warn("%s [the child of the lane-major interleaved 3D batch %dx%dx%d x %zu]", why, N1, N2, N3, K);
         vfft_child_store_free(h->lm_rowS);
         _il2d_col_free(&h->il2d_col);
         free(h);
@@ -111,8 +113,14 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
         (void)_lm2d_clones_build(h, &rc, T);
     }
     if (T <= 1 && !h->il2d_col.blu && !h->il2d_col.tpc)
-        (void)_lm_sscr_build(&h->il2d_col, N1, (int)lanes, 1);   /* the first axis's serial dense tiles' scratch */
-    _lm_race(h, W, cfg, &ck, bcmt);
+        (void)_lm_sscr_build(&h->il2d_col, N1, lanes, 1);   /* the first axis's serial dense tiles' scratch */
+    if (_lm_race(h, W, cfg, &ck, bcmt))
+    {   /* OUT OF MEMORY in the race (its reason recorded). Not retained yet (the front door retains the plan it
+         * returns): its own release is skipped */
+        h->nthreads = 1;
+        vfft_destroy((vfft_plan)h);
+        return NULL;
+    }
     if (!h->il2d_col.colmt)
         _lm2d_clones_drop(h);   /* a serial verdict runs the blocks on the primary alone */
     if (W && !W->vw2_off_2d)

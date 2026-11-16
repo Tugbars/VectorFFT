@@ -937,7 +937,8 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
  * raced and banked there on a miss). NULL, or a provider that declines,
  * means NO M chain (never a heuristic); both the 2D create and the 3D
  * tier install the provider. Set at each create's entry — planning side,
- * one at a time. */
+ * one at a time. Returns 1 = the chain, 0 = none, -1 = OUT OF MEMORY (its
+ * chain race's planes could not be allocated; the reason recorded). */
 typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst, char *forms,
                                   size_t fsz);
 static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
@@ -945,30 +946,47 @@ static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
 /* build the M-chain + tables + chirps + comb-order kernels + scratch
  * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
  * width in complex (N2 for c2c, hp1 for real). M is found in 64 bits: an M
- * past an int is no M chain (the column pool chains none that long). */
+ * past an int is no M chain (the column pool chains none that long).
+ * *oom (when given): 1 when the 0 is OUT OF MEMORY -- the inner chain race's
+ * planes, the M chain's tables, or the chirps, kernels and scratch could not
+ * be allocated (the reason recorded) -- so the caller refuses with that cause
+ * instead of reading it as "no Bluestein". */
 static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
                            vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                            vfft_real **tf, vfft_real **tb, int *nst,
                            vfft_real **chf, vfft_real **chb, vfft_real **kf,
-                           vfft_real **kb, vfft_real **scr)
+                           vfft_real **kb, vfft_real **scr, int *oom)
 {
-    int M, s2, ok = 0, served = 0;
+    int M, s2, ok = 0, served = 0, hk = 0;
     long long Mll = 16;
     vfft_real *za = NULL, *zb2 = NULL;
     char forms[64] = "";
     *chf = *chb = *kf = *kb = *scr = NULL;
+    if (oom) *oom = 0;
     while (Mll < 2LL * N1 - 1)
         Mll <<= 1;
     if (Mll > INT_MAX)
         return 0;
     M = (int)Mll;
-    if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst, forms, sizeof forms))
+    if (_il2d_blu_chain_hook)
+        hk = _il2d_blu_chain_hook(M, Rs, nst, forms, sizeof forms);
+    if (hk < 0)
+    {   /* the inner chain race ran out of memory (its reason recorded) */
+        if (oom) *oom = 1;
+        return 0;
+    }
+    if (hk)
         served = _il2d_resolve(Rs, *nst, ff, fb) &&      /* the validator is the law */
                  _il2d_apply_forms(Rs, *nst, forms, ff, fb);
     if (!served)
         return 0;   /* no provider, or it declined: no M chain, no heuristic */
     if (_il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
+    {   /* the M chain is a power of two (no Rader stage): only an allocation fails here */
+        if (oom) *oom = 1;
+        _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (the Bluestein column route's tables at M=%d)",
+                   N1, rn, M);
         return 0;
+    }
     *chf = (double *)vfft_aligned_alloc(2 * (size_t)N1 * sizeof(double));
     *chb = (double *)vfft_aligned_alloc(2 * (size_t)N1 * sizeof(double));
     *kf = (double *)vfft_aligned_alloc(2 * (size_t)M * sizeof(double));
@@ -1013,7 +1031,10 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
     vfft_aligned_free(za);
     vfft_aligned_free(zb2);
     if (!ok)
-    {
+    {   /* the chirps, kernels or the M x rn scratch could not be allocated: OUT OF MEMORY */
+        if (oom) *oom = 1;
+        _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (the Bluestein column route at M=%d needs %.1f MB)",
+                   N1, rn, M, (2.0 * (double)M * (double)rn + 4.0 * (double)M + 4.0 * (double)N1) * sizeof(double) / 1048576.0);
         vfft_aligned_free(*chf); vfft_aligned_free(*chb); vfft_aligned_free(*kf); vfft_aligned_free(*kb); vfft_aligned_free(*scr);
         *chf = *chb = *kf = *kb = *scr = NULL;
         for (s2 = 0; s2 < *nst; s2++)

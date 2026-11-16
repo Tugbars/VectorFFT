@@ -34,6 +34,7 @@
  * does the same); the guard makes it a no-op in the one-TU build, where
  * cpu_cache.h is already in scope, and lets policy_gate.c compile this
  * module on its own. */
+#include <limits.h>   /* LONG_MAX: the L2 law over a lane count (vfft_policy_fits_l2_lanes) */
 #include <stdlib.h>
 #include "cpu_cache.h"
 
@@ -287,9 +288,9 @@ static inline int vfft_policy_lm_serial_tiles(int rader_stage)
 {
     return !rader_stage;
 }
-static inline int vfft_policy_lm_tile_ok(int w, int K, int nat)
+static inline int vfft_policy_lm_tile_ok(int w, size_t K, int nat)   /* K: the lanes, size_t (w a ladder width) */
 {
-    return w < K || nat;
+    return w < 0 || (size_t)w < K || nat;
 }
 
 /* -- the 2D real lane-major batch's ROW GROUP (il/rank2/lm_batch2dr_il.h) --------
@@ -1093,6 +1094,19 @@ static inline int vfft_policy_k1_engine_present(int mono, int pair, int chain3,
 }
 
 #include "common/policy/policy_cache.h" /* L8 cache laws (layout-neutral) */
+
+/* L8 OVER A LANE COUNT (2026-11-16): the L2 ladder's law (vfft_policy_fits_l2) for a working set of rows x
+ * lanes complexes whose lane count is a size_t -- a lane-major batch's lanes (K, N2 K, N2 N3 K and the real
+ * batches' H K) and the strips cut from them. The bytes are formed in size_t, never in the long the law
+ * takes (32 bits on Windows, where (long)rows * lanes * 16 wraps from 2 GiB on), and a working set past
+ * what a long holds fits no L2 the CPU reports. Below 2^31 bytes this is the law's own answer. */
+static inline int vfft_policy_fits_l2_lanes(size_t rows, size_t lanes)
+{
+    const size_t cx = (size_t)VFFT_CX_BYTES;
+    if (rows && lanes > (size_t)LONG_MAX / cx / rows)
+        return 0;
+    return vfft_policy_fits_l2((long)(rows * lanes * cx));
+}
 
 /* ── L10. the IL REMAINDER (tail) law at 4 complex per vector ──────────
  * An IL codelet's column loop runs whole vectors; the 1..3 columns left over

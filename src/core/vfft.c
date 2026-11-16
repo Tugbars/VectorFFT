@@ -1244,14 +1244,14 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
         cfg->batch_geom != VFFT_BATCH_CONTIGUOUS && !vfft_policy_batch_lane_major(cfg))
     { /* the lane-major real batch serves r2c at an even N out of place (il/rank1/lm_batch_il.h, 2026-10-14);
        * the rest of the real lane-major space is refused with its reason until its piece */
-        _vfft_warn("vfft_create: the lane-major interleaved %s batch (N=%d, howmany=%d, batch=%s) is not "
+        _vfft_warn("vfft_create: the lane-major interleaved %s batch (N=%d, howmany=%zu, batch=%s) is not "
                    "served: %s; no native interleaved engine serves the real lane-major geometry yet "
                    "(the split real engines were retired 2026-11-06) -- name batch=VFFT_BATCH_CONTIGUOUS "
-                   "(the %d transforms end to end, 2*(N/2+1) doubles of CCE bins each)",
-                   _vfft_tname(cfg->transform), N, (int)K,
+                   "(the %zu transforms end to end, 2*(N/2+1) doubles of CCE bins each)",
+                   _vfft_tname(cfg->transform), N, K,
                    cfg->batch_geom == VFFT_BATCH_DEFAULT ? "DEFAULT" : "LANE_MAJOR",
                    (N % 2) ? "an odd N has no real column engine" : "N below 4",
-                   (int)K);
+                   K);
         return NULL;
     }
     /* TRANSFORM-CONTIGUOUS BATCH: one K=1 handle through this same front door, run K times at the per-transform block
@@ -1723,8 +1723,8 @@ static vfft_plan _vfft_create_cfg(const vfft_cfg_t *cfg)
             hp->alias_scr = (vfft_real *)vfft_aligned_alloc(hp->alias_doubles * sizeof(vfft_real));
             if (!hp->alias_scr)
             {
-                _vfft_warn("vfft_create: %s out of place: the one-buffer copy (%zu doubles) could not be allocated",
-                           _vfft_tname(hp->transform), hp->alias_doubles);
+                _vfft_warn("vfft_create: %s out of place: out of memory (the one-buffer copy, %zu doubles, could not "
+                           "be allocated)", _vfft_tname(hp->transform), hp->alias_doubles);
                 vfft_destroy(h);
                 h = NULL;
             }
@@ -2034,10 +2034,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         return used;
 
     /* 1 — config echo: what the caller asked for */
-    FP__ADD("t=%d place=%d lay=%d n=%d,%d,%d,%d q=%ld nthr=%d "
+    FP__ADD("t=%d place=%d lay=%d n=%d,%d,%d,%d q=%zu nthr=%d "
             "padded=%d exec_me=%d",
             (int)h->transform, (int)h->placement, h->layout,
-            h->N, h->N2, h->N3, h->N4, (long)h->K, h->nthreads,
+            h->N, h->N2, h->N3, h->N4, h->K, h->nthreads,
             h->padded, h->exec_me);
 
     /* 2 — route selectors: the "chose differently" surface */
@@ -2045,9 +2045,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->k1_on, h->k1_il_route,
             h->zr2c_route);
     /* zroute/ztmt/ztf left with the cascade 2026-09-15 */ /* ilme/ilrace retired 2026-09-03 with the convert machinery */
-    FP__ADD(" tcbw=%d tcmt=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
-            h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
-            h->pq_wn, h->pq_mt, (long)h->pq_n);
+    FP__ADD(" tcbw=%d tcmt=%d tcbsn=%zu tcbdn=%zu pqw=%d pqmt=%d pqn=%zu",
+            h->tcbw_n, h->tc_mt, h->tcb_sn, h->tcb_dn,
+            h->pq_wn, h->pq_mt, h->pq_n);
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d cmt=%d"
             " oddn2=%d nat=%d blu=%d turn=%d csk=%d tpc=%d]",
             h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,

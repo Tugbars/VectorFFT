@@ -265,24 +265,76 @@ typedef struct
 
 /* ── context lifecycle ─────────────────────────────────────────────────── */
 
-static void vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
+/* the bytes of the four planes a context of max_N holds (the out-of-memory refusal names them) */
+static inline size_t vfft_il_dp_planes_bytes(int max_N)
+{
+    return 4u * (size_t)max_N * 2u * sizeof(vfft_real);
+}
+
+/* THE FOUR PLANES HELD APART from a context until one takes them: a create
+ * secures its planes before it warms, races or banks anything, without
+ * touching the context its nested creates share (_k1_il_plan_race). */
+typedef struct
+{
+    vfft_real *z[4];   /* z_orig, z_in, z_out, z_ref, in that order */
+    int max_N;         /* 0 = nothing held */
+} vfft_il_dp_planes_t;
+
+static void vfft_il_dp_planes_free(vfft_il_dp_planes_t *h)
+{
+    for (int i = 0; i < 4; i++)
+        vfft_aligned_free(h->z[i]);
+    memset(h, 0, sizeof(*h));
+}
+
+/* 0, or -1 when a plane could not be allocated (out of memory): then nothing is held */
+static int vfft_il_dp_planes_alloc(vfft_il_dp_planes_t *h, int max_N)
+{
+    const size_t bytes = (size_t)max_N * 2u * sizeof(vfft_real);   /* interleaved: 2 doubles/point */
+    memset(h, 0, sizeof(*h));
+    for (int i = 0; i < 4; i++)
+        if (!(h->z[i] = (vfft_real *)vfft_aligned_alloc(bytes)))
+        {
+            vfft_il_dp_planes_free(h);
+            return -1;
+        }
+    h->max_N = max_N;
+    return 0;
+}
+
+/* a new context on the planes h holds (taken: h is left empty) */
+static void vfft_il_dp_init_held(vfft_il_dp_context_t *ctx, vfft_il_dp_planes_t *h)
 {
     memset(ctx, 0, sizeof(*ctx));
-    ctx->max_N = max_N;
-    ctx->buf_total = (size_t)max_N * 2u;     /* interleaved: 2 doubles/point  */
+    ctx->max_N = h->max_N;
+    ctx->buf_total = (size_t)h->max_N * 2u;  /* interleaved: 2 doubles/point  */
     ctx->believe_cached_cost = 1;
     ctx->beam = VFFT_IL_DP_BEAM_MEASURE;
-
-    size_t bytes = ctx->buf_total * sizeof(vfft_real);
-    ctx->z_orig = (vfft_real *)vfft_aligned_alloc(bytes);
-    ctx->z_in   = (vfft_real *)vfft_aligned_alloc(bytes);
-    ctx->z_out  = (vfft_real *)vfft_aligned_alloc(bytes);
-    ctx->z_ref  = (vfft_real *)vfft_aligned_alloc(bytes);
+    ctx->z_orig = h->z[0];
+    ctx->z_in   = h->z[1];
+    ctx->z_out  = h->z[2];
+    ctx->z_ref  = h->z[3];
+    memset(h, 0, sizeof(*h));
 
     /* Deterministic seed so two runs bench identical data (as dp_planner.h). */
     srand(42);
     for (size_t i = 0; i < ctx->buf_total; i++)
         ctx->z_orig[i] = (double)rand() / RAND_MAX - 0.5;
+}
+
+/* 0, or -1 when a plane could not be allocated (out of memory): then nothing
+ * is held and the context is empty (max_N 0, every plane NULL), so the caller
+ * refuses the create and the next create starts the context again. */
+static int vfft_il_dp_init(vfft_il_dp_context_t *ctx, int max_N)
+{
+    vfft_il_dp_planes_t h;
+    if (vfft_il_dp_planes_alloc(&h, max_N) != 0)
+    {
+        memset(ctx, 0, sizeof(*ctx));
+        return -1;
+    }
+    vfft_il_dp_init_held(ctx, &h);
+    return 0;
 }
 
 static void vfft_il_dp_destroy(vfft_il_dp_context_t *ctx)

@@ -31,10 +31,16 @@ static struct vfft_plan_s *_vfft_create_real_il(const vfft_cfg_t *cfg,
                                                 struct vfft_wisdom_s *W,
                                                 int N, int *refused)
 {
-    struct vfft_plan_s *hz = (N & 1) ? _real_il_odd_build(cfg, N, W) : _real_il_build(cfg, N, W);
+    int oom = 0;
+    struct vfft_plan_s *hz = (N & 1) ? _real_il_odd_build(cfg, N, W) : _real_il_build(cfg, N, W, &oom);
     *refused = 0;
     if (hz)
         return hz; /* the banked engine, or the race's winner: banks its own cell */
+    if (oom)
+    {   /* out of memory: the race recorded the reason; the door keeps it */
+        *refused = 1;
+        return NULL;
+    }
     if (N & 1)
     {
         _vfft_warn("vfft_create: %s odd N=%d %s: no IL real engine built at this cell "

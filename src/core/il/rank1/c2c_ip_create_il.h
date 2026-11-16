@@ -87,6 +87,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_cfg_t *cfg,
     if (!getenv("VFFT_NO_NAT_ILP"))
     {
         int stale = _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);   /* ilp: a PRIME verdict */
+        if (stale < 0)
+        {   /* out of memory in the plan race: refused with its reason, no default plan */
+            free(h);
+            return NULL;
+        }
         if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp &&
             _k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b) < 0)
             stale = 1;
@@ -109,6 +114,11 @@ static vfft_plan _c2c_ip_create_il(const vfft_cfg_t *cfg,
             rcfg.recalibrate = 1;
             cfg = &rcfg;
             stale = _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd, &ztt, &fs, &ilp);
+            if (stale < 0)
+            {   /* out of memory in the re-race: refused with its reason */
+                free(h);
+                return NULL;
+            }
             if (!il2 && !il3 && !ifd && !ztt && !fs && !ilp &&
                 _k1_il_mono_candidate(W, cfg, N, &mono_f, &mono_b) < 0)
                 stale = 1;

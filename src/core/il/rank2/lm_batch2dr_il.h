@@ -138,7 +138,7 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
     vfft_ilcol_t col;
     vfft_cfg_t rc;
     char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1;
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0;
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
@@ -148,19 +148,20 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
         return NULL;
     }
     memset(&ck, 0, sizeof ck);
-    ck.rank = 2; ck.n0 = N1; ck.n1 = N2; ck.n2 = (int)K; ck.ord = VW2_ORD_NAT; ck.real = 1; ck.nthreads = T; ck.lm = 1;
+    ck.rank = 2; ck.n0 = N1; ck.n1 = (size_t)N2; ck.n2 = K; ck.ord = VW2_ORD_NAT; ck.real = 1; ck.nthreads = T; ck.lm = 1;
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
-    _il2d_blu_ctx.N2 = (int)lanes;
+    _il2d_blu_ctx.N2 = lanes;
     _il2d_blu_chain_hook = _il2d_blu_m_chain;
     memset(&col, 0, sizeof col);
     forms[0] = 0;
     /* the first axis: a complex column pass over the spectrum's width, natural (the leaf redirection) */
     if (!_il2d_col_build(W, cfg, &ck, N1, lanes, /*nat_req=*/1, &col, forms, sizeof forms,
-                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
+                         &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, &oom))
     {
-        _vfft_warn("vfft_create: lane-major interleaved 2D %s batch %dx%d x %zu: no column pass serves the first axis "
-                   "(the column builder refused); unsupported", _vfft_tname(cfg->transform), N1, N2, K);
+        if (!oom)   /* out of memory: the builder's reason stands */
+            _vfft_warn("vfft_create: lane-major interleaved 2D %s batch %dx%d x %zu: no column pass serves the first axis "
+                       "(the column builder refused); unsupported", _vfft_tname(cfg->transform), N1, N2, K);
         return NULL;
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -203,9 +204,11 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
     rc.recalibrate = cfg->recalibrate;
     h->lm_row = h->lm_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
     if (!h->lm_row)
-    {
-        _vfft_warn("vfft_create: lane-major interleaved 2D %s batch %dx%d x %zu: the row child (the 1D real batch at "
-                   "%d x %zu) did not build; unsupported", _vfft_tname(cfg->transform), N1, N2, K, N2, K);
+    {   /* the child's own reason first (an out of memory among them), then whose child it was */
+        char why[VFFT_ERR_CAP];
+        snprintf(why, sizeof why, "%s", h->lm_rowS ? _vfft_err_buf : "vfft_create: out of memory (the row child's store)");
+        _vfft_warn("%s [the row child of the lane-major interleaved 2D %s batch %dx%d x %zu]", why,
+                   _vfft_tname(cfg->transform), N1, N2, K);
         vfft_child_store_free(h->lm_rowS);
         _il2d_col_free(&h->il2d_col);
         free(h);
@@ -215,7 +218,10 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
     {   /* the scratch the backward column pass lands in: the spectrum's size */
         h->lm_W = (vfft_real *)vfft_aligned_alloc((2 * (size_t)N1 * lanes + 8) * sizeof(vfft_real));
         if (!h->lm_W)
-        {
+        {   /* OUT OF MEMORY: the spectrum-sized scratch -- refused with that cause */
+            _vfft_warn("vfft_create: lane-major interleaved 2D %s batch %dx%d x %zu: out of memory (its backward "
+                       "column scratch needs %.1f MB)", _vfft_tname(cfg->transform), N1, N2, K,
+                       (2.0 * (double)N1 * (double)lanes + 8.0) * sizeof(vfft_real) / 1048576.0);
             vfft_destroy((vfft_plan)h->lm_row);
             vfft_child_store_free(h->lm_rowS);
             _il2d_col_free(&h->il2d_col);
@@ -248,8 +254,14 @@ static vfft_plan _vfft_create_lm2dr_il(const vfft_cfg_t *cfg, struct vfft_wisdom
         (void)_lm2d_clones_build(h, &rc, T);
     }
     if (T <= 1 && !h->il2d_col.blu && !h->il2d_col.tpc)
-        (void)_lm_sscr_build(&h->il2d_col, N1, (int)lanes, 1);
-    _lm_race(h, W, cfg, &ck, bcmt);
+        (void)_lm_sscr_build(&h->il2d_col, N1, lanes, 1);
+    if (_lm_race(h, W, cfg, &ck, bcmt))
+    {   /* OUT OF MEMORY in the race (its reason recorded). Not retained yet (the front door retains the plan it
+         * returns): its own release is skipped */
+        h->nthreads = 1;
+        vfft_destroy((vfft_plan)h);
+        return NULL;
+    }
     if (!h->il2d_col.colmt)
         _lm2d_clones_drop(h);
     if (W && !W->vw2_off_2d)

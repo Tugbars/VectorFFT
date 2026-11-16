@@ -281,7 +281,7 @@ static int _il2d_rax_build(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const
         _il2d_blu_ctx.W = h->il2d_raxS;
         _il2d_blu_ctx.cfg = &cc;
         ok = _il2d_col_build(h->il2d_raxS, &cc, &ck, M, rn2, /*nat_req=*/0, &h->il2d_rax_col, forms, sizeof forms,
-                             &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu);
+                             &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL);
         _il2d_blu_ctx.W = W0;
         _il2d_blu_ctx.cfg = c0;
         if (!ok)

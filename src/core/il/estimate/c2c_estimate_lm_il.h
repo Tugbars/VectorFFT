@@ -126,7 +126,7 @@ static inline void est__lm_threaded(const est_machine_t *m, est_planlm_t *p, lon
                        16LL * p->N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
     p->cmt = 1;
     p->mtarm = strips;
-    p->msw = strips ? est__msw_2d(m, p->N1, (int)lanes, p->T) : 0;
+    p->msw = strips ? est__msw_2d(m, p->N1, lanes, p->T) : 0;
 }
 /* est__plan_lm: est_plan_lm's body under opts: EST_LM_TPC the prime column's switch to the turned prime pass (its door
  * admits the pass: a c2c axis 0 only, il2d_tier.h _il2d_tpc_admits; without it a Rader column keeps its stage at every
@@ -164,9 +164,7 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
     out->K = K;
     out->T = T > 1 ? T : 1;
     out->nat = nat;
-    lanes = est__lm_lanes(out);
-    if (lanes > INT_MAX)
-        return est_refuse(why, whylen, "a lane-major batch of %lld lanes: past the doors' lane count", lanes);
+    lanes = est__lm_lanes(out);   /* 64-bit through the column planner and the doors: past INT_MAX too */
     if (nat)   /* a natural pass: the lane-major set count, and on one thread its one-stage form (est__col_chain_r) */
         rules = EST_ND_R_LMSET | ((out->T > 1 || (opts & EST_LM_MT)) ? 0u : EST_ND_R_LMONE);
     if (est_col_plan_r(m, N1, lanes, nat, rules, &out->col, why, whylen))
@@ -216,15 +214,15 @@ static inline int est__preflight_lm(const est_planlm_t *p, char *why, size_t why
         return est_refuse(why, whylen, "the lane-major batch %s: the column pass is not its pass over %lld lanes", sh, lanes);
     if (p->sw)
     {
-        n = _il2d_sw_ladder(p->N1, (int)lanes, 1, lad, 6);
+        n = _il2d_sw_ladder(p->N1, (size_t)lanes, 1, lad, 6);
         for (i = 0, in = 0; i < n; i++)
             in |= lad[i] == p->sw;
-        if (!in || !vfft_policy_lm_tile_ok(p->sw, (int)lanes, p->col.nat && p->col.nst > 1))
+        if (!in || !vfft_policy_lm_tile_ok(p->sw, (size_t)lanes, p->col.nat && p->col.nst > 1))
             return est_refuse(why, whylen, "the lane-major batch %s: the serial tile %d is not one its door races", sh, p->sw);
     }
     if (p->T > 1)
     {
-        n = _il2d_sw_ladder(p->N1, (int)lanes, p->T, lad, 6);
+        n = _il2d_sw_ladder(p->N1, (size_t)lanes, p->T, lad, 6);
         for (i = 0, in = (p->msw == 0); i < n; i++)
             in |= lad[i] == p->msw;
         if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
@@ -260,17 +258,17 @@ static inline void est__lm_key(vw2_ilcol_key_t *ck, const est_planlm_t *p)
     ck->rank = p->rank;
     ck->n0 = p->N1;
     if (p->rank == 1)
-        ck->n1 = (int)p->K;
+        ck->n1 = p->K;
     else if (p->rank == 2)
     {
-        ck->n1 = p->N2;
-        ck->n2 = (int)p->K;
+        ck->n1 = (size_t)p->N2;
+        ck->n2 = p->K;
     }
     else
     {
-        ck->n1 = p->N2;
-        ck->n2 = p->N3;
-        ck->q = (int)p->K;
+        ck->n1 = (size_t)p->N2;
+        ck->n2 = (size_t)p->N3;
+        ck->q = p->K;
     }
     ck->ord = p->nat ? VW2_ORD_NAT : VW2_ORD_SCR;
     ck->nthreads = p->T;
