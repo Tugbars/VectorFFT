@@ -3,8 +3,11 @@
  *
  *   N = R[0] * ... * R[nf-1], R[0] and R[nf-1] in {4, 8}, a mid in {4, 8} or
  *   3/5/7/9/15 (the 2^a*odd band, docs/design/ztt_odd_design.md),
- *   (N / R[0]) % 4 == 0. A pow2 cell binds its FUSED codelet; a 2^a*odd cell
- *   is STAGED (one kernel call per stage and block, vfft_ztt_odd_band).
+ *   (N / R[0]) % 4 == 0; the wider lanes add their laws, and the 8-lane FP64
+ *   natural class drops the column law and takes R[nf-1] = 2 as well
+ *   (_ztt_create, VFFT_ZTT_NAT_ANY_COLS). A pow2 cell binds its FUSED
+ *   codelet; a 2^a*odd cell is STAGED (one kernel call per stage and block,
+ *   vfft_ztt_odd_band).
  *   ingest  t0tp : natural packed z legs at stride N/R0 -> the PLANE, one
  *                  run of R0 per column at run rb[c] (64-B [re x4][im x4]
  *                  blocks); twiddle-free.
@@ -96,8 +99,9 @@
  * 11-arg z ABI with the group loop inside it. The radix lists come from the
  * corpus through il_registry_<isa>.h, so a chain whose radix has no kernel is
  * refused at create, never at run time. The odd radices 3/5/7/9/15 exist for
- * the MIDS only (tmg, tmgb, tmgd): the ingest and the terminators are lane
- * lattices and stay 4/8 — the odd radix is always a mid. */
+ * the MIDS only (tmg, tmgb, tmgd): the ingest and the terminators stay 4/8
+ * (the 8-lane FP64 natural terminator, tlf / tlfi, takes 2 as well) — the odd
+ * radix is always a mid. */
 typedef void (*vfft_ztt_kfn)(const vfft_real *, const vfft_real *, vfft_real *, vfft_real *,
                              const vfft_real *, const vfft_real *,
                              size_t, size_t, size_t, size_t, size_t);
@@ -335,7 +339,8 @@ static inline size_t _ztt_fill_stage(vfft_real *tw, long L, int R, long RL, int 
  * turn lattice and the terminators' lane transposes), a mid is 4, 8 or an odd
  * 3/5/7/9/15 (its edges are radix-agnostic). At 16 lanes (FP32 avx512) the
  * INGEST is radix 16: its law R0 % 16 == 0 admits no smaller one, and the
- * 16-lane ingest kernel turns 16 digits per column. */
+ * 16-lane ingest kernel turns 16 digits per column. At 8 lanes FP64 the
+ * natural terminator may be 2 as well (_ztt_nat_term2_ok below). */
 static inline int _ztt_radix_ok(int R, int mid)
 {
     if (R == 4 || R == 8) return 1;
@@ -347,6 +352,22 @@ static inline int _ztt_ingest_ok(int R)
     if (R == 16) return 1;
 #endif
     return _ztt_radix_ok(R, 0);
+}
+/* THE 8-LANE NATURAL CLASS, FP64: the ingest t0tp radix 8 runs ANY column count -- its
+ * arithmetic unit is a half of 4 columns and every column's run is one whole block, so the
+ * 1..7 leftover columns run k-masked (cascade_z.ml emit_t0tp8_vw8_body) and (N / R0) carries
+ * no lane law; and the natural terminator tlf/tlfi may be radix 2 (its edges are
+ * radix-agnostic: each leg is REINT-stored on its own), which closes 8 . odd mids . 2 at
+ * 2^4 * odd. The plain (scrambled) class keeps its laws: t0d and tld still run whole 8-column
+ * iterations. Every other build (4 lanes, FP32) keeps its laws as well: 0 there. */
+#if VFFT_ZTT_VW == 8 && !defined(VFFT_FLOAT)
+#define VFFT_ZTT_NAT_ANY_COLS 1
+#else
+#define VFFT_ZTT_NAT_ANY_COLS 0
+#endif
+static inline int _ztt_nat_term2_ok(int R, int scr)
+{
+    return VFFT_ZTT_NAT_ANY_COLS && !scr && R == 2;
 }
 
 /* create: the validator is the law (NULL = not a ZTURN-T cell, loudly under
@@ -368,20 +389,25 @@ static inline vfft_ztt_plan_t *_ztt_create(int N, const int *chain, int nf, int 
     else if (N < 16 || N > VFFT_ZTT_MAX_N) why = "N outside 16.." VFFT_ZTT_MAX_N_STR;
     for (s = 0; !why && s < nf; s++)
     {
-        if (!(s == 0 ? _ztt_ingest_ok(chain[s]) : _ztt_radix_ok(chain[s], s < nf - 1)))
-            why = "radix not in {4, 8} at an end (16 for a 16-lane ingest), or not in {4, 8, 3, 5, 7, 9, 15} in a mid";
+        if (!(s == 0 ? _ztt_ingest_ok(chain[s]) : _ztt_radix_ok(chain[s], s < nf - 1)) &&
+            !(s == nf - 1 && s > 0 && _ztt_nat_term2_ok(chain[s], scr)))
+            why = "radix not in {4, 8} at an end (16 for a 16-lane ingest, 2 for an 8-lane FP64 natural terminator), "
+                  "or not in {4, 8, 3, 5, 7, 9, 15} in a mid";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
-    if (!why && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";
+    if (!why && (N / chain[0]) % 4 && !(VFFT_ZTT_NAT_ANY_COLS && !scr)) why = "(N / R0) % 4 != 0";
 #if VFFT_ZTT_VW >= 8
     /* THE WIDE-LANE LAWS (VW = 8 or 16 columns per vector; zil_avx512_design.md
      * §11): the natural class's ingest writes R0-runs as whole VW-column blocks;
      * the plain (scrambled) class's last stage runs whole VW-column iterations
      * of R_last-runs. Fused and staged plans alike. (At 4 lanes every chain the
      * grammar admits meets them, so AVX2 has no such checks. At 16 lanes no
-     * terminator radix meets the plain law: the natural class only.) */
-    if (!why && (N / chain[0]) % VFFT_ZTT_VW) why = "(N / R0) is not a multiple of the lane count";
+     * terminator radix meets the plain law: the natural class only.) The column
+     * law (N / R0) % VW binds the plain class (t0d) and the FP32 natural ingests;
+     * the FP64 8-lane natural ingest has its column tail (VFFT_ZTT_NAT_ANY_COLS). */
+    if (!why && (N / chain[0]) % VFFT_ZTT_VW && !(VFFT_ZTT_NAT_ANY_COLS && !scr))
+        why = "(N / R0) is not a multiple of the lane count";
     if (!why && !scr && chain[0] % VFFT_ZTT_VW)
         why = "natural: R0 is not a multiple of the lane count (the ingest's runs are not whole blocks)";
     if (!why && scr && (chain[nf - 1] % VFFT_ZTT_VW || (N / chain[nf - 1]) % VFFT_ZTT_VW))
@@ -614,8 +640,10 @@ static const int VFFT_ZTT_ODD_MIDS[] = { 15, 9, 7, 5, 3 };
  * ends), 2048 <= N <= the ceiling. The chain grammar is the planner's
  * (_il_dp_enumerate_ztt_odd): the odd part decomposed greedily
  * largest-first, its mids at every interior position, the pow2 slots over
- * ordered {4, 8}.
- * At 8 lanes the policy keeps a >= 6 only (policy_il.h vfft_policy_ztt_odd_band). */
+ * ordered {4, 8} (the 8-lane FP64 natural terminator over {2, 4, 8}).
+ * At 8 lanes the policy keeps a >= 6 only, but in the FP64 natural class,
+ * which keeps the whole band (policy_il.h vfft_policy_ztt_odd_band,
+ * vfft_policy_ztt_odd_band_nat). */
 static inline int vfft_ztt_odd_band(int N)
 {
     int m = N, a = 0, nm = 0, i;

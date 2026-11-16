@@ -44,8 +44,10 @@
  *
  * TIER GATE: radix 4/8 only, monolithic BY DESIGN (16 planes fit the ymm
  * file), except the MIDS, which carry no lane lattice and emit the odd
- * radices 3/5/7/9/15. Dft.should_spill is NOT consulted (its n>=5 clause
- * would put R=8 on the spill recipe).
+ * radices 3/5/7/9/15, and the FP64 natural terminators tlf/tlfi, which emit
+ * radix 2 as well (the last stage of the 8-lane 2^4 * odd chains 8 . odd
+ * mids . 2). Dft.should_spill is NOT consulted (its n>=5 clause would put
+ * R=8 on the spill recipe).
  *
  * Bwd kinds run with ~table_conj because the runtime tables are ALREADY
  * conjugated by the create — the double-conj trap, zil_pipeline_port.md §6.1.
@@ -542,12 +544,20 @@ let emit_codelet
                split side's lane-major flat DIT, 2026-11-06) *)
             || k.plane = P_vec)
            && List.mem radix [ 3; 5; 7; 9; 15 ])
+     (* the NATURAL TERMINATOR at radix 2 (FP64): tlf/tlfi combine R runs of
+        L >= VW columns each and REINT-store each leg on its own -- the
+        radix-agnostic edge the lattice law below names. Radix 2 closes the
+        8-lane 2^4 * odd chains (8 . odd mids . 2: the ingest takes 2^3 and
+        leaves 2^1, which no 4/8 end can take) *)
+     && not ((k.base = "tlf" || k.base = "tlfi") && k.plane = P_block && radix = 2
+             && not (Isa.is_f32 isa))
   then
     failwith
       "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
        MIDS (msz/mszt; ZTURN-T's tmg/tmgb/tmgd since 2026-09-14, ztt_odd_design.md; \
-       t0tp/tlf/tld are lane lattices and stay 4/8), which carry no lane geometry \
-       and emit odd radices 3/5/7/9/15";
+       t0tp/tld are lane lattices and stay 4/8), which carry no lane geometry \
+       and emit odd radices 3/5/7/9/15, and the FP64 natural terminators tlf/tlfi \
+       (block plane), which emit radix 2 as well";
   let vw = isa.Isa.vec_width in
   if vw <> 4 && vw <> 8 && not (vw = 16 && Isa.is_f32 isa)
   then failwith (Printf.sprintf "codelet_zsplit: no block geometry at vec_width %d" vw);
@@ -696,6 +706,8 @@ let emit_codelet
           Printf.sprintf
             (if vw = 4 then "count: ANY >= 1 (%d-column wide loop, then 2-column VEX-128 and 1-column scalar arms — il_odd_count_tail.md §3)" else "count: ANY >= 1 (%d-column wide loop, then ONE masked zmm arm for the 1..7 remainder)")
             vw
+        else if k.base = "t0tp" && k.plane = P_block && vw = 8 && not (Isa.is_f32 isa)
+        then "count: ANY >= 1 (8-column wide loop, then the 1..7 leftover columns k-masked: emit_t0tp8_vw8_body's column tail)"
         else Printf.sprintf "count %% %d == 0 (%d columns per iteration)" vw vw)
        (if not k.twiddled
         then "tw_re/tw_im unused (twiddle-free leaf)."
@@ -1621,15 +1633,32 @@ let emit_codelet
      at VW=4 (width-agnostic Isa ops), and the TURN is one 8x8 transpose of
      the 8 digit vectors per half: T_2i = re of column i over digits 0..7,
      T_2i+1 = its im — column i's whole run is ONE 128-B block. Two halves
-     (plus 0 / plus VW) = VW columns per iteration: count % VW == 0. *)
+     (plus 0 / plus VW) = VW columns per iteration.
+     THE COLUMN TAIL (FP64 AVX-512): the arithmetic's unit is one half = 4
+     columns (a zmm holds 4 interleaved complex), and a column's run is one
+     whole block whatever the column count, so count % VW is no law of the
+     ingest: the 1..7 leftover columns run the same halves once more with
+     k-masked loads (the c2c_il.ml tail's mask, 2 doubles a column: no read
+     past a leg's end) and store only the valid columns' blocks. Bitwise the
+     same per column: masking zeroes only the lanes of columns not stored. *)
+  (* The fused drivers' bodies (body_only) carry no column tail: a fused cell is a
+     power of two of 64 or more, so its count N / R0 is whole VW-column iterations
+     and the tail could never run there; their code stays the main loop alone. *)
   let emit_t0tp8_vw8_body () =
     let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
     let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
+    let tail = not (Isa.is_f32 isa) && not body_only in
     Buffer.add_string buf (Isa.shuffle_consts isa ~deint:false ~reint:false ~transpose:true);
-    Buffer.add_string buf (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
-    List.iter
-      (fun (p, plus, c0) ->
+    if tail
+    then Buffer.add_string buf (Printf.sprintf "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n" vw vw)
+    else Buffer.add_string buf (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
+    let half ~(mask : string option) (p, plus, c0) =
          let v n = p ^ n in
+         let ld addr =
+           match mask with
+           | None -> Isa.loadu_pd isa addr
+           | Some m -> Printf.sprintf "_mm512_maskz_loadu_pd(%s, &%s)" m addr
+         in
          let r4 (i0, i1, i2, i3) (o0, o1, o2, o3) =
            line (Isa.const_decl isa (v (o0 ^ "t0")) (Isa.add_pd isa (v i0) (v i2)));
            line (Isa.const_decl isa (v (o0 ^ "t1")) (Isa.sub_pd isa (v i0) (v i2)));
@@ -1647,10 +1676,11 @@ let emit_codelet
          in
          Buffer.add_string
            buf
-           (Printf.sprintf "        /* ---- half %s: columns k+%d..k+%d -> runs rb[k+%d..k+%d] (1 block each) ---- */\n"
-              (String.uppercase_ascii p) c0 (c0 + 3) c0 (c0 + 3));
+           (Printf.sprintf "        /* ---- half %s: columns k+%d..k+%d -> runs rb[k+%d..k+%d] (1 block each)%s ---- */\n"
+              (String.uppercase_ascii p) c0 (c0 + 3) c0 (c0 + 3)
+              (if mask = None then "" else ", the valid ones of the tail"));
          for l = 0 to 7 do
-           line (Isa.const_decl isa (v (string_of_int l)) (Isa.loadu_pd isa (leg_addr "zin" l "Ls" plus)))
+           line (Isa.const_decl isa (v (string_of_int l)) (ld (leg_addr "zin" l "Ls" plus)))
          done;
          for m = 0 to 3 do
            line (Isa.const_decl isa (v ("b" ^ string_of_int m))
@@ -1673,12 +1703,30 @@ let emit_codelet
               (Array.map v [| "E0"; "O0"; "E1"; "O1"; "E2"; "O2"; "E3"; "O3" |])
               (Array.init 8 (fun j -> v (Printf.sprintf "T%d" j))));
          for i = 0 to 3 do
+           if mask <> None then line (Printf.sprintf "if (_rem > %d) {" (c0 + i));
            line (Printf.sprintf "%s * __restrict__ %s = zout + %d*rb[k+%d];" el (v (Printf.sprintf "p%d" i)) (2 * radix) (c0 + i));
            sline (Isa.storeu_pd isa (Printf.sprintf "%s[0]" (v (Printf.sprintf "p%d" i))) (v (Printf.sprintf "T%d" (2 * i))));
-           sline (Isa.storeu_pd isa (Printf.sprintf "%s[%d]" (v (Printf.sprintf "p%d" i)) vw) (v (Printf.sprintf "T%d" ((2 * i) + 1))))
-         done)
-      [ "a", 0, 0; "b", vw, vw / 2 ];
-    Buffer.add_string buf "    }\n"
+           sline (Isa.storeu_pd isa (Printf.sprintf "%s[%d]" (v (Printf.sprintf "p%d" i)) vw) (v (Printf.sprintf "T%d" ((2 * i) + 1))));
+           if mask <> None then line "}"
+         done
+    in
+    List.iter (half ~mask:None) [ "a", 0, 0; "b", vw, vw / 2 ];
+    Buffer.add_string buf "    }\n";
+    if tail
+    then begin
+      Buffer.add_string
+        buf
+        "    if (k < count) {   /* THE COLUMN TAIL: 1..7 leftover columns, k-masked */\n\
+        \        const size_t _rem = count - k;\n\
+        \        const __mmask8 _tmA = _rem >= 4 ? (__mmask8)0xFF : (__mmask8)((1u << (2u * (unsigned)_rem)) - 1u);\n";
+      half ~mask:(Some "_tmA") ("a", 0, 0);
+      Buffer.add_string
+        buf
+        "        if (_rem > 4) {\n\
+        \        const __mmask8 _tmB = (__mmask8)((1u << (2u * (unsigned)(_rem - 4))) - 1u);\n";
+      half ~mask:(Some "_tmB") ("b", vw, vw / 2);
+      Buffer.add_string buf "        }\n    }\n"
+    end
   in
   (* t0tp at VW=16 (R0 = 16 by the law above; FP32 avx512, 2026-11-11): a zmm z-vector
      holds 8 columns of one leg as (re, im) pairs. The radix-16 DIF runs on those

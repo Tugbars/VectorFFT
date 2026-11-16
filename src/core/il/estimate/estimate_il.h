@@ -284,9 +284,10 @@ static inline int est_nib_bwd(int R, int leaf)
 
 /* ── ZTURN-T ────────────────────────────────────────────────────────────── */
 
-/* the create's chain laws (_ztt_create, ztt.h:344-365): 2..7 stages, the ends in {4, 8}, the mids in
+/* the create's chain laws (_ztt_create, ztt.h): 2..7 stages, the ends in {4, 8}, the mids in
  * {4, 8, 3, 5, 7, 9, 15}, product N, (N / R0) % 4 == 0; at 8 lanes (N / R0) % 8 == 0, the natural
- * class R0 % 8 == 0, the scrambled class R_last % 8 == 0 and (N / R_last) % 8 == 0 */
+ * class R0 % 8 == 0, the scrambled class R_last % 8 == 0 and (N / R_last) % 8 == 0 -- but the FP64
+ * natural class (VFFT_ZTT_NAT_ANY_COLS): R0 % 8 == 0 alone, no column law, and its terminator may be 2 */
 static inline int est_ztt_ok(long long N, const int *c, int nf, int scr)
 {
     int s;
@@ -294,9 +295,13 @@ static inline int est_ztt_ok(long long N, const int *c, int nf, int scr)
     for (s = 0; s < nf; s++)
     {
         const int R = c[s], mid = s > 0 && s < nf - 1;
-        if (!(R == 4 || R == 8 || (mid && (R == 3 || R == 5 || R == 7 || R == 9 || R == 15)))) return 0;
+        if (!(R == 4 || R == 8 || (mid && (R == 3 || R == 5 || R == 7 || R == 9 || R == 15)) ||
+              (s == nf - 1 && _ztt_nat_term2_ok(R, scr)))) return 0;
     }
-    if (est_prod(c, nf) != N || (N / c[0]) % 4) return 0;
+    if (est_prod(c, nf) != N) return 0;
+    if (VFFT_ZTT_NAT_ANY_COLS && !scr)   /* the 8-lane natural ingest runs any column count (ztt.h) */
+        return c[0] % 8 == 0;
+    if ((N / c[0]) % 4) return 0;
     if (VFFT_IL_VW == 8)
     {
         if ((N / c[0]) % 8) return 0;
@@ -446,8 +451,9 @@ static inline int est_bits(int r, int fours_first, int *c)
 }
 /* the odd band. 4 lanes: the ingest 4, the odd part greedy, largest first, then the rest of the
  * power of two as 8s and the forced 4s; a chain past 7 stages ingests 8 instead. 8 lanes: the
- * natural chain ingests 8 (t0tp exists at 8 only there); the scrambled chain ends in 8 (tld), with
- * 4 as its ingest when the power of two is 2^7. Untiled. 0 = no chain within the laws. */
+ * natural chain ingests 8 (t0tp exists at 8 only there), at FP64 a 2^4 * odd chain ends in 2
+ * (8 . mids . 2); the scrambled chain ends in 8 (tld), with 4 as its ingest when the power of two is
+ * 2^7. Untiled. 0 = no chain within the laws. */
 static inline int est_ztt_odd(long long N, int scr, int *c)
 {
     int mids[8], nm = 0, a = est_v2(N), k, i, r, head, rest[16], nr;
@@ -464,6 +470,7 @@ static inline int est_ztt_odd(long long N, int scr, int *c)
     {
         head = 8;
         nr = est_bits(a - 3, 0, rest);
+        if (a - 3 == 1 && VFFT_ZTT_NAT_ANY_COLS) { rest[0] = 2; nr = 1; }   /* 2^4 * odd: 8 . mids . 2 */
     }
     else
     {
@@ -1447,8 +1454,9 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
             return est_refuse(why, whylen, "N = %lld: no ZTURN-T chain within the create's laws", N);
         goto ztt;
     }
-    /* 5. ZTURN-T's odd band at this ISA (policy_il.h:85-88) */
-    if (N <= VFFT_ZTT_MAX_N && vfft_policy_ztt_odd_band((int)N))
+    /* 5. ZTURN-T's odd band at this ISA and order class (policy_il.h:85-88; the natural class's own,
+     * vfft_policy_ztt_odd_band_nat) */
+    if (N <= VFFT_ZTT_MAX_N && (scr ? vfft_policy_ztt_odd_band((int)N) : vfft_policy_ztt_odd_band_nat((int)N)))
     {
         k = est_ztt_odd(N, scr, c);
         if (!k) return est_refuse(why, whylen, "N = %lld: no ZTURN-T chain of at most %d stages", N, VFFT_ZTT_MAX_NF);

@@ -57,8 +57,11 @@ static int _ref_rankn_ord(const vfft_cfg_t *cfg)
  * follows what the build has), spelled apart from the module: the pow2 band
  * from its floor, 16 (4.4) at 4 lanes and 64 (8.8) at 8, where no chain below
  * meets the 8-lane laws; the odd band the engine's, at 8 lanes its multiples
- * of 64 only (a 2^4 or 2^5 multiple has no chain the 8-lane laws admit in
- * either class). Every reference below asks these. */
+ * of 64 only (a 2^4 or 2^5 multiple has no chain the 8-lane laws admit in the
+ * scrambled class, nor in FP32's natural class); the FP64 8-lane natural class
+ * keeps the engine's whole odd band (its ingest's column tail and its radix-2
+ * terminator: 8 . mids . 4 at 2^5 * odd, 8 . mids . 2 at 2^4 * odd). Every
+ * reference below asks these. */
 static int _ref_ztt_band(int N)
 {
 #if VFFT_IL_VW == 8
@@ -74,6 +77,14 @@ static int _ref_ztt_odd_band(int N)
     if (N % 64) return 0;
 #endif
     return vfft_ztt_odd_band(N);
+}
+static int _ref_ztt_odd_band_nat(int N)
+{
+#if VFFT_IL_VW == 8 && !defined(VFFT_FLOAT)
+    return vfft_ztt_odd_band(N);
+#else
+    return _ref_ztt_odd_band(N);
+#endif
 }
 /* ── L9 reference, verbatim from oop/k1_commit.h's race gate ─────────── */
 #define REF_K1_IL_PLAN_MAX_N 16384
@@ -250,7 +261,10 @@ static int _ref_prime_cell(int N)
     return N >= 2 && lpf > _ref_reg_max_prime();
 }
 #define REF_PUSH(f) do { if (n < max) out[n] = (f); n++; } while (0)
-static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
+/* oddband: the natural class's own odd band when the natural pool asks
+ * (_ref_ztt_odd_band_nat), the scrambled class's when the scrambled pool's
+ * lower band asks (_ref_ztt_odd_band) */
+static int _ref_pool_natural(int N, int with_flat, int oddband, vfft_fam_t *out, int max)
 {
     const int pow2 = (N & (N - 1)) == 0;
     int n = 0;
@@ -268,11 +282,11 @@ static int _ref_pool_natural(int N, int with_flat, vfft_fam_t *out, int max)
         if (_ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);
         return n;
     }
-    if (_ref_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_ZTT_ODD);
+    if (oddband) REF_PUSH(VFFT_FAM_ZTT_ODD);
     REF_PUSH(VFFT_FAM_MONO);
     REF_PUSH(VFFT_FAM_PAIR);
     REF_PUSH(VFFT_FAM_CHAIN3);
-    if (with_flat && !pow2 && !_ref_ztt_odd_band(N)) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
+    if (with_flat && !pow2 && !oddband) REF_PUSH(VFFT_FAM_FLAT);   /* 2026-09-22: every non-pow2 cell but the odd band's */
     if (_ref_ztt_registry_has(N)) REF_PUSH(VFFT_FAM_ZTT);
     if (with_flat && _ref_prime_cell(N)) REF_PUSH(VFFT_FAM_PRIME);   /* the prime cell: the lengths no chain carries (owner, 2026-10-02) */
     return n;
@@ -282,7 +296,7 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
     const int pow2 = (N & (N - 1)) == 0;
     int n = 0;
     if (ord == VW2_ORD_NAT)
-        return _ref_pool_natural(N, 1, out, max);
+        return _ref_pool_natural(N, 1, _ref_ztt_odd_band_nat(N), out, max);
     if (_ref_ztt_band(N))          { REF_PUSH(VFFT_FAM_ZTT);     return n; }
     if (pow2 && vfft_k1fs_band(N)) { REF_PUSH(VFFT_FAM_FS);      return n; }
     if (_ref_ztt_odd_band(N))      { REF_PUSH(VFFT_FAM_ZTT_ODD); return n; }
@@ -293,7 +307,7 @@ static int _ref_pool(int N, int ord, vfft_fam_t *out, int max)
         return n;
     }
     {   /* 2026-09-22: no longer fenced to N < 2048 or no factor of 4 */
-        n = _ref_pool_natural(N, 0, out, max);
+        n = _ref_pool_natural(N, 0, _ref_ztt_odd_band(N), out, max);
         if (!pow2) { if (n < max) out[n] = VFFT_FAM_FLAT; n++; }
         if (_ref_prime_cell(N)) { if (n < max) out[n] = VFFT_FAM_PRIME; n++; }   /* owner, 2026-10-02 */
     }

@@ -1232,23 +1232,27 @@ VFFT_IL_DECL(radix8_z_tld_bwd_avx512)
 #define VFFT_IL_TLD_BWD_RADICES(X) X(8)
 #define VFFT_IL_TLD_PAIR_RADICES(X) X(8)
 
-/* ── tlf ── fwd 2 · bwd 2 · pair 2 */
+/* ── tlf ── fwd 3 · bwd 3 · pair 3 */
+VFFT_IL_DECL(radix2_z_tlf_fwd_avx512)
 VFFT_IL_DECL(radix4_z_tlf_fwd_avx512)
 VFFT_IL_DECL(radix8_z_tlf_fwd_avx512)
+VFFT_IL_DECL(radix2_z_tlf_bwd_avx512)
 VFFT_IL_DECL(radix4_z_tlf_bwd_avx512)
 VFFT_IL_DECL(radix8_z_tlf_bwd_avx512)
-#define VFFT_IL_TLF_FWD_RADICES(X) X(4) X(8)
-#define VFFT_IL_TLF_BWD_RADICES(X) X(4) X(8)
-#define VFFT_IL_TLF_PAIR_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLF_FWD_RADICES(X) X(2) X(4) X(8)
+#define VFFT_IL_TLF_BWD_RADICES(X) X(2) X(4) X(8)
+#define VFFT_IL_TLF_PAIR_RADICES(X) X(2) X(4) X(8)
 
-/* ── tlfi ── fwd 2 · bwd 2 · pair 2 */
+/* ── tlfi ── fwd 3 · bwd 3 · pair 3 */
+VFFT_IL_DECL(radix2_z_tlfi_fwd_avx512)
 VFFT_IL_DECL(radix4_z_tlfi_fwd_avx512)
 VFFT_IL_DECL(radix8_z_tlfi_fwd_avx512)
+VFFT_IL_DECL(radix2_z_tlfi_bwd_avx512)
 VFFT_IL_DECL(radix4_z_tlfi_bwd_avx512)
 VFFT_IL_DECL(radix8_z_tlfi_bwd_avx512)
-#define VFFT_IL_TLFI_FWD_RADICES(X) X(4) X(8)
-#define VFFT_IL_TLFI_BWD_RADICES(X) X(4) X(8)
-#define VFFT_IL_TLFI_PAIR_RADICES(X) X(4) X(8)
+#define VFFT_IL_TLFI_FWD_RADICES(X) X(2) X(4) X(8)
+#define VFFT_IL_TLFI_BWD_RADICES(X) X(2) X(4) X(8)
+#define VFFT_IL_TLFI_PAIR_RADICES(X) X(2) X(4) X(8)
 
 /* ── tmg ── fwd 7 · bwd 7 · pair 7 */
 VFFT_IL_DECL(radix3_z_tmg_fwd_avx512)
@@ -1295,6 +1299,6 @@ VFFT_IL_DECL(radix15_z_tmgd_fwd_avx512)
  *   32  no 512-bit edge yet: codelet_cil renders the half stores (--cil-st128) at 256 bits, the halves of a column pair; split stores at 512 bits wait on a Zen 4 measurement (gauntlet/half_store_bench.sh)
  *   12  the row kernels' whole-load form (rowswap) was raced at 256 bits only (2026-11-08); at 512 bits the lane-load n1ccs construction serves until it is raced there
  */
-/* 945 declarations over 75 kinds */
+/* 949 declarations over 75 kinds */
 
 #endif

@@ -134,7 +134,9 @@ static inline void _ztt_mt_columns(int T, vfft_ztt_kfn fn, const vfft_real *zin,
     int w;
     for (w = 0; w < T; w++)
     {
-        const size_t lo = VFFT_ZTT_VW * (ni * (size_t)w / (size_t)T), hi = VFFT_ZTT_VW * (ni * (size_t)(w + 1) / (size_t)T);
+        const size_t lo = VFFT_ZTT_VW * (ni * (size_t)w / (size_t)T),
+                     hi = w == T - 1 ? count : VFFT_ZTT_VW * (ni * (size_t)(w + 1) / (size_t)T);   /* the last range takes
+                                         * the 8-lane natural ingest's column tail (VFFT_ZTT_NAT_ANY_COLS), 0 elsewhere */
         memset(&a[w], 0, sizeof a[w]);
         a[w].kind = 0; a[w].fn = fn;
         a[w].zin = zin + 2 * lo; a[w].zout = oshift ? zout + 2 * lo : zout;   /* the ingest stores at rb[c]*R0, absolute */

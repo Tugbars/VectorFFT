@@ -1516,7 +1516,8 @@ static void _il_dp_enumerate_ztt(int N, vfft_il_cand_sink_t *s)
 
 /* ZTURN-T at 2^a*odd (docs/design/ztt_odd_design.md): the STAGED cells —
  * no registry row; the chain GRAMMAR instead. The ends are 4 or 8 (the
- * ingest's turn lattice and the terminators' lane transposes), the odd part
+ * ingest's turn lattice and the terminators' lane transposes; the 8-lane FP64
+ * natural terminator may be 2 as well), the odd part
  * of N is decomposed greedily largest-first over {15, 9, 7, 5, 3} and its
  * mids are placed at every interior position, the pow2 slots walk ordered
  * {4, 8}, nf <= 7. Each chain x {untiled, the odd-cell ladder 8 / 16 / 32 /
@@ -1539,12 +1540,23 @@ static void _il_dp_enumerate_ztt_odd(int N, vfft_il_cand_sink_t *s, int scr)
     for (nf = nm + 2; nf <= VFFT_ZTT_MAX_NF; nf++)
     {
         const int np = nf - nm;                /* power-of-two slots */
+        /* the last pow2 slot is the chain's terminator: at 8 lanes (FP64) the natural one may be
+         * radix 2 as well (ztt.h VFFT_ZTT_NAT_ANY_COLS), a third value of that slot */
+        const int term2 = VFFT_ZTT_NAT_ANY_COLS && !scr;
         long mask;
-        for (mask = 0; mask < (1L << np); mask++)
+        for (mask = 0; mask < ((1L << np) << term2); mask++)
         {
             int pchain[VFFT_ZTT_MAX_NF], pos[VFFT_ZTT_MAX_NF];
             long prod = 1;
-            for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+            if (term2 && (mask >> np))
+            {   /* mask's top bit: the terminator is 2, the low np - 1 bits choose the rest */
+                if ((mask >> (np - 1)) & 1) continue;   /* one spelling per chain */
+                for (i = 0; i < np - 1; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+                pchain[np - 1] = 2;
+                prod *= 2;
+            }
+            else
+                for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
             if (prod != pw) continue;
             for (i = 0; i < nm; i++) pos[i] = i + 1;
             for (;;)
@@ -1552,7 +1564,7 @@ static void _il_dp_enumerate_ztt_odd(int N, vfft_il_cand_sink_t *s, int scr)
                 int chain[VFFT_ZTT_MAX_NF], pi = 0, mi = 0, q, k;
                 for (i = 0; i < nf; i++)
                     chain[i] = (mi < nm && pos[mi] == i) ? mids[mi++] : pchain[pi++];
-                if ((N / chain[0]) % 4 == 0)
+                if ((N / chain[0]) % 4 == 0 || (term2 && chain[0] % VFFT_ZTT_VW == 0))
                 {
                     vfft_il_cand_t c;
                     memset(&c, 0, sizeof c);

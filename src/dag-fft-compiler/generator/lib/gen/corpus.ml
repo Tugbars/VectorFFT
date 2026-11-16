@@ -2667,6 +2667,19 @@ let zil_pure_cells_avx512_only : (string * string list) list =
   ]
 ;;
 
+(* the 512-bit FP64 ZTURN-T cells of their own: the natural terminator at radix 2, tlf and tlfi in
+   both directions, the last stage of the 8-lane 2^4 * odd chains 8 . odd mids . 2 (cascade_z.ml's
+   tier gate admits radix 2 for these two kinds at FP64; ztt.h VFFT_ZTT_NAT_ANY_COLS). At 4 lanes
+   no chain needs a radix-2 terminator, and the FP32 corpus keeps radix 4 and 8
+   (zil_f32_ztt_in_scope). *)
+let zil_boundary_cells_avx512_only : (string * string list) list =
+  [ ( "radix2_z_tlf_avx512.c", [ "2"; "--zp-tlf"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix2_z_tlf_bwd_avx512.c", [ "2"; "--zp-tlfb"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix2_z_tlfi_avx512.c", [ "2"; "--zp-tlfi"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ; ( "radix2_z_tlfi_bwd_avx512.c", [ "2"; "--zp-tlfib"; "--isa"; "avx512"; "--uarch"; "sapphire_rapids_avx512" ] )
+  ]
+;;
+
 let chop_isa_suffix (name : string) : string =
   let sfx = "_avx2.c" in
   let ln = String.length name and ls = String.length sfx in
@@ -3053,6 +3066,7 @@ let matrix_files (quadrant : string) : (string * string list) list =
      | Some (base, isa) ->
        fst (zil_retarget ~isa (zil_base_cells base))
        @ (if base = "zil-pure" && isa = "avx512" then zil_pure_cells_avx512_only else [])
+       @ (if base = "zil-boundary" && isa = "avx512" then zil_boundary_cells_avx512_only else [])
      | None -> assert false)
   | "oop-edges-avx2" -> oop_edges_avx2_cells
   | "oop-edges-avx512" -> oop_edges_avx512_cells
