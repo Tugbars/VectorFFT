@@ -105,6 +105,8 @@ int vfft_wisdom_reread(const char *dir)
 /* the ESTIMATE create (VFFT_FLAG_ESTIMATE): after the table above, which its detectors read */
 #include "il/estimate/c2c_estimate_il.h"
 
+static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out);   /* the plan's facts, below */
+
 /* ── the public configuration into the request ── */
 static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
 {
@@ -320,9 +322,21 @@ __attribute__((noinline)) static vfft_plan _vfft_create_checked(const vfft_confi
     }
     _vfft_create_unlock();
     if (h)
+    {
+        size_t a, b;
+        _vfft_api_sizes(h, &a, &b);   /* the spans the overlap refusal reads (0 = unknown: no refusal) */
+        h->span_in = a * sizeof(vfft_real);
+        h->span_out = b * sizeof(vfft_real);
         _vfft_err_buf[0] = '\0';
+    }
     _vfft_verbose_tls = v0;
     return h;
+}
+/* an out-of-place call's two buffers share no byte: [in, in + span_in) and [out, out + span_out) apart */
+static inline int _vfft_api_disjoint(const struct vfft_plan_s *h, const vfft_real *in, const vfft_real *out)
+{
+    const uintptr_t a = (uintptr_t)in, b = (uintptr_t)out;
+    return a < b ? b - a >= h->span_in : a - b >= h->span_out;
 }
 
 /* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ── */
@@ -332,6 +346,16 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
     if (h && h->layout == VFI_LAYOUT_SPLIT && !_VFFT_IS_TRIG(h->transform))
     {
         _vfft_warn("vfft_execute: a SPLIT plan runs through vfft_execute_split(); nothing executed");
+        return;
+    }
+    if (h && h->placement != VFFT_INPLACE && in && out && out != in && !_vfft_api_disjoint(h, in, out))
+    {   /* PARTIALLY OVERLAPPING BUFFERS (vfft.h: out of place, two blocks that do not overlap -- or one buffer):
+         * the engines read the input while they write the output, so an overlap corrupts it */
+        const char *u = sizeof(vfft_real) == sizeof(float) ? "floats" : "doubles";   /* the FP32 unit's elements */
+        _vfft_warn("vfft_execute: the output buffer overlaps the input (it starts %td %s after it; this plan "
+                   "reads %zu and writes %zu %s): an out-of-place plan takes two buffers that share no element, "
+                   "or one buffer (out == in) -- nothing executed",
+                   (ptrdiff_t)(out - in), u, h->span_in / sizeof(vfft_real), h->span_out / sizeof(vfft_real), u);
         return;
     }
     if (h && h->k1_alias && in && out == in && (unsigned)dir <= (unsigned)VFFT_BACKWARD)
@@ -363,7 +387,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
     vfft_real *s = (vfft_real *)in, *d = (vfft_real *)out;
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && s && d &&
-        (h->placement == VFFT_INPLACE ? d == s : (d != s || (h->transform == VFFT_C2C && !h->k1_alias))) && h->k1_go[dir])
+        (h->placement == VFFT_INPLACE ? d == s
+                                      : d != s ? _vfft_api_disjoint(h, s, d)   /* a partial overlap: the slow door refuses it */
+                                               : (h->transform == VFFT_C2C && !h->k1_alias)) &&
+        h->k1_go[dir])
     {
         h->k1_go[dir](h, dir, s, d);
         return;
@@ -391,7 +418,18 @@ void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
 #endif
 
 /* ── the plan's facts ── */
-/* the doubles execute reads and writes (per plane under SPLIT); 0 when the product overflows */
+/* a x b, or 0 with *ovf set when the product overflows size_t */
+static size_t _vfft_api_mul(size_t a, size_t b, int *ovf)
+{
+    if (a && b > (size_t)-1 / a)
+    {
+        *ovf = 1;
+        return 0;
+    }
+    return a * b;
+}
+/* the doubles execute reads and writes (per plane under SPLIT); 0 when the product overflows (every product
+ * checked: the create refuses such a batch, so this is the second line) */
 static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out)
 {
     const int real = (h->transform == VFFT_R2C || h->transform == VFFT_C2R);
@@ -400,21 +438,22 @@ static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out
     const size_t K = h->K > 0 ? h->K : 1;
     const size_t Kp = K; /* the split padded batch (its own stride) retired 2026-11-06 */
     size_t lead = (size_t)h->N, last = (size_t)h->N, pts, half, a, b;
+    int ovf = 0;
     /* the extents: the last axis and the product of the ones before it */
-    if (h->N4 > 0)      { lead = (size_t)h->N * (size_t)h->N2 * (size_t)h->N3; last = (size_t)h->N4; }
-    else if (h->N3 > 0) { lead = (size_t)h->N * (size_t)h->N2; last = (size_t)h->N3; }
+    if (h->N4 > 0)      { lead = _vfft_api_mul(_vfft_api_mul((size_t)h->N, (size_t)h->N2, &ovf), (size_t)h->N3, &ovf); last = (size_t)h->N4; }
+    else if (h->N3 > 0) { lead = _vfft_api_mul((size_t)h->N, (size_t)h->N2, &ovf); last = (size_t)h->N3; }
     else if (h->N2 > 0) { lead = (size_t)h->N; last = (size_t)h->N2; }
     else                { lead = 1; last = (size_t)h->N; }
-    pts = lead * last;
-    half = lead * (last / 2 + 1);
+    pts = _vfft_api_mul(lead, last, &ovf);
+    half = _vfft_api_mul(lead, last / 2 + 1, &ovf);
     *in = *out = 0;
     if (trig)
     {   /* N reals in and out (SPLIT internally: one plane each) */
-        a = b = pts * Kp;
+        a = b = _vfft_api_mul(pts, Kp, &ovf);
     }
     else if (!real)
     {   /* complex points: two doubles each interleaved, one per plane split */
-        a = b = pts * (il ? K * 2 : Kp);
+        a = b = _vfft_api_mul(pts, il ? _vfft_api_mul(K, 2, &ovf) : Kp, &ovf);
     }
     else
     {   /* real points against the half spectrum; in place interleaved the plan's pitch (door 2) */
@@ -423,9 +462,9 @@ static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out
             hrow = h->il2d_ipP;
         if (il && h->N3 > 0 && h->ilndr)
             hrow = (size_t)h->ilndr->hp3;
-        half = lead * hrow;
-        a = pts * (il ? K : Kp);
-        b = half * (il ? K * 2 : Kp);
+        half = _vfft_api_mul(lead, hrow, &ovf);
+        a = _vfft_api_mul(pts, il ? K : Kp, &ovf);
+        b = _vfft_api_mul(half, il ? _vfft_api_mul(K, 2, &ovf) : Kp, &ovf);
         if (h->transform == VFFT_C2R)
         {
             const size_t t = a;
@@ -435,6 +474,8 @@ static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out
     }
     if (h->placement == VFFT_INPLACE && il && real)
         a = b = a > b ? a : b;   /* one buffer serves both roles: the larger, the real in-place plane */
+    if (ovf)
+        return;   /* a size past size_t: 0 and 0, never a wrapped count */
     *in = a;
     *out = b;
 }

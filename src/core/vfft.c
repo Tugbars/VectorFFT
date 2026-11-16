@@ -1112,6 +1112,24 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
 }
 
 static vfft_plan _vfft_k1_bind_exec(vfft_plan hp); /* vfft_execute.h: the bound K=1 IL dispatch */
+/* THE THREAD COUNT'S BOUND: a worker beyond this machine's logical CPUs has no core to run on and no measured
+ * form (the pool pins one worker per core), and the pool dispatches at most THREAD_POOL_MAX_DISPATCH workers; a
+ * count past either is refused, never clamped -- by both planning methods (the measuring create and
+ * VFFT_FLAG_ESTIMATE's). 1 = refused, the reason recorded. */
+static int _vfft_nthreads_refused(const vfft_cfg_t *cfg)
+{
+    if (cfg->nthreads < 0 || cfg->nthreads > _thread_pool_ncpu() || cfg->nthreads > THREAD_POOL_MAX_DISPATCH)
+    {
+        _vfft_warn("vfft_create: nthreads=%d is outside the pool's range: 0 or 1 (one "
+                   "thread) up to %d (this machine's %d logical CPUs, at most %d "
+                   "dispatched workers)",
+                   cfg->nthreads,
+                   _thread_pool_ncpu() < THREAD_POOL_MAX_DISPATCH ? _thread_pool_ncpu() : THREAD_POOL_MAX_DISPATCH,
+                   _thread_pool_ncpu(), THREAD_POOL_MAX_DISPATCH);
+        return 1;
+    }
+    return 0;
+}
 static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
 {
     if (!cfg)
@@ -1177,6 +1195,29 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
         _vfft_warn("vfft_create: howmany=0 invalid (batch count must be >= 1)");
         return NULL;
     }
+    {   /* THE BATCH MUST FIT ONE BUFFER: points x K transforms, every product checked in size_t, at most a quarter
+         * of the largest addressable buffer in doubles (two doubles a complex point, a real batch's padded rows
+         * within twice its points). A batch count past that (howmany = SIZE_MAX, an int -1 stored in it, or a
+         * product that wraps) is refused here, before any plan or buffer is sized on it */
+        const size_t lim = (size_t)PTRDIFF_MAX / sizeof(double) / 4;
+        const int nd = cfg->dims < 1 ? 1 : cfg->dims;
+        size_t pts = 1;
+        int d, fits = 1;
+        for (d = 0; d < nd && fits; d++)
+        {
+            fits = pts <= lim / (size_t)cfg->n[d];
+            if (fits)
+                pts *= (size_t)cfg->n[d];
+        }
+        if (fits)
+            fits = pts <= lim / K;
+        if (!fits)
+        {
+            _vfft_warn("vfft_create: howmany=%zu: a batch of that many transforms is larger than one buffer can "
+                       "address (an int -1 stored in howmany becomes SIZE_MAX)", K);
+            return NULL;
+        }
+    }
     /* Order axis (NATURAL/SCRAMBLED) — the 1D C2C scrambled<->natural selector, honored for BOTH
      * placements: 1D in-place (native scrambled vs PURE/PSWAP natural), 1D OOP (MODEB scrambled vs
      * LEAF/BAILEY2 natural), and 2D c2c (native scrambled vs a per-axis digit-reversal reorder).
@@ -1219,21 +1260,8 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
                    _vfft_tname(cfg->transform));
         return NULL;
     }
-    /* THE THREAD COUNT'S BOUND: a worker beyond this machine's logical CPUs
-     * has no core to run on and no measured form (the pool pins one worker
-     * per core), and the pool dispatches at most THREAD_POOL_MAX_DISPATCH
-     * workers; a count past either is refused, never clamped. */
-    if (cfg->nthreads < 0 || cfg->nthreads > _thread_pool_ncpu() ||
-        cfg->nthreads > THREAD_POOL_MAX_DISPATCH)
-    {
-        _vfft_warn("vfft_create: nthreads=%d is outside the pool's range: 0 or 1 (one "
-                   "thread) up to %d (this machine's %d logical CPUs, at most %d "
-                   "dispatched workers)",
-                   cfg->nthreads,
-                   _thread_pool_ncpu() < THREAD_POOL_MAX_DISPATCH ? _thread_pool_ncpu() : THREAD_POOL_MAX_DISPATCH,
-                   _thread_pool_ncpu(), THREAD_POOL_MAX_DISPATCH);
+    if (_vfft_nthreads_refused(cfg))   /* the thread count's bound (above) */
         return NULL;
-    }
     /* THE LANE-MAJOR INTERLEAVED REAL BATCH IS REFUSED (owner, 2026-10-14; field trial V02): the
      * split real engines that served it stage every slab through one scratch at the same lanes and
      * thread by the live pool's size, a data race once the pool is above 1 -- a silent misread. The
@@ -1552,6 +1580,14 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->layout == VFI_LAYOUT_IL)
         return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
 #ifndef VFFT_FLOAT
+    if (VFFT_ZTS_NCELLS == 0)
+    {   /* THE SPLIT LAYOUT HAS NO ENGINE IN THIS BUILD: zturn-ts, every split route's engine, is emitted at AVX2 only
+         * so far (split/rank1/zts.h), so an AVX-512 build serves no split request at any length -- refused here with
+         * that cause, before any size or order law names another */
+        _vfft_warn("vfft_create: the SPLIT layout is served by the AVX2 library only in this version; this is an "
+                   "AVX-512 build -- use VFFT_LAYOUT_INTERLEAVED");
+        return NULL;
+    }
     return _vfft_split_create(cfg, W, N, K);
 #else
     return NULL;   /* the FP32 front door refused every split request */

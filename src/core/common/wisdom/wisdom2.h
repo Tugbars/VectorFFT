@@ -1425,10 +1425,17 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
                     s->dir, split);
     }
     {
-        int aside = 0;
+        int aside = 0, cant_open = 0;
         for (i = 0; i < VW2_NSHARDS; i++) aside += s->nasd[i];
+        if (s->writable)
+        {   /* "writable" is said only of a folder that can take the store's files: the store's lock file is the
+             * probe a save makes (missing, a file, or read-only: it cannot be opened). A folder that fails it gets
+             * no word here -- the first save says it once ("missing or cannot be written"), when a winner is lost */
+            vw2_lock_t lk = vw2__lock_ex(s->dir, 0, &cant_open);
+            vw2__unlock(lk);
+        }
         fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s%s\n", s->dir, s->nrec,
-                s->writable ? ", writable" : ", read-only",
+                !s->writable ? ", read-only" : cant_open ? "" : ", writable",
                 worst == VW2_EVERSION ? ", SOME FILES POISONED" : "",
                 aside ? " (and rows of other builds, kept)" : "");
     }

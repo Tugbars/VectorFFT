@@ -783,6 +783,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
                    "plan-steering switch is set (unset it: estimate plans from formulas only)", env);
         return NULL;
     }
+    if (_vfft_nthreads_refused(cfg))   /* the thread count's bound, as the measuring create states it (vfft.c) */
+        return NULL;
 #ifndef VFFT_FLOAT
     if (cfg->transform == VFFT_DST2 || cfg->transform == VFFT_DST3)
     {   /* DST-II / DST-III (il/real/dst.h): its two real FFTs at N each planned here, as an R2C and a C2R

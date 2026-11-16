@@ -109,6 +109,8 @@ struct vfft_plan_s
                              * of its input made here: the input's size, allocated at create (execute
                              * allocates nothing), freed with the plan */
     size_t alias_doubles;
+    size_t span_in, span_out;  /* the bytes an execute reads and writes (vfft_info's sizes), set by the public
+                                * create: an out-of-place call whose two buffers partly overlap is refused */
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
      * is the plan's COMMITTED layout (h->layout, stamped at create — the old
