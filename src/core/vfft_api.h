@@ -257,6 +257,12 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
     c->recalibrate = (p->flags & VFFT_FLAG_RECALIBRATE) != 0;
     c->destroy_input = (p->flags & VFFT_FLAG_DESTROY_INPUT) != 0;
     c->owned_buffers = (p->flags & VFFT_FLAG_OWN_PITCH) != 0;
+    if (p->wisdom_dir && !p->wisdom_dir[0])
+    {   /* an empty path names no folder (an unset variable read as "", most likely): refused, not taken for
+         * NULL, so a winner never lands in a store the caller did not name */
+        _vfft_warn("vfft_create: wisdom_dir is an empty string: pass NULL for the library's own store, or a folder");
+        return 0;
+    }
     if (p->wisdom_dir && !(p->flags & VFFT_FLAG_ESTIMATE))   /* estimate reads no store: none is opened */
     {
         c->wisdom = _vfft_store_for_dir(p->wisdom_dir);
@@ -339,14 +345,17 @@ static inline int _vfft_api_disjoint(const struct vfft_plan_s *h, const vfft_rea
     return a < b ? b - a >= h->span_in : a - b >= h->span_out;
 }
 
-/* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ── */
-static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, vfft_real *in, vfft_real *out)
+/* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ──
+ * Both return 0 when the plan ran and -1 when the call was refused (vfft_error() says why). The full door's
+ * refusals are told by the reasons it gave (diag.h, _vfft_warn_count): every reason an execute gives is one. */
+static __attribute__((noinline)) int _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, vfft_real *in, vfft_real *out)
 {
+    const unsigned said = _vfft_warn_count;
     thread_pool_pin_t *pin;
     if (h && h->layout == VFI_LAYOUT_SPLIT && !_VFFT_IS_TRIG(h->transform))
     {
         _vfft_warn("vfft_execute: a SPLIT plan runs through vfft_execute_split(); nothing executed");
-        return;
+        return -1;
     }
     if (h && h->placement != VFFT_INPLACE && in && out && out != in && !_vfft_api_disjoint(h, in, out))
     {   /* PARTIALLY OVERLAPPING BUFFERS (vfft.h: out of place, two blocks that do not overlap -- or one buffer):
@@ -356,14 +365,13 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
                    "reads %zu and writes %zu %s): an out-of-place plan takes two buffers that share no element, "
                    "or one buffer (out == in) -- nothing executed",
                    (ptrdiff_t)(out - in), u, h->span_in / sizeof(vfft_real), h->span_out / sizeof(vfft_real), u);
-        return;
+        return -1;
     }
     if (h && h->k1_alias && in && out == in && (unsigned)dir <= (unsigned)VFFT_BACKWARD)
     {   /* AN OUT-OF-PLACE C2C PLAN CALLED WITH ONE BUFFER whose bound kernels are restrict (the solo
          * kernels): its one-buffer executor, the alias-tolerant twins (il/il_execute.h). The lean
          * compare of vfft_execute left the call here. */
-        h->k1_alias(h, dir, in, out);
-        return;
+        return h->k1_alias(h, dir, in, out) ? -1 : 0;
     }
     if (h && h->placement == VFFT_INPLACE && (h->transform == VFFT_C2C || h->dst || h->type1) && in && out && out != in &&
         (unsigned)dir <= (unsigned)VFFT_BACKWARD)
@@ -373,17 +381,19 @@ static __attribute__((noinline)) void _vfft_api_execute_slow(vfft_plan h, vfft_d
         _vfft_warn("vfft_execute: this %s plan is IN-PLACE and must be called with out == in; got "
                    "distinct pointers; for separate buffers create the plan with "
                    "placement=VFFT_PLACEMENT_OUT -- nothing executed", _vfft_tname(h->transform));
-        return;
+        return -1;
     }
     pin = (h && h->nthreads > 1) ? thread_pool_caller_arm() : NULL;   /* the caller's pin, at the first fork-join */
     _vfft_exec6(h, dir, in, NULL, out, NULL);
     if (pin)
         thread_pool_caller_release(pin);
+    return _vfft_warn_count != said ? -1 : 0;
 }
 /* THE BOUND FAST PATH (the lean door, 2026-10-11): a plan with a never-declining executor per
  * direction is entered by a jump after four compares; everything else takes the full door. A
- * plan created with more than one thread is entered through _vfft_k1_go_mt (vfft_create). */
-void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
+ * plan created with more than one thread is entered through _vfft_k1_go_mt (vfft_create). The
+ * executor's 0 is the call's: still a jump. */
+int vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
 {
     vfft_real *s = (vfft_real *)in, *d = (vfft_real *)out;
     if (h && (unsigned)dir <= (unsigned)VFFT_BACKWARD && s && d &&
@@ -391,22 +401,20 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir, const void *in, void *out)
                                       : d != s ? _vfft_api_disjoint(h, s, d)   /* a partial overlap: the slow door refuses it */
                                                : (h->transform == VFFT_C2C && !h->k1_alias)) &&
         h->k1_go[dir])
-    {
-        h->k1_go[dir](h, dir, s, d);
-        return;
-    }
-    _vfft_api_execute_slow(h, dir, s, d);
+        return h->k1_go[dir](h, dir, s, d);
+    return _vfft_api_execute_slow(h, dir, s, d);
 }
 #ifndef VFFT_FLOAT   /* the split door is FP64's alone: the FP32 unit serves interleaved plans only */
-void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
-                        const double *in_re, const double *in_im,
-                        double *out_re, double *out_im)
+int vfft_execute_split(vfft_plan h, vfft_dir_t dir,
+                       const double *in_re, const double *in_im,
+                       double *out_re, double *out_im)
 {
+    const unsigned said = _vfft_warn_count;
     if (h && (h->layout != VFI_LAYOUT_SPLIT || _VFFT_IS_TRIG(h->transform)))
     {
         _vfft_warn("vfft_execute_split: %s plan runs through vfft_execute(); nothing executed",
                    _VFFT_IS_TRIG(h->transform) ? "a real-to-real" : "an INTERLEAVED");
-        return;
+        return -1;
     }
     {
         thread_pool_pin_t *pin = (h && h->nthreads > 1) ? thread_pool_caller_arm() : NULL;
@@ -414,6 +422,7 @@ void vfft_execute_split(vfft_plan h, vfft_dir_t dir,
         if (pin)
             thread_pool_caller_release(pin);
     }
+    return _vfft_warn_count != said ? -1 : 0;
 }
 #endif
 

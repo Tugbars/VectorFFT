@@ -43,8 +43,10 @@ extern "C"
   /**
    * @brief Run an FP32 plan: in and out are complex float pairs; in place,
    *        out == in. Safe to call concurrently on different plans.
+   * @return 0 when the plan ran; -1 when the call was refused: nothing was
+   *         computed or written, and vfft_error() says why.
    */
-  VFFT_API void vfftf_execute(vfftf_plan p, vfft_dir_t dir, const void *in, void *out);
+  VFFT_API int vfftf_execute(vfftf_plan p, vfft_dir_t dir, const void *in, void *out);
 
   /** @brief Free an FP32 plan and everything it allocated. NULL is accepted. */
   VFFT_API void vfftf_destroy(vfftf_plan p);

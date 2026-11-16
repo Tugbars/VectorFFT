@@ -164,7 +164,10 @@ extern "C"
     VFFT_FLAG_OWN_PITCH = 1u << 4,     /**< the plan may choose its row pitch (an in-place
                                             INTERLEAVED 2D or 3D real plan);
                                             the caller reads it with vfft_info() */
-    VFFT_FLAG_VERBOSE = 1u << 5,       /**< print refusals and warnings to stderr as well */
+    VFFT_FLAG_VERBOSE = 1u << 5,       /**< print refusals and warnings to stderr as well
+                                            (a create that opens a wisdom store or measures
+                                            prints its [wisdom2] and [measure] lines whatever
+                                            the flags: the User Guide, Section 11.4) */
     VFFT_FLAG_ESTIMATE = 1u << 6       /**< plan by formulas from the lengths, the thread
                                             and batch count, and this machine's caches and
                                             vector width: nothing is measured at create,
@@ -213,7 +216,11 @@ extern "C"
                                      directory VFFT_WISDOM_DIR names, else this CPU's folder
                                      in the library's wisdom folder (a shared library looks
                                      for a folder named wisdom beside its own file first,
-                                     then at the path compiled in when it was built) */
+                                     then at the path compiled in when it was built). ""
+                                     is refused. A directory that is missing or cannot be
+                                     written does not fail the create: the winner is kept
+                                     for this process only, and one [wisdom2] line on
+                                     stderr says so */
   } vfft_config_t;
 
   /* ── create, execute, destroy ───────────────────────────────────────── */
@@ -254,8 +261,11 @@ extern "C"
    * end of the call, and puts the thread's affinity back; a call the plan runs
    * serially leaves the thread alone, and a thread whose affinity does not hold
    * that core stays where it is.
+   *
+   * @return 0 when the plan ran; -1 when the call was refused: nothing was
+   *         computed or written, and vfft_error() says why.
    */
-  VFFT_API void vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
+  VFFT_API int vfft_execute(vfft_plan p, vfft_dir_t dir, const void *in, void *out);
 
   /**
    * @brief Run a SPLIT plan: separate re and im planes.
@@ -263,10 +273,13 @@ extern "C"
    * C2C, the one transform the split layout serves: all four planes (in
    * place: out_re == in_re, out_im == in_im). An INTERLEAVED plan is
    * refused here.
+   *
+   * @return 0 when the plan ran; -1 when the call was refused: nothing was
+   *         computed or written, and vfft_error() says why.
    */
-  VFFT_API void vfft_execute_split(vfft_plan p, vfft_dir_t dir,
-                          const double *in_re, const double *in_im,
-                          double *out_re, double *out_im);
+  VFFT_API int vfft_execute_split(vfft_plan p, vfft_dir_t dir,
+                         const double *in_re, const double *in_im,
+                         double *out_re, double *out_im);
 
   /** @brief Free a plan and everything it allocated. NULL is accepted. */
   VFFT_API void vfft_destroy(vfft_plan p);
@@ -312,8 +325,9 @@ extern "C"
 
   /**
    * @brief Why the last vfft_create() or vfft_execute() on this thread was
-   *        refused. Static storage, "" when nothing was refused since the
-   *        thread's last create.
+   *        refused: read it when a create returns NULL or an execute -1.
+   *        Static storage, "" when nothing was refused since the thread's
+   *        last create (a call that runs leaves it as it was).
    */
   VFFT_API const char *vfft_error(void);
 

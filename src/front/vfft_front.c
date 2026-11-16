@@ -52,10 +52,10 @@ static char *front_empty(char *buf, size_t n)
 #define FRONT_VFFT(R, V)                                                                                              \
     /* vfft.h */                                                                                                      \
     R(vfft_plan, vfft_create, (const vfft_config_t *config), (config), NULL)                                          \
-    V(vfft_execute, (vfft_plan p, vfft_dir_t dir, const void *in, void *out), (p, dir, in, out))                      \
-    V(vfft_execute_split,                                                                                             \
+    R(int, vfft_execute, (vfft_plan p, vfft_dir_t dir, const void *in, void *out), (p, dir, in, out), -1)             \
+    R(int, vfft_execute_split,                                                                                        \
       (vfft_plan p, vfft_dir_t dir, const double *in_re, const double *in_im, double *out_re, double *out_im),        \
-      (p, dir, in_re, in_im, out_re, out_im))                                                                         \
+      (p, dir, in_re, in_im, out_re, out_im), -1)                                                                     \
     V(vfft_destroy, (vfft_plan p), (p))                                                                               \
     R(void *, vfft_malloc, (size_t bytes), (bytes), NULL)                                                             \
     V(vfft_free, (void *ptr), (ptr))                                                                                  \
@@ -96,7 +96,7 @@ static char *front_empty(char *buf, size_t n)
 #define FRONT_VFFTF(R, V)                                                                                             \
     /* vfftf.h */                                                                                                     \
     R(vfftf_plan, vfftf_create, (const vfft_config_t *config), (config), NULL)                                        \
-    V(vfftf_execute, (vfftf_plan p, vfft_dir_t dir, const void *in, void *out), (p, dir, in, out))                    \
+    R(int, vfftf_execute, (vfftf_plan p, vfft_dir_t dir, const void *in, void *out), (p, dir, in, out), -1)           \
     V(vfftf_destroy, (vfftf_plan p), (p))                                                                             \
     R(int, vfftf_info, (vfftf_plan p, vfft_info_t *out), (p, out), -1)
 #else

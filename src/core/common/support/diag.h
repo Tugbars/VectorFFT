@@ -42,6 +42,9 @@ char *_vfft_err_shared(void);
 static VFFT_TLS char _vfft_err_buf[VFFT_ERR_CAP];
 #endif
 static VFFT_TLS int _vfft_verbose_tls = 0;
+/* the reasons this thread has given (every _vfft_warn): an execute compares it before and after its call, and
+ * every reason an execute gives is a refusal, so a change means the call was refused (vfft_api.h) */
+static VFFT_TLS unsigned _vfft_warn_count = 0;
 static int _vfft_verbose_env(void)
 {
     static int v = -1;   /* read once; a race on the first read writes the same value */
@@ -55,6 +58,7 @@ static int _vfft_verbose_env(void)
 static void _vfft_warn(const char *fmt, ...)
 {
     va_list ap;
+    _vfft_warn_count++;
     va_start(ap, fmt);
     vsnprintf(_vfft_err_buf, VFFT_ERR_CAP, fmt, ap);
     va_end(ap);
