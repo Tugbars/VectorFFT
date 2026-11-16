@@ -3283,7 +3283,7 @@ static void _il2d_n1arm_blu(void *v)
 /* free everything a column-axis pass owns (tables, natural, Bluestein,
  * the staged scratch); the descriptor is zero afterwards */
 static void _il2d_tpc_drop(vfft_ilcol_t *c);
-/* the strips' DENSE per-worker scratch: T blocks of N x swcap
+/* the strips' DENSE per-worker scratch: T blocks of N rows of _il2d_scr_cap(swcap)
  * complexes, swcap = the widest strip a worker runs (the ladder's widest
  * admissible width, and the unsized whole range when it fits L2) */
 static int _il2d_sw_ladder(int N1, size_t N2, int T, int *out, int max);
@@ -3322,7 +3322,7 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, size_t N2, int T)
         return 0;
     for (t = 0; t < T; t++)
     {
-        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * (size_t)swcap * sizeof(vfft_real));
+        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * _il2d_scr_cap((size_t)swcap) * sizeof(vfft_real));
         if (!c->natsscr[t])
         {
             c->nnatsscr = t;
@@ -3352,8 +3352,8 @@ static int _il2d_real_sw_ladder(int N1, size_t rn, int T, int *out, int max)
             out[n++] = SW[i];
     return n;
 }
-/* the real tier's dense strip scratch: T blocks of N1 x swcap complexes, swcap = the widest ladder
- * width, or a worker's whole block where that fits L2 */
+/* the real tier's dense strip scratch: T blocks of N1 rows of _il2d_scr_cap(swcap) complexes, swcap =
+ * the widest ladder width, or a worker's whole block where that fits L2 */
 static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T)
 {
     int lad[6], nl, k, swcap = 0, t;
@@ -3372,7 +3372,7 @@ static int _il2d_real_sscr_build(vfft_ilcol_t *c, int N1, size_t rn, int T)
         return 0;
     for (t = 0; t < T; t++)
     {
-        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * (size_t)swcap * sizeof(vfft_real));
+        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * _il2d_scr_cap((size_t)swcap) * sizeof(vfft_real));
         if (!c->natsscr[t])
         {
             c->nnatsscr = t;

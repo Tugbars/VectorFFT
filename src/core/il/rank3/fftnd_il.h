@@ -767,8 +767,8 @@ static void _ilnd_free_nat(vfft_ilnd_t *d)
     d->nbufw = 0;
 }
 
-/* the strip form's scratches: one dense N[0] x nsw block per worker (tid =
- * slot), sized for the WIDEST width the race may try; 1 = present */
+/* the strip form's scratches: one dense block of N[0] rows per worker (tid =
+ * slot), sized for the WIDEST width the race may try at its pitch (_il2d_scr_cap); 1 = present */
 static void _ilnd_free_strips(vfft_ilnd_t *d)
 {
     int t;
@@ -792,7 +792,7 @@ static int _ilnd_strips_ensure(vfft_ilnd_t *d, int T, int maxw)
         return 0;
     for (t = 0; t < T; t++)
     {
-        d->sscr[t] = (double *)vfft_aligned_alloc(2 * (size_t)d->N[0] * (size_t)maxw * sizeof(double));
+        d->sscr[t] = (double *)vfft_aligned_alloc(2 * (size_t)d->N[0] * _il2d_scr_cap((size_t)maxw) * sizeof(double));
         if (!d->sscr[t])
         {
             d->nsscr = t;

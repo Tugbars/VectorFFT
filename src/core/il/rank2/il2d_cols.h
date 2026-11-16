@@ -771,15 +771,34 @@ static void _il2d_col_pass_nat_range(const vfft_real *src, vfft_real *dst,
     }
 }
 
+/* THE DENSE STRIP SCRATCH'S ROW PITCH, in complexes, for a strip of w lanes: w, and one cache line
+ * more when a row of w complexes is a multiple of 512 B. At such a pitch the rows a radix-8 stage
+ * touches (8 apart) lie a multiple of 4 KB apart -- one L1 set, one 4 KB alias class -- so whether the
+ * scratch's stores stall the plane's loads is decided by where the two buffers happen to start (the
+ * lane-major 64 x 256 batch at a 256-lane tile ran 0.98..1.52x the 32-lane tile by placement alone,
+ * and 0.74..0.96x with the line; 2026-11-16). A narrower row keeps its pitch: there the line costs a
+ * quarter or more of the scratch and bought nothing (8 and 16 lanes: 0.97..1.01x). Every builder of a
+ * strip scratch sizes its rows for its widest strip plus the line (_il2d_scr_cap). */
+#define VFFT_IL_SCR_PAD ((size_t)(64 / (2 * sizeof(vfft_real))))   /* one cache line, in complexes */
+static inline size_t _il2d_scr_pitch(size_t w)
+{
+    return (w * 2 * sizeof(vfft_real)) % 512 == 0 ? w + VFFT_IL_SCR_PAD : w;
+}
+/* the complexes a strip scratch's row is sized for: every strip up to swcap lanes, at its pitch */
+static inline size_t _il2d_scr_cap(size_t swcap)
+{
+    return swcap + VFFT_IL_SCR_PAD;
+}
+
 /* the natural pass over ONE STRIP [k, k+w) with a STRIP-PITCHED scratch:
- * scr is a dense N1 x w block (pitch w) that lives in L1/L2, so the digit reversal is
- * resolved in cache and the strip is written back in NATURAL order — in
+ * scr is a dense N1 x w block (pitch sp = _il2d_scr_pitch(w)) that lives in L1/L2, so the digit
+ * reversal is resolved in cache and the strip is written back in NATURAL order — in
  * place by construction (every row of the strip is read into scr before
  * any row of it is written). The stage kernels advance input and output by
- * ONE pitch per digit, so the pitch change of stage 0 (rn -> w) is a caller
+ * ONE pitch per digit, so the pitch change of stage 0 (rn -> sp) is a caller
  * loop over the digits (OGs = 1, the table advanced one digit's records =
  * (R-1) t2c records, _il2d_build_tables' layout); the mids run in place on
- * scr at pitch w; the leaf scatters scr -> dst (fwd) / gathers src -> scr
+ * scr at pitch sp; the leaf scatters scr -> dst (fwd) / gathers src -> scr
  * (bwd) through its separate strides. Same kernels, tables and values as
  * _il2d_col_pass_nat: the output is bitwise. Requires nst >= 2. */
 static void _il2d_col_pass_nat_strip(const vfft_real *src, vfft_real *dst, int N1,
@@ -790,7 +809,7 @@ static void _il2d_col_pass_nat_strip(const vfft_real *src, vfft_real *dst, int N
                                      const int *perm, vfft_real *scr)
 {
     const int Rl = Rst[nst - 1];
-    const size_t nstride = (size_t)(N1 / Rl) * rn;
+    const size_t nstride = (size_t)(N1 / Rl) * rn, sp = _il2d_scr_pitch(w);
     const int R0 = Rst[0], D0 = Lst[0] / R0;
     int s, b, d;
     if (!w)
@@ -798,57 +817,57 @@ static void _il2d_col_pass_nat_strip(const vfft_real *src, vfft_real *dst, int N
     if (!reverse)
     {
         if (!fns[0])   /* the Rader stage: the plane's lanes [k, k + w) into the dense strip */
-            _il2d_rd0_hook((const void *)tabs[0], src, rn, scr, w, k, 0, w, 0, (size_t)D0);
+            _il2d_rd0_hook((const void *)tabs[0], src, rn, scr, sp, k, 0, w, 0, (size_t)D0);
         else
         for (b = 0; b < N1 / Lst[0]; b++)
             for (d = 0; d < D0; d++)
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
-                fns[0](src + 2 * (row * rn + k), NULL, scr + 2 * row * w, NULL,
+                fns[0](src + 2 * (row * rn + k), NULL, scr + 2 * row * sp, NULL,
                        tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_T2CREC, NULL,
-                       (size_t)D0 * rn, rn, (size_t)D0 * w, 1, w);
+                       (size_t)D0 * rn, rn, (size_t)D0 * sp, 1, w);
             }
         for (s = 1; s < nst - 1; s++)
         {
             const int R = Rst[s], D = Lst[s] / R;
             for (b = 0; b < N1 / Lst[s]; b++)
             {
-                const size_t off = 2 * (size_t)b * Lst[s] * w;
+                const size_t off = 2 * (size_t)b * Lst[s] * sp;
                 fns[s](scr + off, NULL, scr + off, NULL, tabs[s], NULL,
-                       (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
+                       (size_t)D * sp, sp, (size_t)D * sp, (size_t)D, w);
             }
         }
         for (b = 0; b < N1 / Rl; b++)
-            fns[nst - 1](scr + 2 * (size_t)b * Rl * w, NULL,
+            fns[nst - 1](scr + 2 * (size_t)b * Rl * sp, NULL,
                          dst + 2 * ((size_t)perm[b * Rl] * rn + k), NULL,
-                         NULL, NULL, w, 0, nstride, 0, w);
+                         NULL, NULL, sp, 0, nstride, 0, w);
     }
     else
     {
         for (b = 0; b < N1 / Rl; b++)
             fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k), NULL,
-                         scr + 2 * (size_t)b * Rl * w, NULL, NULL, NULL,
-                         nstride, 0, w, 0, w);
+                         scr + 2 * (size_t)b * Rl * sp, NULL, NULL, NULL,
+                         nstride, 0, sp, 0, w);
         for (s = nst - 2; s >= 1; s--)
         {
             const int R = Rst[s], D = Lst[s] / R;
             for (b = 0; b < N1 / Lst[s]; b++)
             {
-                const size_t off = 2 * (size_t)b * Lst[s] * w;
+                const size_t off = 2 * (size_t)b * Lst[s] * sp;
                 fns[s](scr + off, NULL, scr + off, NULL, tabs[s], NULL,
-                       (size_t)D * w, w, (size_t)D * w, (size_t)D, w);
+                       (size_t)D * sp, sp, (size_t)D * sp, (size_t)D, w);
             }
         }
         if (!fns[0])   /* the Rader stage, backward: the dense strip to the plane's lanes */
-            _il2d_rd0_hook((const void *)tabs[0], scr, w, dst, rn, 0, k, w, 0, (size_t)D0);
+            _il2d_rd0_hook((const void *)tabs[0], scr, sp, dst, rn, 0, k, w, 0, (size_t)D0);
         else
         for (b = 0; b < N1 / Lst[0]; b++)
             for (d = 0; d < D0; d++)
             {
                 const size_t row = (size_t)b * Lst[0] + (size_t)d;
-                fns[0](scr + 2 * row * w, NULL, dst + 2 * (row * rn + k), NULL,
+                fns[0](scr + 2 * row * sp, NULL, dst + 2 * (row * rn + k), NULL,
                        tabs[0] + (size_t)d * (R0 - 1) * VFFT_IL_T2CREC, NULL,
-                       (size_t)D0 * w, w, (size_t)D0 * rn, 1, w);
+                       (size_t)D0 * sp, sp, (size_t)D0 * rn, 1, w);
             }
     }
 }

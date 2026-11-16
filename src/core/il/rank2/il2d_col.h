@@ -64,8 +64,9 @@ typedef struct {
                                * aligned (il2d_natural_leaf_design.md);
                                * NULL = the leaf stores at its natural stride */
     vfft_real **natsscr;         /* the threaded strips' DENSE per-worker scratch:
-                               * nnatsscr blocks of N x natswcap complexes, pitch = the strip
-                               * width (the 3D tier's strip form, _il2d_col_pass_nat_strip); the
+                               * nnatsscr blocks of N rows of _il2d_scr_cap(natswcap) complexes;
+                               * the natural strip's pitch is _il2d_scr_pitch(the strip width), the
+                               * others' the width (the 3D tier's strip form, _il2d_col_pass_nat_strip); the
                                * lane-major batches build it for the scrambled chain too (_lm_sscr_build:
                                * the real batch's fused strips, the c2c batch's blocks) */
     int nnatsscr, natswcap;

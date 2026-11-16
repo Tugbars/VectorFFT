@@ -93,7 +93,7 @@ static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin,
  * whose pass does not engage on this cell is out (the engagement counter
  * says). ── */
 /* the lane-major batches' dense strip scratch (the descriptor's natsscr fields, freed with it): T blocks
- * (one at T = 1) of M x swcap complexes, swcap the widest ladder width at this T or a worker's whole
+ * (one at T = 1) of M rows of _il2d_scr_cap(swcap) complexes, swcap the widest ladder width at this T or a worker's whole
  * range where that fits L2, or the whole plane at one thread. The real batch's fused strips (serial tiles
  * and threaded sub-strips), the c2c batch's serial dense tiles (both orders) and its scrambled blocks run
  * in it; the natural chain's threaded blocks keep their own builder (its leaf). K is the lane count, size_t;
@@ -119,7 +119,7 @@ static int _lm_sscr_build(vfft_ilcol_t *c, int M, size_t K, int T)
         return 0;
     for (t = 0; t < Tb; t++)
     {
-        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc((2 * (size_t)M * (size_t)swcap + 8) * sizeof(vfft_real));
+        c->natsscr[t] = (vfft_real *)vfft_aligned_alloc((2 * (size_t)M * _il2d_scr_cap((size_t)swcap) + 8) * sizeof(vfft_real));
         if (!c->natsscr[t])
         {
             c->nnatsscr = t;
