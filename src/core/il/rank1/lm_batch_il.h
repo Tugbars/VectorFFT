@@ -436,15 +436,33 @@ static void _lmc_unpack2(const vfft_real *W, size_t Wp, size_t wk, vfft_real *x,
         _mm256_storeu_pd(x + 4 * m, _mm256_permute4x64_pd(_mm256_loadu_pd(W + 2 * (m * Wp + wk)), 0xD8));
 }
 #endif
+/* THE BLOCK KERNELS' AVX-512 STEPS (2026-11-16): each kernel takes whole 512-bit steps first -- eight lanes a
+ * step in the pack and the unpack (eight reals of a row), four in the fold and the unfold (four complexes) --
+ * then its AVX2 steps and its plain loop for the rest. A 512-bit step is the kernel's own AVX2 step twice as
+ * wide, the same operations in the same order on every lane, so which lanes reach the plain loop does not
+ * change and every number the AVX-512 build writes is bit for bit what it was. Where two NaNs meet in the
+ * fold or the unfold, the NaN that comes out may carry another sign or payload than before (the compiler
+ * orders an FMA's operands differently in the AVX2 remainder loop). The AVX2 build does not see these steps. */
 static void _lmr_pack(const vfft_real *x, size_t K, vfft_real *W, size_t Wp, size_t wk, size_t M, size_t k0, size_t k1)
 {
     size_t m, n;
+#if defined(__AVX512F__)
+    const __m512i i0 = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11), i1 = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+#endif
     for (m = 0; m < M; m++)
     {
         const vfft_real *a = x + 2 * m * K + k0, *b = a + K;
         vfft_real *w = W + 2 * (m * Wp + wk);
         const size_t w1 = k1 - k0;
         n = 0;
+#if defined(__AVX512F__)
+        for (; n + 8 <= w1; n += 8)
+        {   /* a0..a7, b0..b7 -> a0 b0 a1 b1 a2 b2 a3 b3 | a4 b4 ... a7 b7 */
+            const __m512d va = _mm512_loadu_pd(a + n), vb = _mm512_loadu_pd(b + n);
+            _mm512_storeu_pd(w + 2 * n, _mm512_permutex2var_pd(va, i0, vb));
+            _mm512_storeu_pd(w + 2 * n + 8, _mm512_permutex2var_pd(va, i1, vb));
+        }
+#endif
 #if defined(__AVX2__)
         for (; n + 4 <= w1; n += 4)
         {
@@ -483,6 +501,22 @@ static void _lmr_fold(const vfft_real *W, size_t Wp, size_t wk, vfft_real *A, si
         const double wr = tw[2 * k], wi = tw[2 * k + 1];
         const int mirror = (2 * k < M);
         n = k0;
+#if defined(__AVX512F__)
+        {   /* the AVX2 step below, four complexes a step */
+            const __m512d cj8 = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0), half8 = _mm512_set1_pd(0.5);
+            const __m512d vwr8 = _mm512_set1_pd(wr), vwi8 = _mm512_setr_pd(-wi, wi, -wi, wi, -wi, wi, -wi, wi);
+            for (; n + 4 <= k1; n += 4)
+            {
+                const __m512d P = _mm512_loadu_pd(Pk + 2 * (n - k0)), Q = _mm512_xor_pd(_mm512_loadu_pd(Pm + 2 * (n - k0)), cj8);
+                const __m512d E = _mm512_mul_pd(half8, _mm512_add_pd(P, Q)), D = _mm512_mul_pd(half8, _mm512_sub_pd(P, Q));
+                const __m512d O = _mm512_xor_pd(_mm512_permute_pd(D, 0x55), cj8);                              /* -i D */
+                const __m512d T = _mm512_fmadd_pd(O, vwr8, _mm512_mul_pd(_mm512_permute_pd(O, 0x55), vwi8)); /* w^k O */
+                _mm512_storeu_pd(Ak + 2 * n, _mm512_add_pd(E, T));
+                if (mirror)
+                    _mm512_storeu_pd(Am + 2 * n, _mm512_xor_pd(_mm512_sub_pd(E, T), cj8));
+            }
+        }
+#endif
 #if defined(__AVX2__)
         {
             const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0), half = _mm256_set1_pd(0.5);
@@ -544,6 +578,23 @@ static void _lmc_unfold(const vfft_real *A, size_t K, vfft_real *W, size_t Wp, s
         const double wr = tw[2 * k], wi = -tw[2 * k + 1];   /* conj(w^k) */
         const int mirror = (2 * k < M);
         n = k0;
+#if defined(__AVX512F__)
+        {   /* the AVX2 step below, four complexes a step */
+            const __m512d cj8 = _mm512_setr_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0);
+            const __m512d ci8 = _mm512_setr_pd(-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0);
+            const __m512d vwr8 = _mm512_set1_pd(wr), vwi8 = _mm512_setr_pd(-wi, wi, -wi, wi, -wi, wi, -wi, wi);
+            for (; n + 4 <= k1; n += 4)
+            {
+                const __m512d P = _mm512_loadu_pd(Ak + 2 * n), Q = _mm512_xor_pd(_mm512_loadu_pd(Am + 2 * n), cj8);
+                const __m512d E = _mm512_add_pd(P, Q), D = _mm512_sub_pd(P, Q);
+                const __m512d O = _mm512_fmadd_pd(D, vwr8, _mm512_mul_pd(_mm512_permute_pd(D, 0x55), vwi8));   /* conj(w^k) D */
+                const __m512d iO = _mm512_xor_pd(_mm512_permute_pd(O, 0x55), ci8);                           /* i O */
+                _mm512_storeu_pd(Zk + 2 * (n - k0), _mm512_add_pd(E, iO));
+                if (mirror)
+                    _mm512_storeu_pd(Zm + 2 * (n - k0), _mm512_xor_pd(_mm512_sub_pd(E, iO), cj8));
+            }
+        }
+#endif
 #if defined(__AVX2__)
         {
             const __m256d cj = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
@@ -579,12 +630,23 @@ static void _lmc_unfold(const vfft_real *A, size_t K, vfft_real *W, size_t Wp, s
 static void _lmc_unpack(const vfft_real *W, size_t Wp, size_t wk, vfft_real *x, size_t K, size_t M, size_t k0, size_t k1)
 {
     size_t m, n;
+#if defined(__AVX512F__)
+    const __m512i ir = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14), ii = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+#endif
     for (m = 0; m < M; m++)
     {
         const vfft_real *w = W + 2 * (m * Wp + wk);
         vfft_real *a = x + 2 * m * K + k0, *b = a + K;
         const size_t w1 = k1 - k0;
         n = 0;
+#if defined(__AVX512F__)
+        for (; n + 8 <= w1; n += 8)
+        {   /* re0 im0 .. re7 im7 -> re0..re7 | im0..im7 */
+            const __m512d w0 = _mm512_loadu_pd(w + 2 * n), w1v = _mm512_loadu_pd(w + 2 * n + 8);
+            _mm512_storeu_pd(a + n, _mm512_permutex2var_pd(w0, ir, w1v));
+            _mm512_storeu_pd(b + n, _mm512_permutex2var_pd(w0, ii, w1v));
+        }
+#endif
 #if defined(__AVX2__)
         for (; n + 4 <= w1; n += 4)
         {

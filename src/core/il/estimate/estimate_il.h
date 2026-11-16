@@ -1408,9 +1408,16 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
     /* 3. the prime cell (vfft_policy_prime_cell, policy_il.h:173); a composite one whose Bluestein
      * inner passes the ceiling has no engine (policy_il.h:299-302) */
     if (vfft_policy_prime_cell((int)N))
-    {
-        if (!scr && N <= VFFT_ZTT_MAX_N && (k = est_rader_flat_chain(N, c)) > 0)
-            goto flat_chain;   /* the Rader-stage chain (est_rader_flat_chain) */
+    {   /* the Rader-stage chain (est_rader_flat_chain) wherever the measuring planner races the flat DIT: up to
+         * its odd ceiling, and above it in the four-step's band (policy_il.h: the non-pow2 upper band races the
+         * four-step, the flat DIT and the prime cell). The chain is one transform of N, a pass over N a stage
+         * and the Rader stage's p - 1 convolution; Bluestein is two FFTs over M >= 2N - 1 plus its chirp and
+         * pointwise passes over M (the owner's rule of 2026-10-23, taken past 262144 on 2026-11-16). Never past
+         * the measuring planner's own refusal (vfft_policy_prime_cell_unservable: no race, the door refuses),
+         * so the two planning ways serve the same lengths. */
+        if (!scr && (N <= VFFT_ZTT_MAX_N || (vfft_k1fs_band((int)N) && !vfft_policy_prime_cell_unservable((int)N))) &&
+            (k = est_rader_flat_chain(N, c)) > 0)
+            goto flat_chain;
         if (vfft_policy_prime_cell_unservable((int)N))
             return est_refuse(why, whylen, "N = %lld has a prime factor above %d and is not prime: its Bluestein "
                               "inner (2N - 1) passes %d", N, VFFT_POLICY_CHAIN_MAX_PRIME, VFFT_POLICY_INNER_MAX_N);

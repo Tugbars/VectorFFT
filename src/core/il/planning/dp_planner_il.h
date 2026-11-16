@@ -407,8 +407,12 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
          * rather than measure the default under another name - otherwise the
          * race banks a verdict for a kernel that never ran. Both directions,
          * same contract. */
-        if (vfft_il2p_apply_kv_forms(b->ip, c->il_kv) != 0) return -1;
-        if (vfft_il2p_apply_kv_forms_bwd(b->ip, c->il_bkv) != 0) return -1;
+        if (vfft_il2p_apply_kv_forms(b->ip, c->il_kv) != 0 || vfft_il2p_apply_kv_forms_bwd(b->ip, c->il_bkv) != 0)
+        {   /* the refused candidate's plan goes with it: no caller frees a failed build */
+            vfft_il2p_destroy(b->ip);
+            b->ip = NULL;
+            return -1;
+        }
         return 0;
     }
     if (c->route == VFFT_K1_IL_CHAIN3)
@@ -417,8 +421,12 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b, int i
          * the count rules live in vfft_il3p_create; NULL drops the candidate */
         b->i3 = vfft_il3p_create(N, c->R2, c->c3_A, c->c3_B);
         if (!b->i3) return -1;
-        if (vfft_il3p_apply_kv_forms(b->i3, c->il_kv) != 0) return -1;
-        if (vfft_il3p_apply_kv_forms_bwd(b->i3, c->il_bkv) != 0) return -1;
+        if (vfft_il3p_apply_kv_forms(b->i3, c->il_kv) != 0 || vfft_il3p_apply_kv_forms_bwd(b->i3, c->il_bkv) != 0)
+        {   /* as the pair above */
+            vfft_il3p_destroy(b->i3);
+            b->i3 = NULL;
+            return -1;
+        }
         return 0;
     }
     if (c->route == VFFT_K1_IL_FLAT)

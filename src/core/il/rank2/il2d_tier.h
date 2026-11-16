@@ -2645,10 +2645,10 @@ static struct {
     int commit;
 } _il2d_blu_ctx;
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns, int nat, int banded, int *best_wl, int T);
+                             const int *lens, double *best_ns, int nat, int banded, int *best_wl, int T, int lm);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz, int half, int T, int nat);
+                            size_t fsz, int half, int T, int nat, int lm);
 static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                                   const vfft_cfg_t *cfg,
                                   const vw2_ilcol_key_t *key, const char *base,
@@ -2696,7 +2696,7 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
         double bns = 0;
         _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
         if (ncand < 1) return 0;   /* (a capped pool warns from inside the enumerator) */
-        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0, /*banded=*/0, NULL, 1) : 0;   /* the inner runs unbanded */
+        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0, /*banded=*/0, NULL, 1, 0) : 0;   /* the inner runs unbanded */
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
         *nst = lens[win];
@@ -2736,7 +2736,9 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
 /* THE FORMS THROUGH THE THREADED PASS (2026-10-08): at T > 1 the rank-2 real cell times every
  * form through the pass it serves with -- the natural partition for a natural chain (its own
  * perm, scratch and staging slots), the strips otherwise -- the serial pass standing in where it
- * cannot engage; at one thread the scrambled pass in place, as before. */
+ * cannot engage; at one thread the scrambled pass in place, as before. A lane-major batch's
+ * cell (lm = 1) serves its natural leaf strided (it has no staging), so its natural arms run
+ * without the staging slots. */
 static void _il2d_arm_forms_mt(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
@@ -2757,7 +2759,7 @@ static void _il2d_arm_forms_mt(void *v)
 }
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
-                            size_t fsz, int half, int Tw, int nat)
+                            size_t fsz, int half, int Tw, int nat, int lm)
 {
     const size_t T = (size_t)N1 * N2;
     const char *pick[8];
@@ -2802,8 +2804,9 @@ static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
     {
         perm = _il2d_nat_perm(Rs, nst, N1);
         nscr = (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real));
-        nstage = (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * (size_t)Tw * sizeof(vfft_real));
-        if (!perm || !nscr || !nstage)
+        if (!lm)
+            nstage = (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * (size_t)Tw * sizeof(vfft_real));
+        if (!perm || !nscr || (!lm && !nstage))
         {   /* no natural pass to time: the scrambled strips stand in */
             free(perm); vfft_aligned_free(nscr); vfft_aligned_free(nstage);
             perm = NULL; nscr = NULL; nstage = NULL;
@@ -2920,11 +2923,19 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
  * unbanded walk and the banded walk at every width the band law admits for it,
  * each out of place z -> zo; its score is its best form (banded = 0: the
  * unbanded in-place arm alone, the Bluestein inner's). The arms of a heat stay
- * within VFFT_RACE_MAX_ARMS: the caller sizes its heats by the widths. The
- * winner's candidate index, -1 when none builds; *wns its ns, *wwl its width. */
+ * within VFFT_RACE_MAX_ARMS: the caller sizes its heats by the widths. A
+ * LANE-MAJOR batch's cell (lm = 1, il/rank1/lm_batch_il.h and the 2D / 3D
+ * lane-major doors) is never served banded or with a staged leaf (the doors
+ * pin wl = 0 and build no staging), so its arm is the unbanded plane walk
+ * with the natural leaf written at its stride (nstage NULL), out of place
+ * z -> zo: no band widths, and the caller hands no staging. The lane tile,
+ * the real batches' fused strips, the threaded form and the cell's placement
+ * are not in this race: the lane-major race (_lm_race) times them after, on
+ * the winning chain only. The winner's candidate index, -1 when none builds;
+ * *wns its ns, *wwl its width. */
 static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, const int *idx, int n,
                            int nat, vfft_real *z, const vfft_real *zseed, vfft_real *nscr, vfft_real *nstage, double *wns,
-                           vfft_real *zo, int banded, int *wwl, int T)
+                           vfft_real *zo, int banded, int *wwl, int T, int lm)
 {   /* zseed: z's seed, re-laid before every sample where the arms run in place (banded = 0) */
     struct
     {
@@ -2959,7 +2970,7 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
             free(perm);
             continue;
         }
-        if (banded)
+        if (banded && !lm)
             nwl = _il2d_race_widths(N1, N2, lens[ci], cb[nc].Ls, wlc, 14);
         if (na + 1 + nwl > VFFT_RACE_MAX_ARMS)
         {   /* the heat is full: this chain waits for the next (the caller sizes heats so this is rare) */
@@ -3050,20 +3061,20 @@ static int _il2d_race_heat(int N1, int N2, int (*cand)[8], const int *lens, cons
  * and one final. Returns the winner's index (its ns in *best_ns, from the
  * last race it ran), -1 = race impossible. */
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns, int nat, int banded, int *best_wl, int Tw)
-{
+                             const int *lens, double *best_ns, int nat, int banded, int *best_wl, int Tw, int lm)
+{   /* lm: a lane-major batch's cell: the unbanded plane walk, the leaf strided, no staging (_il2d_race_heat) */
     const size_t T = (size_t)N1 * N2;
     const size_t nslot = (size_t)(Tw > 1 ? Tw : 1);   /* the threaded arms' staging: a slot per worker */
     vfft_real *z = (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real));   /* aligned like every plane the door serves */
     vfft_real *zo = banded ? (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real)) : NULL;   /* the serving forms' destination plane */
     vfft_real *zseed = banded ? NULL : (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real));   /* the unbanded arms run in place: the reset's seed */
     vfft_real *nscr = nat ? (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real)) : NULL;   /* aligned like every plane the door serves */
-    vfft_real *nstage = nat ? (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * nslot * sizeof(vfft_real)) : NULL;   /* R_last <= 64 */
+    vfft_real *nstage = (nat && !lm) ? (vfft_real *)vfft_aligned_alloc(2 * 64 * (size_t)N2 * nslot * sizeof(vfft_real)) : NULL;   /* R_last <= 64 */
     int *surv = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     int *next = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     /* the heat's chain count: VFFT_IL2D_HEAT, or what the arm budget holds when
      * every chain brings its widths (the unbanded arm + at most 14 widths) */
-    const int heat = banded ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
+    const int heat = (banded && !lm) ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
     int ns = ncand, win = -1, wwl = 0, i, rounds = 0, heats = 0;
     double wns = 1e300;
     size_t q;
@@ -3097,7 +3108,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
             double hns;
             int hwl = 0;
             const int w = _il2d_race_heat(N1, N2, cand, lens, surv + lo, hi - lo, nat, z, zseed, nscr, nstage, &hns,
-                                          zo, banded, &hwl, Tw);
+                                          zo, banded, &hwl, Tw, lm);
             if (w >= 0)
             {
                 next[nn++] = w;
@@ -3547,7 +3558,7 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
                    base, forms, N, (int)rn);
         (void)_il2d_resolve(Rs, nst, ff, fb);
     }
-    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half, T, nat) && forms[0])
+    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz, half, T, nat, key->lm) && forms[0])
     {
         const int banked = vw2_ilcol_forms_bank_base(&W->vw2, key, base, forms);
         if (banked)
@@ -3782,7 +3793,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 int bwl = 0;
                 int win = _il2d_race_chains(N, (int)rn, ncand, cand,
                                             lens, &bns, nat_req, /*banded=*/1, &bwl,
-                                            (key->rank == 2 && key->real) ? key->nthreads : 1);   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass */
+                                            (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass */
+                                            key->lm);   /* a lane-major batch: the unbanded plane walk, the leaf strided (its tile, strips and threads are raced after) */
                 /* nat_req, NOT key->ord: key->ord is the ROW LABEL, nat_req
                  * is which PASS this build will run. They are equal at the 2D
                  * tier and at the 3D tier's axis 1; they are NOT equal at the
@@ -4157,6 +4169,12 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     {   /* the turned pass won against the Rader chain: it serves, the Bluestein tables go */
                         c->tpc = 1;
                         _il2d_blu_drop_tables(c);
+                    }
+                    else if (!be)
+                    {   /* Bluestein beat the chain: the turned pass races the Bluestein now, as the no-chain build
+                         * races it, so tpc= lands on the row in the create that adopted Bluestein (the replay of a
+                         * blu = M row reads tpc=, and races it only on a row without one) */
+                        _il2d_tpc_race(W, cfg, key, c, N, rn);
                     }
                 }
                 else
