@@ -483,13 +483,23 @@ static inline int est__col_crowds(const est_machine_t *m, int N, const int *R, i
  * whole line (AVX-512: one zmm of 4 complex = 64 bytes) no line is fetched twice, and the filter's radix-4 start only
  * adds work: on Emerald Rapids (AVX-512, one thread) the chain the pick gives without the filter ran the column pass
  * 10-24 % faster at 64x64, 128x32, 256x32, 128x128 (4.16 -> 8.8, 4.32 -> 8.16, 4.64 -> 16.16, 4.4.8 -> 8.16), the
- * planes whose chain is the same unchanged. So the filter applies only where a vector load is less than a line. */
+ * planes whose chain is the same unchanged. So the filter applies only where a vector load is less than a line.
+ * THE LANE-MAJOR BATCH'S NATURAL PASS IS NOT UNDER THIS RULE (2026-11-16; est__col_chain_r under EST_ND_R_LMSET): its
+ * filter is in force on both instruction sets. Timed on Zen 4 (Ryzen 5 PRO 8640HS: AVX-512 with every 512-bit
+ * operation run as two halves, L1d 32 KiB of 8 ways), one thread, two runs:
+ *   - a chain ran slower exactly on the lane counts where its largest count passes the 8 ways: 512 rows through
+ *     4.8.16 1.14 - 1.17 times (11 crowded lane counts of 21), 16.32 1.37 - 1.41, 64 rows through 4.16 1.5 - 1.6 and
+ *     through one stage of 64 2.0, 128 rows through 4.32 1.4 and 8.16 1.5;
+ *   - the pick: over 150 passes (16 - 4096 rows over 6 - 250 lanes, planes past the L1d) the chain picked with the
+ *     filter ran 1.12 times faster than the pick without it (faster in both runs at 58, slower in both at 8: 2048 x
+ *     10 0.75 through 8.32.8, 1024 x 10 0.81 through 64.16); one stage at 16, 32, 64 rows 1.89, 1.45, 1.17 times.
+ * Not yet timed on a CPU that runs a 512-bit operation whole (the rule above is from one). */
 #define EST_ND_VEC_FILLS_LINE (VFFT_IL_VW * 8 >= 64)
-/* the planes the set filter reads: a row within one L1d way on a plane past the L1d, where a vector load is less than
- * a line */
+/* the planes the set filter reads: a row within one L1d way on a plane past the L1d (est__col_chain_r adds, for
+ * every pass but the lane-major batch's natural one, that a vector load is less than a line) */
 static inline int est__col_set_reach(const est_machine_t *m, int N, long long w)
 {
-    return !EST_ND_VEC_FILLS_LINE && 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d;
+    return 16 * w < est__l1_way(m) && 16LL * N * w > (long long)m->l1d;
 }
 /* THE SET COUNT (2026-11-09): how many stages of R put more lines into one L1d set than it has ways, the first and
  * the last stage counted twice while two planes fit the L2 (the first reads one buffer and writes another at one
@@ -739,15 +749,18 @@ static inline int est_col_lead(const est_machine_t *m)
  * pick above. sets = 0: the pick's own regime chain (the real 3D axis-0 rule asks for the narrow and the wide
  * regime's by their row widths). 0 = the pool holds no chain at N (the door's column Bluestein).
  * A LANE-MAJOR BATCH'S NATURAL PASS (rules & EST_ND_R_LMSET, 2026-11-15): the set filter counts by est__col_crowds'
- * lane-major form. On a pass that runs on one thread (EST_ND_R_LMONE), where the filter reads the plane, one stage
- * serves while it crowds no set, whatever the plane's size: it is one pass over the plane where a chain is two or
- * more. On the 14900KF, one thread, one stage of 16, 32 or 64 against the two stages of before at the 26 passes of
- * 16 - 64 rows over 52 - 250 lanes where it crowds no set: 1.21 - 1.80 times faster at every one (16 rows 1.64, 32
- * rows 1.63, 64 rows 1.34); where its legs hold 16 or 32 lines in a set it ran 1.10 - 1.13 times the fastest chain.
- * At 8 threads the two stages ran faster at 25 of the 26 (to 1.84 times): one stage is the one-thread form. */
+ * lane-major form, on both instruction sets (EST_ND_VEC_FILLS_LINE's note: the filter of every other pass is off
+ * where a vector load fills a line). On a pass that runs on one thread (EST_ND_R_LMONE), where the filter reads the
+ * plane, one stage serves while it crowds no set, whatever the plane's size: it is one pass over the plane where a
+ * chain is two or more. On the 14900KF, one thread, one stage of 16, 32 or 64 against the two stages of before at
+ * the 26 passes of 16 - 64 rows over 52 - 250 lanes where it crowds no set: 1.21 - 1.80 times faster at every one
+ * (16 rows 1.64, 32 rows 1.63, 64 rows 1.34); where its legs hold 16 or 32 lines in a set it ran 1.10 - 1.13 times
+ * the fastest chain. At 8 threads the two stages ran faster at 25 of the 26 (to 1.84 times): one stage is the
+ * one-thread form. */
 static inline int est__col_chain_r(const est_machine_t *m, int N, long long w, int nat, int sets, unsigned rules, int *R)
 {
-    const int filt = sets && est__col_set_reach(m, N, w), lm = nat && (rules & EST_ND_R_LMSET) != 0;
+    const int lm = nat && (rules & EST_ND_R_LMSET) != 0;
+    const int filt = sets && est__col_set_reach(m, N, w) && (lm || !EST_ND_VEC_FILLS_LINE);
     const int lm1 = lm && filt && (rules & EST_ND_R_LMONE) != 0;
     est_pool_t P, Q;
     int k, i, pre[1] = { 0 }, one = 0;
