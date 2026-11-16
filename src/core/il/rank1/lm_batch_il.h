@@ -11,8 +11,9 @@
  * is another cell), and run by the column pass: the serial pass with its lane
  * tile (sw=), the threaded forms (strips over lanes, blocks over digits) under
  * the cell's raced verdict at the plan's T (cmt= mtarm= msw=). Everything the
- * 2D and 3D column axes have, the batch inherits: the chain race on the serving
- * walk, the Rader stage with its inner and width race, the forms race, the
+ * 2D and 3D column axes have, the batch inherits: the chain race (here on the
+ * door's serial forms: each chain at its lane tiles, in the cell's placement,
+ * the winner's tile kept), the Rader stage with its inner and width race, the forms race, the
  * natural leaf redirection, the column Bluestein and the turned prime pass at
  * a prime N. Both placements (the pass runs in place on the plane), both order
  * classes (NATURAL by the leaf redirection; SCRAMBLED = the chain's comb per
@@ -78,11 +79,19 @@ static int _lm_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin,
 }
 
 /* ── THE CELL'S OWN VERDICTS BEYOND THE CHAIN: the serial lane tile and the
- * threaded form, replayed from the row at this T or raced on a plane of the
- * plan's own placement and banked (sw= on the row; cmt= / cmtt= through the
- * chain bank, mtarm= / msw= beside them). Every arm runs the plan's own pass
- * (_lm_cols) with the arm's knobs on the descriptor; a threaded arm whose pass
- * does not engage on this cell is out (the engagement counter says). ── */
+ * threaded form, on a plane of the plan's own placement, banked (sw= on the row;
+ * cmt= / cmtt= through the chain bank, mtarm= / msw= beside them). The serial
+ * tile comes with the chain when the chain race ran in this build (it timed
+ * every candidate in the serial forms the door serves, il2d_tier.h
+ * _il2d_race_chains; the descriptor's lmsw), from the row (sw=) when the chain
+ * was replayed, and is raced here only for a replayed chain whose row has no
+ * sw= or a pinned chain. At T > 1 the threaded verdict is raced here: the
+ * serial form at that tile against the threaded walk, the strips over each
+ * worker's whole range (c2c) and the strips at each sub-strip width; or
+ * replayed from the row. Every arm runs the plan's own pass (_lm_cols, or the
+ * real batch's executor) with the arm's knobs on the descriptor; a threaded arm
+ * whose pass does not engage on this cell is out (the engagement counter
+ * says). ── */
 /* the lane-major batches' dense strip scratch (the descriptor's natsscr fields, freed with it): T blocks
  * (one at T = 1) of M x swcap complexes, swcap the widest ladder width at this T or a worker's whole
  * range where that fits L2, or the whole plane at one thread. The real batch's fused strips (serial tiles
@@ -180,6 +189,8 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     const int plain = !c->blu && !c->tpc && c->wl <= 0 && (!c->nat || c->nst >= 2) &&
                       (!c2c || vfft_policy_lm_serial_tiles(c->rd0 != NULL));
     const int strips_ok = !c->blu && !c->tpc && (!c->nat || c->nst >= 2);
+    /* the chain race of this build crowned the serial tile with the chain: kept, never raced again here */
+    const int crowned = plain && c->lmsw >= 0;
     /* the arms' planes: the chain's M x K for a c2c batch; a real batch's arm runs its executor, whose
      * spectrum side is (M + 1) rows of K bins (2 K doubles more than the N K reals) */
     const size_t PN = 2 * (size_t)N * (size_t)K + (h->transform != VFFT_C2C ? 2 * (size_t)K : 0);
@@ -191,7 +202,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     int lad[6], nl, na = 0, i, best = 0, bsw = -1, need_sw, need_mt;
     size_t q;
     c->wc = 0; c->colmt = 0; c->natarm = 0; c->msw = 0;
-    bsw = (plain && usable) ? vw2_ilcol_tok_geti(&W->vw2, key, "sw", -1) : -1;
+    bsw = crowned ? c->lmsw : (plain && usable) ? vw2_ilcol_tok_geti(&W->vw2, key, "sw", -1) : -1;
     need_sw = plain && bsw < 0;
     if (bsw >= 0)
         c->wc = bsw;
@@ -211,6 +222,14 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     if (!need_sw && !need_mt)
     {
         _lm_sscr_settle(h);
+        if (crowned && W && !W->vw2_off_2d)
+        {   /* the chain race's tile onto the row (the chain bank made it) */
+            if (vw2_ilcol_tok_seti(&W->vw2, key, "sw", c->wc) == VW2_OK)
+                _vw2_persist(W, cfg);
+        }
+        if (crowned && getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[lm] %d x %d T=%d %s: the chain race's serial form sw=%d, no race here\n", N, K, T,
+                    h->placement == VFFT_INPLACE ? "ip" : "oop", c->wc);
         return;
     }
     z = (vfft_real *)vfft_aligned_alloc((PN + 8) * sizeof(vfft_real));
@@ -316,7 +335,7 @@ static void _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_
     if (W && !W->vw2_off_2d)
     {   /* the verdicts on the row (the chain bank made it) */
         int changed = 0;
-        if (need_sw) changed |= vw2_ilcol_tok_seti(&W->vw2, key, "sw", c->wc) == VW2_OK;
+        if (need_sw || crowned) changed |= vw2_ilcol_tok_seti(&W->vw2, key, "sw", c->wc) == VW2_OK;
         if (need_mt)
         {
             changed |= vw2_ilcol_chain_bank(&W->vw2, key, c->R, c->nst, -1, -1, -1, c->colmt, T, c->blu, 0.0) >= 0;
@@ -1203,6 +1222,207 @@ static int _lmc_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin
     _lmr_ranges(h, zin, xout, 3);
     return 0;
 }
+/* the real batch's fold order for a chain at M: the inverse of the scrambled pass's row order (the fold reads row k
+ * at the pass row that holds it); NULL with *ok = 1 for a one-stage chain (natural), *ok = 0 where it does not derive */
+static int *_lmr_perm_of(const int *R, int nst, int M, int *ok)
+{
+    int *np, *p, k;
+    *ok = 1;
+    if (nst < 2)
+        return NULL;
+    np = _il2d_nat_perm(R, nst, M);
+    p = np ? (int *)malloc((size_t)M * sizeof(int)) : NULL;
+    if (!p)
+    {
+        free(np);
+        *ok = 0;
+        return NULL;
+    }
+    for (k = 0; k < M; k++)
+        p[np[k]] = k;
+    free(np);
+    return p;
+}
+/* the fold's twiddles w^k = e^{-2 pi i k / N}, k = 0..M, once-rounded (common/math/tw_exact.h) */
+static void _lmr_tw_fill(vfft_real *tw, int M, int N)
+{
+    int k;
+    for (k = 0; k <= M; k++)
+    {
+        double c, s;
+        vfft_cs2pi_exact((long long)k, (long long)N, &c, &s);
+        tw[2 * k] = c;
+        tw[2 * k + 1] = -s;
+    }
+}
+
+/* ── THE CHAIN RACE'S LANE-MAJOR ARMS (il2d_tier.h, _il2d_race_chains / _il2d_race_heat with an _il2d_lmform_t).
+ * A candidate is timed in each serial form its door serves it with, through the door's own pass on a plan that
+ * carries the candidate's view (its kernels, tables and natural leaf; for the 1D real batch its fold order, the
+ * plane and the twiddles), the arm setting the lane tile as _lm_race's serial arms set it: the c2c pass and the
+ * first axis of a real 2D / 3D batch through _lm_cols, the 1D real batch through its executor. The dense scratch is
+ * built by the builder the door uses at the cell's T, so the cap that decides between a tile and the form past it
+ * is the door's. ── */
+static void _lm_sscr_keep_one(vfft_ilcol_t *c)
+{   /* the arms run serial: the first block is the one they use */
+    int t;
+    for (t = 1; t < c->nnatsscr; t++)
+    {
+        vfft_aligned_free(c->natsscr[t]);
+        c->natsscr[t] = NULL;
+    }
+    if (c->nnatsscr > 1)
+        c->nnatsscr = 1;
+}
+static int _lm_chain_open(_il2d_lmform_t *f, int N1, size_t rn, int nat_req)
+{
+    const int K = (int)rn;
+    memset(&f->sscr, 0, sizeof f->sscr);
+    memset(&f->snat, 0, sizeof f->snat);
+    f->W = f->tw = NULL;
+    f->wc = 0;
+    if (f->kind == 1)
+    {   /* the 1D real batch's create: its scratch at T, the three-phase form's plane, the fold's twiddles */
+        (void)_lm_sscr_build(&f->sscr, N1, K, f->T > 1 ? f->T : 1);
+        f->W = (vfft_real *)vfft_aligned_alloc((2 * (size_t)N1 * rn + 8) * sizeof(vfft_real));
+        f->tw = (vfft_real *)vfft_aligned_alloc(2 * ((size_t)N1 + 1) * sizeof(vfft_real));
+        if (!f->W || !f->tw)
+        {
+            _lm_chain_close(f);
+            return 0;
+        }
+        _lmr_tw_fill(f->tw, N1, 2 * N1);
+    }
+    else if (f->T <= 1)
+        (void)_lm_sscr_build(&f->sscr, N1, K, 1);   /* the doors' at one thread, every class */
+    else
+    {   /* _lm_race's, built for its threaded arms (the serial arms run in it): over the workers, a natural chain
+         * through its own builder */
+        const int workers = thread_pool_workers_for(f->T);
+        if (workers >= 2)
+        {
+            (void)_lm_sscr_build(&f->sscr, N1, K, workers);
+            if (nat_req)
+            {
+                f->snat.nat = 1;
+                (void)_il2d_nat_sscr_build(&f->snat, N1, K, workers);
+            }
+        }
+    }
+    _lm_sscr_keep_one(&f->sscr);
+    _lm_sscr_keep_one(&f->snat);
+    return 1;
+}
+static void _lm_chain_close(_il2d_lmform_t *f)
+{
+    _il2d_nat_sscr_free(&f->sscr);
+    _il2d_nat_sscr_free(&f->snat);
+    vfft_aligned_free(f->W);
+    vfft_aligned_free(f->tw);
+    f->W = f->tw = NULL;
+}
+/* the serial forms the door serves a chain with -- the widths _lm_race's serial race offered: the c2c pass under the
+ * serial-form law (policy_il.h: a Rader-stage chain walks; a smooth chain runs the serial ladder's tiles the law
+ * admits, the walk where there is none); the real batches, not under the law, the whole plane or the walk (0) and
+ * every width of the serial ladder. Returns the count, at most 7. */
+static int _lm_chain_forms(const _il2d_lmform_t *f, int N1, size_t rn, const int *R, int nat, int *wcs)
+{
+    int lad[6], nl, i, n = 0;
+    nl = _il2d_sw_ladder(N1, (int)rn, 1, lad, 6);
+    if (f->kind != 0)
+    {
+        wcs[n++] = 0;
+        for (i = 0; i < nl; i++)
+            wcs[n++] = lad[i];
+        return n;
+    }
+    if (vfft_policy_lm_serial_tiles(VFFT_IL2D_RADER_RADIX(R[0])))
+        for (i = 0; i < nl; i++)
+            if (vfft_policy_lm_tile_ok(lad[i], (int)rn, nat))
+                wcs[n++] = lad[i];
+    if (n == 0)
+        wcs[n++] = 0;
+    return n;
+}
+/* the plan an arm runs: the candidate's view in the descriptor (unbanded, serial), the cell's scratch for its class;
+ * the 1D real batch's fields beside it. NULL when the 1D real batch's fold order does not derive for the chain (its
+ * create would refuse it) or nothing could be allocated. */
+static struct vfft_plan_s *_lm_chain_plan(const _il2d_lmform_t *f, int N1, size_t rn, int nst, const int *R,
+                                          const int *L, vfft_il2p_fn const *ff, vfft_il2p_fn const *fb,
+                                          vfft_real *const *tf, vfft_real *const *tb, int nat, const int *perm,
+                                          vfft_real *nscr)
+{
+    struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    /* the class's scratch: at T > 1 a natural chain's is its own builder's (none where it built none: the door then
+     * walks), at one thread and in the 1D real batch every chain's is the one */
+    const vfft_ilcol_t *sd = (nat && f->T > 1 && f->kind != 1) ? &f->snat : &f->sscr;
+    vfft_ilcol_t *c;
+    if (!h)
+        return NULL;
+    h->transform = f->kind == 0 ? VFFT_C2C : f->rev ? VFFT_C2R : VFFT_R2C;
+    h->placement = f->ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    h->layout = (int)VFI_LAYOUT_IL;
+    h->N = f->kind == 1 ? 2 * N1 : N1;
+    h->K = rn;
+    h->nthreads = 1;
+    h->lm = 1;
+    c = &h->il2d_col;
+    c->N = N1;
+    c->rn = rn;
+    c->nst = nst;
+    memcpy(c->R, R, (size_t)nst * sizeof c->R[0]);
+    memcpy(c->L, L, (size_t)nst * sizeof c->L[0]);
+    memcpy(c->f, ff, (size_t)nst * sizeof c->f[0]);
+    memcpy(c->b, fb, (size_t)nst * sizeof c->b[0]);
+    memcpy(c->tf, tf, (size_t)nst * sizeof c->tf[0]);
+    memcpy(c->tb, tb, (size_t)nst * sizeof c->tb[0]);
+    c->nat = nat;
+    c->natperm = (int *)perm;
+    c->natscr = nscr;
+    c->natsscr = sd->natsscr;
+    c->nnatsscr = sd->nnatsscr;
+    c->natswcap = sd->natswcap;
+    c->natdense = sd->natdense;
+    c->lmsw = -1;
+    if (f->kind == 1)
+    {
+        int ok;
+        h->lm_M = N1;
+        h->lm_W = f->W;
+        h->lm_tw = f->tw;
+        h->lm_perm = _lmr_perm_of(R, nst, N1, &ok);
+        if (!ok)
+        {
+            free(h);
+            return NULL;
+        }
+    }
+    return h;
+}
+static void _lm_chain_plan_free(struct vfft_plan_s *h)
+{   /* the plan owns its fold order alone: the tables, the scratch and the planes are the race's */
+    if (!h)
+        return;
+    free(h->lm_perm);
+    free(h);
+}
+/* one arm: the door's serial form at the arm's lane tile (_il2d_race_ctx_t.h the plan, .wc the tile; .zo == .z in
+ * place) */
+static void _lm_chain_arm(void *v)
+{
+    _il2d_race_ctx_t *a = (_il2d_race_ctx_t *)v;
+    struct vfft_plan_s *h = a->h;
+    h->il2d_col.wc = a->wc;
+    if (h->lm_M > 0)
+    {   /* the 1D real batch: its executor (the fused strips, the whole plane, or the three-phase form) */
+        if (h->transform == VFFT_C2R)
+            _lmc_exec(h, VFFT_BACKWARD, a->z, a->zo);
+        else
+            _lmr_exec(h, VFFT_FORWARD, a->z, a->zo);
+    }
+    else   /* the c2c pass, or a real 2D / 3D batch's first axis on the spectrum (the backward for c2r) */
+        _lm_cols(h, a->z, a->zo, h->transform == VFFT_C2R);
+}
 /* the real batch's create, r2c or c2r by the request (the same chain at M on the shared real row,
  * the direction's own executor) */
 static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, int N, size_t K)
@@ -1211,7 +1431,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     vw2_ilcol_key_t ck;
     vfft_ilcol_t col;
     char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, k;
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1;
     struct vfft_plan_s *h;
     if (!vfft_policy_batch_lane_major(cfg))
     {
@@ -1258,21 +1478,18 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     h->il2d_col.cut = 0;
     h->il2d_col.tfuse = 0;
     h->il2d_col.wc = 0;
-    if (!h->il2d_col.blu && h->il2d_col.nst >= 2)
+    if (!h->il2d_col.blu)
     {   /* the scrambled pass's row order: the fold reads row k at the pass row that holds it */
-        int *np = _il2d_nat_perm(h->il2d_col.R, h->il2d_col.nst, M);
-        if (!np || !(h->lm_perm = (int *)malloc((size_t)M * sizeof(int))))
+        int ok;
+        h->lm_perm = _lmr_perm_of(h->il2d_col.R, h->il2d_col.nst, M, &ok);
+        if (!ok)
         {
-            free(np);
             _vfft_warn("vfft_create: lane-major interleaved R2C batch N=%d x K=%zu: the chain's permutation at M=%d "
                        "does not derive; unsupported", N, K, M);
             _il2d_col_free(&h->il2d_col);
             free(h);
             return NULL;
         }
-        for (k = 0; k < M; k++)
-            h->lm_perm[np[k]] = k;
-        free(np);
     }
     h->lm_W = (vfft_real *)vfft_aligned_alloc((2 * (size_t)M * K + 8) * sizeof(vfft_real));
     h->lm_tw = (vfft_real *)vfft_aligned_alloc(2 * ((size_t)M + 1) * sizeof(vfft_real));
@@ -1283,13 +1500,7 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
         free(h);
         return NULL;
     }
-    for (k = 0; k <= M; k++)
-    {   /* w^k = e^{-2 pi i k / N}, once-rounded (common/math/tw_exact.h) */
-        double c, s;
-        vfft_cs2pi_exact((long long)k, (long long)N, &c, &s);
-        h->lm_tw[2 * k] = c;
-        h->lm_tw[2 * k + 1] = -s;
-    }
+    _lmr_tw_fill(h->lm_tw, M, N);
     if (!h->il2d_col.blu && !h->il2d_col.tpc)
         (void)_lm_sscr_build(&h->il2d_col, M, (int)K, T);   /* the fused strips' scratch, raced below */
     _lm_race(h, W, cfg, &ck, bcmt);
