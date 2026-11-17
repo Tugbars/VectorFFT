@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* ztt_drivers.ml — ZTURN-T: the CELL LIST and the FUSED DRIVER TU.
  *
  * ZTURN-T (docs/design/zturn_t_ship_plan.md; the probe's CONTRACT.md) is the

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* gen_main.ml — the generator driver: one `run argv` that takes a
  * codelet request from CLI flags to C text on stdout. bin/gen_radix is
  * a 1-line wrapper around it; bin/gen_set calls it in-process once per

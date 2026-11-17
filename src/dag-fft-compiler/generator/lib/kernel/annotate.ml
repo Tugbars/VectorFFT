@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* annotate.ml — block-level lifetime annotation for scheduled DAGs.
  *
  * What this layer does:

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* corpus.ml — M10: THE CORPUS, TYPED (§9 #37) — coverage.ml inverted.
  *
  * The family matrices below (moved verbatim from coverage.ml) still

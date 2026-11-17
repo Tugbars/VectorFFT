@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* Bb.ml — Branch-and-bound cluster-local scheduler with lexicographic cost.
  *
  * Cost function: lexicographic (saturated_peak ASC, -progress ASC) where:

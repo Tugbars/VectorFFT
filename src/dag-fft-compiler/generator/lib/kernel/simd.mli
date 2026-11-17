@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* simd.mli -- M7.  See simd.ml: the feature-blind strided transpose
    lattices (plain re/im arms), moved byte-verbatim from emit_c. *)
 

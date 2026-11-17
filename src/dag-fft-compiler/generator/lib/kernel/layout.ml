@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* layout.ml — M3.  See layout.mli: the anti-hybrid law lives here.  Rendering
    is byte-exact to the three historical printer sites it replaced
    (codelet_oop signature, emit_c in-place arm, emit_c strided chain) — the

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* lib/split_radix.ml
  *
  * SPLIT-RADIX DECOMPOSITION FOR POWER-OF-TWO N

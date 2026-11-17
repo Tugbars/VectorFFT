@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* expr.ml — the symbolic math IR.
  *
  * This is the "math layer" output: a tree-structured representation of

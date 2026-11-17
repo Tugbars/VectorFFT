@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* regalloc.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. Linear-scan allocation + peak-live.
    Generated from the inferred signature; trim = later per-module work. *)

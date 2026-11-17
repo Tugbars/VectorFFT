@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* corpus.mli — M10 (also the coverage interface M9 deferred here).
    THE corpus: typed cells over the Codelet descriptor; the family
    matrices are private scaffold.  Laws (round-trip verbatim, per-dir

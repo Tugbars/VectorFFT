@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_cpl.ml — CPL: Critical-Path List scheduler for the cx IR, the
  * ILP-objective alternative to SR (cx_sched / Schedule.Make).
  *

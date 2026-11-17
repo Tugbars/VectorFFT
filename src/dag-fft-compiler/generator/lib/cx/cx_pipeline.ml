@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_pipeline.ml — the optimizer pipeline of the full-IL (cil) family.
  *
  * The cx analog of pipeline.ml: ONE entry point that every cil emission

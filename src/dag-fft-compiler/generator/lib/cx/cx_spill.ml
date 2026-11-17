@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_spill.ml — Belady spill planner for the cx mono emission.
  *
  * WHY (2026-08-11, docs/roadmap/tangent_emitter_plan.md): the tangent/wing

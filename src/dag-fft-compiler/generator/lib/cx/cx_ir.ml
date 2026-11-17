@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_ir.ml — the packed-complex IR of the full-IL (cil) family.
  *
  * Split out of codelet_cil.ml (Phase 0 decomposition, 2026-08-09,

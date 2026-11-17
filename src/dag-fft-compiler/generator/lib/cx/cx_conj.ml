@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_conj.ml -- THE COSINE AND SINE PARTS (2026-11-11, the --cil-conj form; design:
  * docs/design/il_avx512_kernel_operations.md).
  *

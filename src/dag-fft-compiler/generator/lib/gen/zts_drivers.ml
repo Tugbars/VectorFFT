@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* zts_drivers.ml — zturn-ts (2026-11-04): ZTURN-T's run-contiguous DIT
  * arrangement on the SPLIT library's own planes, and its FUSED DRIVERS.
  *

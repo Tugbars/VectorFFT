@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* dft_select.ml — c2c DFT algorithm selection.
  *
  * Bottom layer of the Dft chain (Dft_select < Dft_recurse < Dft; the

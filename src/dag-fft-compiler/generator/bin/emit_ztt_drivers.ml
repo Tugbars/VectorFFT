@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_ztt_drivers.ml — emit the ZTURN-T fused driver FILES (Ztt_drivers.emit_all).
  *
  * The drivers are DERIVED from the corpus cells (every admissible (N, chain):

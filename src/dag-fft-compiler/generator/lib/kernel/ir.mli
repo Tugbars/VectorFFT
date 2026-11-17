@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* ir.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. Hash-consed DAG + smart constructors.
 

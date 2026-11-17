@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* bb.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. Basic-block / budget analysis.
    Generated from the inferred signature; trim = later per-module work. *)

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* abi.mli — M4 (generator_lib_architecture.md §11.2).  LAYER 3.
    A codelet's C SIGNATURE as DATA: one TOTAL constructor over the measured
    kind shapes, one renderer.  Depends on Isa + Layout only.

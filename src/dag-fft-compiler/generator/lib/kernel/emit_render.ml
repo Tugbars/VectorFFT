@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_render.ml — node/DAG-to-C rendering layer of the emitter.
  *
  * Everything emit_codelet composes but does not itself define:

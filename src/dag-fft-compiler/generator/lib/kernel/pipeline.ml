@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* ═══════════════════════════════════════════════════════════════════════
  * PIPELINE.ML — Shared codelet preparation pipeline
  *

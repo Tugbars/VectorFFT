@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_sched.ml — the shared SR (Starve-Retire) scheduler over the cx IR.
  * Split out of codelet_cil.ml (Phase 0, 2026-08-09, byte-identity gated).
  * MODULE CARD

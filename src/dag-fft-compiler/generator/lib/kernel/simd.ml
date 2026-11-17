@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* simd.ml -- M7.  The SIMD transpose-lattice vocabulary (S10.2).
    The four FEATURE-BLIND plain arms of emit_c's strided load/store
    lattices, moved here byte-verbatim (M7's corrected scope: the

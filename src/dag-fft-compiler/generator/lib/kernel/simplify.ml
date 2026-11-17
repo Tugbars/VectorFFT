@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* simplify.ml — algebraic rewrite passes over the hash-consed IR.
  *
  * The non-FMA passes: sub-pair dedup, collect-M / deep-collect,

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* algsimp.ml — facade of the IR + pass stack, plus the passes that
  * bridge to neighbouring layers.
  *

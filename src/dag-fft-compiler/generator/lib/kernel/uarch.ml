@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* uarch.ml — micro-architecture profiles for SU scheduling.
  *
  * Each profile pairs an Isa.t with timing and capacity parameters that

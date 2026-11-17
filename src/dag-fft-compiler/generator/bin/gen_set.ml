@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* gen_set — THE codelet-tree generator (section 39).
  *
  * Walks Coverage (the single source of truth) and emits every codelet

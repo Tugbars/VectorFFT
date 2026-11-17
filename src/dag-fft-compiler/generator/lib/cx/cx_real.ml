@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_real.ml — REAL-input / real-output DFTs on the cx IR, for the
    interleaved real pair's leaf (real_il.ml, kind r2z; 2026-09-29).
 

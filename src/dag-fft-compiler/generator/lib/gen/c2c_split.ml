@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* c2c_split.ml — M8.5: the C2c_split feature module (§9 #32), renamed
  * from codelet_oop.ml — the split-complex c2c family: in-place · OOP
  * edges · strided/batched (849 files, 59.3% of the corpus).  ⚠ G6,

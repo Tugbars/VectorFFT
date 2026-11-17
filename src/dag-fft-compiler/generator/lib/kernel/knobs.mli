@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* knobs.mli — M6.0 (the M5 row's second half, landed beside its consumers).
    LAYER 0.  The env-var REGISTRY: every knob DECLARED once, READ once
    (lazily, at first use), consumed through here — never via a scattered

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* Dump the IR of a small case to understand what shape we're dealing with. *)
 
 let () =

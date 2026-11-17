@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_body.ml — M8.2: renamed from emit_c.ml (§9 #23 Emit_body — the
  * schedule / spill / regalloc / render meeting point).  The M8 family
  * moves (Real, C2c_split) will thin this file toward the irreducible

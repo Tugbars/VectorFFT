@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_body.mli — M8.5 (G7): the engine's interface.  §10's rule
    ("more than one consumer OR a layer boundary") applies: after M8 the
    engine serves exactly TWO consumers — Real (the r2c/c2r/hc/trig

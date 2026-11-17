@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* pipeline.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. THE pass cascade (sole owner after M11; today one of three copies — see P4).
    Generated from the inferred signature; trim = later per-module work. *)

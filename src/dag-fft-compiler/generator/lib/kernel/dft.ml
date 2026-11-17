@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* dft.ml — c2c math-layer facade: twiddle policy + expansion wrappers.
  *
  * Top of the Dft chain (Dft_select < Dft_recurse < Dft). `include`

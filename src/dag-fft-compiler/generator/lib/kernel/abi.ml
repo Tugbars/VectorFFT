@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* abi.ml — M4.  See abi.mli.  The param lists below are a TRANSCRIPTION of
    the 13-arm ladder (emit_c.ml, historical :1446-1911) — proven equivalent
    by VFFT_ABI_XCHECK over every emission before the ladder is deleted. *)

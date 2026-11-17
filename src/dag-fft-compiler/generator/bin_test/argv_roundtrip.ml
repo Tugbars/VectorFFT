@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* argv_roundtrip.ml — M5's acceptance: Codelet.of_argv / to_argv must
    round-trip every RECORDED argv line VERBATIM (flag order included).
    Input: a file of argv strings, one per line (argv[0] already stripped).

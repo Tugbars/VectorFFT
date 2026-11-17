@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* ir.ml — the hash-consed DAG IR: node type, smart constructors, CSE.
  *
  * The bottom of the rewrite stack. Two responsibilities:

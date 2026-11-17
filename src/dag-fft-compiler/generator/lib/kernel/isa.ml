@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* isa.ml — minimal ISA abstraction for AVX-512 / AVX2.
  *
  * Both targets are modern x86 with FMA. The differences captured here:

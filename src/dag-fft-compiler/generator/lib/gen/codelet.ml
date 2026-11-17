@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* codelet.ml — M5 (generator_lib_architecture.md §10.2).  LAYER 4.
    THE WORD FOR THE THING WE COMPILE.
 

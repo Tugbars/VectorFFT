@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_zts_drivers.ml — emit the zturn-ts fused driver FILES (Zts_drivers.emit_all):
  * one TU per (family, N), zts_drivers_<isa>_<N>.c (K=1, split planes) and
  * ztv_drivers_<isa>_<N>.c (lane-major K=VW), into generated/fused_codelets/.

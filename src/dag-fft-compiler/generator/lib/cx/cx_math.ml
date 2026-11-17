@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_math.ml - math-layer DAG builders of the full-IL (cil) family.
  * Split out of codelet_cil.ml (Phase 0, 2026-08-09, byte-identity gated).
  * MODULE CARD

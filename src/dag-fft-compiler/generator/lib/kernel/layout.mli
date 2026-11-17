@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* layout.mli — M3 (generator_lib_architecture.md §10.1, §12.1).  LAYER 0.
    THE ANTI-HYBRID LAW LIVES HERE AND NOWHERE ELSE.
 

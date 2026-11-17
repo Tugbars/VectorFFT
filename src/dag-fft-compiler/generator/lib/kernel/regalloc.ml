@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* regalloc.ml — SSA register allocator + scheduling fence (the "M-project").
  *                DORMANT / opt-in on modern x86; see §5 for when to revive it.
  *

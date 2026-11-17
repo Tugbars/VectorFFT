@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cascade_z.ml — the BLOCK-SPLIT stage-kernel emitter (the Cascade_z feature
  * module, §9 #35; the file keeps its historical name, and the emitted files
  * keep the "codelet_zsplit.ml" provenance stem they have always carried).

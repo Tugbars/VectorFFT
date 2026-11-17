@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* split_radix.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. Existing SR construction. PLACED, FROZEN, NEVER DEVELOPED (standing ban).
    Generated from the inferred signature; trim = later per-module work. *)

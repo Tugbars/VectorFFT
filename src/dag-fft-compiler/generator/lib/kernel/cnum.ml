@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cnum.ml — Symbolic complex number combinator layer.
  *
  * Following the complex-combinator design of Frigo 2003, this module provides

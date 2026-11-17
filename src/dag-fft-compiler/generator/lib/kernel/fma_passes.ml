@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* fma_passes.ml — the FMA rewrite family: how mul-and-add pairs become
  *                  fused multiply-adds at the IR level, and why the IR
  *                  owns that decision instead of the C compiler.

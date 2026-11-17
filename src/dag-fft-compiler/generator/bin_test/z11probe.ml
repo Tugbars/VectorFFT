@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 let () =
   (* both arities: the default keeps __restrict__, alias_tolerant drops it for
      the kinds il2p calls with zin == zout (forward T2, backward N1). *)

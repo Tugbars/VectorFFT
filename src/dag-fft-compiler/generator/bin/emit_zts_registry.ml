@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_zts_registry.ml — auto-generate the zturn-ts driver registry.
  *
  * Derived from the SAME cell list the driver files are emitted from

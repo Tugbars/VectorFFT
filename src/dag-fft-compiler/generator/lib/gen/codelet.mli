@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* codelet.mli — M5.  THE WORD FOR THE THING WE COMPILE (§10.2).
 
    Constructors are exposed CONCRETELY (G9): the totality laws downstream

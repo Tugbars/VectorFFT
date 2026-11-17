@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* emit_il_registry.ml — auto-generate the INTERLEAVED-COMPLEX (IL) registry.
  *
  * The last hand-maintained dispatch surface. The IL family is the largest in

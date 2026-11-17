@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* expr.mli — M2 (generator_lib_architecture.md §10): the compiler-checked
    MODULE CARD. elem_ref + the symbolic expression type — the ONE type both compiler stacks share.
    Generated from the inferred signature; trim = later per-module work. *)

@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* dft_recurse.ml — the c2c recursive constructions.
  *
  * Middle layer of the Dft chain (Dft_select < Dft_recurse < Dft).

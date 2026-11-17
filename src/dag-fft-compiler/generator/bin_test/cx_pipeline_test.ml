@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_pipeline_test.ml — unit gate for the cx pass cascade.
  *
  * The production emitters contain ZERO dedup_sub_pairs sites (audited

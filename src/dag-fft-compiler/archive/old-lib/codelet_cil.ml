@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* ================================ STATUS BANNER =================================
    DEAD TREE (2026-08-14, M0 of generator_lib_architecture.md): src/dag-fft-compiler/archive/old-lib (MOVED out of generator/ 2026-08-14,
    owner decision) is an ARCHIVED reference snapshot from the cx decomposition (02f7c633) — it is

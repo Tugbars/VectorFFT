@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* cx_lazy.ml -- LAZY TERMS over the packed-complex IR (2026-11-11).
  *
  * A term is a value with a pending real scale per complex lane and a pending quarter turn:

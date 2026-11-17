@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* knobs.ml — M6.0.  See knobs.mli. *)
 
 let snap key = lazy (Sys.getenv_opt key)

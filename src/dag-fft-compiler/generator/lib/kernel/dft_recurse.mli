@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* dft_recurse.mli — M9b: full-surface interface, derived from the inferred
    signature (ocamlc -i) at the M9 library split.  Freezes the public
    surface — additions are now deliberate.  Trim opportunistically. *)

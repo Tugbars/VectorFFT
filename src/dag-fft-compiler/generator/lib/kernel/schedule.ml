@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* schedule.ml — Starve–Retire (SR) list scheduling: the production
  *               instruction scheduler, with a Goodman-Hsu pressure
  *               switch and port-class balancing.

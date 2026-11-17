@@ -1,3 +1,5 @@
+(* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın *)
 (* real_il.ml — the interleaved REAL pair's kinds (2026-09-29; docs/roadmap/
    il_real_engine_research.md, method 1). Pipeline-hosted like c2c_il: the cx
    IR, the shared scheduler, the ISA-parametric renderer; only the loads, the
