@@ -36,6 +36,8 @@
  *             2D / 3D c2c batches; --lm2dr2c / --lm2dc2r and --lm3dr2c / --lm3dc2r the 2D / 3D real
  *             batches (the contiguous queue timed beside them); --ilmt the threaded
  *             transform-contiguous batch
+ *   --est     beside any mode but --f32: our plans by VFFT_FLAG_ESTIMATE (formulas, nothing measured,
+ *             no wisdom read or saved) instead of the planner's; the comparator as always
  *   FP32      --f32 (a build with VFFT_HAS_FLOAT: build.py --float) beside --k1noop [--mt] or --k1nat:
  *             the K=1 natural cell on float data through vfftf.h, MKL DFTI_SINGLE (or, with --cmp fftw,
  *             single-precision FFTW, one transform); K > 1 in the K slot is the contiguous batch (MKL);
@@ -222,6 +224,11 @@ static int reps_for(size_t total)
 /* MT thread count (--mt). 1 = single-thread (legacy path, byte-identical timing).
  * MKL gets mkl_set_num_threads(g_mt). */
 static int g_mt = 1;
+/* --est (2026-11-15 for the 2D / 3D real batch cells, every mode since 2026-11-17): our plans by
+ * VFFT_FLAG_ESTIMATE -- formulas, nothing measured, no wisdom read or saved -- instead of the planner's;
+ * every create of the cell takes the flag, its helper plans too (a batch cell's one-transform plan for the
+ * loop arm, a c2r mirror), and the comparator's arms run as always. Not with --f32 (FP32 has no estimate). */
+static int g_est = 0;
 /* ════════════════════════════════════════════════════════════════════════
  * K=1 SCRAMBLED-cascade cells (kind-4 oop_wisdom lines) — FRONT-DOOR path.
  *
@@ -753,6 +760,8 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* k1z cells run the committed z contract */
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -1829,6 +1838,8 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
     cfg.order = VFFT_ORDER_NATURAL;   /* a real spectrum is natural */
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;   /* --mt: the plan's thread snapshot; the comparator gets the same T */
     cfg.wisdom_dir = W;   /* wisdom_write 0: a bench never banks */
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -2223,6 +2234,8 @@ static void run_dst_cell(int N, FILE *out, int cool_ms, int flip)
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.nthreads = g_k1noop_mt ? g_mt : 1;   /* --mt: the plan's thread snapshot; the comparator gets the same T */
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -2618,6 +2631,8 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -2781,8 +2796,6 @@ static int g_kzb = 0;
 static int g_lm2d = 0;   /* --lm2d (2) / --lm3d (3): the lane-major 2D / 3D c2c batch cell (2026-10-15), the rank */
 static int g_lm2dr = 0;  /* --lm2dr2c (1) / --lm2dc2r (2): the lane-major 2D real batch cell (2026-10-15) */
 static int g_lm3dr = 0;  /* --lm3dr2c (1) / --lm3dc2r (2): the lane-major 3D real batch cell (2026-10-19) */
-static int g_est = 0;    /* --est beside a 2D / 3D real batch cell (2026-11-15): our two plans by VFFT_FLAG_ESTIMATE
-                          * (formulas, nothing measured, no wisdom read or saved); MKL's arms as always */
 static int g_kzbr = 0;   /* --lmr2c = 1, --lmc2r = 2: the lane-major 1D REAL batch cells (2026-10-15), the
                           * same four arms as --kzb / --lmc2c over the real batch door (lm_batch_il.h) */
 
@@ -2950,6 +2963,8 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     cfg.batch = VFFT_BATCH_LANE_MAJOR;
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and the loop arm's one-transform plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -3284,6 +3299,8 @@ static void run_lm2d_cell(int nd, const int *n, int K, FILE *out, int cool_ms, i
     cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* explicit: the batch door of the rank */
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and the loop arm's one-plane plan */
     h = vfft_create(&cfg);
     if (!h)
     {
@@ -4134,6 +4151,8 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
     cfg.batch = VFFT_BATCH_LANE_MAJOR;   /* the real batch's DEFAULT is lane-major too; said explicitly here */
     cfg.nthreads = T;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and the loop arm's one-transform plan */
     h = vfft_create(&cfg);
     if (!h)
     {
@@ -4412,6 +4431,8 @@ static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
     cfg.batch = VFFT_BATCH_CONTIGUOUS; /* explicit: the axis
                                                        * under test */
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plans, at T and at one thread */
     /* Create the MT handle FIRST (mt_c2c_gate discipline: an MT-first create
      * is what exposed the 2026-07-06 lazily-built-shared-state race). The ST
      * create below leaves the pool as the MT create grew it: a create only
@@ -4616,6 +4637,8 @@ static void run_2dreal_cell(int N1, int N2, int rounds, const char *W)
      * (the tier's contract). */
     c.transform = VFFT_R2C;
     c.layout = VFFT_LAYOUT_INTERLEAVED;
+    if (g_est)
+        c.flags |= VFFT_FLAG_ESTIMATE;   /* --est: this plan and its c2r mirror below */
     pn = vfft_create(&c);
     if (pn)
         vfft_execute(pn, VFFT_FORWARD, x, zn);
@@ -4839,6 +4862,8 @@ static void run_2dil_cell(int N1, int N2, int rounds, const char *W)
         /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.order = VFFT_ORDER_NATURAL;     /* the interleaved tier's own */
+        if (g_est)
+            cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plans (both creates) */
         hi = vfft_create(&cfg);
         /* O-native: same caller contract, native tier opted in for THIS
          * create only. Engagement is verified below, not assumed. */
@@ -5080,6 +5105,8 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, const char *W, int
         cfg.wisdom_dir = W;
         /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+        if (g_est)
+            cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
         hn = vfft_create(&cfg);
     }
     have[0] = (hn != NULL);
@@ -5356,6 +5383,8 @@ static void zr_fd_arm(zr_arm_t *a, int N, const char *W, int is_c2r, int ip,
     cfg.wisdom_dir = W;
     /* cfg.order left 0: real spectra are natural by definition.
      * cfg.wisdom_write left 0: A BENCH NEVER BANKS. */
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan (refused while a route pin is set) */
     p = vfft_create(&cfg);
     if (!p) return;                        /* built stays 0 -> named sentinel */
     a->built = 1;
@@ -5516,6 +5545,8 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
     cfg.wisdom_dir = W;
+    if (g_est)
+        cfg.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
     vfft_plan h = vfft_create(&cfg);
     if (!h)
     {
@@ -5680,6 +5711,8 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         ncf.layout = VFFT_LAYOUT_INTERLEAVED;
         ncf.nthreads = 1;
         ncf.wisdom_dir = W;
+        if (g_est)
+            ncf.flags |= VFFT_FLAG_ESTIMATE;   /* --est: the estimate's plan */
         vfft_plan hn = vfft_create(&ncf);
         if (hn)
         {
@@ -5784,6 +5817,7 @@ int main(int argc, char **argv)
         "  1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (--realip in place; --mt threaded)\n"
         "  2D / 3D   --2dilnat / --3dilnat (--ilip in place); --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt\n"
+        "  --est     beside any mode but --f32: our plans by VFFT_FLAG_ESTIMATE instead of the planner's\n"
 #ifdef VFFT_HAS_FLOAT
         "  FP32      --f32 with --k1noop [--mt] / --k1nat: the cell on float data (K > 1: a contiguous batch), MKL DFTI_SINGLE;\n"
         "            with --cmp fftw single-precision FFTW (libfftw3f: $VFFT_FFTWF_DLL, $VFFT_FFTWF_WIS), one transform\n"
@@ -5883,7 +5917,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--lm3d") == 0)
             g_lm2d = 3;   /* the lane-major 3D c2c batch cell, the shape N1xN2xN3 */
         else if (strcmp(argv[1], "--est") == 0)
-            g_est = 1;    /* the 2D / 3D real batch cell planned by the estimate */
+            g_est = 1;    /* every mode's plans by the estimate (g_est, above) */
         else if (strcmp(argv[1], "--lm2dr2c") == 0)
             g_lm2dr = 1;  /* the lane-major 2D real batch cell, r2c */
         else if (strcmp(argv[1], "--lm2dc2r") == 0)
@@ -5978,6 +6012,11 @@ int main(int argc, char **argv)
         return 2;
     }
 #ifdef VFFT_HAS_FLOAT
+    if (g_f32 && g_est)
+    {
+        fprintf(stderr, "--est --f32: the FP32 library plans by measuring only (it has no estimate)\n");
+        return 2;
+    }
     /* --f32 serves the K=1 natural cell and its contiguous batch, MKL or (one transform) single-precision
      * FFTW as the comparator: --k1noop (with --mt the threaded cell) or --k1nat, nothing else */
     if (g_f32 && g_cmp_fftw && argc >= 6 && atoi(argv[5]) > 1)
