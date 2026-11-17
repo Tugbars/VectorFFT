@@ -258,7 +258,7 @@ typedef struct est_plan3d_s
 /* THE 2D PLAN AT T > 1 (est_mt_2d, 2026-10-29): the one-thread plan, then how it threads, from the data's
  * size against the caches and the count of columns only -- how a thread count scales is the machine's, so
  * no rule is fitted to it. Serial while the plane fits the 2D serial bound (est__serial_2d_div: L1d / 2, L1d / 4
- * when the rows are a prime cell, the L1d for the cheapest work), or on two rows; the
+ * when the rows are a prime cell, the L1d for the cheapest work and below 4 threads), or on two rows; the
  * turn (where the door builds one) on at most EST_ND_MT_TURN_PER_T x T columns, too few to share; the
  * skewed pass and the turn their one threaded walk; the chain walk as strips (est__msw_2d), which the door
  * runs unbanded (il2d_tier.h:1643), so with the unbanded walk's chain: no band, est__pick's radix-8 regime
@@ -321,7 +321,8 @@ typedef struct est_plan3d_s
 /* THE 2D SERIAL BOUND (2026-11-17; est__serial_2d_div): a plane runs serial while it fits L1d /
  * EST_ND_MT_SERIAL_2D_L1_DIV; one whose rows are a prime cell (vfft_policy_prime_cell: every row runs the Rader or
  * Bluestein convolution) while it fits L1d / EST_ND_MT_SERIAL_2D_PRIME_L1_DIV; one whose both sides are powers of two,
- * and below EST_ND_MT_SERIAL_2D_CHEAP_T threads one whose both sides are 7-smooth, while it fits the whole L1d.
+ * below EST_ND_MT_SERIAL_2D_CHEAP_T threads one whose both sides are 7-smooth, and below EST_ND_MT_SERIAL_2D_FEW_T
+ * threads every other plane, while it fits the whole L1d.
  * Split, each worker pulls its share from
  * another core's caches and the pass pays the fork and the join; that pays once the plane's serial work passes about
  * 2.5 - 3 us at 8 threads on the 14900KF, which a plane of chains reaches about L1d / 2, and a prime-cell row's
@@ -345,12 +346,21 @@ typedef struct est_plan3d_s
  * 9), 7-smooth 0.89, factors of 11 - 47 0.74, prime-cell columns 0.67; at 4 threads 1.22, 1.12, 0.93, 0.77. Against
  * the faster verdict per plane this bound 1.023 at 8 threads and 1.041 at 4 (every plane threaded 1.029 and 1.099,
  * every plane serial 1.289 and 1.121, a bound on the serial time itself 1.016 and 1.032). The one-process probe above
- * read threading about 12 % better than the bench on the powers of two (0.98 against 1.10). Left: planes with both
- * sides of 29 - 47 below L1d / 2 (37x41 serial 1.99 x threaded); tall planes of few columns (130x12); 5 - 7 threads,
- * not timed (the 7-smooth rule follows the 4-thread reading). */
+ * read threading about 12 % better than the bench on the powers of two (0.98 against 1.10). Held the same way on 75
+ * planes no study had used (25 of factors 11 - 47, 40 7-smooth, 10 prime-cell columns), 6 rounds, at 2, 3, 4, 6 and 8
+ * threads, with 57 more at 2: below 4 threads no class gains from threads below the L1d (threaded / serial at 2 and 3
+ * threads 1.75 and 1.35 on factors of 11 - 47, 1.64 and 1.35 7-smooth, 1.29 and 1.17 prime-cell columns; serial the
+ * faster on 126 of 132 planes at 2), so there every plane but those of prime-cell rows keeps the L1d: 1.006 at 2
+ * threads and 1.025 at 3 against the faster verdict (the bound of 4 threads and up there 1.141 and 1.158). Prime-cell
+ * rows keep their bound at every count: on 19 such planes between L1d / 2 and the L1d threaded ran 1.031, 1.002 and
+ * 1.000 against the faster verdict at 2, 3 and 4 threads, serial 1.089, 1.382 and 1.654. All planes: 4 threads 1.066
+ * (every plane serial 1.094), 6 threads 1.100 (1.109), 8 threads 1.043 (1.246); 4 threads is the edge (the 75 new
+ * planes alone: this bound 1.111, every plane serial 1.049). Left: planes with both sides of 29 - 47 below L1d / 2
+ * (37x41 serial 1.99 x threaded); tall planes of few columns (130x12); 5 and 7 threads, not timed. */
 #define EST_ND_MT_SERIAL_2D_L1_DIV 2
 #define EST_ND_MT_SERIAL_2D_PRIME_L1_DIV 4
 #define EST_ND_MT_SERIAL_2D_CHEAP_T 8   /* below it, a plane of 7-smooth sides keeps the whole L1d */
+#define EST_ND_MT_SERIAL_2D_FEW_T 4     /* below it, every plane but those of prime-cell rows keeps the whole L1d */
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
 #define EST_ND_MT_SW_L1_DIV 2
@@ -1438,7 +1448,8 @@ static inline int est__serial_2d_div(int N1, int N2, int T)
 {
     if (vfft_policy_prime_cell(N2))
         return EST_ND_MT_SERIAL_2D_PRIME_L1_DIV;
-    if ((est_is_pow2(N1) && est_is_pow2(N2)) || (T < EST_ND_MT_SERIAL_2D_CHEAP_T && est__smooth7(N1) && est__smooth7(N2)))
+    if (T < EST_ND_MT_SERIAL_2D_FEW_T || (est_is_pow2(N1) && est_is_pow2(N2))
+        || (T < EST_ND_MT_SERIAL_2D_CHEAP_T && est__smooth7(N1) && est__smooth7(N2)))
         return 1;
     return EST_ND_MT_SERIAL_2D_L1_DIV;
 }
