@@ -1,7 +1,7 @@
 @echo off
 rem build_and_run_pow2.bat -- the quick check from one double-click on Windows. It builds the benchmark tools for this
 rem computer's CPU (build_tools.py: -march=native, the AVX-512 version when the CPU runs AVX-512, else the AVX2 one),
-rem then runs the 1D complex transform at every power of two from 2 to 2^23 against FFTW, as run_pow2.sh does.
+rem then runs the 1D complex transform at every power of two from 2 to 2^23 against FFTW (run_suite.py --sets pow2).
 rem Needs Python 3.8 or newer, and GCC: MSYS2 in its default folder with its UCRT64 compiler
 rem (pacman -S mingw-w64-ucrt-x86_64-gcc), or a compiler named by the CC variable. It installs nothing,
 rem except the Python package matplotlib for the picture, and only when you say yes.

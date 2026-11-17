@@ -3,7 +3,6 @@
 banked in the wisdom store), in one process per set:
 
     python benchmark_scripts/scripts/estimate_pow2.py [options]
-    ./benchmark_scripts/scripts/run_estimate_pow2.sh [options]
 
     --isa avx512|avx2   the codelet tree to compile (default avx512)
     --sets LIST         which sets, from 1d, 2d, 3d (complex) and r2d, r3d (real: R2C and C2R); default 1d,2d,3d

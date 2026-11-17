@@ -196,7 +196,7 @@ jobs:
           else
             # main: the benchmark programs alone, replaced in place
             NOTES="Benchmark programs: VectorFFT against FFTW on your own machine, no compiler needed.
-          Windows: unzip, double-click run_benchmark.bat. Linux: extract, ./run.sh (install libfftw3 first).
+          Windows: unzip, double-click run_selected.bat (one file per test). Linux: extract, ./run_selected.sh (install libfftw3 first).
           README.txt inside says what each program does; BUILD.txt holds the source commit and every file's SHA-256.
 
           ${BUILT}

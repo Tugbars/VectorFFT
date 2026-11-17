@@ -11,7 +11,7 @@
 built WITHOUT Intel MKL: every program runs the same bench, and a bench linked to MKL does not start on a machine
 without it, the FFTW programs included (the script refuses such a bench). The package:
 
-    <name>/run_benchmark.bat | run.sh   the menu (Windows | Linux)
+    <name>/run_<test>.bat | .sh        one per program, the program started with one click (Windows | Linux)
            README.txt, BUILD.txt, LICENSE
            vectorfft_vs_*[.exe]         the programs (vectorfft_launcher.h)
            avx2/, avx512/               each instruction set's worker, bench and planning tool, with the compiler's
@@ -134,13 +134,18 @@ def main():
     shutil.copytree(os.path.join(ROOT, "src", "wisdom"), os.path.join(pkg, "wisdom"),
                     ignore=shutil.ignore_patterns("*.lock", "*.bak*", "*.tmp"))
 
-    # the menu, the README, the license
+    # each program's one-click file (vectorfft_vs_fftw_<test> -> run_<test>.bat | .sh), the README, the license
     rel = os.path.join(ROOT, "benchmark_scripts", "release")
-    if WIN:
-        shutil.copy2(os.path.join(rel, "run_benchmark.bat"), pkg)
-    else:
-        shutil.copy2(os.path.join(rel, "run.sh"), pkg)
-        os.chmod(os.path.join(pkg, "run.sh"), 0o755)
+    for f in progs:
+        base = f[:-len(EXE)] if EXE else f
+        if not base.startswith("vectorfft_vs_fftw_"):
+            sys.exit("%s is not an FFTW program: the download holds the FFTW programs only" % f)
+        run = "run_%s%s" % (base[len("vectorfft_vs_fftw_"):], ".bat" if WIN else ".sh")
+        if not os.path.isfile(os.path.join(rel, run)):
+            sys.exit("no benchmark_scripts/release/%s: every program of the download has its one-click file there" % run)
+        shutil.copy2(os.path.join(rel, run), pkg)
+        if not WIN:
+            os.chmod(os.path.join(pkg, run), 0o755)
     shutil.copy2(os.path.join(rel, "README.txt"), pkg)
     shutil.copy2(os.path.join(ROOT, "LICENSE"), pkg)
 

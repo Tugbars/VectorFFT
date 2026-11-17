@@ -7,22 +7,24 @@ sudo apt install libfftw3-3 libfftw3-single3; Fedora: sudo dnf install fftw-libs
 
 Run it
 ------
-Windows: double-click run_benchmark.bat and press Enter for the first choice.
-Linux:   ./run.sh
+One file per test. Start with run_selected.
+Windows: double-click run_selected.bat.
+Linux:   in a terminal in this folder, ./run_selected.sh
 
-Each program prints a table: for every transform VectorFFT's time, FFTW's time and the
+Each test prints a table: for every transform VectorFFT's time, FFTW's time and the
 speedup (FFTW's time divided by VectorFFT's; above 1, VectorFFT is faster). It writes the
 table and the raw measurements to a folder under vectorfft_results/ beside the programs.
 
-The programs
-------------
-  vectorfft_vs_fftw_selected          18 commonly used transforms: 1D, 2D (including the
-                                      1920 x 1080 and 1280 x 720 frames) and 3D; about 2 minutes
-  vectorfft_vs_fftw_pow2              the 1D transform at every power of two from 64 to
-                                      4,194,304, the lengths FFTW is tuned for most; a minute
-  vectorfft_vs_fftw_selected_planned  the selected transforms with the plans of VectorFFT's
-                                      planner, which measures (see "Plans" below)
-  vectorfft_vs_fftw_pow2_fp32         the powers of two in single precision (FP32), planned
+The tests
+---------
+Each file (.bat on Windows, .sh on Linux) starts the program of its name, vectorfft_vs_fftw_<test>.
+  run_selected          18 commonly used transforms: 1D, 2D (including the 1920 x 1080 and
+                        1280 x 720 frames) and 3D; about 2 minutes
+  run_pow2              the 1D transform at every power of two from 64 to 4,194,304, the
+                        lengths FFTW is tuned for most; a minute
+  run_selected_planned  the selected transforms with the plans of VectorFFT's planner, which
+                        measures (see "Plans" below)
+  run_pow2_fp32         the powers of two in single precision (FP32), planned
 
 Options (every program)
 -----------------------
@@ -34,8 +36,8 @@ Options (every program)
   --inplace          every transform in place on both libraries: one buffer, the input
                      overwritten by the output
   --check-only       plan and check the transforms, time nothing
-Run a program from a command prompt to pass options, or run the menu with them:
-run_benchmark.bat --cells 1000,4096 (Linux: ./run.sh 1 --cells 1000,4096).
+Give them to a test's file from a command prompt: run_selected.bat --cells 1000,4096
+(Linux: ./run_selected.sh --cells 1000,4096), or to the program itself.
 
 How it measures
 ---------------
@@ -68,6 +70,7 @@ The largest transform (256 x 256 x 256) needs about 1 GB of memory.
 
 What is in this folder
 ----------------------
+  run_*.bat, run_*.sh the tests, one file each (above)
   vectorfft_vs_*      the programs: each checks the CPU, then runs avx2/ or avx512/
   avx2/, avx512/      the benchmark itself for each instruction set
   fftw/               (Windows) FFTW 3.3.10, double and single precision, with its license

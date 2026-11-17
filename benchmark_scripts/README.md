@@ -25,8 +25,8 @@ under `gauntlet/results/`. Nothing is written into the library's shipped wisdom
 `vectorfft-fftw-pow2-gflops.svg`:
 
 ```sh
-./benchmark_scripts/scripts/build_avx512.sh   # once; build_avx2.sh on a CPU without AVX-512
-./benchmark_scripts/scripts/run_pow2.sh       # FFTW; run_pow2.sh mkl for MKL
+python benchmark_scripts/scripts/build_tools.py --isa avx512           # once; --isa avx2 on a CPU without AVX-512
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets pow2   # FFTW; --cmp mkl for MKL
 ```
 
 It is not one of the five pictures and the full runs never include it.
@@ -89,8 +89,10 @@ A pushed version tag (`v*`) gets its own release the same way. Each release has
 `vectorfft-benchmarks-windows-x64.zip` and `vectorfft-benchmarks-linux-x64.tar.gz`, with
 their SHA-256 on the release page and in a `.sha256` file beside each.
 
-Unpack it and run `run_benchmark.bat` (Windows) or `./run.sh` (Linux, with FFTW installed:
-`libfftw3-3` and `libfftw3-single3` on Debian and Ubuntu). Inside are the FFTW programs above,
+Unpack it and start a test with one click: one file per program, `run_selected`, `run_pow2`,
+`run_selected_planned` and `run_pow2_fp32`, a `.bat` to double-click on Windows and a `.sh` to
+run on Linux (`./run_selected.sh`, with FFTW installed: `libfftw3-3` and `libfftw3-single3` on
+Debian and Ubuntu); options given to the file go to the program. Inside are the FFTW programs above,
 built for any x86-64 CPU with AVX2 (an AVX2 and an AVX-512 version; the program picks one by
 the CPU), FFTW's DLLs on Windows with their license, the repository's wisdom (`src/wisdom/`,
 so a known CPU plans at once), a `README.txt` for the user and a `BUILD.txt` with the source
@@ -120,10 +122,9 @@ python benchmark_scripts/scripts/package_release.py --build build
 
 CMake is not needed for this path: the tools are built by `gauntlet/build.py` with the
 compiler alone. (The CMake target `vfft-gauntlet` builds the same binaries, see
-`gauntlet/README.md`; the scripts here expect the ones `build_tools.py` builds.) The shell
-scripts below run from bash (Git Bash or MSYS2 on Windows, bash on Linux) and from any
-directory; the Python scripts they call also run from PowerShell, from the repository's
-root.
+`gauntlet/README.md`; the scripts here expect the ones `build_tools.py` builds.) The commands
+below run from the repository's root in any shell (PowerShell, cmd, bash); where Python 3 is
+named `python3`, as on most Linux systems, type that instead of `python`.
 
 ## Which FFTW
 
@@ -182,17 +183,16 @@ library a run will use. With `mkl` none of this runs.
 ### 1. Build the tools
 
 ```sh
-./benchmark_scripts/scripts/build_avx512.sh                    # the AVX-512 tree, on a CPU with AVX-512; Windows: the FFTW in gauntlet/fftw/ is used
-./benchmark_scripts/scripts/build_avx2.sh                      # the AVX2 tree, on a CPU without AVX-512
-./benchmark_scripts/scripts/build_avx512.sh --fftw-dll <path>  # Linux, or an FFTW of your own
+python benchmark_scripts/scripts/build_tools.py --isa avx512                    # the AVX-512 tree, on a CPU with AVX-512; Windows: the FFTW in gauntlet/fftw/ is used
+python benchmark_scripts/scripts/build_tools.py --isa avx2                      # the AVX2 tree, on a CPU without AVX-512
+python benchmark_scripts/scripts/build_tools.py --isa avx512 --fftw-dll <path>  # Linux, or an FFTW of your own
 ```
 
-Each script calls `python benchmark_scripts/scripts/build_tools.py` with its ISA (`--isa avx512` or
-`--isa avx2`) and your arguments (`python3` when that is a working Python, else `python`):
+Its options:
 
 | Option | Meaning |
 |---|---|
-| `--isa avx2` or `--isa avx512` | which of the library's two codelet trees to compile (set by the script you run; `build_tools.py` alone defaults to `avx512`; see "AVX-512" below) |
+| `--isa avx2` or `--isa avx512` | which of the library's two codelet trees to compile (default `avx512`; see "AVX-512" below) |
 | `--mkl` / `--no-mkl` | build the MKL arm in, or leave it out; by default it is in when MKL is found |
 | `--fftw-dll PATH` | the FFTW shared library for `--cmp fftw` runs, recorded for `run_suite.py` |
 | `--cc NAME` | the compiler (default `gcc`) |
@@ -204,38 +204,44 @@ library's codelets (about 1,600 files) once; that takes a few minutes, and later
 reuse them until a codelet or the ISA changes. The binaries land in `gauntlet/`. What was
 chosen (the ISA, whether MKL is in, the FFTW path and its version string, the compiler) is
 recorded in `benchmark_scripts/scripts/.config.json`, which `run_suite.py` reads; the file is per
-machine and not tracked by git. Run the other script to switch trees: the record changes
-with it.
+machine and not tracked by git. Run it again with the other `--isa` to switch trees: the
+record changes with it.
 
 ### 2. Run the benchmarks
 
-One script per picture, and one for all five:
+One command per picture, and one for all five:
 
 ```sh
-./benchmark_scripts/scripts/run_pow2.sh fftw               # the quick check: 1D, every power of two to 2^23, minutes
-./benchmark_scripts/scripts/run_all.sh fftw --yes          # all five pictures, one after the other
-./benchmark_scripts/scripts/run_1d.sh fftw --yes           # the 1D picture
-./benchmark_scripts/scripts/run_accuracy.sh fftw           # the accuracy picture (after run_1d.sh, or on its own)
-./benchmark_scripts/scripts/run_2d.sh fftw --yes           # the 2D picture
-./benchmark_scripts/scripts/run_2d_mt.sh fftw --yes        # the 2D picture threaded (needs the run of run_2d.sh)
-./benchmark_scripts/scripts/run_3d.sh fftw --yes           # the 3D picture
-./benchmark_scripts/scripts/run_2d.sh mkl --yes            # the same against MKL
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets pow2          # the quick check: 1D, every power of two to 2^23, minutes
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --yes                # all five pictures, one after the other
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets 1d --yes      # the 1D picture
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets accuracy      # the accuracy picture (after the 1d set, or on its own)
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets 2d --yes      # the 2D picture
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets 2d-mt --yes   # the 2D picture threaded (needs the 2d set's run)
+python benchmark_scripts/scripts/run_suite.py --cmp fftw --sets 3d --yes      # the 3D picture
+python benchmark_scripts/scripts/run_suite.py --cmp mkl --sets 2d --yes       # the same against MKL
 ```
+
+On Windows each of these is also one double-click, in `benchmark_scripts/scripts/`:
+`build_and_run_pow2.bat`, `build_and_run_1d.bat`, `build_and_run_accuracy.bat`,
+`build_and_run_2d.bat`, `build_and_run_2d_mt.bat`, `build_and_run_3d.bat` and
+`build_and_run_all.bat`. Each finds Python and GCC, builds the tools for this computer's CPU
+(the AVX-512 version when the CPU runs it, else the AVX2 one), then runs its set against FFTW
+and draws the picture; options given to it go to `run_suite.py` (`build_and_run_2d.bat --cmp mkl`
+compares with MKL). `build_and_run_pow2_fp32.bat` builds the single-precision program with CMake
+and runs it.
 
 The threaded picture runs at as many threads as your machine has physical cores in its
 fastest core class, read from the operating system and printed when the script starts: the
 front page's own picture used 8 threads on an Intel Core i9-14900KF with 8 P-cores; on a
 six-core Zen 4 the script uses 6. `--threads N` sets another count.
 
-The first argument is the comparator, `fftw` (the default when left out) or `mkl`; every
-further argument goes to `python benchmark_scripts/scripts/run_suite.py`, the script they all call
-(`run_all.sh fftw --yes` is `run_suite.py --cmp fftw --yes`, `run_2d.sh mkl` is
-`run_suite.py --cmp mkl --sets 2d`). Its options:
+`run_suite.py`'s options:
 
 | Option | Meaning |
 |---|---|
-| `--cmp fftw` or `--cmp mkl` | the comparator (required; the shell scripts' first argument) |
-| `--sets 1d,accuracy,2d,2d-mt,3d` | which sets to run (default all five; each `run_*.sh` names its own); they run in this order whatever order you list them. `pow2`, the quick check, runs only when named |
+| `--cmp fftw` or `--cmp mkl` | the comparator (required) |
+| `--sets 1d,accuracy,2d,2d-mt,3d` | which sets to run (default all five); they run in this order whatever order you list them. `pow2`, the quick check, runs only when named |
 | `--threads N` | the thread count of the `2d-mt` set (default: the physical cores of the fastest core class) |
 | `--name-prefix NAME` | the run directories' prefix (default `<cmp>_<isa>_<date>`, e.g. `fftw_avx512_2026-10-19`) |
 | `--fftw-dll PATH` | the FFTW library, when it is not the one `build_tools.py` recorded |
@@ -247,10 +253,10 @@ Each set is one gauntlet command, then the plot script of that picture, drawn in
 directory, then the summary. The gauntlet's output streams through as it runs; the first
 failure stops the suite with the failing command printed, and the finished sets stay. A
 stopped gauntlet run resumes where it left off when the same command runs again
-(`gauntlet/README.md`), so running the same script again with the same `--name-prefix`
+(`gauntlet/README.md`), so running the same command again with the same `--name-prefix`
 continues it; the prefix defaults to the day's date, so a run continued on another day
 needs the prefix named. The `2d-mt` set draws the threaded run beside the one-thread `2d`
-run, so it needs the `2d` run of the same prefix: `run_2d.sh` first, or `run_all.sh`.
+run, so it needs the `2d` run of the same prefix: the `2d` set first, or all five in one run.
 
 ## What lands where
 
@@ -319,7 +325,7 @@ library never falls back from AVX-512 to AVX2 for a kernel it lacks: the planner
 routes that exist. The AVX-512 tree has not been timed on AVX-512 hardware yet; these
 scripts are how that is done. The release will ship both ISAs.
 
-`build_avx512.sh` builds the AVX-512 tree; measure it on a CPU that has AVX-512,
+`build_tools.py --isa avx512` builds the AVX-512 tree; measure it on a CPU that has AVX-512,
 against an FFTW with its AVX-512 code paths: on Windows the one in `gauntlet/fftw/`, on Linux
 a build from source (above); `build_tools.py` prints what the
 FFTW file was built with, and `SUMMARY.md` records both.
@@ -331,12 +337,10 @@ caller to one core and holds its SMT sibling the same way as on Intel.
 
 ## Files
 
-- `scripts/build_avx512.sh`, `scripts/build_avx2.sh` -- build the tools with the AVX-512 or the AVX2 tree: call `scripts/build_tools.py` with that ISA and your arguments
-- `scripts/run_all.sh`, `scripts/run_1d.sh`, `scripts/run_accuracy.sh`, `scripts/run_2d.sh`, `scripts/run_2d_mt.sh`, `scripts/run_3d.sh` -- the benchmarks, all five or one picture each: the comparator first (`fftw`, the default, or `mkl`), then `scripts/run_suite.py`'s options
-- `scripts/run_pow2.sh` -- the quick check: 1D c2c at every power of two from 2 to 2^23, in minutes; the same arguments
-- `scripts/run_estimate_pow2.sh`, `scripts/estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused; `--inplace` times both plans in place. Windows only; `--help` for the options
+- `scripts/build_and_run_<set>.bat` -- Windows, one double-click per set (`pow2`, `1d`, `accuracy`, `2d`, `2d_mt`, `3d`, `all`): the tools built for this CPU, then the set run; `scripts/build_and_run_pow2_fp32.bat` -- the FP32 program built with CMake and run
+- `scripts/estimate_pow2.py` -- the library against itself, not a comparator: the estimate plan (`VFFT_FLAG_ESTIMATE`, nothing measured) against the planner's plan, 1D c2c at every power of two from 64 to 2^23, 29 power-of-two planes and 21 power-of-two volumes, one thread; `--real` instead times the real transforms, R2C and C2R on 26 planes and 19 volumes, and checks each estimate plan against a long-double DFT; builds `src/estimate/estimate_race.c`, `estimate_race_nd.c` and `estimate_race_real.c` as needed (AVX-512 by default, `--isa avx2`), copies this CPU's wisdom folder into the run directory, banks any missing planner row there first, then times; `SUMMARY.md` gives each cell's E/B (below 1: the estimate is faster) and lists any estimate the library refused; `--inplace` times both plans in place. Windows only; `--help` for the options
 - `scripts/build_tools.py` -- builds the three tools through `gauntlet/build.py` and records `scripts/.config.json`
 - `scripts/run_suite.py` -- runs the sets through `gauntlet/gauntlet.py`, draws the pictures with `src/tools/plots/gen_gflops.py`, `gen_2d_pow2.py`, `gen_forest_2d_mt.py`, `gen_3d_pow2.py` and `gen_precision.py`, and writes `SUMMARY.md`
 - `scripts/.config.json` -- the record of the last build (per machine, not tracked)
-- `release/` -- what the download holds beside the programs: `run_benchmark.bat`, `run.sh`, `README.txt`; `scripts/package_release.py` -- makes the download (above)
+- `release/` -- what the download holds beside the programs: one file per program to start it, `run_<test>.bat` (Windows) and `run_<test>.sh` (Linux), and `README.txt`; `scripts/package_release.py` -- makes the download (above)
 - `CMakeLists.txt` and `vectorfft_vs_*.c` -- the build targets above, one file per program; `vectorfft_launcher.h` -- what a program does first (the CPU check, the instruction set, the options) and the programs' transforms; `vectorfft_bench.h`, `vectorfft_bench_worker.c` -- the work, one build per instruction set (the plans, their checks, the bench runs, the table)

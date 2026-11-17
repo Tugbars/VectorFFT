@@ -24,4 +24,4 @@ When you replace the library with a newer version, compile your program again.
 
 **Also in this release**
 
-`vectorfft-benchmarks-*`: VectorFFT against FFTW on your own machine, no compiler needed. Windows: unzip, double-click `run_benchmark.bat`. Linux: extract, `./run.sh` (install libfftw3 first).
+`vectorfft-benchmarks-*`: VectorFFT against FFTW on your own machine, no compiler needed. One file per test: Windows: unzip, double-click `run_selected.bat`. Linux: extract, `./run_selected.sh` (install libfftw3 first).
