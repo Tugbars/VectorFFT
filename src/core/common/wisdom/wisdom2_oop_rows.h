@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_oop_rows.h — the OOP family's row MECHANICS, shared by both layouts'
  * codecs: token parsing, the engine tag, the date stamp, the kind-3 (K=1)
  * row scan by layout, and the existence queries.

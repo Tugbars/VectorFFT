@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_cfg.h -- THE REQUEST AS THE ENGINES READ IT (2026-10-15, the public API's version 2).
  *
  * The public configuration (include/vfft.h, vfft_config_t) is translated once, at the front

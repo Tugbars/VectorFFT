@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfftf.c -- the FP32 library: the core's translation unit (vfft.c) compiled a second time for
  * float data (common/vfft_prec.h). Built only when VFFT_ENABLE_FLOAT is on. Its public functions
  * are vfftf_create / vfftf_execute / vfftf_destroy / vfftf_info (include/vfftf.h); vfft_malloc,

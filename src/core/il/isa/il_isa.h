@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_isa.h — the IL (interleaved-complex, zil) family at the build's ISA.
  *
  * Every runtime header that names an IL kernel includes this instead of a

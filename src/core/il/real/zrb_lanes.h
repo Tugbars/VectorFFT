@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrb_lanes.h - the real Bluestein over K LANES: the interleaved real batch
  * in its DEFAULT geometry (lane-major: element e of lane t at x[e K + t], bin
  * f of lane t at z[2 (f K + t)]) at an odd N without a chain, as a native IL

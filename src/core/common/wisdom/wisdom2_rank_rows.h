@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_rank_rows.h — the rank>=2 row helpers both layouts' 2D/3D codecs
  * use: the canonical request key, the record key, the MEASURE/provenance
  * tail and the fill-only bank. Carved verbatim out of wisdom2_2d_reader.h

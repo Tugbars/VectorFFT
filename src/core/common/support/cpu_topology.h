@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* cpu_topology.h — which logical CPU is which: the physical cores, their
  * hyperthread siblings, and which cores are P-cores.
  *

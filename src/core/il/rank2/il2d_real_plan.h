@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_real_plan.h — the 2D real tier's PASS PLANS and their planners, per
  * direction: the ROW PLAN (below) and the COLUMN PLAN (at the end of the
  * file), each the r2c plan and its c2r twin (2026-10-05).

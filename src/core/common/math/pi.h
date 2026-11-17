@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* pi.h — THE value of pi, once (the utilities merge, 2026-09-27).
  *
  *   VFFT_PI    the double, 0x1.921fb54442d18p+1: every twiddle, chirp and

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* cpu_cache.h — cache capacities and SMT width, discovered once at PLAN time.
  *
  * PLANNING ONLY. Nothing here may be called from an execute path.

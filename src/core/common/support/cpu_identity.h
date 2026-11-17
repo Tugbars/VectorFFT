@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* cpu_identity.h — THE CPU IDENTITY: which CPU raced a wisdom row.
  *
  * A race winner is a property of the machine that ran the race, so the store

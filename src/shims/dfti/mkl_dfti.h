@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /*
  * mkl_dfti.h -- the DFTI interface of VectorFFT (docs/roadmap/dfti_shim_design.md).
  *

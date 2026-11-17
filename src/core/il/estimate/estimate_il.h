@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* estimate_il.h — THE ESTIMATE: the plan of a 1D interleaved c2c transform chosen by formulas,
  * with nothing measured (VFFT_FLAG_ESTIMATE, include/vfft.h).
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* sibling_guard.h -- THE SIBLING GUARDS: a waiting thread on the hyperthread sibling of each core the
  * library times or runs on, so no other thread shares that core.
  *

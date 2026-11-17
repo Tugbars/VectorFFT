@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_tier.h - the native interleaved 2D tier.
  *
  * The row and column passes, their multithreaded forms, and the racers that

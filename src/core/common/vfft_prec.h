@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_prec.h -- the element precision of this translation unit.
  *
  * The core is one translation unit (vfft.c). The FP32 library is the same source compiled a

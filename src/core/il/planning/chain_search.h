@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* chain_search.h - the measured CHAIN SEARCH over a radix pool (owner,
  * 2026-10-04): the flat DITs' chain pick, c2c (il/planning/dp_planner_il.h)
  * and real (il/real/odd_build.h, zrf).

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_fingerprint.h — the create-time PLAN FINGERPRINT.
  *
  * WHY THIS EXISTS

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* route_ids.h - the K=1 route ids of BOTH layouts and the OOP wisdom/plan kinds.
  *
  * Persisted vocabulary: kind-3 wisdom rows carry a split route (VFFT_K1_SP_*)

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_estimate_lm_il.h — the ESTIMATE create of a LANE-MAJOR REAL batch (VFFT_FLAG_ESTIMATE on R2C or C2R at
  * howmany = K >= 2 in the lane-major geometry: the real batch's DEFAULT at rank 1, named at rank 2 and 3) at rank 1, 2
  * and 3: the batch's row written from the formulas and replayed by the door with nothing measured

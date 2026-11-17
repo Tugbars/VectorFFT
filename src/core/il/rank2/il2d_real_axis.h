@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_real_axis.h -- THE REAL AXIS ON N1 (2026-10-07): a whole-plan FORM of
  * the interleaved 2D r2c plan at an even N1 and an odd N2
  * (docs/roadmap/il2d_real_axis_n1.md).

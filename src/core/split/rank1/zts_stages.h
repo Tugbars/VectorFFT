@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zts_stages.h — zturn-ts's STAGE KERNELS, for the staged executor: the
  * cells with no fused driver (every 2^a*odd cell of the odd band,
  * zts.h vfft_zts_odd_band) run one kernel call per stage and block. The

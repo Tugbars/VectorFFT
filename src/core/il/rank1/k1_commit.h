@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* k1_commit.h - the K=1 plan's replay, race, and commit.
  *
  * How a single-transform cell gets its plan: consult wisdom, and on a miss race

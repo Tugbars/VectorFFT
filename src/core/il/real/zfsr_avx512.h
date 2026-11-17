@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zfsr_avx512.h — the real four-step's block gather, scatter and its two
  * order sweeps at 512 bits (the avx512 build).
  *

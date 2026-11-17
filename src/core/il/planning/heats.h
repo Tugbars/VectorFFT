@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* heats.h - the measured TOURNAMENT IN HEATS (owner, 2026-10-04): many
  * candidates ranked by same-run races, never by numbers taken one after
  * another.

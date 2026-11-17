@@ -1540,8 +1540,17 @@ let provenance_env_overrides () : string =
   | l -> String.concat " " l
 ;;
 
-let provenance_block ~(family : string) (lines : string list) : string =
+(* The license lines every generated codelet opens with, the same two lines
+ * the committed codelets carry: the provenance block starts with them; a
+ * family whose file opens with its own banner (cascade_z) prints them above
+ * the banner and asks the block for none (~license:false). *)
+let license_header =
+  "/* SPDX-License-Identifier: MIT\n * Copyright (c) 2026 Tuğbars Heptaşkın */\n"
+;;
+
+let provenance_block ?(license = true) ~(family : string) (lines : string list) : string =
   let b = Buffer.create 1024 in
+  if license then Buffer.add_string b license_header;
   Buffer.add_string b "/* ===================== PROVENANCE =====================\n";
   Buffer.add_string
     b

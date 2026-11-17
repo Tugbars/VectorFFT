@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_internal.h - the three private handle types.
  *
  * vfft_wisdom_s, vfft_plan_s and vfft_batch_s: the structs behind the opaque

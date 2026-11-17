@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_create_split.h — the split library's 1D C2C create: zturn-ts, both
  * placements (docs/design/split_v1_0_contract.md).
  *

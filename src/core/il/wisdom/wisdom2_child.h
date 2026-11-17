@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_child.h — A CHILD PLAN IN ROLE (owner, 2026-10-02; the 2D and 3D
  * tiers 2026-10-05).
  *

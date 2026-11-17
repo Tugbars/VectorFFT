@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* lm_batch2d_il.h -- THE LANE-MAJOR 2D BATCH (docs/roadmap/lane_major_batch_design.md, step 6,
  * 2026-10-15): K >= 2 planes of N1 x N2 side by side, element (r, c) of transform t at
  * z[2 ((r N2 + c) K + t)]. Every axis is a column pass. The FIRST axis is one column pass of

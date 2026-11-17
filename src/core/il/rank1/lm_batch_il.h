@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* lm_batch_il.h — THE LANE-MAJOR 1D BATCH on the column pass
  * (docs/roadmap/lane_major_batch_design.md, 2026-10-14).
  *

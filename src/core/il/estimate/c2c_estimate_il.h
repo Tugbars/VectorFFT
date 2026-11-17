@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_estimate_il.h — the ESTIMATE create (VFFT_FLAG_ESTIMATE): a 1D interleaved c2c plan built
  * from the formulas' recipe (il/estimate/estimate_il.h) through the door's own replay, with
  * nothing measured. Rank 2 and 3 are il/estimate/c2c_estimate_nd_il.h's, included at the end on

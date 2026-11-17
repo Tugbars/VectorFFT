@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vtw_avx512.h — every AVX-512 twiddle table of the IL runtime, and nothing else.
  *
  * Included only when the build's ISA is avx512 (VFFT_IL_VW == 8, il_isa.h). Each

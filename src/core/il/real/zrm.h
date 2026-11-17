@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrm.h - the real MONO engine: the whole small real transform as ONE kernel.
  *
  * The rn1 kind (codelets/zil/<isa>/real/mono/, generator/lib/gen/c2c_il.ml,

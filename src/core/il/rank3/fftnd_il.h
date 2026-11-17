@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * fftnd_il.h — the rank-N INTERLEAVED c2c tier (design of record:
  * docs/roadmap/fftnd_il_design.md). Rank 3; rank 4 would compose the same

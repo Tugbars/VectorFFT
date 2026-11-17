@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* odd_build.h — the real door's ODD-N engine pick (K=1, INTERLEAVED, both
  * placements): env pin, the banked engine, or THE ODD REAL RACE.
  *

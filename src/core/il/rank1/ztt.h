@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* ztt.h — ZTURN-T: the RUN-CONTIGUOUS DIT engine for K=1 interleaved c2c,
  * 16 <= N <= 262144 (FP32: 1048576), route VFFT_K1_IL_ZTT.
  *

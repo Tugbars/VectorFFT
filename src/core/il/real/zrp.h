@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrp.h — the interleaved REAL PAIR (2026-09-29, docs/roadmap/
  * il_real_engine_research.md, method 1): a real transform of even N = R1 * R2
  * in two stages, no fold pass — the untangle rides in the top stage (form A)

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* split_create.h — the SPLIT create: the split side of vfft_create's one fork.
  *
  * _vfft_create_inner validates the config, applies the layout-independent

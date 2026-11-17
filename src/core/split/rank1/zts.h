@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zts.h — zturn-ts: ZTURN-T's RUN-CONTIGUOUS DIT engine on the SPLIT layout,
  * 1D c2c, natural order, 16 <= N <= 262144, N = R[0] * ... * R[nf-1] with
  * every R in {4, 8}, nf >= 2, (N / R[0]) % 4 == 0 (the natural-class cells of

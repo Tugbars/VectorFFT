@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_zts_split.h — the SPLIT library's zturn-ts wisdom: the cell rows a
  * split 1D c2c natural-order request is served from, and their codec.
  *

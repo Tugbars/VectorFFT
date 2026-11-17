@@ -148,7 +148,8 @@ val filter_inline_set_cross_pass
 
 val provenance_argv : string array option ref
 val provenance_env_overrides : unit -> string
-val provenance_block : family:string -> string list -> string
+val license_header : string
+val provenance_block : ?license:bool -> family:string -> string list -> string
 
 val render_node_def
   :  sc:Scratch.t

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_create_il.h — the r2c / c2r CREATE, interleaved tier.
  *
  * K==1, INTERLEAVED, no caller-supplied batch. The door's engine pick is by

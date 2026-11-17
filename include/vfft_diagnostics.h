@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_diagnostics.h - did the threading actually happen?
  *
  * vfft.h is the transform contract: eight functions. Nothing here is needed

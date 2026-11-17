@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrb.h - the real BLUESTEIN: the odd-N real transform that has no chain (a
  * prime, or a composite with a factor outside the flat DIT's pool) as a
  * chirp-z convolution at length M on the IL machinery -- the half spectrum

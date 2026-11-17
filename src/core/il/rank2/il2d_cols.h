@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_cols.h - native IL 2D: the column-chain machinery.
  *
  * The chain enumerator, the twiddle-table builders, and the column-pass

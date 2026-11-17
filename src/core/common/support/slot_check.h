@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* slot_check.h — the one SLOT-INVARIANT walk, shared by the form checkers.
  *
  * THE INVARIANT: every kernel a form resolver hands back for a slot must be

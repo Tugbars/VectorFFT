@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zts_race.h — zturn-ts's create-time race on the shared race body
  * (common/support/race.h): the five parts, docs/design/planning_model.md §4.
  *

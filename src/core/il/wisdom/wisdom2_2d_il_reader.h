@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_2d_il_reader.h — the INTERLEAVED rank>=2 cell codec: the lay=il
  * rows of the native IL 2D tier (column chains, forms, axis races), the IL
  * 2D real rows and the rank-3 IL (ilnd) tokens. Carved verbatim out of

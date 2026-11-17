@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_create.h — the INTERLEAVED create: the IL side of vfft_create's one fork.
  *
  * _vfft_create_inner validates the config, applies the layout-independent

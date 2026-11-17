@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zfsr.h - the real FOUR-STEP: the 1D real transform above ZTT-r's band on
  * the 1D c2c four-step's recipe (il/rank1/k1_fourstep.h), the Hermitian fold
  * acting on the mirror pairs through the Bailey plane.

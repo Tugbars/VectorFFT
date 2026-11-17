@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_proto.h — SCALAR SIMULATOR for the native IL 2D c2c tier's stage
  * maps (docs/roadmap/fft2d_il_c2c_design.md).
  *

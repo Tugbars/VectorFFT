@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* ref.h — the benchmark reference-backend interface.
  *
  * Declarations only: the vtable slot type and the reference-independent

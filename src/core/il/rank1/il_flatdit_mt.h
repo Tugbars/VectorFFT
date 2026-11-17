@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_flatdit_mt.h — the FLAT mixed-radix DIT's intra-transform threading
  * (docs/design/3D_mt_il_strategy.md declares the method).
  *

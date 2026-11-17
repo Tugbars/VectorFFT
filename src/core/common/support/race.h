@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* race.h — the one race body shared by the in-process racers.
  *
  * docs/design/planning_model.md §4 declares that every race has the same

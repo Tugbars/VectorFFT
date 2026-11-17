@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* numtheory.h — the small integer helpers both prime engines need, once.
  *
  *   vfft_is_prime(n)          trial division; n < 2 is not prime

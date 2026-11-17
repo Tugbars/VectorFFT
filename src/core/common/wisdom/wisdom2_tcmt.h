@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_tcmt.h — the contiguous batch's THREADING verdict: its row and codec.
  *
  * A K > 1 transform-contiguous batch has one threaded arm, the serial loop vs

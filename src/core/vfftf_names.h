@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfftf_names.h -- the external names of the FP32 unit (vfftf.c), included before vfft.c.
  *
  * The FP32 unit is vfft.c compiled again, so every symbol it defines with external linkage

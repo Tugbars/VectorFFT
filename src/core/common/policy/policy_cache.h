@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* policy_cache.h - L8, a working set against the cache the CPU reports.
  *
  * Layout-neutral (today's callers are interleaved: the 2D/3D tiers and the

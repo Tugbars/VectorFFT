@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* dft_ld.h -- THE LONG-DOUBLE DFT OF CREATE TIME (2026-10-17).
  *
  * Some create-time tables are the DFT of a known sequence: the Rader kernel is the DFT of length

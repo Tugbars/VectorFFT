@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_selftest.h — the unit gates for the wisdom2 module, OWNED BY THE
  * MODULE (the thin-driver law): bench files only make calls; every
  * scenario, assertion, and helper lives here beside the code it gates.

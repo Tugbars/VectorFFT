@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2.h — THE VectorFFT wisdom store: the only parser and the only
  * writer of the @vw2 grammar, everywhere (library, calibrators, benches,
  * gates). Read src/core/wisdom2/README.md before changing anything here;

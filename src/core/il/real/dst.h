@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* dst.h -- DST-II and DST-III (VFFT_DST2, VFFT_DST3): 1D, N reals in and N reals out, any N, one transform,
  * on the interleaved real FFT of the same length.
  *

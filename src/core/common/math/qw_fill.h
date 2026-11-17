@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* qw_fill.h — the ZTURN-T twiddle streams expanded from the BAKED QUARTER-WAVE
  * (ztt_qw16384.h), for either library (common/: split cannot include il/).
  *

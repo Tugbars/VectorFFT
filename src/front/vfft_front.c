@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_front.c -- the library a program links when VectorFFT comes ready built: libvfft.dll (libvfft.so). It holds
  * no transform code. On the first call it looks at the CPU, loads the library built for the instruction set the CPU
  * runs -- libvfft_avx512 when the CPU runs AVX-512, else libvfft_avx2 -- from its own folder, and from then on every

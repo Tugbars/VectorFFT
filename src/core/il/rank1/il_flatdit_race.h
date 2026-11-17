@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_flatdit_race.h — the flat DIT's create-time races on the shared race
  * body. Two axes the planner banks on the kind-3 row:
  *

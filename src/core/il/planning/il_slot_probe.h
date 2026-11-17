@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_slot_probe.h — the INTERLEAVED PAIR tier's half of the slot invariant:
  * which slots exist, and how to build and check one.
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_estimate_il.h — the ESTIMATE create of a 1D REAL transform (VFFT_FLAG_ESTIMATE on R2C or C2R, rank 1,
  * one transform): the real door's row written from the formulas and replayed by the door with nothing measured
  * (docs/roadmap/real_estimate_plan.md, stage 1; the formulas are docs/design/estimate_1d_sketch.md sections 6

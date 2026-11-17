@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_ip_create_il.h — the c2c IN-PLACE create, interleaved tier.
  *
  * Reached from the IL create (il/il_create.h) for an interleaved

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* dp_planner_il.h — measured plan search for the INTERLEAVED (IL) K=1 axis.
  *
  * The IL sibling of dp_planner.h: every reported cost is a WHOLE-PLAN

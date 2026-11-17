@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_memory.h -- the public memory calls (vfft.h, "memory"): vfft_malloc,
  * vfft_free, vfft_alignment, vfft_plan_alloc and vfft_buffers_free.
  *

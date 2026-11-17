@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_oop_create_il.h — the c2c OUT-OF-PLACE create, interleaved tier.
  *
  * The K=1 engines (mono, pair, chain3, flat, ZTURN-T, four-step, prime): the

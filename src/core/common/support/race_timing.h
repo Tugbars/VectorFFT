@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* race_timing.h — THE monotonic clock: every racer and planner times with it.
  *
  * vfft_now_ns() is nanoseconds as a double, for interval measurement only.

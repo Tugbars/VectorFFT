@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* codelet_abi.h - the 11-argument codelet signature both layouts share.
  *
  * fn(in_re_or_z, in_im, out_re_or_z, out_im, tw_re, tw_im, Ls, Gs, OLs, OGs, count).

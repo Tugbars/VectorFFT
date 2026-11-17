@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zttr_mt.h - ZTT-r's THREADED arms: the ZTT's threaded walk (il/rank1/
  * ztt_mt.h) with the Hermitian fold staying FUSED.
  *

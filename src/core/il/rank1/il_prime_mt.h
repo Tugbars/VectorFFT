@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_prime_mt.h - the prime cell's THREADED form (Rader / Bluestein,
  * il_prime.h; owner, 2026-10-03: the convolutions take c2c's threading).
  *

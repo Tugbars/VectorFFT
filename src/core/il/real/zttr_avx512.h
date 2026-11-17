@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zttr_avx512.h — ZTT-r's two fused kernels at 8 lanes (the avx512 build).
  *
  * Included by zttr.h at the avx512 ISA (VFFT_ZTTR_VW == 8), in place of its 4-lane kernels:

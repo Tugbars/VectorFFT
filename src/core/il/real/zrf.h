@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrf.h - the real FLAT DIT: the odd-N real transform on the c2c flat DIT's
  * own stages (il/rank1/il_flatdit.h), real input never widened to complex.
  *

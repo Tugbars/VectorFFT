@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* lm_batch3d_il.h -- THE LANE-MAJOR 3D BATCH (docs/roadmap/lane_major_batch_design.md, step 6,
  * 2026-10-15): K >= 2 volumes of N1 x N2 x N3 side by side, element (i, j, k) of transform t
  * at z[2 ((i N2 N3 + j N3 + k) K + t)]: the 2D batch's door one rank up. The FIRST axis is one

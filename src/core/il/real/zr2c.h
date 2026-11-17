@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zr2c.h — INTERLEAVED (z) real-transform folds: the "CCE-mirror IL" route's
  * two hand-written passes (measured −30…−59% vs the K-axis fold).
  *

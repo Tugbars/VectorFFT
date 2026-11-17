@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * transpose.h — Multi-regime cache-oblivious SIMD matrix transpose
  *

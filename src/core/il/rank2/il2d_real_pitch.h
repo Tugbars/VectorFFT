@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_real_pitch.h -- THE REAL TIER'S PITCH FORMS (2026-10-07): two planes the
  * caller never sees moved off the CCE pitch hp1, where a one-kernel column
  * pass in place at that pitch aliases itself (16 bytes past a 4 KB multiple

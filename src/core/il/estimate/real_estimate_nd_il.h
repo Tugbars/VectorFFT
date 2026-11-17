@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_estimate_nd_il.h — the ESTIMATE create of one 2D real transform (VFFT_FLAG_ESTIMATE; R2C and C2R, natural
  * order, either placement, any thread count): the 2D real door's row written from formulas into a private store,
  * then the door's own create replays it with nothing measured (docs/roadmap/real_estimate_plan.md, stage 3).

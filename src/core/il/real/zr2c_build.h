@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zr2c_build.h - the interleaved-CCE real route ("kind 5").
  *
  * THE IDEA

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* dct1_dst1.h -- DCT-I and DST-I (VFFT_DCT1, VFFT_DST1): 1D, N reals in and N reals out, any N, one transform,
  * on the interleaved real FFT of the input extended to twice its length.
  *

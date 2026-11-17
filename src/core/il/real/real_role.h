@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_role.h -- THE ROLE OF THE REAL DOOR'S RACES (owner, 2026-11-14: "the OOO engine makes everything non
  * predictable").
  *

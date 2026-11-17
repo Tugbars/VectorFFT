@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_rader_stage.h — the RADER STAGE of the flat chain: a prime radix p above the
  * kernel pool, served as a vectorized Rader convolution over the stage's columns
  * (docs/roadmap/rader_leaf_design.md, 2026-10-13).

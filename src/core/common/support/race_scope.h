@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* race_scope.h — THE RACE SCOPE: the conditions every measurement runs under.
  *
  * A race decides which plan a cell is served from, and its winner is saved,

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_measure.h -- the public measurement calls (vfft.h, "the measurement
  * scope"): vfft_measure_configure, vfft_measure_begin, vfft_measure_end,
  * vfft_measure_confine, vfft_measure_describe; and vfft_measure_scopes

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* fft2d_create_il.h — the rank-2 CREATE, interleaved tier.
  *
  * The native IL 2D serving (lay=il): the c2c tier (any placement) and the

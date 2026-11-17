@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zalloc.h — THE allocator: 64-byte-aligned memory for every buffer, table
  * and scratch arena in the library (the utilities merge, 2026-09-27).
  *

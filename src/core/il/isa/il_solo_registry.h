@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_solo_registry.h - the interleaved K=1 SOLO tier's kernels and resolvers.
  *
  * The mono-64 8x8 IL twins and the resolvers of the whole-transform solo

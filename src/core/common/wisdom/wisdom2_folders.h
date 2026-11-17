@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_folders.h — ONE CPU, ONE FOLDER: which folder of a store root is
  * this CPU's.
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* tw_exact.h -- cos/sin(2*pi*p/n) rounded ONCE to double, from the integers.
  *
  * THE ONE TRIG SOURCE OF EVERY CREATE-TIME TABLE. A twiddle, a chirp or a

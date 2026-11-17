@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_prime.h — PRIME-N K=1 route on the PURE-IL machinery (OOP, NATURAL,
  * interleaved z->z, both directions).
  *

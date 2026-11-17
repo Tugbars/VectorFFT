@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* k1_fourstep_band.h — the K=1 interleaved four-step's BAND (docs/design/
  * k1_fourstep_design.md): the sizes the engine serves and the
  * side ladders its splits draw from. Self-contained so the benches admit the

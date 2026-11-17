@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrb_mt.h - the real Bluestein's THREADED form (il/real/zrb.h; owner,
  * 2026-10-03: the convolutions take c2c's threading).
  *

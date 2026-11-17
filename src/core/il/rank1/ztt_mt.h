@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* ztt_mt.h — ZTURN-T's THREADED arm: the staged walk, sectioned
  * (docs/design/ztt_mt_design.md).
  *

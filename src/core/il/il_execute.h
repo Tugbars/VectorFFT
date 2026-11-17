@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_execute.h — the INTERLEAVED execute: the IL side of vfft_execute's one fork.
  *
  * vfft_execute validates the call (_vfft_sig_bad), tries the bound K=1 IL

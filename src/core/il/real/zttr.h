@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zttr.h — ZTURN-T REAL (2026-09-29, docs/roadmap/il_real_engine_research.md
  * method 2): the r2c of an even N on the ZTURN-T machinery at M = N/2 with
  * the Hermitian fold FUSED INTO THE TERMINATOR. No fold pass, no scratch

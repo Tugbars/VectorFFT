@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* policy_il.h (was planning/policy.h) — THE planning policy: the one place a law about a REQUEST is
  * written (docs/design/planning_policy_design.md).
  *

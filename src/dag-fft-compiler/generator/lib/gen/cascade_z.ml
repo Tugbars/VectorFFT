@@ -632,6 +632,7 @@ let emit_codelet
   in
   (* ─── emit ────────────────────────────────────────────────────────── *)
   let buf = Buffer.create 8192 in
+  Buffer.add_string buf Emit_render.license_header;
   Buffer.add_string
     buf
     (Printf.sprintf
@@ -739,6 +740,7 @@ let emit_codelet
   Buffer.add_string
     buf
     (Emit_render.provenance_block
+       ~license:false   (* printed above the banner, the file's first lines *)
        ~family:"zsplit-pipeline"
        [ Printf.sprintf "kind=%s radix=%d dir=%s isa=%s" k.base radix dir_s isa.Isa.name
        ; (if k.twiddled

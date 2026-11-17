@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * @file vfftf.h
  * @brief The FP32 (single precision) VectorFFT API: the plan functions of

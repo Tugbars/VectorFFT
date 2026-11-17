@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_oop_il.h — the INTERLEAVED library's OOP-family wisdom: its K=1
  * record and codec.
  *

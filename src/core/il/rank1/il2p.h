@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2p.h — PURE-IL two-pass K=1 route (bailey2 shape, interleaved end to end).
  *
  * z -> n1t(R2) -> z scratch -> t2(R1) -> z.  No split planes anywhere: every

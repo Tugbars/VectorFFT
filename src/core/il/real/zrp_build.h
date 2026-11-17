@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrp_build.h - the real pair's, ZTT-r's and the real mono's handles and the
  * real door's engine race.
  *

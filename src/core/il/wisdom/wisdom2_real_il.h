@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_real_il.h - the interleaved 1D real cell's ENGINE verdict.
  *
  * One record per (transform, N, placement, thread count) at q=1 ord=nat in the

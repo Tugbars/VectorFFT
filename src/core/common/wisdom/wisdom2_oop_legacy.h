@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_oop_legacy.h — the FROZEN legacy oop_wisdom.txt format: its dual
  * entry struct, table, loader and lookups.
  *

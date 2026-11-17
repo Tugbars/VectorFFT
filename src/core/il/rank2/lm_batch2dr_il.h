@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* lm_batch2dr_il.h -- THE LANE-MAJOR 2D REAL BATCH, r2c and c2r (docs/roadmap/lane_major_batch_design.md,
  * step 6, 2026-10-15): K real planes of N1 x N2 side by side, x[(r N2 + c) K + t]; the spectrum
  * z[2 ((r H + f) K + t)], f < H = N2 / 2 + 1. The 2D c2c batch's shape (lm_batch2d_il.h) with the

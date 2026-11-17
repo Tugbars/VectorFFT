@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* policy_order.h - L4, the ORDER law, and the CELL: layout-neutral policy.
  *
  * Both layouts ask which wisdom order row a request reads (the order is a

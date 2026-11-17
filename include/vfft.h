@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * @file vfft.h
  * @brief The VectorFFT public API: eight functions.

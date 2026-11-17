@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_api.h -- THE PUBLIC API, version 2 (include/vfft.h; docs/roadmap/api_v2_design.md, 2026-10-15).
  *
  * The eight functions over the library's own create, execute and plan facts. The public

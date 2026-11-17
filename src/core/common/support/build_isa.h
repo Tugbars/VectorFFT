@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* build_isa.h — THE build's ISA, decided once.
  *
  * The user picks the ISA when building (CMake -DVFFT_ISA=avx2|avx512, or

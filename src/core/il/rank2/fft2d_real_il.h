@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* fft2d_real_il.h — the native IL 2D REAL tier's execution kernels
  * (docs/roadmap/fft2d_real_il_design.md; the row-pass drivers live in
  * il2d_tier.h — this header holds the kernel-grade data movement, the

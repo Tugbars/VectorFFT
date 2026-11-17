@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* k1_fourstep.h — the K=1 INTERLEAVED four-step above ZTURN-T's ceiling
  * (docs/design/k1_fourstep_design.md): the standard method at 256k and
  * above.

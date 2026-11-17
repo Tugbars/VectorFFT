@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* plane_queue.h - the 2D plane queue (howmany > 1), and one rank up the
  * VOLUME QUEUE (2026-10-18): the same wrapper over the single-volume rank-3
  * plan, K contiguous volumes at the per-volume distances. "Plane" below

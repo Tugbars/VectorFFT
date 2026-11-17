@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_col.h — THE COLUMN-AXIS PASS DESCRIPTOR.
  *
  * Everything the interleaved column pass over an N-row plane of rn complex

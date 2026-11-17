@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft.c — the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss
  * at the chosen rigor -> build -> execute. Feature coverage: src/core/README.md.
  * See docs/design/vfft_front_door.md. */

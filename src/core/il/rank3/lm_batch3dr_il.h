@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* lm_batch3dr_il.h -- THE LANE-MAJOR 3D REAL BATCH, r2c and c2r (docs/roadmap/lane_major_batch_design.md,
  * step 6 one rank up, 2026-10-19): K real volumes of N1 x N2 x N3 side by side,
  * x[((i N2 + j) N3 + k) K + t]; the spectrum z[2 (((i N2 + j) H + f) K + t)], f < H = N3 / 2 + 1. The 3D

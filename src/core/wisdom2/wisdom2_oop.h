@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* wisdom2_oop.h — the front door's OOP-family wisdom include.
  *
  * Layout separation phase 5 (the kind-3 record split, owner's option (a),

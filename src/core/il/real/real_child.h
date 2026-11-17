@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_child.h -- THE REAL FFT INSIDE A REAL-TO-REAL PLAN, CREATED AS A CHILD IN ROLE (owner, 2026-11-14).
  *
  * A DST-II or DST-III plan (il/real/dst.h) and a DCT-I or DST-I plan (il/real/dct1_dst1.h) each run one 1D

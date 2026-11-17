@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * threads.h -- the thread pool, the one owner of every fork-join.
  *

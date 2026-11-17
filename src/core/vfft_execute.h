@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* vfft_execute.h - THE execute entry point.
  *
  * vfft_execute and the transform-contiguous batch MT it dispatches through.

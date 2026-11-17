@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il2d_real_fuse.h -- THE FUSED WALK (2026-10-07): the interleaved 2D r2c
  * plan's rows fused into column stage 0, the suffix tiled.
  *

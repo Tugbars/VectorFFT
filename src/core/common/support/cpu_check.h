@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* cpu_check.h -- THE CPU CHECK (owner 2026-11-14): the library's entry points refuse to run on a CPU that lacks an
  * instruction set this build was compiled for, where they would otherwise stop the program with an illegal
  * instruction.

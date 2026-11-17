@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* env.h — the runtime environment. Two parts:
  *
  *   PART 1 — CPU / runtime setup: denormal handling (FTZ/DAZ), SIMD-aligned

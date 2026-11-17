@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* il_flatdit.h — the FLAT mixed-radix DIT chain, un-turned: the generic-N
  * engine on the pure-IL kinds.
  *

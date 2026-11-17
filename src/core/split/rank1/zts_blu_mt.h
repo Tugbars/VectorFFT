@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* OUT OF THE BUILD (owner 2026-11-07): the split Bluestein is too weak to refine and release unless
  * customers ask for it. The file stays, compiled only under VFFT_SPLIT_BLUESTEIN, which no build defines;
  * the lengths it served (a prime among them) are refused at create on the split layout. */

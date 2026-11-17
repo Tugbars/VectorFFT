@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* estimate_nd_il.h — THE ESTIMATE at rank 2 and 3: the plan of a 2D or 3D interleaved c2c transform
  * chosen by formulas, with nothing measured (VFFT_FLAG_ESTIMATE, include/vfft.h; the design:
  * docs/design/estimate_2d3d_sketch.md).
@@ -256,7 +258,7 @@ typedef struct est_plan3d_s
 /* THE 2D PLAN AT T > 1 (est_mt_2d, 2026-10-29): the one-thread plan, then how it threads, from the data's
  * size against the caches and the count of columns only -- how a thread count scales is the machine's, so
  * no rule is fitted to it. Serial while the plane fits the 2D serial bound (est__serial_2d_div: L1d / 2, L1d / 4
- * when the rows are a prime cell), or on two rows; the
+ * when the rows are a prime cell, the L1d for the cheapest work), or on two rows; the
  * turn (where the door builds one) on at most EST_ND_MT_TURN_PER_T x T columns, too few to share; the
  * skewed pass and the turn their one threaded walk; the chain walk as strips (est__msw_2d), which the door
  * runs unbanded (il2d_tier.h:1643), so with the unbanded walk's chain: no band, est__pick's radix-8 regime
@@ -317,12 +319,16 @@ typedef struct est_plan3d_s
  * there lost on the powers of two (1.19) and below 512 rows (1.35). */
 #define EST_ND_MT_SERIAL_L1_DIV 2   /* the lane-major batches' serial bound (c2c_estimate_lm_il.h, real_estimate_lm_il.h) */
 /* THE 2D SERIAL BOUND (2026-11-17; est__serial_2d_div): a plane runs serial while it fits L1d /
- * EST_ND_MT_SERIAL_2D_L1_DIV, and one whose rows are a prime cell (vfft_policy_prime_cell: every row runs the Rader or
- * Bluestein convolution) while it fits L1d / EST_ND_MT_SERIAL_2D_PRIME_L1_DIV. Split, each worker pulls its share from
+ * EST_ND_MT_SERIAL_2D_L1_DIV; one whose rows are a prime cell (vfft_policy_prime_cell: every row runs the Rader or
+ * Bluestein convolution) while it fits L1d / EST_ND_MT_SERIAL_2D_PRIME_L1_DIV; one whose both sides are powers of two,
+ * and below EST_ND_MT_SERIAL_2D_CHEAP_T threads one whose both sides are 7-smooth, while it fits the whole L1d.
+ * Split, each worker pulls its share from
  * another core's caches and the pass pays the fork and the join; that pays once the plane's serial work passes about
  * 2.5 - 3 us at 8 threads on the 14900KF, which a plane of chains reaches about L1d / 2, and a prime-cell row's
  * convolution, several times the work per byte, at half the bytes (as the real batch's prime floor,
- * est__real_batch_whole). A prime-cell column keeps the plain bound: its threaded pass shares the Rader
+ * est__real_batch_whole). The work per byte orders the classes: powers of two the least, then 7-smooth sides, then
+ * factors of 11 - 47; fewer threads gain less against the same fork and join, so the work that pays rises (about 4 -
+ * 6 us at 4 threads), past the 7-smooth planes of the L1d. A prime-cell column keeps the plain bound: its threaded pass shares the Rader
  * stage over the plane's few columns (199x4, 211x4, 101x8: 1.2 - 3.2 x serial below L1d / 2). Both verdicts timed on
  * every plane through the estimate's own plans, one process, the threaded protocol: 282 planes of 3 - 48 KB in six
  * classes by the factors of each side (powers of two, 7-smooth, 11 - 23, prime-cell rows, prime-cell columns, both)
@@ -332,12 +338,19 @@ typedef struct est_plan3d_s
  * few columns); at T = 4 0.796, 47 and 14. The classes but the powers of two between L1d / 2 and the L1d ran 0.27 -
  * 0.95 x serial threaded (15x173 0.27, 6x512 0.72); from 64 KiB 8 threads is the fastest count (61 of 67 power-of-two
  * planes; 2 or 4 never needed). A serial verdict at T > 1 runs the one-thread request's plan (est_mt_2d_serial_1t):
- * at 16 KiB the threaded rules' own plan ran 1.05 - 1.27 x it (4x256 1.27, 8x128 1.15). Left: planes with both sides
- * of 29 - 47 below L1d / 2 (37x41 serial 1.99 x threaded); tall planes of few columns (130x12); the powers of two at
- * 32 KiB, threaded here: one process a tie (0.91 - 1.22 x serial), the gauntlet's bench 1.04 - 1.36 x serial at 7 of
- * 9 (1024x2 1.30 - 1.36, 4x512, 128x16, 512x4, 64x32), the 2026-11-09 study serial the faster at 7 of 10. */
+ * at 16 KiB the threaded rules' own plan ran 1.05 - 1.27 x it (4x256 1.27, 8x128 1.15). The classes by work, through
+ * the gauntlet's bench (the door, the estimate's plans, pinned and paced): two builds differing in this bound only,
+ * alternated in one run, the threaded build's engagement counted, on the 131 planes between L1d / 2 and the L1d whose
+ * rows are not a prime cell, 6 - 8 rounds: threaded / serial at 8 threads powers of two 1.10 (serial the faster on 9 of
+ * 9), 7-smooth 0.89, factors of 11 - 47 0.74, prime-cell columns 0.67; at 4 threads 1.22, 1.12, 0.93, 0.77. Against
+ * the faster verdict per plane this bound 1.023 at 8 threads and 1.041 at 4 (every plane threaded 1.029 and 1.099,
+ * every plane serial 1.289 and 1.121, a bound on the serial time itself 1.016 and 1.032). The one-process probe above
+ * read threading about 12 % better than the bench on the powers of two (0.98 against 1.10). Left: planes with both
+ * sides of 29 - 47 below L1d / 2 (37x41 serial 1.99 x threaded); tall planes of few columns (130x12); 5 - 7 threads,
+ * not timed (the 7-smooth rule follows the 4-thread reading). */
 #define EST_ND_MT_SERIAL_2D_L1_DIV 2
 #define EST_ND_MT_SERIAL_2D_PRIME_L1_DIV 4
+#define EST_ND_MT_SERIAL_2D_CHEAP_T 8   /* below it, a plane of 7-smooth sides keeps the whole L1d */
 #define EST_ND_MT_TURN_PER_T 2
 #define EST_ND_MT_SW_MIN 8
 #define EST_ND_MT_SW_L1_DIV 2
@@ -1411,10 +1424,23 @@ static inline int est__tile_chain_2d(const est_machine_t *m, int T, est_plan2d_t
     }
     return 1;
 }
-/* the divisor of the L1d up to which a plane of rows of N2 runs serial at T > 1 (THE 2D SERIAL BOUND) */
-static inline int est__serial_2d_div(int N2)
+/* n factors over 2, 3, 5 and 7 only */
+static inline int est__smooth7(long long n)
 {
-    return vfft_policy_prime_cell(N2) ? EST_ND_MT_SERIAL_2D_PRIME_L1_DIV : EST_ND_MT_SERIAL_2D_L1_DIV;
+    static const int p[] = {2, 3, 5, 7};
+    if (n < 1) return 0;
+    for (int i = 0; i < 4; i++)
+        while (n % p[i] == 0) n /= p[i];
+    return n == 1;
+}
+/* the divisor of the L1d up to which an N1 x N2 plane runs serial at T > 1 threads (THE 2D SERIAL BOUND) */
+static inline int est__serial_2d_div(int N1, int N2, int T)
+{
+    if (vfft_policy_prime_cell(N2))
+        return EST_ND_MT_SERIAL_2D_PRIME_L1_DIV;
+    if ((est_is_pow2(N1) && est_is_pow2(N2)) || (T < EST_ND_MT_SERIAL_2D_CHEAP_T && est__smooth7(N1) && est__smooth7(N2)))
+        return 1;
+    return EST_ND_MT_SERIAL_2D_L1_DIV;
 }
 /* est_mt_2d: the one-thread plan p (est_plan_2d) threaded at T (EST_ND_MT_*): the threaded verdict and,
  * where it threads, the turn on few columns, the blocks where the door would run the skewed pass serial,
@@ -1429,7 +1455,7 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
     if (T < 2)
         return;   /* one thread: nls stays est_plan_2d_r's (LEAF) */
     p->nls = -1;
-    if (16LL * p->N1 * p->N2 > m->l1d / est__serial_2d_div(p->N2) && p->N1 != 2 && p->col.tpc != 1)
+    if (16LL * p->N1 * p->N2 > m->l1d / est__serial_2d_div(p->N1, p->N2, T) && p->N1 != 2 && p->col.tpc != 1)
     {
         const int tall = p->N1 >= (long long)EST_ND_MT_TILE_N1_PER_N2 * p->N2;
         int tile = 0;

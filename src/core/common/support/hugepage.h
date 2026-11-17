@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* hugepage.h — 2 MB pages for big data planes: vfft_alloc_huge / vfft_free_huge.
  *
  * WHY

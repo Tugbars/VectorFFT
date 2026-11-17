@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_estimate_lm_il.h — the ESTIMATE create of a LANE-MAJOR c2c batch (VFFT_FLAG_ESTIMATE with
  * VFFT_BATCH_LANE_MAJOR, howmany = K >= 2) at rank 1, 2 and 3: the batch's rows written from the formulas and
  * replayed by the lane-major doors with nothing measured (docs/roadmap/lane_major_estimate_plan.md).

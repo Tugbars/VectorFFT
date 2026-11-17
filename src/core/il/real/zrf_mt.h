@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zrf_mt.h - the real flat DIT's THREADED forms: the c2c flat DIT's tiles arm
  * (il/rank1/il_flatdit_mt.h) on the real engine's levels, in two arms.
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* split_execute.h — the SPLIT execute: the split side of vfft_execute's one fork.
  *
  * One engine serves every split C2C plan: zturn-ts (split/rank1/zts.h), both

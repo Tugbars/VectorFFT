@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* zts_mt.h — zturn-ts's SECTIONED walk: the threaded form of ONE transform
  * (ZTURN-T's ztt_mt.h on the split layout, 2026-11-06).
  *

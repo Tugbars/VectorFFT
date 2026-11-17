@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * fftnd_real_il.h — the rank-3 INTERLEAVED REAL tier (design of record:
  * docs/roadmap/fft3d_real_il_design.md, decided with the owner 2026-10-07).
