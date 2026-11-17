@@ -347,10 +347,10 @@ static inline int _vfft_api_disjoint(const struct vfft_plan_s *h, const vfft_rea
 
 /* ── execute: the lean door for INTERLEAVED and real-to-real plans; the split door ──
  * Both return 0 when the plan ran and -1 when the call was refused (vfft_error() says why). The full door's
- * refusals are told by the reasons it gave (diag.h, _vfft_warn_count): every reason an execute gives is one. */
+ * refusals are told by the reasons it gave (diag.h, _vfft_warned_since): every reason an execute gives is one. */
 static __attribute__((noinline)) int _vfft_api_execute_slow(vfft_plan h, vfft_dir_t dir, vfft_real *in, vfft_real *out)
 {
-    const unsigned said = _vfft_warn_count;
+    const unsigned long long said = _vfft_warn_now();
     thread_pool_pin_t *pin;
     if (h && h->layout == VFI_LAYOUT_SPLIT && !_VFFT_IS_TRIG(h->transform))
     {
@@ -387,7 +387,7 @@ static __attribute__((noinline)) int _vfft_api_execute_slow(vfft_plan h, vfft_di
     _vfft_exec6(h, dir, in, NULL, out, NULL);
     if (pin)
         thread_pool_caller_release(pin);
-    return _vfft_warn_count != said ? -1 : 0;
+    return _vfft_warned_since(said) ? -1 : 0;
 }
 /* THE BOUND FAST PATH (the lean door, 2026-10-11): a plan with a never-declining executor per
  * direction is entered by a jump after four compares; everything else takes the full door. A
@@ -409,7 +409,7 @@ int vfft_execute_split(vfft_plan h, vfft_dir_t dir,
                        const double *in_re, const double *in_im,
                        double *out_re, double *out_im)
 {
-    const unsigned said = _vfft_warn_count;
+    const unsigned long long said = _vfft_warn_now();
     if (h && (h->layout != VFI_LAYOUT_SPLIT || _VFFT_IS_TRIG(h->transform)))
     {
         _vfft_warn("vfft_execute_split: %s plan runs through vfft_execute(); nothing executed",
@@ -422,7 +422,7 @@ int vfft_execute_split(vfft_plan h, vfft_dir_t dir,
         if (pin)
             thread_pool_caller_release(pin);
     }
-    return _vfft_warn_count != said ? -1 : 0;
+    return _vfft_warned_since(said) ? -1 : 0;
 }
 #endif
 

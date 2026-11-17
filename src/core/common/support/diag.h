@@ -42,9 +42,21 @@ char *_vfft_err_shared(void);
 static VFFT_TLS char _vfft_err_buf[VFFT_ERR_CAP];
 #endif
 static VFFT_TLS int _vfft_verbose_tls = 0;
-/* the reasons this thread has given (every _vfft_warn): an execute compares it before and after its call, and
- * every reason an execute gives is a refusal, so a change means the call was refused (vfft_api.h) */
-static VFFT_TLS unsigned _vfft_warn_count = 0;
+/* THE REASON SEQUENCE: every reason any thread gives (_vfft_warn) takes the process's next number, and the thread
+ * keeps the last number it took. An execute reads the number before and after its call, and only when it moved
+ * asks whether this thread took one since (_vfft_warned_since): every reason an execute gives is a refusal
+ * (vfft_api.h). A call that ran reads one global twice and no thread-local: MinGW's GCC reaches a thread-local
+ * through a call (__emutls_get_address), and two of them cost a 2D real 2x8 plan 11 ns per execute. */
+static unsigned long long _vfft_warn_seq = 0;
+static VFFT_TLS unsigned long long _vfft_warn_mine = 0;
+static inline unsigned long long _vfft_warn_now(void) { return __atomic_load_n(&_vfft_warn_seq, __ATOMIC_RELAXED); }
+/* this thread gave a reason after `t` (a _vfft_warn_now reading on this thread): reads and writes of one atomic on
+ * one thread keep their order, so the number such a reason took is above t; another thread's reasons move the
+ * sequence but not this thread's number */
+static inline int _vfft_warned_since(unsigned long long t)
+{
+    return _vfft_warn_now() != t && _vfft_warn_mine > t;
+}
 static int _vfft_verbose_env(void)
 {
     static int v = -1;   /* read once; a race on the first read writes the same value */
@@ -58,7 +70,7 @@ static int _vfft_verbose_env(void)
 static void _vfft_warn(const char *fmt, ...)
 {
     va_list ap;
-    _vfft_warn_count++;
+    _vfft_warn_mine = __atomic_add_fetch(&_vfft_warn_seq, 1, __ATOMIC_RELAXED);
     va_start(ap, fmt);
     vsnprintf(_vfft_err_buf, VFFT_ERR_CAP, fmt, ap);
     va_end(ap);
