@@ -119,9 +119,9 @@ static inline void vfft_env_restore(unsigned int saved_mxcsr)
 
 /* THE RELEASE: one number for the library, its CMake package (CMakeLists.txt project()) and the guides */
 #define VFFT_VERSION_MAJOR 0
-#define VFFT_VERSION_MINOR 7
+#define VFFT_VERSION_MINOR 8
 #define VFFT_VERSION_PATCH 0
-#define VFFT_VERSION_STRING "0.7.0"
+#define VFFT_VERSION_STRING "0.8.0"
 
 #include "build_isa.h"   /* VFFT_ISA_NAME: the build's ISA, decided once */
 

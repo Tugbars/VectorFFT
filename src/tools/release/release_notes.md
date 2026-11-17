@@ -1,4 +1,4 @@
-VectorFFT 0.7 beta
+VectorFFT 0.8 beta
 
 The library, ready built. Unpack it, compile your program with one command, run it. There is nothing else to build.
 

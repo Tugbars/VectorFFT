@@ -36,7 +36,7 @@ cmake_minimum_required(VERSION 3.18)
 if(POLICY CMP0126)
     cmake_policy(SET CMP0126 NEW)
 endif()
-project(VectorFFT_dag VERSION 0.7.0 LANGUAGES C)   # the library's VFFT_VERSION_STRING (src/core/common/support/env.h)
+project(VectorFFT_dag VERSION 0.8.0 LANGUAGES C)   # the library's VFFT_VERSION_STRING (src/core/common/support/env.h)
 
 # ── Top level or a subproject (PROJECT_IS_TOP_LEVEL needs CMake 3.21) ────────
 if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)

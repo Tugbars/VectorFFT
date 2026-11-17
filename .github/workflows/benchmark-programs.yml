@@ -13,7 +13,8 @@
 # of libvfft_avx2 and libvfft_avx512, checked by its own check.c, packed with its wisdom. The tag's release then
 # carries the library's archives and the benchmark programs, under the title and the text of
 # src/tools/release/release_notes.md (its first line is the title; @VERSION@ is the tag without its v). The tag
-# must be the version of CMakeLists.txt (v0.7.0 for 0.7.0): the archives are named after that version.
+# must be the version of CMakeLists.txt (v0.8.0 for 0.8.0): the archives are named after that version. The page
+# then gives that version's section of CHANGELOG.md; a tag without one stops before anything is published.
 #
 # The packages hold the FFTW programs only: every program runs one bench, and a bench linked to Intel MKL does not
 # start on a machine without MKL. The comparison with MKL is built from source (benchmark_scripts/README.md).
@@ -185,8 +186,17 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
             ls dist/vectorfft-"${TAG#v}"-windows-x64.zip dist/vectorfft-"${TAG#v}"-linux-x64.tar.gz
             TITLE="$(head -n 1 src/tools/release/release_notes.md)"
+            # what changed: the version's section of CHANGELOG.md, from its "## <version> " heading to the next one
+            awk -v h="## ${TAG#v} " 'index($0, h) == 1 {on = 1; next} on && /^## / {exit} on' CHANGELOG.md \
+              | sed 's/^### \(.*\)$/**\1**/' > changes.md
+            if ! grep -q '[^[:space:]]' changes.md; then
+              echo "CHANGELOG.md has no section for ${TAG#v} (a heading '## ${TAG#v} ...'): nothing published"
+              exit 1
+            fi
             {
               tail -n +2 src/tools/release/release_notes.md | sed "s/@VERSION@/${TAG#v}/g"
+              printf '\n**What changed in %s**\n' "${TAG#v}"
+              cat changes.md
               printf '\n%s\nSHA-256 of the files:\n' "$BUILT"
               cat dist/*.sha256
             } > notes.md
