@@ -74,8 +74,10 @@ typedef struct {
                              * too, so the convolution's pointwise multiply runs in
                              * natural order */
 #endif
-    struct vfft_k1fs_s *fs; /* the four-step at M (scrambled, out of place, one thread):
-                             * the lengths past ZTURN-T's ceiling, 2026-10-12 */
+    struct vfft_k1fs_s *fs; /* the four-step at M (scrambled, out of place): the lengths
+                             * past ZTURN-T's ceiling, 2026-10-12 */
+    int fs_t;               /* the thread count fs was built at (0 or 1: one thread); built at a
+                             * plan's T > 1 its 2D walk threads itself (il_prime_mt.h) */
     vfft_ilfd_plan_t *fd;   /* the flat DIT at M, natural class, both directions (2026-10-13):
                              * a Rader inner at N-1 whose factor above the pool is a Rader
                              * stage of its own (il_rader_stage.h) */
@@ -92,7 +94,7 @@ static void *_ilprime_inner_provider_ctx = 0;
 
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
-    in->p2 = 0; in->p3 = 0; in->fs = 0;
+    in->p2 = 0; in->p3 = 0; in->fs = 0; in->fs_t = 0;
 #ifdef VFFT_ZTURN_H
     in->pz = 0;
 #endif
@@ -141,6 +143,7 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     in->p2 = 0; in->p3 = 0;
     if (in->fs) vfft_k1fs_destroy(in->fs);
     in->fs = 0;
+    in->fs_t = 0;
     if (in->fd) vfft_ilfd_destroy(in->fd);
     in->fd = 0;
 #ifdef VFFT_ZTT_H

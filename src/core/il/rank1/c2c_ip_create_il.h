@@ -130,7 +130,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_cfg_t *cfg,
         }
         if (ztt) vfft_ztt_bind(ztt, 1);   /* in place: the plane drivers */
         if (!il2 && !il3 && !ifd && !ztt && !fs && !mono_f && !ilp && (N & (N - 1)) != 0)
-            ilp = _ilprime_create_banked(W, cfg, N, NULL);   /* a route, never a fallback: the unraced cell above the ceiling */
+            ilp = _ilprime_create_banked(W, cfg, N, NULL, _vfft_plan_threads(cfg));   /* a route, never a fallback: the unraced cell above the ceiling */
         have_k1 = vfft_policy_k1_engine_present(
             /* mono   */ mono_f != 0,   /* in place the solo tier IS a resolved fn pair */
             /* pair   */ il2 != NULL, /* chain3 */ il3 != NULL,

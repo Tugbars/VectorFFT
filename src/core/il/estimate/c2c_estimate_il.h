@@ -352,7 +352,9 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
             if (!est__prime_inner_len_ok(N, rc->prime.method, (long)n1 * n2))
                 return est_refuse(why, whylen, "the four-step inner %dx%d is not a %s length at N = %d", n1, n2,
                                   rc->prime.method == 1 ? "Rader" : "Bluestein", N);
-            return est__fs_preflight(rc->fs, n1, n2, why, whylen);
+            if (est__fs_preflight(rc->fs, n1, n2, why, whylen))
+                return -1;
+            return T > 1 ? est__fs_preflight(rc->fs_t, n1, n2, why, whylen) : 0;   /* the T row's child at T */
         }
         p = _ilprime_build_with(N, rc->prime.method == 1, &d);
         if (!p)

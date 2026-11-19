@@ -86,12 +86,14 @@ typedef struct {
      * plan at N on every row of it, transposed back. blu stays = M as the
      * prime-column marker (natural out, no chain); the Bluestein tables are
      * not kept when tpc serves. Raced at create, banked tpc= on the column
-     * row. Serial: one plan, so the column-MT walks and the rank-3 plane arm
-     * decline to split a tpc axis. */
+     * row. Threaded (2026-11-18): every worker its lanes through its own clone
+     * of the plan (_il2d_tpc_cols_mt), the clones built at the cell's T. */
     int tpc;
     struct vfft_plan_s *tpcplan;
     vfft_real *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
     struct vfft_wisdom_s *tpcS;   /* the plan's private store: its recipe rides on the column row as tpc_* */
+    struct vfft_plan_s **tpcw;    /* the clones of tpcplan for workers 1 .. tpcw_n (the cell's T - 1), replayed from tpcS */
+    int tpcw_n;
     /* a LANE-MAJOR cell's serial lane tile as its chain race crowned it with the chain (il2d_tier.h,
      * _il2d_race_chains: every candidate timed in the serial forms its door serves; 0 = no tile: the walk, or the
      * real batch's whole plane); -1 = no chain race in this build (a replayed or pinned chain: the lane-major race

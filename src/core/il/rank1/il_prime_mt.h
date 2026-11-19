@@ -5,7 +5,9 @@
  *
  * A convolution is two FFTs at the inner length M and O(N) / O(M) passes
  * around them. The threaded form runs the inner ZTURN-T's own threaded walk
- * (ztt_mt.h: mt=1 BLOCKS, mt=2 TILES -- the arm is the plan's) and cuts the
+ * (ztt_mt.h: mt=1 BLOCKS, mt=2 TILES -- the arm is the plan's), or a
+ * four-step inner built at the plan's T (its 2D walk and transposes thread
+ * themselves, k1_fourstep.h: mt=1), and cuts the
  * convolution's passes into ranges on the same pool, one fork-join each:
  *   Bluestein   the modulate with its zero pad (over M), the pointwise
  *               multiply (over M), the demodulate (over N);
@@ -15,7 +17,7 @@
  * Every pass is elementwise, cut at even boundaries (the packed multiply
  * pairs complex from its range's start), so every element takes the code
  * path the serial run gives it: the threaded output is BITWISE the serial
- * plan's. A plan whose inner is not ZTURN-T has no threaded form.
+ * plan's. A plan whose inner is neither has no threaded form.
  *
  * Banked per thread count by the planners (k1_commit.h for the c2c cell,
  * zr2c_build.h / zrp_build.h for the zr2c child), raced at T by
@@ -32,13 +34,21 @@
 
 extern long _vfft_ilpr_mt_count;   /* vfft.c: the engagement counter */
 
-/* bind the arm for T: the inner ZTURN-T's walk (1 BLOCKS, 2 TILES); 0 =
- * declined or unbound (T < 2, arm 0, no ZTURN-T inner, or an arm the inner
- * cannot run) -- the plan then runs serial */
+/* bind the arm for T: the inner ZTURN-T's walk (1 BLOCKS, 2 TILES), a four-step
+ * inner built at T (1: its own walk); 0 = declined or unbound (T < 2, arm 0, no
+ * such inner, or an arm the inner cannot run) -- the plan then runs serial */
 static inline int vfft_ilprime_mt_bind(vfft_ilprime_plan_t *p, int T, int arm)
 {
     p->mt = 0;
     p->mt_t = 0;
+    if (p->inner.fs)
+    {   /* the four-step threads itself at the T it was built at: the one arm is the passes cut over that T */
+        if (arm < 1 || T < 2 || p->inner.fs_t != T)
+            return 0;
+        p->mt = 1;
+        p->mt_t = T;
+        return 1;
+    }
     if (!p->inner.pt)
         return 0;
     if (!vfft_ztt_mt_bind(p->inner.pt, T, arm))
@@ -88,24 +98,25 @@ static void _ilpr_mt_pass(int T, const _ilpr_mt_arg *proto, size_t n)
     thread_pool_run(T, _ilpr_mt_tramp, a, sizeof a[0]);
 }
 /* the inner FFT through its threaded walk (it declines only on a clamped
- * pool, and then the serial walk runs: the same bits) */
+ * pool, and then the serial walk runs: the same bits); a four-step inner built
+ * at T runs its own threaded walk */
 static inline void _ilpr_mt_inner(const vfft_ilprime_plan_t *p, const double *zi, double *zo, int bwd)
 {
-    if (vfft_ztt_execute_mt(p->inner.pt, zi, zo, bwd))
+    if (p->inner.pt && vfft_ztt_execute_mt(p->inner.pt, zi, zo, bwd))
         return;
     if (bwd) _ilprime_inner_bwd(&p->inner, zi, zo);
     else     _ilprime_inner_fwd(&p->inner, zi, zo);
 }
 
 /* Returns 1 when it ran threaded, 0 when the caller must run serial: no arm
- * bound, no ZTURN-T inner, T < 2, or a live pool clamped below the bound T
+ * bound, no threaded inner, T < 2, or a live pool clamped below the bound T
  * (the inner's cut is for exactly mt_t threads). zin == zout is safe, as in
  * the serial run: every read of zin completes before the first zout write. */
 static inline int vfft_ilprime_execute_mt(const vfft_ilprime_plan_t *p, const double *zin, double *zout, int bwd)
 {
     const int T = thread_pool_workers_for(p->mt_t);
     _ilpr_mt_arg a;
-    if (p->mt <= 0 || T < 2 || T != p->mt_t || !p->inner.pt)
+    if (p->mt <= 0 || T < 2 || T != p->mt_t || (!p->inner.pt && !p->inner.fs))
         return 0;
     memset(&a, 0, sizeof a);
     a.p = p;
@@ -158,7 +169,8 @@ static void _ilpr_mt_arm_run(void *v)
 {
     _ilpr_mt_ctx_t *c = (_ilpr_mt_ctx_t *)v;
     c->p->mt = c->mt;
-    c->p->inner.pt->mt = c->mt;
+    if (c->p->inner.pt)
+        c->p->inner.pt->mt = c->mt;
     if (c->mt == 0 || !vfft_ilprime_execute_mt(c->p, c->zi, c->zo, 0))
         vfft_ilprime_execute_fwd(c->p, c->zi, c->zo);
 }
@@ -172,7 +184,7 @@ static inline int vfft_ilprime_mt_race(vfft_ilprime_plan_t *p, int T, double *ns
     double *zi, *zo, t0;
     int na = 0, a, best = 0, reps;
     size_t i;
-    if (T < 2 || !p->inner.pt || !vfft_ilprime_mt_bind(p, T, 1))
+    if (T < 2 || (!p->inner.pt && !p->inner.fs) || !vfft_ilprime_mt_bind(p, T, 1))
     {
         vfft_ilprime_mt_bind(p, T, 0);
         return 0;
@@ -189,7 +201,8 @@ static inline int vfft_ilprime_mt_race(vfft_ilprime_plan_t *p, int T, double *ns
     for (i = 0; i < 2 * (size_t)p->N; i++)
         zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
     p->mt = 0;
-    p->inner.pt->mt = 0;
+    if (p->inner.pt)
+        p->inner.pt->mt = 0;
     vfft_ilprime_execute_fwd(p, zi, zo);
     t0 = vfft_now_ns();
     vfft_ilprime_execute_fwd(p, zi, zo);
@@ -199,8 +212,8 @@ static inline int vfft_ilprime_mt_race(vfft_ilprime_plan_t *p, int T, double *ns
     if (reps > (1 << 19)) reps = 1 << 19;
     for (a = 0; a < 3; a++)
     {
-        if (a == 2 && (p->inner.pt->tile == 0 || (size_t)p->inner.pt->N / p->inner.pt->tile < 2))
-            break;
+        if (a == 2 && (!p->inner.pt || p->inner.pt->tile == 0 || (size_t)p->inner.pt->N / p->inner.pt->tile < 2))
+            break;   /* the tiles: a ZTURN-T inner's arm only */
         cx[na].p = p; cx[na].zi = zi; cx[na].zo = zo; cx[na].mt = a;
         arms[na].name = names[a]; arms[na].run = _ilpr_mt_arm_run; arms[na].ctx = &cx[na];
         na++;

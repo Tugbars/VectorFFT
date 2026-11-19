@@ -212,6 +212,9 @@ typedef struct {
     struct vfft_wisdom_s *S;        /* 4: the race's private store, or NULL (an own store) */
     struct vfft_wisdom_s *seed;     /* 4: a seeded private store the plan takes over (a composite's replay); consumed */
     int grew;                       /* 4: the child did not replay from `row` / `seed` */
+    int T;                          /* 4: the thread count the four-step is built at (0 or 1: one thread). A c2c cell at
+                                     * T > 1 builds it at T, its child's rows keyed at T: the four-step's threaded form
+                                     * (2026-11-18; one thread, 1000003 and 4000037 ran 1.0x at every T) */
 } _ilprime_inner_desc_t;
 
 static void _ilprime_desc_str(const _ilprime_inner_desc_t *d, char *kind, size_t ksz, char *shape, size_t ssz)
@@ -277,32 +280,33 @@ static int _ilprime_desc_parse(_ilprime_inner_desc_t *d, const char *kind, const
     return 0;
 }
 
-/* THE FOUR-STEP INNER at M (kind 4): the SCRAMBLED class, out of place, one
- * thread, form 0, on the race's shared private store (d->S: the plan does
- * not own it) or on an own store seeded from the banked row's fs_ tokens
- * (_k1fs_build_own; with no row, or stale tokens, the child races there and
- * d->grew says so). The request the child sees is the inner's own: c2c,
- * MEASURE, nothing persisted. */
+/* THE FOUR-STEP INNER at M (kind 4): the SCRAMBLED class, out of place, at
+ * d->T threads (one by default), form 0, on the race's shared private store
+ * (d->S: the plan does not own it) or on an own store seeded from the banked
+ * row's fs_ tokens (_k1fs_build_own; with no row, or stale tokens, the child
+ * races there and d->grew says so). The request the child sees is the inner's
+ * own: c2c, MEASURE, nothing persisted. */
 static vfft_k1fs_plan_t *_ilprime_fs_inner_build(int M, _ilprime_inner_desc_t *d)
 {
     vfft_cfg_t cc;
     int grew = 0;
+    const int T = d->T > 1 ? d->T : 1;
     vfft_k1fs_plan_t *p;
     if ((long)d->R1 * (long)d->R2 != (long)M)
         return NULL;
     memset(&cc, 0, sizeof cc);
     cc.transform = VFFT_C2C; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
     cc.dims = 1; cc.n[0] = M; cc.howmany = 1; cc.order = VFI_ORDER_SCRAMBLED;
-    cc.layout = VFI_LAYOUT_IL; cc.nthreads = 1;
+    cc.layout = VFI_LAYOUT_IL; cc.nthreads = T;
     if (d->S)
     {
         cc.wisdom = (vfft_wisdom *)d->S;
-        return vfft_k1fs_create(M, d->R1, d->R2, 1, d->S, &cc, 0, 1, 0, NULL, 0);
+        return vfft_k1fs_create(M, d->R1, d->R2, 1, d->S, &cc, 0, T, 0, NULL, 0);
     }
     if (d->seed)
     {   /* a composite's replay (zr2c): the child's rows seeded by the caller; the plan owns the store from here */
         cc.wisdom = (vfft_wisdom *)d->seed;
-        p = vfft_k1fs_create(M, d->R1, d->R2, 1, d->seed, &cc, 0, 1, 0, NULL, 0);
+        p = vfft_k1fs_create(M, d->R1, d->R2, 1, d->seed, &cc, 0, T, 0, NULL, 0);
         if (p)
         {
             p->own = d->seed;
@@ -311,7 +315,7 @@ static vfft_k1fs_plan_t *_ilprime_fs_inner_build(int M, _ilprime_inner_desc_t *d
         }
         return p;
     }
-    p = _k1fs_build_own(M, d->R1, d->R2, 1, &cc, 0, 1, 0, NULL, 0, d->row, &grew);
+    p = _k1fs_build_own(M, d->R1, d->R2, 1, &cc, 0, T, 0, NULL, 0, d->row, &grew);
     d->grew = (p != NULL) && (grew || !d->row);
     return p;
 }
@@ -323,6 +327,7 @@ static int _ilprime_inner_from_desc(int M, _ilprime_inner_t *in, void *v)
     if (d->kind == 4)
     {
         in->fs = _ilprime_fs_inner_build(M, d);
+        in->fs_t = d->T > 1 ? d->T : 1;
         if (in->fs) return 1;
     }
     else if (d->kind == 5)
@@ -514,11 +519,14 @@ typedef struct { vfft_ilprime_plan_t *p; vfft_real *zi, *zo; } _ilprime_iarm_t;
 static void _ilprime_iarm_run(void *v)
 {
     _ilprime_iarm_t *a = (_ilprime_iarm_t *)v;
+    if (a->p->mt > 0 && vfft_ilprime_execute_mt(a->p, a->zi, a->zo, 0))   /* a plan the race at T bound threaded */
+        return;
     if (a->p->method == 1) _ilprime_exec_rader(a->p, a->zi, a->zo, 0);
     else _ilprime_exec_bluestein(a->p, a->zi, a->zo, 0);
 }
-/* one same-run race over np live plans: the index of the fastest */
-static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, vfft_real *zi, vfft_real *zo)
+/* one same-run race over np live plans: the index of the fastest. T > 1: the plans run as bound at T (the race
+ * at T binds each candidate's threaded form first, vfft_ilprime_mt_race), unpaced on the armed pool */
+static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, vfft_real *zi, vfft_real *zo, int T)
 {
     _ilprime_iarm_t ctx[VFFT_RACE_MAX_ARMS];
     vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
@@ -526,6 +534,11 @@ static int _ilprime_race_plans(vfft_ilprime_plan_t **plans, int np, vfft_real *z
     vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 1, NULL, NULL, 1 };   /* min-of-3, alternated, one warm pass */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
     int a, w = 0;
     if (np <= 1) return 0;
+    if (T > 1)
+    {   /* threaded arms: no pause (it parks the team) */
+        proto.pace = 0;
+        _vfft_pool_arm(T);
+    }
     for (a = 0; a < np; a++)
     {
         ctx[a].p = plans[a]; ctx[a].zi = zi; ctx[a].zo = zo;
@@ -569,20 +582,77 @@ static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *
  * pool and never replays or banks. Nothing buildable: NULL, never a
  * structural default. `won` (may be NULL) receives the served inner's
  * descriptor, replayed or raced: a composite that banks the prime cell on
- * its own row (zr2c) records it from there. */
+ * its own row (zr2c) records it from there. T = the plan's thread count:
+ * at T > 1 the verdict is the one at T (below). */
+/* THE VERDICT AT T (2026-11-18, the threading census; owner: race the inners at the plan's T, bank on its row at T):
+ * a cell created at T > 1 races every (method, inner) at T -- each candidate bound to its threaded form first
+ * (vfft_ilprime_mt_race: serial, blocks or tiles), then timed against the others as bound -- since an inner with no
+ * threaded form (the four-step, a pair) can win on one thread and lose several times over at T (r2c 205762 at T = 4:
+ * the inner four-step 0.91x, the ZTURN-T inner at T = 2 and 8 1.9x and 5.9x). Its verdict replays from the cell's
+ * own row at T (il_prime, il_prime_in, il_prime_sh, il_prime_tw, a four-step inner's child as fs_*: the real row's
+ * tokens, wisdom2_real_il.h); the prime shard's row keeps the one-thread verdict. A race at T banks through
+ * _ilpr_mt_replay_or_race (the row at T exists once the cell is built): the verdict waits here for it. */
+static struct
+{
+    const vfft_ilprime_plan_t *p;   /* the plan it was raced for (a plan the route race drops leaves it stale) */
+    int N, T, method;               /* method 1 = Rader, 2 = Bluestein */
+    _ilprime_inner_desc_t d;
+    struct vfft_wisdom_s *S;        /* a four-step inner's child store (a copy of the race's), or NULL */
+} _ilpr_tv;
+static void _ilpr_tv_clear(void)
+{
+    _vfft_wisdom_free((vfft_wisdom *)_ilpr_tv.S);
+    memset(&_ilpr_tv, 0, sizeof _ilpr_tv);
+}
 static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    const vfft_cfg_t *cfg,
-                                                   int N, _ilprime_inner_desc_t *won)
+                                                   int N, _ilprime_inner_desc_t *won, int T)
 {
     int hint = 0;
     const int store = W && !W->vw2_off_oop;
     const char *pin = getenv("VFFT_ILPR_METHOD");
     const int pin_m = (pin && pin[0] == 'r') ? 1 : (pin && pin[0] == 'b') ? 2 : 0;   /* 1 rader, 2 bluestein */
     const int bank = store && !pin_m;
+    if (T < 1) T = 1;
     /* COMPOSITES COME IN TOO: Bluestein needs no primality, and the raced
      * pool reaches as far as the ZTURN-T grammars do. The Rader ARM is
      * excluded below. */
-    if (bank && !cfg->recalibrate)
+    if (bank && !cfg->recalibrate && T > 1)
+    {   /* the verdict at T, on the cell's own row at T; none: the race at T below (never the one-thread verdict) */
+        const int ip = (cfg->placement == VFFT_INPLACE);
+        const int scr = (vfft_policy_ord_k1(cfg, N, ip) == VW2_ORD_SCR);
+        const vw2_rec_t *r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, T);
+        const char *pm = r ? vw2_rec_get(r, "il_prime") : NULL;
+        const char *pk = r ? vw2_rec_get(r, "il_prime_in") : NULL;
+        const char *ps = r ? vw2_rec_get(r, "il_prime_sh") : NULL;
+        _ilprime_inner_desc_t d;
+        if (pm && pk && ps && _ilprime_desc_parse(&d, pk, ps, vw2__oop_geti(r, "il_prime_tw", 0)))
+        {
+            vfft_ilprime_plan_t *p;
+            d.row = r;   /* a four-step inner's child replays from this row's fs_ tokens */
+            if (d.kind == 4)
+                d.T = T;   /* built at T, its child's rows keyed at T (the race at T below) */
+            p = _ilprime_build_with(N, !strcmp(pm, "rader"), &d);
+            if (p)
+            {
+                if (d.kind == 4 && d.grew && p->inner.fs && p->inner.fs->own)
+                {   /* the child did not replay (a row banked before the four-step inner was built at T carries its
+                     * child at one thread): it raced at T in the plan's private store; the row takes it now */
+                    const vw2_key_t key = r->key;
+                    const vw2_rec_t *r2 = vw2_lookup(&W->vw2, &key);
+                    if (r2 && _k1fs_row_put_child(&W->vw2, r2, p->inner.fs->own, d.R1, d.R2, 0, T) == VW2_OK)
+                        _vw2_persist(W, cfg);
+                }
+                if (getenv("VFFT_ILPR_LOG"))
+                    fprintf(stderr, "[ilprime] N=%d T=%d: replay %s inner %s %s tw=%d src=wisdom (the row at T)\n",
+                            N, T, p->method == 1 ? "RADER" : "BLUESTEIN", pk, ps, d.tw);
+                d.row = NULL;
+                if (won) *won = d;
+                return p;
+            }
+        }
+    }
+    if (bank && !cfg->recalibrate && T <= 1)
     {
         char kind[8], shape[64];
         int tw = 0;
@@ -675,6 +745,9 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                         if (cands[j].d.kind == 4 && (long)cands[j].d.R1 * (long)cands[j].d.R2 == m) seen = 1;
                     if (pS && !seen) _k1_il_fs_warm(pS, W, &pcfg, (int)m);
                     cands[q].d.S = pS;
+                    if (T > 1 && !won)
+                        cands[q].d.T = T;   /* its threaded form: built at T (a composite's in-role race, won, keeps
+                                             * one thread: its recipe carries the child's one-thread rows) */
                 }
             if (maxM > 0)
             {
@@ -687,6 +760,8 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
         zo = _ilprime_alloc((size_t)2 * N);
         if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); _vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         for (h = 0; h < 2 * N; h++) zi[h] = 1.0 + 1e-6 * (double)(h & 255);
+        if (T > 1)
+            _vfft_pool_arm(T);   /* the race at T: every candidate's threaded form on the team */
         /* HEATS */
         for (h = 0; h < nc; h += hs)
         {
@@ -702,19 +777,21 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
             {
                 vfft_ilprime_plan_t *p = _ilprime_build_with(N, cands[q].rader, &cands[q].d);
                 if (!p) continue;
+                if (T > 1)
+                    vfft_ilprime_mt_race(p, T, NULL);   /* bound to its threaded form at T (serial where it has none) */
                 plans[np] = p; ci[np] = q; np++;
                 builtm[cands[q].rader ? 0 : 1]++;
             }
             if (np == 0) continue;
             nbuilt += np;
-            w = _ilprime_race_plans(plans, np, zi, zo);
+            w = _ilprime_race_plans(plans, np, zi, zo, T);
             for (a = 0; a < np; a++)
                 if (a != w) vfft_ilprime_destroy(plans[a]);
             fin[nfin] = plans[w]; fin_ci[nfin] = ci[w]; nfin++;
         }
         if (nfin == 0) { vfft_aligned_free(zi); vfft_aligned_free(zo); _vfft_wisdom_free((vfft_wisdom *)pS); return 0; }
         /* THE FINAL */
-        w = _ilprime_race_plans(fin, nfin, zi, zo);
+        w = _ilprime_race_plans(fin, nfin, zi, zo, T);
         vfft_aligned_free(zi); vfft_aligned_free(zo);
         for (h = 0; h < nfin; h++)
             if (h != w) vfft_ilprime_destroy(fin[h]);
@@ -736,13 +813,24 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                 _vfft_warn("ilprime N=%d: BLUESTEIN offered %d inner(s) and built NONE",
                            N, ncm[1]);
             if (getenv("VFFT_ILPR_LOG"))
-                fprintf(stderr, "[ilprime] N=%d: inner race %d arm(s) in %d heat(s) "
-                                "[rader %d/%d, blue %d/%d] -> %s inner %s %s tw=%d, %s\n",
-                        N, nbuilt, nfin, builtm[0], ncm[0], builtm[1], ncm[1],
-                        fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw,
-                        bank ? "banked" : "not banked");
-            if (bank && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
-                                              kind, shape, cands[wci].d.tw) == VW2_OK)
+                fprintf(stderr, "[ilprime] N=%d T=%d: inner race %d arm(s) in %d heat(s) "
+                                "[rader %d/%d, blue %d/%d] -> %s inner %s %s tw=%d mt=%d, %s\n",
+                        N, T, nbuilt, nfin, builtm[0], ncm[0], builtm[1], ncm[1],
+                        fin[w]->method == 1 ? "RADER" : "BLUESTEIN", kind, shape, cands[wci].d.tw, fin[w]->mt,
+                        !bank ? "not banked" : T > 1 ? "banked on the row at T" : "banked");
+            if (bank && T > 1)
+            {   /* the verdict at T waits for the cell's row at T (_ilpr_mt_replay_or_race banks it with the arm) */
+                _ilpr_tv_clear();
+                _ilpr_tv.p = fin[w];
+                _ilpr_tv.N = N;
+                _ilpr_tv.T = T;
+                _ilpr_tv.method = fin[w]->method == 1 ? 1 : 2;
+                _ilpr_tv.d = cands[wci].d;
+                if (cands[wci].d.kind == 4 && pS)
+                    _ilpr_tv.S = _k1fs_store_dup(pS);   /* the four-step inner's child, for the row's fs_ tokens */
+            }
+            else if (bank && vw2_prime_method_bank(&W->vw2, N, fin[w]->method == 1 ? 1 : 2,
+                                                   kind, shape, cands[wci].d.tw) == VW2_OK)
             {
                 if (cands[wci].d.kind == 4 && pS)
                 {   /* the four-step inner's child onto the prime row (fs_ tokens): a replay seeds it from there */
@@ -845,7 +933,15 @@ static int _k1_il_dp_hold(vfft_il_dp_planes_t *h, int N)
     return -1;
 }
 /* the race CEILINGS live in planning/policy.h (L9) */
+/* bank = 0 (the race at T's own ranking, _k1_il_t_rank): the request's NATURAL class raced at one thread into the
+ * context -- its routes' best left in the context's slot (dp_planner_il.h fam) -- and nothing banked; returns 1 when
+ * a live candidate ranked */
+static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int bank);
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N)
+{
+    return _k1_il_plan_race_ex(W, cfg, N, 1);
+}
+static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int bank)
 {
     vfft_il_cand_t top;
     int lines;
@@ -902,7 +998,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
     _k1pr_release();
     if (vfft_policy_prime_cell(N) && cfg->layout == VFI_LAYOUT_IL)
     {
-        _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL);
+        _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL, _vfft_plan_threads(cfg));
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
     }
     /* CHECK AGAIN: the row warm and the prime cell ran creates through this
@@ -939,13 +1035,27 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
                         "chains x widths, chain3 x forms, bwd forms) — a cold cell "
                         "takes seconds\n", N);
     _k1_il_dp_busy = 1;
-    lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
-                                     cfg->placement == VFFT_INPLACE,   /* the cell's placement */
-                                     getenv("VFFT_IL_DP_VERBOSE") != NULL);
+    if (bank)
+        lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
+                                         cfg->placement == VFFT_INPLACE,   /* the cell's placement */
+                                         getenv("VFFT_IL_DP_VERBOSE") != NULL);
+    else
+    {   /* the ranking alone, the natural class at the cell's placement, the cached verdict dropped so it races in full */
+        vfft_il_cand_t nat;
+        _k1_il_dp_ctx.inplace = cfg->placement == VFFT_INPLACE;
+        vfft_il_dp_forget(&_k1_il_dp_ctx, N, VFFT_IL_ORD_NATURAL);
+        lines = vfft_il_dp_plan(&_k1_il_dp_ctx, N, VFFT_IL_ORD_NATURAL, &nat,
+                                getenv("VFFT_IL_DP_VERBOSE") != NULL) < 1e17 ? 1 : 0;
+    }
     _k1_il_dp_busy = 0;
     _k1fs_ctx.W = NULL;
     _k1fs_ctx.cfg = NULL;
     _vfft_wisdom_free((vfft_wisdom *)fsS);
+    if (!bank)
+    {
+        _k1pr_release();
+        return lines;
+    }
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (_k1pr_ctx.plan)
@@ -971,6 +1081,7 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
 static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr, int ip,
                                       const vfft_oop_il_entry_t *ke);
 static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int T, const vfft_oop_il_entry_t *ke);
+static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int T);   /* below: the 1D plan at T */
 /* ── the K=1 IL-engine candidate: the request's cell (order x placement),
  * raced and banked on a miss, resolved to exactly one plan — the banked
  * route's (prime / chain3 / flat / ZTURN-T / four-step / pair), else the
@@ -1025,13 +1136,19 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     const vfft_oop_il_entry_t *ke =
         W->vw2_off_oop ? (kle ? &keb : NULL)
                        : (vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL);
-    /* the threaded plan's row (v1.3): the K=1 route is thread-independent, so
-     * a miss at T > 1 takes the one-thread row's route as its own row, keyed
-     * nthreads=T, and the MT commits below race its threaded verdict there */
+    /* the threaded plan's row (v1.3): a miss at T > 1 whose one-thread row exists. Natural order: the recipe is
+     * chosen AT T (_k1_il_t_race, 2026-11-18: every candidate that threads raced in its threaded form); where that
+     * race banks nothing (nothing in the pool threads, or a serial plan wins), and for the scrambled class, the
+     * one-thread row's recipe becomes the row at T, keyed nthreads=T, and the MT commits below race its threaded
+     * verdict there */
     if (!ke && T > 1 && !W->vw2_off_oop && !cfg->recalibrate &&
-        vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
+        vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr_req, ip_req ? VW2_PL_IP : VW2_PL_OOP, 1))
     {
-        _vw2_persist(W, cfg);
+        const int tr = scr_req ? 0 : _k1_il_t_race(W, cfg, N, T);
+        if (tr < 0)
+            return -1;   /* out of memory: nothing built, the caller refuses the create */
+        if (tr == 0 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
+            _vw2_persist(W, cfg);
         ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
     }
     /* the IL plan race: a MISS (no IL verdict on the row), a pair-only row
@@ -1049,8 +1166,14 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
             return -1;   /* out of memory: nothing built, the caller refuses the create */
         if (lines > 0)
         {
-            if (T > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
-                _vw2_persist(W, cfg);
+            if (T > 1)
+            {   /* the row at T: the recipe chosen at T on the ranking just raced (above) */
+                const int tr = scr_req ? 0 : _k1_il_t_race(W, cfg, N, T);
+                if (tr < 0)
+                    return -1;
+                if (tr == 0 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, ip_req, T))
+                    _vw2_persist(W, cfg);
+            }
             ke = vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, T, &keb) ? &keb : NULL;
         }
     }
@@ -1085,7 +1208,7 @@ static int _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 _k1pr_ctx.N = 0;
             }
             else
-                *ilp_out = _ilprime_create_banked(W, cfg, N, NULL);
+                *ilp_out = _ilprime_create_banked(W, cfg, N, NULL, _vfft_plan_threads(cfg));
             if (getenv("VFFT_NAT_LOG") && *ilp_out)
                 fprintf(stderr, "[k1pr] N=%d: %s prime cell (%s, M=%d) src=wisdom\n", N,
                         ip_req ? "in place" : "out of place",
@@ -1423,7 +1546,10 @@ static void _ilfd_mt_replay_or_race(struct vfft_plan_s *h,
  * count are its key (v1.3), so a plan bound IN PLACE, which races aliased
  * arms through the plane — a different measurement — banks on the place=ip
  * row at its T. The one-thread tile il_tw= is
- * untouched: the arm sections the walk the row already names. */
+ * untouched; the TILES arm races at every stage span the tile law admits
+ * (vfft_ztt_mt_tile_cands, 2026-11-18) and its width banks as il_mt_tw= on
+ * the row at T (the flat DIT's law): a 2^a x odd chain, untiled at one
+ * thread, gets its tiles arm. */
 static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
                                    struct vfft_wisdom_s *W,
                                    const vfft_cfg_t *cfg, int N)
@@ -1447,16 +1573,31 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
             fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: mt=%d src=env\n", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
         return;
     }
-    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v))
+    size_t cands[VFFT_ZTT_MAX_NF + 1], tw = 0;
+    int nc = vfft_ztt_mt_tile_cands(p, cands, VFFT_ZTT_MAX_NF);
+    {   /* the one-thread width among them (the planner's ladder width at a power of two) */
+        int q, have = 0;
+        for (q = 0; q < nc; q++) have |= (cands[q] == p->tile);
+        if (p->tile && !have && (size_t)N / p->tile >= 2) cands[nc++] = p->tile;
+    }
+    /* the banked verdict at THIS T, with its tile width (il_mt_tw, 2026-11-18); a row raced before the widths
+     * (il_mt and no il_mt_tw) races again where the plan offers widths: its tiles arm was the one-thread width only */
+    if (r && !cfg->recalibrate && vw2_rec_get(r, tok_v) && (vw2_rec_get(r, "il_mt_tw") || nc == 0))
     {
-        const int v = vw2__oop_geti(r, tok_v, 0);
+        int v = vw2__oop_geti(r, tok_v, 0);
+        const int w = vw2__oop_geti(r, "il_mt_tw", 0);
+        if (v == 2 && w > 0 && !vfft_ztt_set_tile(p, (size_t)w))
+        {
+            _vfft_warn("banked il_mt_tw=%d does not fit the ZTURN-T chain at N=%d - serial", w, N);
+            v = 0;
+        }
         if (!vfft_ztt_mt_bind(p, T, (v >= 0 && v <= 2) ? v : 0)) p->mt = 0;
         if (getenv("VFFT_NAT_LOG"))
-            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: replay mt=%d src=wisdom\n",
-                    N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt);
+            fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s: replay mt=%d tw=%zu src=wisdom\n",
+                    N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", p->mt, p->tile);
         return;
     }
-    {   /* the race on 64-B aligned scratch, in the plan's own placement */
+    {   /* the race on 64-B aligned scratch, in the plan's own placement: serial, blocks, the tiles at every width */
         const size_t nb = (size_t)2 * N * sizeof(vfft_real);
         vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
         vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
@@ -1464,16 +1605,19 @@ static void _ztt_mt_replay_or_race(struct vfft_plan_s *h,
         if (!zi || !zo) { vfft_aligned_free(zi); vfft_aligned_free(zo); p->mt = 0; return; }
         for (i = 0; i < 2 * (size_t)N; i++) zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
         _vfft_pool_arm(T);
-        if (ip) { memcpy(zo, zi, nb); vfft_ztt_mt_race(p, T, zo, zo, NULL); }
-        else vfft_ztt_mt_race(p, T, zi, zo, NULL);
+        if (ip) { memcpy(zo, zi, nb); vfft_ztt_mt_race(p, T, zo, zo, NULL, cands, nc, &tw); }
+        else vfft_ztt_mt_race(p, T, zi, zo, NULL, cands, nc, &tw);
         vfft_aligned_free(zi); vfft_aligned_free(zo);
     }
     if (r && !W->vw2_off_oop)
     {
-        char b[16];
+        const vw2_key_t key = r->key;   /* an update may move the record */
+        char b[24];
         int ok = 1;
         snprintf(b, sizeof b, "%d", p->mt);
-        ok = ok && vw2_update_field(&W->vw2, &r->key, tok_v, b) == VW2_OK;
+        ok = ok && vw2_update_field(&W->vw2, &key, tok_v, b) == VW2_OK;
+        snprintf(b, sizeof b, "%zu", tw);
+        ok = ok && vw2_update_field(&W->vw2, &key, "il_mt_tw", b) == VW2_OK;
         if (ok)
             _vw2_persist(W, cfg);
     }
@@ -1498,6 +1642,39 @@ static void _ilpr_mt_replay_or_race(struct vfft_plan_s *h,
         return;
     if (W && !W->vw2_off_oop)
         r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, T);   /* the plan's own row (v1.3) */
+    if (_ilpr_tv.p == p && _ilpr_tv.N == N && _ilpr_tv.T == T)
+    {   /* THE VERDICT AT T raced in this create (_ilprime_create_banked): the plan is bound to its arm already; the
+         * inner, the arm and a four-step inner's child onto the row at T (a row's earlier il_mt named the one-thread
+         * inner's arm: the race at T replaces it). The key is copied: an update may move the record. */
+        if (r && !W->vw2_off_oop)
+        {
+            const vw2_key_t key = r->key;
+            char kind[8], shape[64], b[16];
+            int ok;
+            _ilprime_desc_str(&_ilpr_tv.d, kind, sizeof kind, shape, sizeof shape);
+            ok = vw2_update_field(&W->vw2, &key, "il_prime", _ilpr_tv.method == 1 ? "rader" : "bluestein") == VW2_OK;
+            ok = ok && vw2_update_field(&W->vw2, &key, "il_prime_in", kind) == VW2_OK;
+            ok = ok && vw2_update_field(&W->vw2, &key, "il_prime_sh", shape) == VW2_OK;
+            snprintf(b, sizeof b, "%d", _ilpr_tv.d.tw);
+            ok = ok && vw2_update_field(&W->vw2, &key, "il_prime_tw", b) == VW2_OK;
+            snprintf(b, sizeof b, "%d", p->mt);
+            ok = ok && vw2_update_field(&W->vw2, &key, "il_mt", b) == VW2_OK;
+            if (ok && _ilpr_tv.d.kind == 4 && _ilpr_tv.S)
+            {
+                const vw2_rec_t *r2 = vw2_lookup(&W->vw2, &key);
+                ok = r2 && _k1fs_row_put_child(&W->vw2, r2, _ilpr_tv.S, _ilpr_tv.d.R1, _ilpr_tv.d.R2, 0,
+                                               _ilpr_tv.d.T > 1 ? _ilpr_tv.d.T : 1) == VW2_OK;   /* the child at the T it was built at */
+            }
+            if (ok)
+                _vw2_persist(W, cfg);
+            else
+                fprintf(stderr, "vfft: the prime cell's verdict at T=%d (N=%d) NOT banked -- it races again\n", T, N);
+        }
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[ilpr-mt] N=%d T=%d%s: raced with the inner at T, mt=%d\n", N, T, ip ? " ip" : "", p->mt);
+        _ilpr_tv_clear();
+        return;
+    }
     if (r && !cfg->recalibrate && vw2_rec_get(r, "il_mt"))
     {
         const int v = vw2__oop_geti(r, "il_mt", 0);
@@ -1638,6 +1815,506 @@ static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int 
     return ke && ke->k1_il_route == VFFT_K1_IL_FS && T == 1 && W && !W->vw2_off_oop &&
            !_k1fs_row_has_child(vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr, ip ? VW2_PL_IP : VW2_PL_OOP, 1));
 }
+/* THE SPLITS AT T (the threaded split race's body; shared since 2026-11-18 with the zr2c child's threaded form,
+ * il/real/zr2c_build.h): every split of N -- x form x chain for the natural class -- built AT T on 64-B aligned
+ * scratch in the placement `ip`, the candidates' children racing into ONE private store mS (taken: the winner keeps
+ * it, else it is freed). `p` (may be NULL) is a plan already at T, its own split's form-0 arm (the c2c door's served
+ * plan) and the plan the reps are timed on; W lends the row cells under VFFT_HIGHN_PLAN=borrow. Returns the winner --
+ * p, or a new plan owning mS -- every other candidate destroyed, p too when it lost; NULL when nothing raced (p
+ * untouched, mS freed). */
+static vfft_k1fs_plan_t *_k1fs_mt_split_race(vfft_k1fs_plan_t *p, struct vfft_wisdom_s *mS,
+                                             const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr,
+                                             int ip, int T)
+{
+    const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+    vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
+    vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
+    vfft_cfg_t mcfg = *cfg;
+    vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS], *win;
+    _k1fs_mt_ctx_t cx[VFFT_RACE_MAX_ARMS];
+    vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
+    char names[VFFT_RACE_MAX_ARMS][40];
+    double tns[VFFT_RACE_MAX_ARMS];
+    _k1fs_mt_rst_t rs;
+    int n1[8], n2[8], ns, na = 0, best = 0, reps, a, i;
+    size_t k;
+    if (!zi || !zo || !mS)
+    {
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
+        _vfft_wisdom_free((vfft_wisdom *)mS);
+        return NULL;
+    }
+    ns = vfft_k1fs_splits(N, n1, n2, 8);
+    mcfg.wisdom = (vfft_wisdom *)mS;
+    mcfg.wisdom_write = 0;
+    mcfg.recalibrate = 0;
+    for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
+    for (i = 0; i < ns; i++)
+    {   /* the candidates' row cells at T: the store's 1D rows at N2 (borrow); else the
+         * one-thread child's rp_ recipe in mS serves them (_k1fs_child_row_store) */
+        if (vfft_policy_highn_borrow() && W) _k1fs_borrow_rows(mS, W, n2[i]);
+    }
+    _vfft_pool_arm(T);
+    for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)
+    {
+        int ch[24][8], cl[24], nch = 0, c;
+        /* form 0 (the current plan when it is this split and form) */
+        cand[na] = (p && n1[i] == p->N1 && p->form == 0) ? p
+                 : vfft_k1fs_create(N, n1[i], n2[i], scr, mS, &mcfg, ip, T, 0, NULL, 0);
+        if (cand[na])
+        {
+            cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
+            snprintf(names[na], sizeof names[na], "%dx%d", n1[i], n2[i]);
+            arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
+            na++;
+        }
+        if (scr || !_k1fs_sb_admit(N, n2[i])) continue;
+        nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 1);
+        for (c = 0; c < nch && na < VFFT_RACE_MAX_ARMS; c++)
+        {
+            char cs[48];
+            int q, off = 0, same = 0;
+            for (q = 0; q < cl[c] && off < (int)sizeof cs - 4; q++)
+                off += snprintf(cs + off, sizeof cs - (size_t)off, "%s%d", q ? "." : "", ch[c][q]);
+            if (p && n1[i] == p->N1 && p->form == 1 && p->sbnst == cl[c] && memcmp(p->sbR, ch[c], (size_t)cl[c] * sizeof(int)) == 0)
+                same = 1;
+            cand[na] = same ? p : vfft_k1fs_create(N, n1[i], n2[i], 0, mS, &mcfg, ip, T, 1, ch[c], cl[c]);
+            if (!cand[na]) continue;
+            cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
+            snprintf(names[na], sizeof names[na], "%dx%d/%s", n1[i], n2[i], cs);
+            arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
+            na++;
+        }
+    }
+    if (na == 0)
+    {
+        vfft_aligned_free(zi); vfft_aligned_free(zo);
+        _vfft_wisdom_free((vfft_wisdom *)mS);
+        return NULL;
+    }
+    {   /* reps from one timing of the serial verdict's plan at T (the first candidate when none is given) */
+        const vfft_k1fs_plan_t *tp = p ? p : cx[0].p;
+        double t0;
+        if (ip) memcpy(zo, zi, nb);
+        vfft_k1fs_execute(tp, VFFT_FORWARD, ip ? zo : zi, zo);
+        if (ip) memcpy(zo, zi, nb);
+        t0 = vfft_now_ns(); vfft_k1fs_execute(tp, VFFT_FORWARD, ip ? zo : zi, zo); t0 = vfft_now_ns() - t0;
+        reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
+        if (reps < 2) reps = 2;
+        if (reps > 64) reps = 64;
+    }
+    rs.dst = zo; rs.src = zi; rs.nb = nb;
+    {
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
+        vfft_race_run(&proto, arms, na, tns);
+    }
+    for (a = 1; a < na; a++) if (tns[a] < tns[best]) best = a;
+    win = cx[best].p;
+    if (win != p)
+    {   /* the winner keeps the race's store: its child is there */
+        win->own = mS;
+        mS = NULL;
+    }
+    _vfft_wisdom_free((vfft_wisdom *)mS);
+    for (a = 0; a < na; a++) if (cand[a] && cand[a] != win && cand[a] != p) vfft_k1fs_destroy(cand[a]);
+    if (p != win) vfft_k1fs_destroy(p);
+    if (getenv("VFFT_NAT_LOG"))
+    {
+        fprintf(stderr, "[k1fs-mt] N=%d T=%d %s%s: split race", N, T, scr ? "scr" : "nat", ip ? " ip" : "");
+        for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f", arms[a].name, tns[a]);
+        fprintf(stderr, " -> %s\n", arms[best].name);
+    }
+    vfft_aligned_free(zi); vfft_aligned_free(zo);
+    return win;
+}
+
+/* ── THE 1D PLAN AT T (2026-11-18, the threading census; the owner: "I agree with the changes") ──────────────────
+ * A K=1 create at T > 1 that finds no row at its T (natural order, not a prime cell) no longer copies the one-thread
+ * row's recipe and races only that recipe's threaded arms: the recipe is chosen AT T. A near-tie at one thread decides
+ * a gap at T, between routes (15625: chain3 ahead of the flat DIT by 9 % on one thread and 2.08x behind it at 8 --
+ * chain3 has no threaded form) and between chains of a route (65536: a ZTURN-T chain 0.3 % behind the pick on one
+ * thread and 13 % ahead of it at 4 and 8; 177147, 59049, 45045 the flat DIT's, 6 - 13 %); and a candidate with fewer
+ * passes over memory or a smaller footprint can lose on one thread and win threaded (the owner). So:
+ *   1. the pool ranked at one thread by the planner's own race (_k1_il_plan_race_ex, nothing banked; this process's
+ *      last full race of the cell when it just ran): every live candidate of a route that threads and the best of
+ *      each route that cannot (dp_planner_il.h fam) -- the one-thread rank filters nothing that threads;
+ *   2. each built and bound to its own best threaded form at T -- ZTURN-T serial / blocks / tiles at every width the
+ *      tile law admits (vfft_ztt_mt_race), the flat DIT likewise (vfft_ilfd_mt_race) -- gated against the planner's
+ *      reference and timed at T as bound; the four-step: every split at T on its own private store, its row cells
+ *      warmed into it (_k1fs_mt_split_race); chain3, the pair, the mono: their one-thread form;
+ *   3. the fastest VFFT_K1T_FINAL of each route by that time raced against each other at T (same-run, alternated,
+ *      unpaced: threaded arms never park);
+ *   4. the winner's whole recipe banked on the row at T with its threaded verdict (il_mt, il_mt_tw; the four-step's
+ *      split il_mt, il_mtsb and its child at T), which the MT commits then replay. A winner that runs serial banks
+ *      nothing: the one-thread row's recipe is the plan at T then, as before (vw2_oop_k1_row_at_T), so serial plans
+ *      are not reshuffled by this race's noise.
+ * Returns 1 = the row at T banked, 0 = not (the caller copies the one-thread row), -1 = OUT OF MEMORY. */
+#define VFFT_K1T_FINAL 3
+typedef struct
+{
+    vfft_il_cand_t c;            /* the recipe (ZTURN-T, flat DIT, chain3, pair, mono) */
+    int mt;                      /* its arm at T (ZTURN-T, flat DIT: 0 serial, 1 BLOCKS, 2 TILES) */
+    size_t tw;                   /* the TILES arm's width */
+    double ns;                   /* its time at T as bound */
+    _il_dp_built_t b;            /* built (the bound plan) */
+    vfft_k1fs_plan_t *fs;        /* route FS: the four-step at T (owns its store) */
+    const vfft_real *zi;
+    vfft_real *zo;
+    int ip;
+} _k1t_arm_t;
+static void _k1t_arm_run(void *v)
+{
+    _k1t_arm_t *a = (_k1t_arm_t *)v;
+    const vfft_real *in = a->ip ? a->zo : a->zi;
+    if (a->fs) { vfft_k1fs_execute(a->fs, VFFT_FORWARD, in, a->zo); return; }
+    if (a->b.ztt && a->b.ztt->mt > 0 && vfft_ztt_execute_mt(a->b.ztt, in, a->zo, 0)) return;
+    if (a->b.ifd && a->b.ifd->mt > 0 && vfft_ilfd_execute_mt(a->b.ifd, in, a->zo, 0)) return;
+    (void)_il_dp_exec_io(&a->c, &a->b, in, a->zo, 0);
+}
+static void _k1t_arm_free(_k1t_arm_t *a)
+{
+    if (a->fs) vfft_k1fs_destroy(a->fs);
+    else _il_dp_free(&a->b);
+    a->fs = NULL;
+    memset(&a->b, 0, sizeof a->b);
+}
+/* build the arm's recipe in the placement and bind it at T: race = 1 races its threaded form (a->mt, a->tw set);
+ * race = 0 binds the form already raced. 0 = it does not build */
+static int _k1t_build(_k1t_arm_t *a, int N, int T, int ip, vfft_real *zi, vfft_real *zo, int race)
+{
+    const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+    memset(&a->b, 0, sizeof a->b);
+    if (_il_dp_build(N, &a->c, &a->b, ip) != 0)
+        return 0;
+    if (a->b.ztt)
+    {
+        vfft_ztt_plan_t *p = a->b.ztt;
+        if (race)
+        {   /* the tile widths at T with the one-thread width among them (_ztt_mt_replay_or_race's set) */
+            size_t cands[VFFT_ZTT_MAX_NF + 1], tw = 0;
+            int nc = vfft_ztt_mt_tile_cands(p, cands, VFFT_ZTT_MAX_NF), q, have = 0;
+            for (q = 0; q < nc; q++)
+                have |= (cands[q] == p->tile);
+            if (p->tile && !have && (size_t)N / p->tile >= 2)
+                cands[nc++] = p->tile;
+            if (ip)
+            {
+                memcpy(zo, zi, nb);
+                vfft_ztt_mt_race(p, T, zo, zo, NULL, cands, nc, &tw);
+            }
+            else
+                vfft_ztt_mt_race(p, T, zi, zo, NULL, cands, nc, &tw);
+            a->mt = p->mt;
+            a->tw = tw;
+        }
+        else
+        {
+            if (a->mt == 2 && a->tw > 0 && !vfft_ztt_set_tile(p, a->tw))
+                a->mt = 0;
+            if (!vfft_ztt_mt_bind(p, T, a->mt))
+                p->mt = 0;
+        }
+    }
+    else if (a->b.ifd)
+    {
+        vfft_ilfd_plan_t *p = a->b.ifd;
+        if (race)
+        {   /* out of place: the in-place serving runs the same lists (_ilfd_mt_replay_or_race) */
+            int mt_tw = 0;
+            vfft_ilfd_mt_race(p, T, p->tw, zi, zo, &mt_tw);
+            p->mt_tw = mt_tw;
+            a->mt = p->mt;
+            a->tw = (size_t)mt_tw;
+        }
+        else
+        {
+            p->mt = a->mt;
+            p->mt_t = T;
+            p->mt_tw = (int)a->tw;
+            if (a->mt == 2 && a->tw > 0 && !vfft_ilfd_apply_tw(p, (int)a->tw))
+                p->mt = 0;
+            if (p->mt > 0 && !vfft_ilfd_mt_bind(p, T))
+                p->mt = 0;
+        }
+    }
+    else
+        a->mt = 0;
+    return 1;
+}
+/* the arm's forward from the pristine input against the reference spectrum (natural bins): the planner's gate */
+static int _k1t_gate(_k1t_arm_t *a, int N, const vfft_real *zorig, const vfft_real *zref, double scale)
+{
+    const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+    double worst = 0.0;
+    long k;
+    memcpy(a->ip ? a->zo : (vfft_real *)a->zi, zorig, nb);
+    _k1t_arm_run(a);
+    for (k = 0; k < 2 * (long)N; k += 2)
+    {
+        const double d = fabs(a->zo[k] - zref[k]) + fabs(a->zo[k + 1] - zref[k + 1]);
+        if (!(d < 1e300)) return 0;
+        if (d > worst) worst = d;
+    }
+    return worst / scale <= VFFT_IL_DP_GATE_TOL;
+}
+/* the arm's time at T as bound: the median of 5 samples of at least 2 ms (the heats' sample), threaded arms unpaced */
+static double _k1t_time(_k1t_arm_t *a)
+{
+    double t[5], t0, one;
+    int s, k, reps, i, j;
+    _k1t_arm_run(a);
+    _k1t_arm_run(a);
+    t0 = vfft_now_ns();
+    _k1t_arm_run(a);
+    one = vfft_now_ns() - t0;
+    reps = (int)(VFFT_IL_DP_HEAT_SAMPLE_NS / (one > 1.0 ? one : 1.0));
+    if (reps < 2) reps = 2;
+    if (reps > 1 << 16) reps = 1 << 16;
+    for (s = 0; s < 5; s++)
+    {
+        t0 = vfft_now_ns();
+        for (k = 0; k < reps; k++)
+            _k1t_arm_run(a);
+        t[s] = (vfft_now_ns() - t0) / reps;
+    }
+    for (i = 1; i < 5; i++)
+        for (j = i; j > 0 && t[j] < t[j - 1]; j--) { const double x = t[j]; t[j] = t[j - 1]; t[j - 1] = x; }
+    return t[2];
+}
+static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int T)
+{
+    const int ip = (cfg->placement == VFFT_INPLACE);
+    vfft_il_dp_context_t *ctx = &_k1_il_dp_ctx;
+    const size_t nb = (size_t)2 * N * sizeof(vfft_real);
+    vfft_il_cand_t *list = NULL;
+    _k1t_arm_t *cand = NULL, fin[3 * VFFT_K1T_FINAL + 4], *win = NULL;
+    vfft_race_arm_t arms[3 * VFFT_K1T_FINAL + 4];
+    double ns[3 * VFFT_K1T_FINAL + 4], scale;
+    vfft_real *zorig = NULL, *zref = NULL, *zi = NULL, *zo = NULL;
+    int nl, nc = 0, nfin = 0, i, j, threads = 0, best = 0, rc = 0, verbose = getenv("VFFT_NAT_LOG") != NULL;
+    if (T < 2 || !W || W->vw2_off_oop || vfft_policy_prime_cell(N))
+        return 0;
+    /* 1. the ranking: this process's last full race of the cell, else the race now */
+    if (!(_k1_il_dp_ctx_ready && ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0 && ctx->fam_n[0] > 0))
+    {
+        const int r = _k1_il_plan_race_ex(W, cfg, N, 0);
+        if (r < 0) return -1;
+        if (r == 0 || !(ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0 && ctx->fam_n[0] > 0))
+            return 0;
+    }
+    nl = ctx->fam_n[0];
+    for (i = 0; i < nl; i++)
+        threads |= (ctx->fam[0][i].route == VFFT_K1_IL_ZTT || ctx->fam[0][i].route == VFFT_K1_IL_FLAT ||
+                    ctx->fam[0][i].route == VFFT_K1_IL_FS);
+    if (!threads)
+        return 0;   /* nothing in the pool threads: the one-thread row's recipe is the plan at T */
+    /* the candidates and the planner's input and reference, copied before any nested create touches the context */
+    if (ctx->ref_N != N && _il_dp_ref_build(ctx, N) != 0)
+        return 0;
+    scale = ctx->ref_scale;
+    list = (vfft_il_cand_t *)malloc((size_t)nl * sizeof *list);
+    cand = (_k1t_arm_t *)calloc((size_t)nl, sizeof *cand);
+    zorig = (vfft_real *)vfft_aligned_alloc(nb);
+    zref = (vfft_real *)vfft_aligned_alloc(nb);
+    zi = (vfft_real *)vfft_aligned_alloc(nb);
+    zo = (vfft_real *)vfft_aligned_alloc(nb);
+    if (!list || !cand || !zorig || !zref || !zi || !zo)
+    {
+        rc = -1;
+        goto out;
+    }
+    memcpy(list, ctx->fam[0], (size_t)nl * sizeof *list);
+    memcpy(zorig, ctx->z_orig, nb);
+    memcpy(zref, ctx->z_ref, nb);
+    memcpy(zi, zorig, nb);
+    _vfft_pool_arm(T);
+    /* 2. each candidate bound to its threaded form at T, gated, timed; the four-step once, over every split */
+    for (i = 0; i < nl; i++)
+    {
+        _k1t_arm_t *a = &cand[nc];
+        a->c = list[i];
+        a->zi = zi;
+        a->zo = zo;
+        a->ip = ip;
+        if (list[i].route == VFFT_K1_IL_FS)
+        {
+            struct vfft_wisdom_s *mS = _k1fs_store_new();
+            vfft_cfg_t fscfg = *cfg;
+            if (!mS) continue;
+            fscfg.wisdom = (vfft_wisdom *)mS;
+            fscfg.wisdom_write = 0;
+            fscfg.recalibrate = 0;
+            fscfg.nthreads = 1;
+            _k1_il_fs_warm(mS, W, &fscfg, N);   /* the candidates' row cells, before the race (a nested create races them) */
+            a->fs = _k1fs_mt_split_race(NULL, mS, W, cfg, N, 0, ip, T);
+            if (!a->fs) continue;
+        }
+        else if (!_k1t_build(a, N, T, ip, zi, zo, 1))
+            continue;
+        memcpy(zi, zorig, nb);
+        if (!_k1t_gate(a, N, zorig, zref, scale))
+        {
+            if (verbose) fprintf(stderr, "[k1-T] N=%d T=%d: candidate %d (route %d) FAILS the gate at T -- dropped\n",
+                                 N, T, i, list[i].route);
+            _k1t_arm_free(a);
+            continue;
+        }
+        memcpy(zi, zorig, nb);
+        a->ns = _k1t_time(a);
+        if (!a->fs)
+            _k1t_arm_free(a);   /* rebuilt for the final from its raced form; the four-step stays built (its store) */
+        nc++;
+    }
+    /* 3. the fastest VFFT_K1T_FINAL of each route by its time at T, raced against each other */
+    {
+        int used[VFFT_IL_DP_FAM_MAX];
+        memset(used, 0, sizeof used);
+        for (j = 0; j < nc && nfin < (int)(sizeof fin / sizeof fin[0]); j++)
+        {
+            int k, bi = -1, r;
+            for (k = 0; k < nc; k++)
+                if (!used[k] && (bi < 0 || cand[k].ns < cand[bi].ns))
+                    bi = k;
+            if (bi < 0) break;
+            used[bi] = 1;
+            r = cand[bi].c.route;
+            for (k = 0, i = 0; k < nfin; k++) i += (fin[k].c.route == r);
+            if (i >= VFFT_K1T_FINAL)
+            {
+                if (cand[bi].fs) _k1t_arm_free(&cand[bi]);
+                continue;
+            }
+            fin[nfin] = cand[bi];
+            memset(&cand[bi].b, 0, sizeof cand[bi].b);
+            cand[bi].fs = NULL;   /* moved into the final */
+            if (!fin[nfin].fs && !_k1t_build(&fin[nfin], N, T, ip, zi, zo, 0))
+                continue;
+            nfin++;
+        }
+        for (j = 0; j < nc; j++)
+            if (cand[j].fs) _k1t_arm_free(&cand[j]);   /* a four-step past the final's places */
+    }
+    if (nfin == 0)
+        goto out;
+    for (j = 0; j < nfin; j++)
+    {
+        arms[j].name = "k1-T";
+        arms[j].run = _k1t_arm_run;
+        arms[j].ctx = &fin[j];
+    }
+    {
+        _k1fs_mt_rst_t rs;
+        double t0, one;
+        int reps;
+        memcpy(zi, zorig, nb);
+        if (ip) memcpy(zo, zorig, nb);
+        _k1t_arm_run(&fin[0]);
+        t0 = vfft_now_ns();
+        _k1t_arm_run(&fin[0]);
+        one = vfft_now_ns() - t0;
+        reps = (int)(VFFT_IL_DP_HEAT_SAMPLE_NS / (one > 1.0 ? one : 1.0));
+        if (reps < VFFT_IL_DP_HEAT_MIN_REPS) reps = VFFT_IL_DP_HEAT_MIN_REPS;
+        if (reps > 1 << 16) reps = 1 << 16;
+        rs.dst = zo; rs.src = zorig; rs.nb = nb;
+        {
+            const vfft_race_proto_t proto = { 7, reps, VFFT_RACE_MEDIAN, 1, 2, ip ? _k1fs_mt_reseed : NULL,
+                                              ip ? &rs : NULL, 0 };   /* THREADED arms: never paused */
+            vfft_race_run(&proto, arms, nfin, ns);
+        }
+    }
+    for (j = 1; j < nfin; j++)
+        if (ns[j] < ns[best]) best = j;
+    win = &fin[best];
+    if (verbose)
+    {
+        char s[96];
+        fprintf(stderr, "[k1-T] N=%d T=%d %s: %d candidate(s) timed at T, final", N, T, ip ? "ip" : "oop", nc);
+        for (j = 0; j < nfin; j++)
+        {
+            if (fin[j].fs) snprintf(s, sizeof s, "fs %dx%d%s", fin[j].fs->N1, fin[j].fs->N2, fin[j].fs->form ? "/sb" : "");
+            else _il_dp_cand_str(&fin[j].c, s, sizeof s);
+            fprintf(stderr, " | %s mt%d=%.0f", s, fin[j].fs ? 0 : fin[j].mt, ns[j]);
+        }
+        fprintf(stderr, " -> %d\n", best);
+    }
+    /* 4. the winner's recipe on the row at T, when it threads */
+    if (win->fs || win->mt > 0)
+    {
+        vfft_oop_il_entry_t e;
+        const vw2_rec_t *r;
+        const vfft_il_cand_t *c = &win->c;
+        memset(&e, 0, sizeof e);
+        e.N = N;
+        e.K = 1;
+        e.kind = VFFT_OOP_KIND_BAILEY2V;
+        e.place_ip = ip;
+        e.ord_scr = 0;
+        e.nthreads = T;
+        e.k1_il_route = win->fs ? VFFT_K1_IL_FS : c->route;
+        e.il_R1 = win->fs ? win->fs->N1 : c->R1;
+        e.il_R2 = win->fs ? win->fs->N2 : c->R2;
+        e.il_kv = win->fs ? win->fs->form : c->il_kv;
+        e.il_kv_raced = 1;
+        if (!win->fs && c->route == VFFT_K1_IL_FLAT)
+        {
+            memcpy(e.il_fl, c->il_fl, sizeof e.il_fl);
+            e.il_fl_n = c->il_fl_n;
+            memcpy(e.il_flf, c->il_flf, sizeof e.il_flf);
+            e.il_tw = c->il_tw;
+            memcpy(e.il_rd, c->il_rd, sizeof e.il_rd);
+            e.il_rd_n = c->il_rd_n;
+            e.il_rdw = c->il_rdw;
+        }
+        if (!win->fs && c->route == VFFT_K1_IL_ZTT)
+        {
+            memcpy(e.il_zt, c->il_zt, sizeof e.il_zt);
+            e.il_zt_n = c->il_zt_n;
+            e.il_tw = c->il_tw;
+        }
+        e.ns = ns[best];
+        if (vw2_oop_bank_k1_il(&W->vw2, &e) == VW2_OK &&
+            (r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, 0, ip ? VW2_PL_IP : VW2_PL_OOP, T)) != NULL)
+        {
+            const vw2_key_t key = r->key;   /* an update may move the record */
+            char b[48];
+            int ok = 1;
+            if (win->fs)
+            {
+                snprintf(b, sizeof b, "%d", win->fs->N1);
+                ok = ok && vw2_update_field(&W->vw2, &key, "il_mt", b) == VW2_OK;
+                _k1fs_chain_str(win->fs, b, sizeof b);
+                ok = ok && vw2_update_field(&W->vw2, &key, "il_mtsb", b) == VW2_OK;
+                r = vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, 0, ip ? VW2_PL_IP : VW2_PL_OOP, T);
+                ok = ok && r && _k1fs_row_put_child(&W->vw2, r, win->fs->own, win->fs->N1, win->fs->N2, ip, T) == VW2_OK;
+            }
+            else
+            {
+                snprintf(b, sizeof b, "%d", win->mt);
+                ok = ok && vw2_update_field(&W->vw2, &key, "il_mt", b) == VW2_OK;
+                snprintf(b, sizeof b, "%zu", win->mt == 2 ? win->tw : (size_t)0);
+                ok = ok && vw2_update_field(&W->vw2, &key, "il_mt_tw", b) == VW2_OK;
+            }
+            if (ok)
+            {
+                _vw2_persist(W, cfg);
+                rc = 1;
+            }
+            else
+                fprintf(stderr, "vfft: the 1D plan at T=%d for N=%d NOT banked -- the one-thread recipe serves\n", T, N);
+        }
+    }
+out:
+    for (j = 0; j < nfin; j++)
+        _k1t_arm_free(&fin[j]);
+    if (cand)
+        for (j = 0; j < nl; j++)
+            if (cand[j].fs) _k1t_arm_free(&cand[j]);
+    free(list);
+    free(cand);
+    vfft_aligned_free(zorig); vfft_aligned_free(zref); vfft_aligned_free(zi); vfft_aligned_free(zo);
+    return rc;
+}
+
 static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
                                     struct vfft_wisdom_s *W,
                                     const vfft_cfg_t *cfg, int N)
@@ -1684,106 +2361,12 @@ static void _k1fs_mt_replay_or_race(struct vfft_plan_s *h,
     {   /* the race: every split (x form x chain for the natural class) at T
          * on 64-B aligned scratch, the plan's placement; the candidates'
          * children race into ONE private store (a copy of the plan's own,
-         * k1_fourstep.h) that the winner keeps */
-        const size_t nb = (size_t)2 * N * sizeof(vfft_real);
-        vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
-        vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
+         * k1_fourstep.h) that the winner keeps (_k1fs_mt_split_race) */
         struct vfft_wisdom_s *mS = p->own ? _k1fs_store_dup(p->own) : _k1fs_store_new();
-        vfft_cfg_t mcfg = *cfg;
-        vfft_k1fs_plan_t *cand[VFFT_RACE_MAX_ARMS];
-        _k1fs_mt_ctx_t cx[VFFT_RACE_MAX_ARMS];
-        vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
-        char names[VFFT_RACE_MAX_ARMS][40];
-        double tns[VFFT_RACE_MAX_ARMS];
-        _k1fs_mt_rst_t rs;
-        int na = 0, best = 0, reps, a;
-        size_t k;
-        if (!zi || !zo || !mS)
-        {
-            vfft_aligned_free(zi); vfft_aligned_free(zo);
-            _vfft_wisdom_free((vfft_wisdom *)mS);
+        vfft_k1fs_plan_t *w = _k1fs_mt_split_race(p, mS, W, cfg, N, p->scr, ip, T);
+        if (!w)
             return;
-        }
-        mcfg.wisdom = (vfft_wisdom *)mS;
-        mcfg.wisdom_write = 0;
-        mcfg.recalibrate = 0;
-        for (k = 0; k < 2 * (size_t)N; k++) zi[k] = 1.0 + 1e-6 * (double)(k & 1023);
-        for (i = 0; i < ns; i++)
-        {   /* the candidates' row cells at T: the store's 1D rows at N2 (borrow); else the
-             * one-thread child's rp_ recipe in mS serves them (_k1fs_child_row_store) */
-            if (vfft_policy_highn_borrow() && W) _k1fs_borrow_rows(mS, W, n2[i]);
-        }
-        _vfft_pool_arm(T);
-        for (i = 0; i < ns && na < VFFT_RACE_MAX_ARMS; i++)
-        {
-            int ch[24][8], cl[24], nch = 0, c;
-            /* form 0 (the current plan when it is this split and form) */
-            cand[na] = (n1[i] == p->N1 && p->form == 0) ? p
-                     : vfft_k1fs_create(N, n1[i], n2[i], p->scr, mS, &mcfg, ip, T, 0, NULL, 0);
-            if (cand[na])
-            {
-                cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
-                snprintf(names[na], sizeof names[na], "%dx%d", n1[i], n2[i]);
-                arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
-                na++;
-            }
-            if (p->scr || !_k1fs_sb_admit(N, n2[i])) continue;
-            nch = _k1fs_sb_chains(n1[i], ch, cl, 24, 1);
-            for (c = 0; c < nch && na < VFFT_RACE_MAX_ARMS; c++)
-            {
-                char cs[48];
-                int q, off = 0, same = 0;
-                for (q = 0; q < cl[c] && off < (int)sizeof cs - 4; q++)
-                    off += snprintf(cs + off, sizeof cs - (size_t)off, "%s%d", q ? "." : "", ch[c][q]);
-                if (n1[i] == p->N1 && p->form == 1 && p->sbnst == cl[c] && memcmp(p->sbR, ch[c], (size_t)cl[c] * sizeof(int)) == 0)
-                    same = 1;
-                cand[na] = same ? p : vfft_k1fs_create(N, n1[i], n2[i], 0, mS, &mcfg, ip, T, 1, ch[c], cl[c]);
-                if (!cand[na]) continue;
-                cx[na].p = cand[na]; cx[na].zi = zi; cx[na].zo = zo; cx[na].ip = ip;
-                snprintf(names[na], sizeof names[na], "%dx%d/%s", n1[i], n2[i], cs);
-                arms[na].name = names[na]; arms[na].run = _k1fs_mt_arm_run; arms[na].ctx = &cx[na];
-                na++;
-            }
-        }
-        if (na == 0)
-        {
-            vfft_aligned_free(zi); vfft_aligned_free(zo);
-            _vfft_wisdom_free((vfft_wisdom *)mS);
-            return;
-        }
-        {   /* reps from one timing of the serial verdict's plan at T */
-            double t0;
-            if (ip) memcpy(zo, zi, nb);
-            vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo);
-            if (ip) memcpy(zo, zi, nb);
-            t0 = vfft_now_ns(); vfft_k1fs_execute(p, VFFT_FORWARD, ip ? zo : zi, zo); t0 = vfft_now_ns() - t0;
-            reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
-            if (reps < 2) reps = 2;
-            if (reps > 64) reps = 64;
-        }
-        rs.dst = zo; rs.src = zi; rs.nb = nb;
-        {
-            const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, ip ? _k1fs_mt_reseed : NULL, ip ? &rs : NULL, 0 }; /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
-            vfft_race_run(&proto, arms, na, tns);
-        }
-        for (a = 1; a < na; a++) if (tns[a] < tns[best]) best = a;
-        h->k1fs = cx[best].p;
-        if (h->k1fs != p)
-        {   /* the winner keeps the race's store: its child is there */
-            h->k1fs->own = mS;
-            mS = NULL;
-        }
-        _vfft_wisdom_free((vfft_wisdom *)mS);
-        for (a = 0; a < na; a++) if (cand[a] && cand[a] != h->k1fs && cand[a] != p) vfft_k1fs_destroy(cand[a]);
-        if (p != h->k1fs) vfft_k1fs_destroy(p);
-        p = h->k1fs;
-        if (getenv("VFFT_NAT_LOG"))
-        {
-            fprintf(stderr, "[k1fs-mt] N=%d T=%d %s%s: split race", N, T, p->scr ? "scr" : "nat", ip ? " ip" : "");
-            for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f", arms[a].name, tns[a]);
-            fprintf(stderr, " -> %s\n", arms[best].name);
-        }
-        vfft_aligned_free(zi); vfft_aligned_free(zo);
+        h->k1fs = p = w;
     }
     if (r && W && !W->vw2_off_oop)
     {

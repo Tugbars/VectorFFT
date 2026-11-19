@@ -571,9 +571,10 @@ static int _ilnd_mt_axis0(const vfft_ilnd_t *d, vfft_dir_t dir, const double *sr
     }
     {
         const int Ts = (rn < (size_t)T ? (int)rn : T);
-        if (Ts >= 2 && !c->tpc)   /* a tpc axis 0 runs serial: one 1D plan */
+        if (Ts >= 2 && !c->tpc)
             _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
-        else
+        else if (!c->tpc || !_il2d_tpc_cols_mt(c, src, dst, rn, rev, T))   /* a tpc axis 0: every worker its lanes through
+                                                                         * its own clone of the 1D plan */
             _il2d_col_exec(c, src, dst, rev);
         return 1;
     }

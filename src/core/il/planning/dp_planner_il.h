@@ -86,6 +86,8 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TOPK_MAX      8
 #define VFFT_IL_DP_BEAM_MEASURE  3
 #define VFFT_IL_DP_BEAM_PATIENT  8
+#define VFFT_IL_DP_FAM_MAX       128      /* the race at T's candidates (k1_commit.h _k1_il_t_race): every live one of a
+                                           * route that threads, the best of each that cannot */
 /* Array bound for tile widths per (chain, engine) — NOT a policy knob.
  *
  * It must be large enough to hold every LEGAL width, because VFFT_IL_DP_NO_BAND
@@ -261,6 +263,18 @@ typedef struct
     void *role_ctx;
     int role_bwd, role_key;
 
+    /* THE CANDIDATES FOR THE RACE AT T (2026-11-18, the 1D route at T), from the last FULL race: every live
+     * candidate of a route that threads (ZTURN-T, the flat DIT) in the screen's order, the best of each route that
+     * cannot (chain3, the pair, the mono: their time does not change with T) and of the four-step (its race at T
+     * takes every split itself), kept for the K=1 door's race at T > 1 (k1_commit.h _k1_il_t_race). The one-thread
+     * rank is no filter there: a near-tie at one thread decides a gap at T (15625: chain3 ahead of the flat DIT by
+     * 9 % on one thread, 2.08x behind it at 8), and a candidate with fewer passes over memory or a smaller footprint
+     * can lose on one thread and win threaded (the owner, 2026-11-18). One slot per order class ([0] natural, [1]
+     * scrambled: a cold create races both): the last cell raced in full (a PATIENT re-measure of the cached top-K
+     * is not one), keyed like the cache. */
+    int fam_N[2], fam_ip[2], fam_role[2], fam_n[2];
+    vfft_il_cand_t fam[2][VFFT_IL_DP_FAM_MAX];
+
     int n_benchmarks;
     int n_cache_hits;
 } vfft_il_dp_context_t;
@@ -381,6 +395,19 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
     e->inplace = ctx->inplace;
     e->role_key = ctx->role_key;
     return e;
+}
+/* drop the cell's cached verdict (N, ord, the context's placement and role) so its next plan races in full (the K=1
+ * door's race at T reads the routes' best of a full race, k1_commit.h _k1_il_t_race) */
+static void vfft_il_dp_forget(vfft_il_dp_context_t *ctx, int N, int ord)
+{
+    int i;
+    for (i = 0; i < ctx->count; i++)
+        if (ctx->entries[i].N == N && ctx->entries[i].ord == ord && ctx->entries[i].inplace == ctx->inplace &&
+            ctx->entries[i].role_key == ctx->role_key)
+        {
+            ctx->entries[i] = ctx->entries[--ctx->count];
+            return;
+        }
 }
 
 static void _il_dp_pace(void)
@@ -2268,6 +2295,26 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     if ((cand[0].route == VFFT_K1_IL_2P_PURE || cand[0].route == VFFT_K1_IL_CHAIN3) &&
         !(ctx->role_run && !ctx->role_bwd))   /* a forward-only role never runs the backward */
         (void)_il_dp_race_bwd(ctx, N, &cand[0], verbose);
+
+    if (!e)
+    {   /* a full race: the candidates for the race at T, in the screen's order (the live ones lead it) */
+        const int o = (ord != VFFT_IL_ORD_NATURAL);
+        int cnt[16], i;
+        memset(cnt, 0, sizeof cnt);
+        ctx->fam_n[o] = 0;
+        for (i = 0; i < nlive && ctx->fam_n[o] < VFFT_IL_DP_FAM_MAX; i++)
+        {
+            const int r = cand[i].route;
+            const int threads = (r == VFFT_K1_IL_ZTT || r == VFFT_K1_IL_FLAT);
+            if (cand[i].cost_ns >= 1e17 || r < 0 || r >= 16 || (!threads && cnt[r] >= 1))
+                continue;
+            cnt[r]++;
+            ctx->fam[o][ctx->fam_n[o]++] = cand[i];
+        }
+        ctx->fam_N[o] = N;
+        ctx->fam_ip[o] = ctx->inplace;
+        ctx->fam_role[o] = ctx->role_key;
+    }
 
     if (!e) e = _il_dp_insert(ctx, N, ord);
     if (e)

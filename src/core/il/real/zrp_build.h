@@ -31,7 +31,8 @@
  *         il/real/odd_build.h.
  * The cell's engine is read from the real shard (wisdom2_real_il.h); a miss
  * races every candidate the band admits (the c2c band map at N/2: zr2c at
- * every even N, its threaded fold at T > 1, the mono to 64, the pairs inside
+ * every even N, its threaded arm at T > 1 (the fold and the child threaded,
+ * zr2c+mt), the mono to 64, the pairs inside
  * their band, ZTT-r's shortlist, the four-step in its band) through the
  * finished handles, gates each against the independent reference before
  * timing, and banks the fastest -- no incumbent, no bias; one candidate is
@@ -746,7 +747,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
-    enum { NARMS = 4 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };
+    enum { NARMS = 4 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };   /* zr2c, zr2c+mt, zrm, zfsr + the lists */
     const size_t xs = (size_t)N + 2;
     const size_t nchk = c2r ? (size_t)N : xs;
     struct vfft_plan_s *hall[NARMS];
@@ -793,7 +794,17 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
             (h) = NULL;                                                                             \
         }                                                                                           \
     } while (0)
-    /* zr2c, and its threaded fold at T > 1 (the same child route) */
+    /* zr2c, and at T > 1 its threaded arm: the fold threaded and the child on its
+     * own threaded form raced at T -- a prime child's convolution (il_prime_mt.h),
+     * every other child's c2c engine (_zr2c_kid_mt_race: ZTURN-T, the flat DIT,
+     * the four-step's splits at T) -- serial where that race says so. One arm
+     * since 2026-11-18 (the owner: "if the new arm wins in all cases obsolete the
+     * old code"): the fold threaded beside a one-thread child that has a threaded
+     * form lost every race (1.5 - 4.8x slower), and so did the child threaded
+     * beside a one-thread fold (1.2 - 2.0x) -- 29 races, 5 lengths 20000 -
+     * 1000000, T 2 - 8, both directions, both placements; where the child's race
+     * keeps it serial this arm is the fold's threading alone, the arm it
+     * replaced. */
     {
         struct vfft_plan_s *hz = _zr2c_build(cfg, N, W, oom);
         struct vfft_plan_s *hzm = NULL;
@@ -816,7 +827,9 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
                     _vfft_pool_arm(Tk);
                     vfft_ilprime_mt_race(hzm->zr2c_kid->ilp, Tk, NULL);
                 }
-                ZRPR_GATE(hzm, "zr2c+foldmt");
+                else
+                    (void)_zr2c_kid_mt_race(hzm, cfg, Tk, W);
+                ZRPR_GATE(hzm, "zr2c+mt");
             }
         }
         if (hz)
@@ -828,7 +841,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
         }
         if (hzm)
         {
-            snprintf(names[nall], sizeof names[nall], "zr2c+foldmt");
+            snprintf(names[nall], sizeof names[nall], "zr2c+mt");
             hall[nall++] = hzm;
         }
     }

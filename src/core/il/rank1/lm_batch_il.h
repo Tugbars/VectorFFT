@@ -219,19 +219,19 @@ static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_c
     need_sw = plain && bsw < 0;
     if (bsw >= 0)
         c->wc = bsw;
-    /* a column through the turned prime pass runs serial, as the 2D door runs it (il2d_tier.h, _il2d_c2c_mt): the
-     * threaded column pass would run the Bluestein columns over tables the turned pass dropped (a pool worker's
-     * memset into freed scratch: 12005 x 32 and 4099 x 32 at 8 threads, 2026-11-01). No threaded arm, no threaded
-     * replay. */
-    need_mt = workers >= 2 && !c->tpc && !(usable && bcmt >= 0);
-    if (workers >= 2 && !need_mt && !c->tpc && bcmt > 0)
+    /* a column through the turned prime pass threads in its own form (2026-11-18, il2d_tier.h _il2d_tpc_cols_mt:
+     * every worker its lanes through its own clone of the 1D plan), which the threaded column pass serves it with
+     * before any other -- it once ran the Bluestein columns over the tables the turned pass dropped (12005 x 32 and
+     * 4099 x 32 at 8 threads, 2026-11-01). Its threaded arm is the "threaded" one: no tile, no strips. */
+    need_mt = workers >= 2 && !(usable && bcmt >= 0);
+    if (workers >= 2 && !need_mt && bcmt > 0)
     {   /* a banked threaded form this door no longer serves for the pass -- the walk where the tile serves, the tile
          * where it does not -- is no verdict: raced again */
         const int arm = vw2_ilcol_tok_geti(&W->vw2, key, "mtarm", 0);
         if ((arm == 0 && tile) || (arm == 2 && !tile))
             need_mt = 1;
     }
-    if (workers >= 2 && !need_mt && !c->tpc)
+    if (workers >= 2 && !need_mt)
     {   /* the threaded verdict from the row at this T */
         c->colmt = bcmt > 0;
         c->natarm = c->colmt ? vw2_ilcol_tok_geti(&W->vw2, key, "mtarm", 0) : 0;

@@ -450,8 +450,13 @@ typedef struct
     char pin[8];           /* il_prime_in (the inner's kind: 2p | 3p | ztt) */
     char psh[64];          /* il_prime_sh (its shape) */
     int  ptw;              /* il_prime_tw (its tile, 0 = untiled) */
-    int  pmt;              /* il_mt: on a threaded plan's row, the prime cell's threaded
-                            * arm (il_prime_mt.h: 1 BLOCKS, 2 TILES); absent = serial */
+    int  mt;               /* il_mt: on a threaded plan's row, the child's threaded form (the c2c K=1
+                            * T row's words, 2026-11-18): ZTURN-T, the flat DIT and the prime cell
+                            * their arm (ztt_mt.h, il_flatdit_mt.h, il_prime_mt.h: 1 BLOCKS,
+                            * 2 TILES); the four-step the N1 of its split at T, its child at T
+                            * under fs_; absent = the one-thread child */
+    int  mt_tw;            /* il_mt_tw: the TILES arm's width (ZTURN-T, the flat DIT) */
+    int  mtsb[8], mtsb_n;  /* il_mtsb: the four-step's super-band chain at T (0 = form 0) */
     char fs[4096];         /* route FS: its four-step child's rows -- the fs_*
                             * fs_row_* fs_row_bwd_* tokens, space-joined (N/2 = 500000:
                             * about 1070 characters; 512 left that row unbanked) */
@@ -506,7 +511,20 @@ static inline int vw2_real_il_bank_zr2c(vw2_store_t *s, int realN, int is_c2r, i
         VW2__ZS("il_prime_in", ch->pin);
         VW2__ZS("il_prime_sh", ch->psh);
         snprintf(b, sizeof b, "%d", ch->ptw); VW2__ZS("il_prime_tw", b);
-        if (ch->pmt > 0) { snprintf(b, sizeof b, "%d", ch->pmt); VW2__ZS("il_mt", b); }
+    }
+    if (ch->mt > 0)
+    {   /* the child's threaded form, on a threaded plan's row */
+        snprintf(b, sizeof b, "%d", ch->mt); VW2__ZS("il_mt", b);
+        if (ch->route == VFFT_K1_IL_ZTT || ch->route == VFFT_K1_IL_FLAT)
+        {
+            snprintf(b, sizeof b, "%d", ch->mt_tw); VW2__ZS("il_mt_tw", b);
+        }
+        if (ch->route == VFFT_K1_IL_FS)
+        {
+            if (ch->mtsb_n >= 2) { if (vw2__zr2c_ints_str(b, sizeof b, ch->mtsb, ch->mtsb_n)) goto bad; }
+            else snprintf(b, sizeof b, "0");
+            VW2__ZS("il_mtsb", b);
+        }
     }
     if (ch->route == VFFT_K1_IL_FS || (ch->route == VFFT_K1_IL_PRIME && ch->fs[0]))
     {   /* the four-step's child: no rows, no recipe (a prime child's four-step inner carries its rows the same way) */
@@ -587,7 +605,14 @@ static inline int vw2_real_il_lookup_zr2c(const vw2_store_t *s, int realN, int i
         strcpy(ch->pin, pin);
         strcpy(ch->psh, psh);
         ch->ptw = vw2__oop_geti(r, "il_prime_tw", 0);
-        ch->pmt = vw2__oop_geti(r, "il_mt", 0);
+    }
+    ch->mt = vw2__oop_geti(r, "il_mt", 0);   /* the child's threaded form (absent: the one-thread child) */
+    ch->mt_tw = vw2__oop_geti(r, "il_mt_tw", 0);
+    if (ch->route == VFFT_K1_IL_FS && ch->mt > 0)
+    {   /* the four-step's split at T and its super-band chain there ("0": form 0) */
+        n = vw2__oop_split_ints(vw2_rec_get(r, "il_mtsb"), v, 8);
+        if (n >= 2) { memcpy(ch->mtsb, v, sizeof(int) * (size_t)n); ch->mtsb_n = n; }
+        if (ch->mt < 4 || ch->mt > 8 * 1024 * 1024) return 0;
     }
     if (ch->route == VFFT_K1_IL_FS || ch->route == VFFT_K1_IL_PRIME)
     {   /* a four-step child without its own child's rows is no recipe; a prime child's

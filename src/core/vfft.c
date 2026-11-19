@@ -173,10 +173,10 @@ int vfft__ztt_mt_race_probe(int N, const int *chain, int nf, int scr, int inplac
     if (inplace)
     {
         memcpy(y, x, (size_t)2 * N * sizeof(vfft_real));
-        mt = vfft_ztt_mt_race(p, T, y, y, ns3);
+        mt = vfft_ztt_mt_race(p, T, y, y, ns3, NULL, 0, NULL);
     }
     else
-        mt = vfft_ztt_mt_race(p, T, x, y, ns3);
+        mt = vfft_ztt_mt_race(p, T, x, y, ns3, NULL, 0, NULL);
     vfft_ztt_destroy(p);
     return mt;
 }
@@ -674,9 +674,10 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * engines called directly (the IL planner's builds: serial, pool-free,
          * plan-owned scratch, the four-step at one thread); the R2C/C2R execute
          * branches skip the pool re-assert on this path. A batch clone is its
-         * own create: its own child. The threaded fold (fold=mt) and a prime
-         * child's threaded form (il_prime_mt.h) slab the pool. */
-        return !g->zr2c_fold_mt && !(g->zr2c_kid->ilp && g->zr2c_kid->ilp->mt);
+         * own create: its own child. The threaded fold (fold=mt) and the
+         * child's threaded form (a prime cell's, ZTURN-T's or the flat DIT's
+         * arm; a four-step built at T) slab the pool. */
+        return !g->zr2c_fold_mt && !_zr2c_kid_threaded(g->zr2c_kid);
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: the K=1 engine arms are engine-pure; a
          * handle with none of them is treated as unsafe. A threaded arm
@@ -738,7 +739,7 @@ static int _tc_threaded_form(const struct vfft_plan_s *g)
 {
     return (g->zrf && g->zrf->mt) || (g->zttr && g->zttr->mt) || (g->zr2c_kid && g->zr2c_fold_mt) ||
            (g->k1ztt && g->k1ztt->mt) || (g->k1ilfd && g->k1ilfd->mt) ||
-           (g->zrb && g->zrb->mt) || (g->zr2c_kid && g->zr2c_kid->ilp && g->zr2c_kid->ilp->mt) ||
+           (g->zrb && g->zrb->mt) || (g->zr2c_kid && _zr2c_kid_arm(g->zr2c_kid)) ||
            (g->k1ilpr && g->k1ilpr->mt);
 }
 static void _tc_slab_role(struct vfft_plan_s *c)
@@ -756,6 +757,10 @@ static void _tc_slab_role(struct vfft_plan_s *c)
         c->zr2c_fold_mt = 0;
         if (c->zr2c_kid->ilp)
             vfft_ilprime_mt_bind(c->zr2c_kid->ilp, c->nthreads, 0);
+        if (c->zr2c_kid->b.ztt && c->zr2c_kid->b.ztt->mt)
+            vfft_ztt_mt_bind(c->zr2c_kid->b.ztt, c->nthreads, 0); /* arm 0: unbound */
+        if (c->zr2c_kid->b.ifd && c->zr2c_kid->b.ifd->mt)
+            c->zr2c_kid->b.ifd->mt = 0; /* the flat DIT's serial run */
     }
     if (c->k1ilpr && c->k1ilpr->mt)
         vfft_ilprime_mt_bind(c->k1ilpr, c->nthreads, 0);
@@ -2175,7 +2180,13 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
         {
             vw2_zr2c_child_t kr;
             _zr2c_child_of_kid(&kr, h->zr2c_kid);
-            FP__ADD(" zr2c_prime=[m%d %s %s tw=%d mt=%d]", kr.pm, kr.pin, kr.psh, kr.ptw, kr.pmt);
+            FP__ADD(" zr2c_prime=[m%d %s %s tw=%d mt=%d]", kr.pm, kr.pin, kr.psh, kr.ptw, kr.mt);
+        }
+        else if (_zr2c_kid_threaded(h->zr2c_kid))
+        {   /* the child's own threaded form (2026-11-18): its arm and width, a four-step's split at T */
+            vw2_zr2c_child_t kr;
+            _zr2c_child_of_kid(&kr, h->zr2c_kid);
+            FP__ADD(" zr2c_mt=[%d tw=%d sb=%d]", kr.mt, kr.mt_tw, kr.mtsb_n);
         }
     }
     used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);

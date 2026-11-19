@@ -599,18 +599,75 @@ static void _il2d_tpc_turn_out(const vfft_real *S, size_t P, vfft_real *dst, siz
         }
     }
 }
-/* the pass over lanes [c0, c1): turn in, the 1D plan per row, turn out */
-static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst,
-                                 size_t rn, size_t c0, size_t c1, int rev)
+/* the pass over lanes [c0, c1): turn in, the 1D plan per row, turn out -- worker w's
+ * plan (0: the plan's own, w > 0: its clone) */
+static void _il2d_tpc_cols_range_w(const vfft_ilcol_t *c, int w, const vfft_real *src, vfft_real *dst,
+                                   size_t rn, size_t c0, size_t c1, int rev)
 {
     const size_t N = (size_t)c->N, P = VFFT_IL2D_TPC_PITCH(N);
     vfft_real *S = c->tpcscr;
+    struct vfft_plan_s *pl = (w > 0 && w <= c->tpcw_n) ? c->tpcw[w - 1] : c->tpcplan;
     size_t l;
     _il2d_tpc_turn_in(src, rn, N, c0, c1, S, P);
     for (l = c0; l < c1; l++)
-        _vfft_exec6((vfft_plan)c->tpcplan, rev ? VFFT_BACKWARD : VFFT_FORWARD,
+        _vfft_exec6((vfft_plan)pl, rev ? VFFT_BACKWARD : VFFT_FORWARD,
                      S + 2 * l * P, NULL, S + 2 * l * P, NULL);
     _il2d_tpc_turn_out(S, P, dst, rn, N, c0, c1);
+}
+static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst,
+                                 size_t rn, size_t c0, size_t c1, int rev)
+{
+    _il2d_tpc_cols_range_w(c, 0, src, dst, rn, c0, c1, rev);
+}
+/* THE TURNED PRIME PASS THREADED (2026-11-18; serial, it ran 1.0x at every T: 2D 4099 x 256, lane-major 4099:32,
+ * 4483:64): every worker its lanes -- the turn into its rows of the scratch, the 1D plan on each through its own
+ * clone (worker 0 the plan's own: the clones carry its recipe, route-checked at build), the turn back -- cut at
+ * four-lane boundaries (no destination line shared between two workers' lanes but at the plane's edge). The
+ * values are the serial pass's, bit for bit. 1 = it ran threaded, 0 = the caller runs the serial pass (T < 2,
+ * fewer clones than workers, fewer than two lane groups) */
+typedef struct
+{
+    const vfft_ilcol_t *c;
+    const vfft_real *src;
+    vfft_real *dst;
+    size_t rn, lo, hi;
+    int rev, w;
+} _il2d_tpc_mt_arg;
+static void _il2d_tpc_mt_tramp(void *v)
+{
+    const _il2d_tpc_mt_arg *a = (const _il2d_tpc_mt_arg *)v;
+    if (a->lo < a->hi)
+        _il2d_tpc_cols_range_w(a->c, a->w, a->src, a->dst, a->rn, a->lo, a->hi, a->rev);
+}
+static int _il2d_tpc_cols_mt(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int rev, int T)
+{
+    _il2d_tpc_mt_arg a[THREAD_POOL_MAX_DISPATCH];
+    int t;
+    T = thread_pool_workers_for(T);
+    if ((size_t)T > rn / 4)
+        T = (int)(rn / 4);
+    if (T < 2 || !c->tpcplan || c->tpcw_n < T - 1)   /* (the races time it before the verdict sets c->tpc) */
+        return 0;
+    for (t = 0; t < T; t++)
+    {
+        a[t].c = c;
+        a[t].src = src;
+        a[t].dst = dst;
+        a[t].rn = rn;
+        a[t].rev = rev;
+        a[t].w = t;
+        a[t].lo = (rn * (size_t)t / (size_t)T) & ~(size_t)3;
+        a[t].hi = (t == T - 1) ? rn : (rn * (size_t)(t + 1) / (size_t)T) & ~(size_t)3;
+    }
+    thread_pool_run(T, _il2d_tpc_mt_tramp, a, sizeof a[0]);   /* caller = a[0] */
+    return 1;
+}
+/* the turned pass as a race arm at the cell's T: threaded above 1 where it engages, else serial */
+static void _il2d_tpc_arm(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int T)
+{
+    if (T > 1 && _il2d_tpc_cols_mt(c, src, dst, rn, 0, T))
+        return;
+    _il2d_tpc_cols_range(c, src, dst, rn, 0, rn, 0);
 }
 
 /* THE COLUMN-ONLY SERIAL EXECUTE: the pass a rank-N IL plan runs on each
@@ -971,6 +1028,8 @@ static int _il2d_cols_mt_desc(const vfft_ilcol_t *c, int N1, const vfft_real *sr
     /* T arrives as the plan's snapshot (the plan's nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
     T = thread_pool_workers_for(T);
+    if (T >= 2 && c->tpc)
+        return _il2d_tpc_cols_mt(c, src, dst, hp1, reverse, T);   /* the turned prime pass: every worker its lanes */
     if (T >= 2 && c->natarm == 1 && !c->blu && !c->tpc && (!c->nat || c->nst >= 2))
     {   /* mtarm = 1: the column blocks -- every worker the whole chain over its columns (the
          * sub-strip arm of the body); every class but the Bluestein and turned axes */
@@ -1862,8 +1921,6 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const vfft_real *sre,
         return _il2d_turn_exec_mt(h, sre, dre, dir, T); /* the turn's own walk */
     if (h->il2d_csk)
         return _il2d_csk_exec_mt(h, sre, dre, dir, T);  /* the skewed pass's own walk */
-    if (h->il2d_col.tpc)
-        return 0; /* the turned prime pass: one 1D plan, serial */
     if (h->il2d_col.staged)
         return 0; /* env-experimental route: one shared band scratch —
                    * per-worker slots are not built for it */
@@ -1872,6 +1929,16 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const vfft_real *sre,
     T = thread_pool_workers_for(T);
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
+    if (h->il2d_col.tpc)
+    {   /* the turned prime pass (2026-11-18): every worker its lanes through its own clone of the 1D plan, then the
+         * rows over row slabs -- the serial walk's order (il_execute.h) */
+        const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
+        if (!_il2d_tpc_cols_mt(&h->il2d_col, sre, dre, rn, !fwd, T))
+            return 0;
+        _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+        _vfft_il2d_col_mt_count++;
+        return 1;
+    }
     if (h->il2d_col.blu)
     {   /* Bluestein column axis: column windows, then rows —
          * the same order the unbanded chain walk uses */
@@ -2227,10 +2294,13 @@ static void _il2d_arm_exec_st(void *v)
     _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
 static void _il2d_arm_exec_mt(void *v)
-{
+{   /* the matched partition: no sub-strips -- at wl = 0 a scrambled plane's walk is the strips over each
+     * worker's whole block, the form the verdict serves (msw 0); an msw left by the ladder arm before it
+     * timed that arm's form under this one's name */
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_col.colmt = 1;
     c->h->il2d_col.natarm = 0;
+    c->h->il2d_col.msw = 0;
     c->h->il2d_col.natst = c->lst;
     _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo ? c->zo : c->z, NULL);
 }
@@ -3841,6 +3911,9 @@ static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 {
     return c->blu > 0 && !key->real && key->axis == 0;
 }
+static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_cfg_t *cfg,
+                           int N, int placement, int T, struct vfft_plan_s ***out, int *out_n, const char *what);   /* below */
+static void _il2d_clone_set_drop(struct vfft_plan_s ***arr, int *n);
 static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const vw2_ilcol_key_t *key,
                            vfft_ilcol_t *c, int N, size_t rn)
 {
@@ -3877,10 +3950,16 @@ static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const
         c->tpcplan = NULL;
         return 0;
     }
+    if (key->nthreads > 1 && !c->tpcw)
+        /* the threaded form's clones at the cell's T (_il2d_tpc_cols_mt); a set that does not build leaves the pass
+         * serial, and the warning names it */
+        (void)_il2d_clone_set(c->tpcplan, c->tpcS, cfg, c->N, VFFT_INPLACE, key->nthreads, &c->tpcw, &c->tpcw_n,
+                              "turned prime pass");
     return 1;
 }
 static void _il2d_tpc_drop(vfft_ilcol_t *c)
 {
+    _il2d_clone_set_drop(&c->tpcw, &c->tpcw_n);
     if (c->tpcplan)
         vfft_destroy(c->tpcplan);
     c->tpcplan = NULL;
@@ -3901,8 +3980,8 @@ static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
     c->bluchf = c->bluchb = c->blukf = c->blukb = c->bluscr = NULL;
 }
 /* the tpc race's Bluestein arm: at the cell's T > 1 through the threaded pass the cell serves Bluestein with (each
- * worker its lanes: _il2d_blu_cols_range), else the serial pipeline. The turned pass has no threaded form: a
- * one-thread race crowned it at 12005 x 32 lanes at every T (2026-11-18, the threading census) */
+ * worker its lanes: _il2d_blu_cols_range), else the serial pipeline (a one-thread race crowned the turned pass at
+ * 12005 x 32 lanes at every T, 2026-11-18, the threading census); the turned arm likewise (_il2d_tpc_arm) */
 static void _il2d_tpc_blu_arm(const vfft_ilcol_t *c, vfft_real *z, vfft_real *zo, int N, size_t rn, int Tc)
 {
     if (Tc > 1)
@@ -3964,17 +4043,17 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     }
     for (i = 0; i < 2 * T; i++)
         z[i] = (double)(i % 977) / 977.0 - 0.5;
-    /* min of 3, alternated, both arms through their serving functions (the Bluestein arm at the cell's T) */
+    /* min of 3, alternated, both arms through their serving functions (both threaded at the cell's T) */
     if (Tc > 1)
         _vfft_pool_arm(Tc);
     _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
-    _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
+    _il2d_tpc_arm(c, z, zo, rn, Tc);
     for (r = 0; r < 3; r++)
     {
         const double t0 = vfft_now_ns();
         _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
         const double t1 = vfft_now_ns();
-        _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
+        _il2d_tpc_arm(c, z, zo, rn, Tc);
         const double t2 = vfft_now_ns();
         if (t1 - t0 < tb) tb = t1 - t0;
         if (t2 - t1 < tt) tt = t2 - t1;
@@ -4105,7 +4184,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     _il2d_lmform_of(key, cfg, &lmf);
                 int win = _il2d_race_chains(N, rn, ncand, cand,
                                             lens, &bns, nat_req, /*banded=*/1, &bwl,
-                                            key->lm ? key->nthreads : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass; a lane-major cell at T > 1 its tile too */
+                                            key->lm ? key->nthreads : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 in its serial walks and every threaded form its door serves at T; a lane-major cell at T > 1 its tile too */
                                             key->lm ? &lmf : NULL);   /* a lane-major batch: its door's serial forms in its placement and at T > 1 the tile, the winner's lane tile kept (the threaded form is decided after, _lm_race) */
                 if (win == VFFT_IL2D_RACE_OOM)
                 {   /* OUT OF MEMORY: the race's planes could not be allocated (its reason recorded). That is no
@@ -4272,12 +4351,17 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
          * =0 pins the chain (env never banks); unset = race
          * min-of-3 on scratch through the SERVING functions,
          * banked (blu= on the chain row) and replayed. pow2
-         * chains never race (blu is pointless there). */
+         * chains never race (blu is pointless there), nor a
+         * chain of kernel radices: Bluestein races a Rader chain
+         * only (vfft_policy_il2d_blu_races); the env pin still
+         * races it. */
         int hasodd = 0, s3;
         const char *be = getenv("VFFT_IL2D_BLU");
         for (s3 = 0; s3 < c->nst; s3++)
             if (c->R[s3] & 1)
                 hasodd = 1;
+        if (hasodd && !be && !vfft_policy_il2d_blu_races(c->nst >= 1 && VFFT_IL2D_RADER_RADIX(c->R[0])))
+            hasodd = 0;   /* no Bluestein arm: the chain serves */
         /* the chain arm times the SERVING column pass, so the
          * N tables must exist BEFORE the race (they are
          * otherwise built at the shared build below — timing
@@ -4484,8 +4568,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             tz, N, rn, c->nst, c->R,
                             c->L, c->f, c->tf, M2, bnst, bR,
                             bL, bf, bb, btf, btb, bchf, bkf, bscr,
-                            c->nat, c->natperm, c->natscr, key->nthreads };   /* the chain at T: threaded above 1; the turned
-                                                                               * pass has no threaded form (one thread) */
+                            c->nat, c->natperm, c->natscr, key->nthreads };   /* the chain at T: threaded above 1, and the
+                                                                               * turned pass too (_il2d_tpc_arm) */
                         double tch = 1e300, ttp = 1e300;
                         int r3;
                         if (key->nthreads > 1)
@@ -4493,14 +4577,14 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                         for (i3 = 0; i3 < 2 * (size_t)N * rn; i3++)
                             tz[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
                         _il2d_n1arm_chain(&rc2);
-                        _il2d_tpc_cols_range(c, tz, tzo, rn, 0, rn, 0);
+                        _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads);
                         for (r3 = 0; r3 < 3; r3++)
                         {
                             const double t0 = vfft_now_ns();
                             double t1, t2;
                             _il2d_n1arm_chain(&rc2);
                             t1 = vfft_now_ns();
-                            _il2d_tpc_cols_range(c, tz, tzo, rn, 0, rn, 0);
+                            _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads);
                             t2 = vfft_now_ns();
                             if (t1 - t0 < tch) tch = t1 - t0;
                             if (t2 - t1 < ttp) ttp = t2 - t1;
@@ -4639,7 +4723,8 @@ typedef struct
     int wc;                   /* the unbanded walk's column tile (0 = the whole plane) */
     int kb;                   /* ro=3: the two-pass rows' tile, KB of chunk scratch */
     int csk;                  /* the SKEWED column pass */
-    int mt;                   /* T > 1: the arm runs its route's threaded walk */
+    int mt;                   /* T > 1: the arm runs its route's threaded walk -- 1 the unbanded one (the strips),
+                               * 2 the bands at the arm's width; 0 the serial walk */
     char name[24];
 } _il2d_axis_arm_t;
 static void _il2d_arm_axis(void *v)
@@ -4658,13 +4743,16 @@ static void _il2d_arm_axis(void *v)
         h->il2d_rowb2_ch = (int)_il2d_rb2_rows(c->kb, (size_t)h->N2);
     if (c->mt)
     {   /* the T-aware race: every arm through its route's threaded walk --
-         * the chain under the DENSE STRIPS (the form that dominated the block
-         * arm at every cell measured: an arm raced under the block shape picks
-         * tiled rows the strips then run worse with, 128x256 0.58, 4096x256
-         * 0.77); the threading race refines the winner's shape (serial,
-         * block, the strips ladder) afterwards */
+         * unbanded, the chain under the DENSE STRIPS (the form that dominated the
+         * block arm at every cell measured: an arm raced under the block shape
+         * picks tiled rows the strips then run worse with, 128x256 0.58, 4096x256
+         * 0.77); a scrambled arm with a band width, the BANDS at that width (the
+         * strips ignore the width: 3125x125 at T=8 timed wl 0 / 25 / 125 as 501 /
+         * 505 / 506 us under them, while its bands ran 158 us at wl=125 and 469
+         * at wl=0); the threading race refines the winner's shape (serial, the
+         * bands or block, the strips ladder) afterwards */
         h->il2d_col.colmt = 1;
-        h->il2d_col.natarm = 1;
+        h->il2d_col.natarm = (c->mt == 2) ? 0 : 1;
         h->il2d_col.msw = 0;
         h->il2d_col.natst = 0;
     }
@@ -4715,10 +4803,15 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
      * skewed pass (racing serially at T=8 sent 81 of 159 pow2 cells down a
      * route with no threaded walk). The verdict banks
      * beside the serial one (axt= and the t-suffixed tokens), served at
-     * that T only. On natural cells the threaded chain walk ignores the band
-     * width and the sub-strip tile, so those arms are pruned to wl = 0. */
+     * that T only. Every configuration is timed in its SERIAL walk (the "+s"
+     * twin: a plane the threading race keeps serial picks its width and tile
+     * by them, natural or not) and in the threaded walk it has: a scrambled
+     * width its bands, the unbanded configuration the strips; the threaded
+     * walks ignore the serial walk's column tile, and a natural cell's every
+     * band width, so those configurations are timed threaded once, unbanded
+     * and untiled (2026-11-18: the width is the bands' lever, and timing the
+     * strips at every width picked it by noise). */
     const int mt = (h->nthreads > 1 && thread_pool_workers_for(h->nthreads) >= 2);
-    const int prune = mt && h->il2d_col.nat;
     if (reps < 2) reps = 2;
     if (!z || !zo)
     {
@@ -4817,8 +4910,6 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 if (ro == 1 || (ro == 2 && !h->il2d_rowb_f) || (ro == 3 && (!h->il2d_rowb2_leaf_f || rofix)) ||
                     (ro == 0 && rofix) || (ro == 4 && (!h->il2d_turn_plan || w != 0 || h->il2d_csk_scr)))
                     continue;
-                if (prune && w != 0)
-                    continue;   /* the threaded natural walk has no bands */
                 if (w > 0)
                 {   /* an admitted width's cut; 0 kept where none (R3) */
                     const int r = vfft_policy_il2d_cut_of(h->il2d_col.nst, h->il2d_col.L, w);
@@ -4826,7 +4917,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 }
                 {
                     int sub, ki, fm;
-                    for (sub = 0; sub <= (w == 0 && ro != 4 && !csk && !prune ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
+                    for (sub = 0; sub <= (w == 0 && ro != 4 && !csk ? nsw : 0) && na < VFFT_RACE_MAX_ARMS; sub++)
                         for (ki = 0; ki < (ro == 3 ? 4 : 1) && na < VFFT_RACE_MAX_ARMS; ki++)
                         for (fm = 0; fm <= (mt ? 1 : 0) && na < VFFT_RACE_MAX_ARMS; fm++)
                         {   /* fm = 1: the arm's SERIAL form beside its threaded one at T > 1:
@@ -4836,6 +4927,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             if (ro == 3 && ki > 0 &&
                                 _il2d_rb2_rows(kb, (size_t)N2) == _il2d_rb2_rows(VFFT_IL2D_RB2_KB_LADDER[ki - 1], (size_t)N2))
                                 continue;   /* the same tile in rows: one arm */
+                            if (mt && !fm && (sub > 0 || (w > 0 && h->il2d_col.nat)))
+                                continue;   /* no threaded walk of its own: the unbanded untiled arm's */
                             ac[na].h = h;
                             ac[na].z = z;
                             ac[na].zo = zo;
@@ -4844,7 +4937,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             ac[na].ro = ro;
                             ac[na].kb = kb;
                             ac[na].csk = csk;
-                            ac[na].mt = mt && !fm;
+                            ac[na].mt = (mt && !fm) ? (w > 0 ? 2 : 1) : 0;   /* a width's threaded walk: its bands */
                             ac[na].wc = sub ? swl[sub - 1] : 0;
                             if (sub)
                                 snprintf(ac[na].name, sizeof ac[na].name, "sw%d%s%s", ac[na].wc,

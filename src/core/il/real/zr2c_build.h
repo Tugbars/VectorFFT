@@ -38,9 +38,11 @@
  *
  * The child is built straight from its recipe by the planner's own builder
  * (_il_dp_build): what serves is what raced, and the composite calls the
- * child's engines directly, never through the front door. One thread: a
- * threaded real plan threads the fold (zr2c_fold_mt), and the threaded real
- * engines (ZTT-r's, the four-step's) race beside it. A PRIME child's prime
+ * child's engines directly, never through the front door. It is raced at one
+ * thread; a threaded real plan threads the fold (zr2c_fold_mt) and the child
+ * on its own c2c engine's threaded form, raced at T (2026-11-18:
+ * _zr2c_kid_mt_race, banked il_mt il_mt_tw il_mtsb on the row at T), and the
+ * threaded real engines (ZTT-r's, the four-step's) race beside it. A PRIME child's prime
  * cell is part of the recipe: its method and inner race on the cell's own
  * convolution with no store, ride on the real row (il_prime*) and replay from
  * there -- the prime shard is never read or written. A four-step child's own
@@ -104,12 +106,30 @@ static void _zr2c_kid_destroy(struct vfft_zr2c_kid_s *k)
     free(k);
 }
 
+/* 1 when the child runs a threaded ARM the slab role can unbind, its serial run bitwise the threaded one (2026-11-18:
+ * ZTURN-T's, the flat DIT's, a prime cell's -- the c2c engines' own threaded forms, raced at the real plan's T,
+ * zrp_build.h) */
+static inline int _zr2c_kid_arm(const struct vfft_zr2c_kid_s *k)
+{
+    return k && ((k->ilp && k->ilp->mt > 0) || (k->b.ztt && k->b.ztt->mt > 0) || (k->b.ifd && k->b.ifd->mt > 0));
+}
+/* 1 when the child runs a threaded form: an arm, or a four-step built at T (its 2D child threads on the pool, with no
+ * serial form to fall to: never a slab clone, as the c2c four-step at T) */
+static inline int _zr2c_kid_threaded(const struct vfft_zr2c_kid_s *k)
+{
+    return _zr2c_kid_arm(k) || (k && k->b.fs && k->b.fs->nthreads > 1);
+}
+
 /* the child's run: z_in -> z_out, the direction the transform needs */
 static inline int _zr2c_kid_exec(const struct vfft_zr2c_kid_s *k, const double *in, double *out, int bwd)
 {
     if (k->ilp && k->ilp->mt > 0 && vfft_ilprime_execute_mt(k->ilp, in, out, bwd))
         return 0;   /* a prime child's threaded form (il_prime_mt.h; _exec_zr2c armed the pool) */
-    return _il_dp_exec_io(&k->c, &k->b, in, out, bwd);
+    if (k->b.ztt && k->b.ztt->mt > 0 && vfft_ztt_execute_mt(k->b.ztt, in, out, bwd))
+        return 0;   /* ZTURN-T's threaded arm (ztt_mt.h), bound in the child's placement */
+    if (k->b.ifd && k->b.ifd->mt > 0 && vfft_ilfd_execute_mt(k->b.ifd, in, out, bwd))
+        return 0;   /* the flat DIT's threaded arm (il_flatdit_mt.h) */
+    return _il_dp_exec_io(&k->c, &k->b, in, out, bwd);   /* a four-step built at T threads inside (its 2D child) */
 }
 
 /* the child's own c2c request: what its components (the prime cell, the
@@ -185,15 +205,16 @@ static void _zr2c_cand_of_child(vfft_il_cand_t *c, const vw2_zr2c_child_t *o)
     c->il_bkv_raced = 1;
 }
 /* route FS: the four-step child's rows (its private store's) as the row's
- * fs_ tokens, space-joined into o; 0 when a row is missing */
-static int _zr2c_fs_str(char *o, size_t cap, const struct vfft_wisdom_s *S, int N1, int N2, int inplace)
+ * fs_ tokens, space-joined into o; 0 when a row is missing. T: the child's
+ * thread count (a four-step built at T, its 2D child's row keyed there) */
+static int _zr2c_fs_str_t(char *o, size_t cap, const struct vfft_wisdom_s *S, int N1, int N2, int inplace, int T)
 {
     const vw2_rec_t *r2, *rr, *rb;
     vw2_rec_t t;
     size_t off = 0;
     int i, ok = 1;
     o[0] = 0;
-    _k1fs_child_rows(S, N1, N2, inplace, 1, &r2, &rr, &rb);
+    _k1fs_child_rows(S, N1, N2, inplace, T, &r2, &rr, &rb);
     if (!r2)
         return 0;
     (void)rr; (void)rb;   /* the 2D row carries its row plan itself (rp_*, wisdom2_child.h) */
@@ -211,10 +232,14 @@ static int _zr2c_fs_str(char *o, size_t cap, const struct vfft_wisdom_s *S, int 
         o[0] = 0;
     return ok;
 }
+static int _zr2c_fs_str(char *o, size_t cap, const struct vfft_wisdom_s *S, int N1, int N2, int inplace)
+{
+    return _zr2c_fs_str_t(o, cap, S, N1, N2, inplace, 1);
+}
 /* the row's fs_ tokens seeded into a new private store under the four-step
- * child's keys (its one thread, the route's placement); NULL when they do
+ * child's keys (its thread count T, the route's placement); NULL when they do
  * not parse */
-static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int inplace)
+static struct vfft_wisdom_s *_zr2c_fs_store_t(const char *fs, int N1, int N2, int inplace, int T)
 {
     char buf[sizeof ((vw2_zr2c_child_t *)0)->fs], *sp = buf, *tk;
     vw2_rec_t all, r2, rr, rb;
@@ -233,7 +258,7 @@ static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int 
         if (vw2_rec_set(&all, 1, tk, eq + 1) != VW2_OK) ok = 0;
     }
     ok = ok && vw2__fs_get(&r2, &all, "fs_", "fs_row_") > 0 && vw2__fs_get(&rr, &all, "fs_row_", "fs_row_bwd_") >= 0 &&
-         vw2__fs_get(&rb, &all, "fs_row_bwd_", NULL) >= 0 && _k1fs_child_keys(N1, N2, inplace, 1, &k2, &kr, &kb);
+         vw2__fs_get(&rb, &all, "fs_row_bwd_", NULL) >= 0 && _k1fs_child_keys(N1, N2, inplace, T, &k2, &kr, &kb);
     if (ok && (S = _k1fs_store_new()) != NULL &&
         (_k1fs_seed(S, &k2, &r2) || (rr.ntok > 0 && _k1fs_seed(S, &kr, &rr)) || (rb.ntok > 0 && _k1fs_seed(S, &kb, &rb))))
     {
@@ -244,6 +269,10 @@ static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int 
         vw2_disown(&S->vw2);   /* seeded, not raced */
     vw2_rec_free(&all); vw2_rec_free(&r2); vw2_rec_free(&rr); vw2_rec_free(&rb);
     return S;
+}
+static struct vfft_wisdom_s *_zr2c_fs_store(const char *fs, int N1, int N2, int inplace)
+{
+    return _zr2c_fs_store_t(fs, N1, N2, inplace, 1);
 }
 /* a second plan from a kid's recipe: its four-step child's rows in a fresh
  * private store (NULL off route FS) */
@@ -258,15 +287,40 @@ static struct vfft_wisdom_s *_zr2c_fs_dup(const struct vfft_zr2c_kid_s *k)
  * FS and its prime cell on route PRIME */
 static void _zr2c_child_of_kid(vw2_zr2c_child_t *o, const struct vfft_zr2c_kid_s *k)
 {
+    const vfft_k1fs_plan_t *f = k->b.fs;
     _zr2c_child_of_cand(o, &k->c);
     if (k->c.route == VFFT_K1_IL_FS)
-        (void)_zr2c_fs_str(o->fs, sizeof o->fs, k->fsS, k->c.R1, k->c.R2, k->inplace);
+    {
+        if (f && f->nthreads > 1 && f->own)
+        {   /* the four-step built at T (its threaded form): the split at T, its super-band chain, its child at T */
+            int q;
+            o->mt = f->N1;
+            if (f->form == 1)
+            {
+                for (q = 0; q < f->sbnst && q < 8; q++) o->mtsb[q] = f->sbR[q];
+                o->mtsb_n = f->sbnst;
+            }
+            (void)_zr2c_fs_str_t(o->fs, sizeof o->fs, f->own, f->N1, f->N2, k->inplace, f->nthreads);
+        }
+        else
+            (void)_zr2c_fs_str(o->fs, sizeof o->fs, k->fsS, k->c.R1, k->c.R2, k->inplace);
+    }
+    if (k->b.ztt && k->b.ztt->mt > 0)
+    {   /* ZTURN-T's threaded arm and, for TILES, its width (_zr2c_kid_mt_race) */
+        o->mt = k->b.ztt->mt;
+        o->mt_tw = k->b.ztt->mt == 2 ? (int)k->b.ztt->tile : 0;
+    }
+    if (k->b.ifd && k->b.ifd->mt > 0)
+    {   /* the flat DIT's threaded arm and its width */
+        o->mt = k->b.ifd->mt;
+        o->mt_tw = k->b.ifd->mt == 2 ? k->b.ifd->mt_tw : 0;
+    }
     if (k->c.route != VFFT_K1_IL_PRIME)
         return;
     o->pm = k->pr.m;
     _ilprime_desc_str(&k->pr.d, o->pin, sizeof o->pin, o->psh, sizeof o->psh);
     o->ptw = k->pr.d.tw;
-    o->pmt = k->ilp ? k->ilp->mt : 0;   /* its threaded arm, on a threaded plan's row */
+    o->mt = k->ilp ? k->ilp->mt : 0;   /* its threaded arm, on a threaded plan's row */
     if (k->pr.d.kind == 4)
     {   /* the four-step inner's child: its rows ride on the composite's row as fs_ tokens (the FS route's spelling) */
         if (k->ilp && k->ilp->inner.fs && k->ilp->inner.fs->own)
@@ -289,12 +343,17 @@ static int _zr2c_prime_of_child(_zr2c_prime_t *pr, const vw2_zr2c_child_t *o)
     return 1;
 }
 
+/* a four-step child built AT T (its threaded form, 2026-11-18): the split the race at T picked and its super-band
+ * chain (form 1), its child's rows keyed at T in the store the build takes */
+typedef struct { int T, N1, N2, form, sb[8], sbn; } _zr2c_fst_t;
+
 /* build the child from its recipe (`pr`: its prime cell, route PRIME; `fsS`:
  * its four-step child's private store, route FS, taken whatever the
- * outcome); NULL when it no longer builds */
+ * outcome; `ft`: route FS built at T from that store, NULL = the recipe's
+ * one-thread four-step); NULL when it no longer builds */
 static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_cfg_t *cfg, int n, int inplace,
                                                const vfft_il_cand_t *c, const _zr2c_prime_t *pr,
-                                               struct vfft_wisdom_s *fsS)
+                                               struct vfft_wisdom_s *fsS, const _zr2c_fst_t *ft)
 {
     vfft_cfg_t c2;
     struct vfft_zr2c_kid_s *k = (struct vfft_zr2c_kid_s *)calloc(1, sizeof *k);
@@ -351,13 +410,31 @@ static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_cfg_t *cfg, int n, int
         }
         n0 = k->fsS->vw2.nrec;
         cs.wisdom = (vfft_wisdom *)k->fsS;
-        _k1fs_ctx.W = k->fsS;
-        _k1fs_ctx.cfg = &cs;
-        rc = _il_dp_build(n, c, &k->b, inplace);
-        _k1fs_ctx.W = sw;
-        _k1fs_ctx.cfg = sc;
-        if (rc == 0 && k->fsS->vw2.nrec != n0)
-            rc = -1;
+        if (ft && ft->T > 1)
+        {   /* the four-step at T: built straight from the store (its child keyed at T), the plan owns the store */
+            cs.wisdom_write = 0;
+            cs.recalibrate = 0;
+            k->b.fs = vfft_k1fs_create(n, ft->N1, ft->N2, c->il_scr, k->fsS, &cs, inplace, ft->T, ft->form,
+                                       ft->form ? ft->sb : NULL, ft->form ? ft->sbn : 0);
+            rc = k->b.fs ? 0 : -1;
+            if (rc == 0)
+            {
+                k->b.fs->own = k->fsS;
+                k->fsS = NULL;
+                if (k->b.fs->own->vw2.nrec != n0)
+                    rc = -1;   /* the child raced: not the row's */
+            }
+        }
+        else
+        {
+            _k1fs_ctx.W = k->fsS;
+            _k1fs_ctx.cfg = &cs;
+            rc = _il_dp_build(n, c, &k->b, inplace);
+            _k1fs_ctx.W = sw;
+            _k1fs_ctx.cfg = sc;
+            if (rc == 0 && k->fsS->vw2.nrec != n0)
+                rc = -1;
+        }
     }
     else
         rc = _il_dp_build(n, c, &k->b, inplace);
@@ -503,7 +580,7 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
         }
         if (!_k1pr_ctx.plan)
         {   /* the first route, or a cell that did not build from the first race: raced here */
-            _k1pr_ctx.plan = _ilprime_create_banked(NULL, &c2, n, &pr->d);
+            _k1pr_ctx.plan = _ilprime_create_banked(NULL, &c2, n, &pr->d, _vfft_plan_threads(cfg));   /* the inner raced at the real plan's T: the real row carries il_prime* per T */
             pr->m = _k1pr_ctx.plan ? (_k1pr_ctx.plan->method == 1 ? 1 : 2) : 0;
         }
         _k1pr_ctx.N = _k1pr_ctx.plan ? n : 0;
@@ -547,10 +624,11 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
 
 /* the composite for one route, its child built from `child`, its prime cell
  * `pr` and its four-step child's private store `fsS` (taken; child NULL: the
- * child races in role first, banking nothing) */
-static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int route,
-                                             const vfft_il_cand_t *child, const _zr2c_prime_t *pr,
-                                             struct vfft_wisdom_s *fsS)
+ * child races in role first, banking nothing); `ft`: a four-step child built
+ * at T from fsS (_zr2c_kid_build) */
+static struct vfft_plan_s *_zr2c_build_route_ft(const vfft_cfg_t *cfg, int N, int route,
+                                                const vfft_il_cand_t *child, const _zr2c_prime_t *pr,
+                                                struct vfft_wisdom_s *fsS, const _zr2c_fst_t *ft)
 {
     const int half = N / 2, top = N / 4;
     vfft_il_cand_t raced;
@@ -571,7 +649,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int r
         child = &raced;
         pr = &rpr;
     }
-    kid = _zr2c_kid_build(cfg, half, route, child, pr, fsS);
+    kid = _zr2c_kid_build(cfg, half, route, child, pr, fsS, ft);
     if (!kid)
     {
         _vfft_warn("vfft_create: zr2c child c2c(%d) does not build from its recipe (route %d)", half, child->route);
@@ -621,6 +699,12 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int r
     h->zr2c_scratch = scr;
     return h;
 }
+static struct vfft_plan_s *_zr2c_build_route(const vfft_cfg_t *cfg, int N, int route,
+                                             const vfft_il_cand_t *child, const _zr2c_prime_t *pr,
+                                             struct vfft_wisdom_s *fsS)
+{
+    return _zr2c_build_route_ft(cfg, N, route, child, pr, fsS, NULL);
+}
 
 /* execute the composite. 2 transforms x 2 placements x 2 routes; the folds
  * are in-place-safe by construction (zr2c.h), scratch only where a
@@ -641,7 +725,7 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
                               else _zr2c_fold_fwd((zi), (xo), aS, aC, N, 1, xs, xs); } while (0)
 #define ZR2C_BWD(xi, zo) do { if (fmt) _zr2c_fold_mt((xi), (zo), bS, bC, N, 1, fT); \
                               else _zr2c_fold_bwd((xi), (zo), bS, bC, N, 1, xs, (size_t)N); } while (0)
-    if (fmt || (kid->ilp && kid->ilp->mt > 0 && h->nthreads > 1))
+    if (fmt || (h->nthreads > 1 && _zr2c_kid_threaded(kid)))
         _vfft_pool_arm(h->nthreads); /* the snapshot pool, as the threaded fold / child assert it */
     if (h->transform == VFFT_R2C)
     {
@@ -713,32 +797,166 @@ static int _zr2c_bank(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N,
  * predates the in-role child), a PRIME recipe without its prime cell, a FS
  * recipe without its four-step child's rows, or one whose recipe no longer
  * builds is a miss. */
+/* the row's threaded form onto a replayed child at T: the prime cell's arm, ZTURN-T's or the flat DIT's arm at its
+ * width (a four-step's form is its build at T, _zr2c_kid_build). An arm that no longer binds leaves the child serial,
+ * said loudly (the c2c door's law for a banked arm, k1_commit.h _ztt_mt_replay_or_race). */
+static void _zr2c_kid_mt_bind(struct vfft_zr2c_kid_s *k, int T, const vw2_zr2c_child_t *ch, int N)
+{
+    const int v = (ch->mt >= 1 && ch->mt <= 2) ? ch->mt : 0;
+    int ok = 1;
+    if (k->ilp)
+        ok = vfft_ilprime_mt_bind(k->ilp, T, ch->mt);
+    else if (k->b.ztt)
+    {
+        if (v == 2 && ch->mt_tw > 0 && !vfft_ztt_set_tile(k->b.ztt, (size_t)ch->mt_tw))
+            ok = 0;
+        if (!ok || !vfft_ztt_mt_bind(k->b.ztt, T, v))
+            ok = 0;
+    }
+    else if (k->b.ifd)
+    {
+        vfft_ilfd_plan_t *p = k->b.ifd;
+        p->mt = v;
+        p->mt_t = T;
+        p->mt_tw = ch->mt_tw;
+        if (v == 2 && ch->mt_tw > 0 && !vfft_ilfd_apply_tw(p, ch->mt_tw))
+            ok = 0;
+        if (!ok || !vfft_ilfd_mt_bind(p, T))
+            ok = 0;
+        if (!ok)
+            p->mt = 0;
+    }
+    if (!ok)
+        _vfft_warn("the zr2c child's banked threaded form (il_mt=%d il_mt_tw=%d) does not bind at N=%d T=%d -- its "
+                   "child runs serial", ch->mt, ch->mt_tw, N, T);
+}
+
+/* the composite a child record names (the row's, or a raced plan's own, _zr2c_child_of_kid): its route, the fold's
+ * serving, the child built from the recipe -- at T with its threaded form when the record carries one. NULL when the
+ * record does not build as written (a four-step child at T whose child raced included). */
+static struct vfft_plan_s *_zr2c_build_child(const vfft_cfg_t *cfg, int N, int route, int fmt, const vw2_zr2c_child_t *ch)
+{
+    const int T = _vfft_plan_threads(cfg);
+    vfft_il_cand_t c;
+    _zr2c_prime_t pr;
+    _zr2c_fst_t ft;
+    struct vfft_wisdom_s *fsS = NULL;
+    struct vfft_plan_s *h;
+    if (!_zr2c_prime_of_child(&pr, ch))
+        return NULL;
+    memset(&ft, 0, sizeof ft);
+    if (ch->route == VFFT_K1_IL_FS && ch->mt > 0 && T > 1)
+    {   /* the four-step built at T: its split and chain there, its child's rows keyed at T */
+        if ((N / 2) % ch->mt)
+            return NULL;
+        ft.T = T;
+        ft.N1 = ch->mt;
+        ft.N2 = (N / 2) / ch->mt;
+        ft.form = ch->mtsb_n >= 2;
+        if (ft.form)
+        {
+            memcpy(ft.sb, ch->mtsb, sizeof(int) * (size_t)ch->mtsb_n);
+            ft.sbn = ch->mtsb_n;
+        }
+        if (!(fsS = _zr2c_fs_store_t(ch->fs, ft.N1, ft.N2, route, T)))
+            return NULL;
+    }
+    else if (ch->route == VFFT_K1_IL_FS && !(fsS = _zr2c_fs_store(ch->fs, ch->R1, ch->R2, route)))
+        return NULL;
+    _zr2c_cand_of_child(&c, ch);
+    h = _zr2c_build_route_ft(cfg, N, route, &c, &pr, fsS, ft.T > 1 ? &ft : NULL);
+    if (h)
+    {
+        h->zr2c_fold_mt = fmt && T > 1;
+        if (T > 1 && ch->mt > 0 && ch->route != VFFT_K1_IL_FS)   /* the child's banked threaded arm, at T */
+            _zr2c_kid_mt_bind(h->zr2c_kid, T, ch, N);
+    }
+    return h;
+}
+
 static struct vfft_plan_s *_zr2c_replay(const vfft_cfg_t *cfg, int N, struct vfft_wisdom_s *W)
 {
     int route, fmt;
     vw2_zr2c_child_t ch;
-    vfft_il_cand_t c;
-    _zr2c_prime_t pr;
-    struct vfft_wisdom_s *fsS = NULL;
-    struct vfft_plan_s *h;
     if (!W || W->vw2_off_oop)
         return NULL;
     if (!vw2_real_il_lookup_zr2c(&W->vw2, N, cfg->transform == VFFT_C2R, cfg->placement == VFFT_INPLACE,
                                  _vfft_plan_threads(cfg), &route, &fmt, &ch))
         return NULL;
-    if (!_zr2c_prime_of_child(&pr, &ch))
-        return NULL;
-    if (ch.route == VFFT_K1_IL_FS && !(fsS = _zr2c_fs_store(ch.fs, ch.R1, ch.R2, route)))
-        return NULL;
-    _zr2c_cand_of_child(&c, &ch);
-    h = _zr2c_build_route(cfg, N, route, &c, &pr, fsS);
-    if (h)
+    return _zr2c_build_child(cfg, N, route, fmt, &ch);
+}
+
+/* THE CHILD'S THREADED FORM AT T (2026-11-18, the threading census: the child ran one thread at every T, the real
+ * plan threading only its fold -- r2c 30000 1.0x, r2c / c2r 1000000 1.15 / 1.28x at T = 8): the c2c engine's own race
+ * at T on the child's plan, in the child's placement -- ZTURN-T serial / blocks / tiles at every stage width the tile
+ * law admits (ztt_mt.h), the flat DIT serial / blocks / tiles at its widths (il_flatdit_mt.h), the four-step every
+ * split at T (k1_commit.h _k1fs_mt_split_race; no serial arm there, as the c2c four-step at T: the one-thread child
+ * is the plain zr2c arm's). The child keeps the winner; returns 1 when that is a threaded form. It runs in the real
+ * door's one threaded arm, zr2c+mt (zrp_build.h), beside the threaded fold; a prime child races its convolution
+ * there instead (vfft_ilprime_mt_race). W lends the four-step's row cells (VFFT_HIGHN_PLAN=borrow). */
+static int _zr2c_kid_mt_race(struct vfft_plan_s *h, const vfft_cfg_t *cfg, int T, const struct vfft_wisdom_s *W)
+{
+    struct vfft_zr2c_kid_s *k = h->zr2c_kid;
+    const int n = k->n;
+    if (T < 2 || k->ilp)
+        return 0;
+    if (k->b.ztt || k->b.ifd)
     {
-        h->zr2c_fold_mt = fmt && _vfft_plan_threads(cfg) > 1;
-        if (ch.pmt > 0 && h->zr2c_kid->ilp)   /* the prime child's banked threaded arm, at the row's T */
-            vfft_ilprime_mt_bind(h->zr2c_kid->ilp, _vfft_plan_threads(cfg), ch.pmt);
+        const size_t nb = (size_t)2 * n * sizeof(vfft_real);
+        vfft_real *zi = (vfft_real *)vfft_aligned_alloc(nb);
+        vfft_real *zo = (vfft_real *)vfft_aligned_alloc(nb);
+        size_t i;
+        if (!zi || !zo)
+        {
+            vfft_aligned_free(zi);
+            vfft_aligned_free(zo);
+            return 0;
+        }
+        for (i = 0; i < 2 * (size_t)n; i++)
+            zi[i] = 1.0 + 1e-6 * (double)(i & 1023);
+        _vfft_pool_arm(T);
+        if (k->b.ztt)
+        {   /* the tile widths at T with the one-thread width among them (_ztt_mt_replay_or_race's set) */
+            vfft_ztt_plan_t *p = k->b.ztt;
+            size_t cands[VFFT_ZTT_MAX_NF + 1], tw = 0;
+            int nc = vfft_ztt_mt_tile_cands(p, cands, VFFT_ZTT_MAX_NF), q, have = 0;
+            for (q = 0; q < nc; q++)
+                have |= (cands[q] == p->tile);
+            if (p->tile && !have && (size_t)n / p->tile >= 2)
+                cands[nc++] = p->tile;
+            if (k->inplace)
+            {   /* the child runs in place: aliased arms */
+                memcpy(zo, zi, nb);
+                vfft_ztt_mt_race(p, T, zo, zo, NULL, cands, nc, &tw);
+            }
+            else
+                vfft_ztt_mt_race(p, T, zi, zo, NULL, cands, nc, &tw);
+        }
+        else
+        {   /* out of place: the in-place serving runs the same lists (_ilfd_mt_replay_or_race) */
+            vfft_ilfd_plan_t *p = k->b.ifd;
+            int mt_tw = 0;
+            vfft_ilfd_mt_race(p, T, p->tw, zi, zo, &mt_tw);
+            p->mt_tw = mt_tw;
+        }
+        vfft_aligned_free(zi);
+        vfft_aligned_free(zo);
+        return _zr2c_kid_threaded(k);
     }
-    return h;
+    if (k->b.fs && k->c.route == VFFT_K1_IL_FS)
+    {   /* every split at T, the candidates' children racing into a copy of the child's store (its row cells) */
+        struct vfft_wisdom_s *mS = k->fsS ? _k1fs_store_dup(k->fsS) : _k1fs_store_new();
+        vfft_k1fs_plan_t *w;
+        vfft_cfg_t c2;
+        _zr2c_kid_cfg(cfg, n, k->inplace, &c2);
+        w = _k1fs_mt_split_race(NULL, mS, W, &c2, n, k->c.il_scr, k->inplace, T);
+        if (!w)
+            return 0;
+        vfft_k1fs_destroy(k->b.fs);   /* the one-thread child (its store is the kid's, kept) */
+        k->b.fs = w;                  /* owns the race's store: its child at T */
+        return 1;
+    }
+    return 0;
 }
 
 /* the two arms of the zr2c route race: two finished handles */

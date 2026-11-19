@@ -286,25 +286,53 @@ static inline int vfft_ztt_execute_mt(const vfft_ztt_plan_t *p, const vfft_real 
  * hot). An in-place plan races ALIASED arms (z -> z through the plane) with
  * the buffer re-seeded before every sample; an out-of-place plan races
  * zin -> zout. Leaves the plan at the winner, bound for T. Returns mt. */
-typedef struct { vfft_ztt_plan_t *p; const vfft_real *zin; vfft_real *zout; int mt, ok; } _ztt_mt_ctx_t;
+typedef struct { vfft_ztt_plan_t *p; const vfft_real *zin; vfft_real *zout; int mt, ok; size_t tile; } _ztt_mt_ctx_t;
 typedef struct { vfft_real *dst; const vfft_real *src; size_t nb; } _ztt_mt_rst_t;
+/* THE TILE WIDTHS AT T (2026-11-18, the threading census; the owner's "can we give zturn-t tiling?"): the widths the
+ * race at T offers the TILES arm -- the chain's stage spans the tile law admits (natural: the products of the leading
+ * radices, the first mid's group R0 R1 and up; plain: of the trailing radices), at least two tiles each. The
+ * one-thread width is the planner's ladder (policy_il.h VFFT_ZTT_TILE_LADDER, powers of two), which never divides a
+ * 2^a x odd N: such a plan was untiled and its threaded walk had no tiles arm at all (10000, 120000: blocks only),
+ * where the flat DIT races every legal width at T (il_flatdit_mt.h). Returns the count. */
+static inline int vfft_ztt_mt_tile_cands(const vfft_ztt_plan_t *p, size_t *out, int cap)
+{
+    size_t span = 1;
+    int k, n = 0;
+    for (k = 0; k < p->nf - 1 && n < cap; k++)
+    {
+        span *= (size_t)p->chain[p->scr ? p->nf - 1 - k : k];
+        if ((size_t)p->N / span < 2)
+            break;
+        if (vfft_ztt_tile_legal_ord(p->N, p->chain, p->nf, span, p->scr))
+            out[n++] = span;
+    }
+    return n;
+}
 static void _ztt_mt_arm_run(void *v)
 {
     _ztt_mt_ctx_t *c = (_ztt_mt_ctx_t *)v;
+    c->p->tile = c->tile;   /* the arm's width: a tile changes group order only, every width bitwise the untiled walk */
     if (c->mt == 0) { c->p->mt = 0; vfft_ztt_execute_fwd(c->p, c->zin, c->zout); return; }
     c->p->mt = c->mt;
     if (c->ok && !vfft_ztt_execute_mt(c->p, c->zin, c->zout, 0)) c->ok = 0;
 }
 static void _ztt_mt_reseed(void *v) { _ztt_mt_rst_t *r = (_ztt_mt_rst_t *)v; memcpy(r->dst, r->src, r->nb); }
-static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *zin, vfft_real *zout, double *ns_out)
+/* tws[0..ntw) (ntw > 0): the TILES arm at each of these widths (vfft_ztt_mt_tile_cands), the winner's width left on
+ * the plan and in *tw_out (0 = not the tiles arm); ntw = 0: the tiles arm at the plan's own width, as bound (the
+ * probe's form). ns_out[2] = the fastest tiles arm. */
+static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *zin, vfft_real *zout, double *ns_out,
+                                   const size_t *tws, int ntw, size_t *tw_out)
 {
     static const char *names[3] = { "serial", "blocks", "tiles" };
-    _ztt_mt_ctx_t cx[3];
-    vfft_race_arm_t arms[3];
-    double ns[3];
+    _ztt_mt_ctx_t cx[2 + VFFT_ZTT_MAX_NF];
+    vfft_race_arm_t arms[2 + VFFT_ZTT_MAX_NF];
+    double ns[2 + VFFT_ZTT_MAX_NF];
+    char nm[2 + VFFT_ZTT_MAX_NF][24];
     _ztt_mt_rst_t rs;
     const int ip = (zin == zout);
+    const size_t tile0 = p->tile;
     int na = 0, a, best = 0, reps;
+    if (tw_out) *tw_out = 0;
     if (T < 2) { p->mt = 0; p->mt_t = 0; return 0; }
 #ifdef VFFT_FLOAT
     if (!p->st_fwd[0]) { p->mt = 0; p->mt_t = 0; if (ns_out) ns_out[0] = ns_out[1] = ns_out[2] = -1.0; return 0; }
@@ -319,18 +347,29 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *z
         if (reps < 2) reps = 2;
         if (reps > (1 << 19)) reps = 1 << 19;
     }
-    for (a = 0; a < 3; a++)
-    {
-        if (a == 2 && (p->tile == 0 || (size_t)p->N / p->tile < 2)) break;
-        cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].mt = a; cx[na].ok = 1;
-        arms[na].name = names[a]; arms[na].run = _ztt_mt_arm_run; arms[na].ctx = &cx[na];
-        na++;
+#define ZTT_MT_ARM(MT, TILE) do { \
+        cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].mt = (MT); cx[na].ok = 1; cx[na].tile = (TILE); \
+        if ((MT) == 2 && ntw > 0) snprintf(nm[na], sizeof nm[na], "tiles/tw%zu", (size_t)(TILE)); \
+        else snprintf(nm[na], sizeof nm[na], "%s", names[(MT)]); \
+        arms[na].name = nm[na]; arms[na].run = _ztt_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
+    } while (0)
+    ZTT_MT_ARM(0, tile0);
+    ZTT_MT_ARM(1, tile0);
+    if (ntw > 0)
+    {   /* the tiles arm at every offered width */
+        for (a = 0; a < ntw && na < (int)(sizeof cx / sizeof cx[0]); a++)
+            if (tws[a] > 0 && (size_t)p->N / tws[a] >= 2 &&
+                vfft_ztt_tile_legal_ord(p->N, p->chain, p->nf, tws[a], p->scr))
+                ZTT_MT_ARM(2, tws[a]);
     }
+    else if (tile0 && (size_t)p->N / tile0 >= 2)
+        ZTT_MT_ARM(2, tile0);
+#undef ZTT_MT_ARM
     rs.dst = zout; rs.src = ip ? p->plane : zin; rs.nb = 0;   /* placeholder, set below */
     if (ip)
     {   /* aliased arms: re-seed the buffer from a copy before every sample */
         vfft_real *seed = (vfft_real *)vfft_aligned_alloc((size_t)2 * p->N * sizeof(vfft_real));
-        if (!seed) { p->mt = 0; return 0; }
+        if (!seed) { p->mt = 0; p->tile = tile0; return 0; }
         memcpy(seed, zout, (size_t)2 * p->N * sizeof(vfft_real));
         rs.src = seed; rs.nb = (size_t)2 * p->N * sizeof(vfft_real);
         {
@@ -349,11 +388,20 @@ static inline int vfft_ztt_mt_race(vfft_ztt_plan_t *p, int T, const vfft_real *z
     if (getenv("VFFT_NAT_LOG") || getenv("VFFT_IL2D_LOG"))
     {
         fprintf(stderr, "[ztt-mt] N=%d T=%d %s%s reps=%d", p->N, T, p->scr ? "scr" : "nat", ip ? " ip" : "", reps);
-        for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f%s", names[cx[a].mt], ns[a], cx[a].ok ? "" : "(no engage)");
-        fprintf(stderr, " -> %s\n", names[cx[best].mt]);
+        for (a = 0; a < na; a++) fprintf(stderr, " %s=%.0f%s", nm[a], ns[a], cx[a].ok ? "" : "(no engage)");
+        fprintf(stderr, " -> %s\n", nm[best]);
     }
-    if (ns_out) { for (a = 0; a < 3; a++) ns_out[a] = a < na ? ns[a] : -1.0; }
+    if (ns_out)
+    {   /* serial, blocks, the fastest tiles arm (-1 = none) */
+        ns_out[0] = ns[0];
+        ns_out[1] = na > 1 ? ns[1] : -1.0;
+        ns_out[2] = -1.0;
+        for (a = 2; a < na; a++)
+            if (cx[a].ok && (ns_out[2] < 0 || ns[a] < ns_out[2])) ns_out[2] = ns[a];
+    }
     p->mt = cx[best].mt;
+    p->tile = p->mt == 2 ? cx[best].tile : tile0;   /* the winner's width; the one-thread width otherwise */
+    if (tw_out && p->mt == 2) *tw_out = cx[best].tile;
     if (p->mt && !vfft_ztt_mt_bind(p, T, p->mt)) p->mt = 0;
     return p->mt;
 }

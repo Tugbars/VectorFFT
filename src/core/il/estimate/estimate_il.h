@@ -93,11 +93,16 @@ typedef struct est_recipe_s
     int il_mt;                     /* [il_mt] T > 1. Flat, ZTURN-T, prime: the threaded arm, 0 serial,
                                     * 1 BLOCKS, 2 TILES (k1_commit.h:1317, 1397, 1448). The
                                     * four-step: the threaded split's N1 (k1_commit.h:1543-1551) */
-    int il_mt_tw;                  /* [il_mt_tw] T > 1, the flat's TILES arm: its width */
+    int il_mt_tw;                  /* [il_mt_tw] T > 1, the TILES arm's width: the flat's; ZTURN-T's (its one-thread
+                                    * tile, or the span an untiled chain takes at T) */
     char fs[512];                  /* the four-step's 2D child as the 2D row's tokens, fs_*, with its row
                                     * plan at N2 as fs_row_* and that plan's backward twin as
                                     * fs_row_bwd_*: the four-step route's child, or the prime cell's
                                     * four-step inner's */
+    char fs_t[512];                /* T > 1, the prime cell's four-step inner: its child at T, the T row's fs_*
+                                    * (k1_commit.h _ilprime_create_banked builds the inner at T from the row at
+                                    * T, its child's rows keyed at T); fs stays the one-thread child, the method
+                                    * row's */
     struct
     {
         int method;                /* [eng=rader|bluestein] 1 Rader, 2 Bluestein */
@@ -1415,6 +1420,16 @@ inner_done:
     snprintf(o->prime.in_shape, sizeof o->prime.in_shape, "%s", in.shape);
     o->prime.in_tw = in.tw;
     o->il_mt = est_inner_mt(m, &in, M > N ? M : N, M, T);
+    o->fs_t[0] = 0;
+    if (T > 1 && !strcmp(in.kind, "fs"))
+    {   /* the T row's four-step inner is built at T, its child's rows keyed at T: the child at T, as the
+         * four-step route's T row carries it (est_fs_route) */
+        int s1, s2;
+        if (sscanf(in.shape, "%d.%d", &s1, &s2) != 2)
+            return est_refuse(why, whylen, "the four-step inner %s is not a split", in.shape);
+        if (est_fs_child(m, s1, s2, T, o->fs_t, sizeof o->fs_t, why, whylen) != 0)
+            return -1;
+    }
     return 0;
 }
 
@@ -1546,8 +1561,34 @@ ztt:
     o->il_zt_n = k;
     o->il_tw = tw;
     o->il_kv = 0;
-    if (T > 1 && !est_serial(m, N))   /* TILES when tiled with at least 2 tiles, else BLOCKS (ztt_mt.h:13-17) */
+    if (T > 1 && !est_serial(m, N))
+    {   /* TILES at the one-thread tile with at least 2 tiles, else BLOCKS (ztt_mt.h:13-17). An untiled chain (a 2^a x odd
+         * N: the planner's tile ladder is powers of two) takes the TILES arm at T at the widest stage span the race at T
+         * offers it (vfft_ztt_mt_tile_cands: the leading radices' products, natural; the trailing ones, scrambled) that
+         * still gives every worker a whole tile (N / span >= T): a wider tile keeps more stages inside one worker and
+         * crosses the cores less often (2026-11-18: 10000 at T = 4, the race's tiles 20 / 100 / 500 / 2500 ran 10403 /
+         * 9779 / 9035 / 8852 ns, blocks 10051); no such span, BLOCKS */
         o->il_mt = (tw > 0 && N / tw >= 2) ? 2 : 1;
+        o->il_mt_tw = o->il_mt == 2 ? tw : 0;
+        if (tw == 0)
+        {
+            long long span = 1, best = 0;
+            int q;
+            for (q = 0; q < k - 1; q++)
+            {
+                span *= c[scr ? k - 1 - q : q];
+                if (N / span < T)
+                    break;
+                if (est_ztt_tile_ok(N, c, k, span, scr))
+                    best = span;
+            }
+            if (best > 0)
+            {
+                o->il_mt = 2;
+                o->il_mt_tw = (int)best;
+            }
+        }
+    }
     return 0;
 }
 
@@ -1807,18 +1848,22 @@ static inline int est_put_rows(vw2_store_t *st, const est_recipe_t *rc, const es
 {
     const int N = rq->N, T = rq->nthreads > 1 ? rq->nthreads : 1, ip = (rq->placement == VFFT_PLACEMENT_IN);
     const int scr = (rq->order == VFFT_ORDER_SCRAMBLED), route = rc->k1_il_route;
-    char b[128], fsb[1024];
+    char b[128], fsb[1024], fsbT[1024];
     int R1, R2, n1 = 0, n2 = 0;
     vfft_oop_il_entry_t e;
     const vw2_rec_t *r;
     vw2_key_t key;
     fsb[0] = 0;
+    fsbT[0] = 0;
     if (rq->transform != VFFT_C2C)
         return est_refuse(why, whylen, "the row writer writes c2c rows only");
     if (est__c2c_shape(rc, N, &R1, &R2, why, whylen))
         return -1;
     if (est__fs_split(rc, N, T, &n1, &n2) && est__fs_text(rc->fs, n1, n2, to_rp, fsb, sizeof fsb))
         return est_refuse(why, whylen, "the four-step child's tokens do not parse");
+    if (T > 1 && route == VFFT_K1_IL_PRIME && !strcmp(rc->prime.in_kind, "fs") &&
+        est__fs_text(rc->fs_t, n1, n2, to_rp, fsbT, sizeof fsbT))
+        return est_refuse(why, whylen, "the prime cell's four-step inner: its child's tokens at T do not parse");
     if (route == VFFT_K1_IL_PRIME)
     {   /* the method row: ord=scr place=ip role=method lay=il, one thread (wisdom2_oop_il.h:529-535, :554) */
         if (vw2_prime_method_bank(st, N, rc->prime.method, rc->prime.in_kind, rc->prime.in_shape, rc->prime.in_tw) != VW2_OK)
@@ -1881,6 +1926,28 @@ static inline int est_put_rows(vw2_store_t *st, const est_recipe_t *rc, const es
             snprintf(b, sizeof b, "%d", rc->il_mt_tw);
             if (vw2_update_field(st, &key, "il_mt_tw", b) != VW2_OK)
                 goto tok;
+        }
+        if (route == VFFT_K1_IL_ZTT)
+        {   /* the tiles arm's width on the T row (k1_commit.h _ztt_mt_replay_or_race, 2026-11-18: a row with il_mt and
+             * no il_mt_tw races again): the width this recipe's threaded arm runs (the one-thread tile, or the span
+             * an untiled chain takes at T) */
+            snprintf(b, sizeof b, "%d", rc->il_mt == 2 ? rc->il_mt_tw : 0);
+            if (vw2_update_field(st, &key, "il_mt_tw", b) != VW2_OK)
+                goto tok;
+        }
+        if (route == VFFT_K1_IL_PRIME)
+        {   /* the inner AT T on the T row (k1_commit.h _ilprime_create_banked, 2026-11-18: at T > 1 the door reads the
+             * inner from the row at T, never the method row's): the method row's inner, a four-step inner's child
+             * at T with it (fs_t: the inner is built at T) */
+            if (vw2_update_field(st, &key, "il_prime", rc->prime.method == 1 ? "rader" : "bluestein") != VW2_OK ||
+                vw2_update_field(st, &key, "il_prime_in", rc->prime.in_kind) != VW2_OK ||
+                vw2_update_field(st, &key, "il_prime_sh", rc->prime.in_shape) != VW2_OK)
+                goto tok;
+            snprintf(b, sizeof b, "%d", rc->prime.in_tw);
+            if (vw2_update_field(st, &key, "il_prime_tw", b) != VW2_OK)
+                goto tok;
+            if (!strcmp(rc->prime.in_kind, "fs") && (!fsbT[0] || est__put_fs(st, &key, fsbT)))
+                return est_refuse(why, whylen, "the prime cell's four-step inner has no child tokens for its row at T");
         }
     }
     if (route == VFFT_K1_IL_FS)

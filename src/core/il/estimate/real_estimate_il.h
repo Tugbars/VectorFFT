@@ -572,7 +572,7 @@ static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, i
             o->c.il_kv = est_nib_fwd(o->c.il_R1, 0) | est_nib_fwd(o->c.il_R2, 1) << 4;
             o->c.il_bkv = est_nib_bwd(o->c.il_R1, 0) | est_nib_bwd(o->c.il_R2, 1) << 4;
         }
-        o->c.il_mt = 0;   /* the child is one-thread (zr2c_build.h:38-41) ... */
+        o->c.il_mt = 0;   /* the child at one thread (one transform at T: est__real_zr2c_child_mt) */
         o->c.il_mt_tw = 0;
         if (T > 1 && N >= 64)
         {   /* section 7: fold=mt (zrp_build.h:795-818) above the bound at N/2; a prime child reads the bound at
@@ -608,6 +608,29 @@ static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, i
             }
         }
         return 0;
+    }
+}
+
+/* THE ONE TRANSFORM'S THREADED CHILD (2026-11-18): the door's threaded zr2c is one arm, the fold threaded and the child in
+ * its threaded form at T (zrp_build.h "zr2c+mt"; the fold alone threaded ran 1.4 - 4.8x slower than it at 20000 -
+ * 1000000: the threaded child's output lies over the workers' caches, not the caller's). A ZTURN-T or flat child takes
+ * the c2c estimate's own arm at N/2 and T (est_c2c keeps the route of T = 1 and adds the arm), and the fold threads with
+ * it; r2c / c2r 30000 at T = 8 ran 1.0x with the child serial, 2.05 / 2.24x with it threaded. One transform only: a
+ * batch's whole transforms and the 2D real rows run their copies one-thread (_tc_slab_role), and the batch rule reads
+ * the recipe as it was fitted (est__real_threads_own). A four-step child stays one-thread here. */
+static inline void est__real_zr2c_child_mt(const est_machine_t *m, long long N, est_real_recipe_t *o, int T)
+{
+    est_recipe_t t;
+    char w2[16];
+    if (strcmp(o->eng, "zr2c") || T < 2 || N < 64 ||
+        (o->c.k1_il_route != VFFT_K1_IL_ZTT && o->c.k1_il_route != VFFT_K1_IL_FLAT))
+        return;
+    if (est_c2c(m, N / 2, 0, o->zr2c.route, T, &t, w2, sizeof w2) == 0 && t.k1_il_route == o->c.k1_il_route &&
+        t.il_mt > 0)
+    {
+        o->c.il_mt = t.il_mt;
+        o->c.il_mt_tw = t.il_mt_tw;
+        o->zr2c.fold_mt = 1;
     }
 }
 
@@ -687,6 +710,8 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
         return est_refuse(why, whylen, "a real plan is natural order only (vfft.c:1941-1957)");
     if (est_real(m, rq->N, rq->transform == VFFT_C2R, rq->placement == VFFT_PLACEMENT_IN, T, out, why, whylen))
         return -1;
+    if (rq->howmany <= 1 && T > 1)
+        est__real_zr2c_child_mt(m, rq->N, out, T);
     if (rq->howmany > 1 && T > 1)
     {
         const int ip = rq->placement == VFFT_PLACEMENT_IN;
@@ -759,7 +784,13 @@ static inline void est__zr2c_child(const est_recipe_t *rc, int R1, int R2, const
         snprintf(ch->pin, sizeof ch->pin, "%s", rc->prime.in_kind);
         snprintf(ch->psh, sizeof ch->psh, "%s", rc->prime.in_shape);
         ch->ptw = rc->prime.in_tw;
-        ch->pmt = rc->il_mt;   /* the prime child's threaded arm, on a threaded row only (zr2c writes it then) */
+        ch->mt = rc->il_mt;    /* the prime child's threaded arm, on a threaded row only (zr2c writes it then) */
+    }
+    if (rc->k1_il_route == VFFT_K1_IL_ZTT || rc->k1_il_route == VFFT_K1_IL_FLAT)
+    {   /* the ZTURN-T or flat child's threaded arm and its width (est__real_zr2c), on a threaded row only; a four-step
+         * child stays one-thread here */
+        ch->mt = rc->il_mt;
+        ch->mt_tw = rc->il_mt == 2 ? rc->il_mt_tw : 0;
     }
     if (fs && fs[0])
         snprintf(ch->fs, sizeof ch->fs, "%s", fs);
@@ -846,7 +877,10 @@ static inline int est_put_rows_real(vw2_store_t *st, const est_real_recipe_t *rc
                               "(wisdom2_real_il.h:405)", (unsigned)sizeof ch.fs);
         est__zr2c_child(&rc->c, R1, R2, fsb, &ch);
         if (T < 2)
-            ch.pmt = 0;
+        {
+            ch.mt = 0;
+            ch.mt_tw = 0;
+        }
         if (vw2_real_il_bank_zr2c(st, N, c2r, ip, T, rc->zr2c.route, rc->zr2c.fold_mt, &ch, 0.0) != VW2_OK) goto real;
         return 0;
     }
@@ -974,8 +1008,12 @@ static inline int est__check_plan_real(const struct vfft_plan_s *h, const est_re
         ok = h->zr2c_kid != NULL && h->zr2c_route == rc->zr2c.route;
         if (ok && T > 1)
         {
-            want = (rc->zr2c.fold_mt != 0) * 10 + (rc->c.k1_il_route == VFFT_K1_IL_PRIME ? rc->c.il_mt : 0);
-            got = (h->zr2c_fold_mt != 0) * 10 + (h->zr2c_kid->ilp ? h->zr2c_kid->ilp->mt : 0);
+            const int cr = rc->c.k1_il_route;
+            want = (rc->zr2c.fold_mt != 0) * 10 +
+                   ((cr == VFFT_K1_IL_PRIME || cr == VFFT_K1_IL_ZTT || cr == VFFT_K1_IL_FLAT) ? rc->c.il_mt : 0);
+            got = (h->zr2c_fold_mt != 0) * 10 +
+                  (h->zr2c_kid->ilp ? h->zr2c_kid->ilp->mt : h->zr2c_kid->b.ztt ? h->zr2c_kid->b.ztt->mt :
+                   h->zr2c_kid->b.ifd ? h->zr2c_kid->b.ifd->mt : 0);
         }
         break;
     default: break;

@@ -388,6 +388,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     vfft_real *il2d_bluscr = NULL;
     int il2d_tpc = 0;                     /* the turned prime pass */
     struct vfft_plan_s *il2d_tpcplan = NULL;
+    struct vfft_plan_s **il2d_tpcw = NULL; /* ... and its clones for the threaded form */
+    int il2d_tpcw_n = 0;
     void *il2d_rd0 = NULL;                /* the Rader stage at stage 0 (il2d_col.h rd0) */
     vfft_real *il2d_tpcscr = NULL;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
@@ -428,6 +430,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             il2d_bluscr = col.bluscr;
             il2d_tpc = col.tpc;
             il2d_tpcplan = col.tpcplan;
+            il2d_tpcw = col.tpcw;
+            il2d_tpcw_n = col.tpcw_n;
             il2d_tpcscr = col.tpcscr;
             il2d_tpcS = col.tpcS;
             il2d_rd0 = col.rd0;
@@ -1092,6 +1096,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     h->il2d_col.bluscr = il2d_bluscr;
     h->il2d_col.tpc = il2d_tpc;
     h->il2d_col.tpcplan = il2d_tpcplan;
+    h->il2d_col.tpcw = il2d_tpcw;
+    h->il2d_col.tpcw_n = il2d_tpcw_n;
     h->il2d_col.tpcscr = il2d_tpcscr;
     h->il2d_col.tpcS = il2d_tpcS;
     h->il2d_col.rd0 = il2d_rd0;

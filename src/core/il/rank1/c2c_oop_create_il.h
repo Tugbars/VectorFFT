@@ -67,13 +67,21 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
                          cfg->layout == VFI_LAYOUT_IL && !W->vw2_off_oop);
     const vfft_oop_il_entry_t *ki =
         scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
-    /* the threaded plan's row (v1.3): the K=1 route is thread-independent,
-     * so a miss at T > 1 takes the one-thread row's route as its own row */
+    /* the threaded plan's row (v1.3): a miss at T > 1 whose one-thread row exists. Natural order: the recipe is
+     * chosen AT T (k1_commit.h _k1_il_t_race, 2026-11-18); where that race banks nothing, and for the scrambled
+     * class, the one-thread row's recipe becomes the row at T */
     if (cfg->layout == VFI_LAYOUT_IL && !W->vw2_off_oop && !cfg->recalibrate &&
         _vfft_plan_threads(cfg) > 1 && !ki &&
-        vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
+        vw2__oop_k1_scan_pl(&W->vw2, N, VW2_LAY_IL, scr_req, VW2_PL_OOP, 1))
     {
-        _vw2_persist(W, cfg);
+        const int tr = scr_req ? 0 : _k1_il_t_race(W, cfg, N, _vfft_plan_threads(cfg));
+        if (tr < 0)
+        {   /* out of memory: refused with its reason */
+            *stale = -1;
+            return NULL;
+        }
+        if (tr == 0 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
+            _vw2_persist(W, cfg);
         kin = vw2_oop_lookup_k1_il_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &kinb) ? &kinb : NULL;
         ki = scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
     }
@@ -99,8 +107,17 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
         }
         if (lines > 0)
         {
-            if (_vfft_plan_threads(cfg) > 1 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
-                _vw2_persist(W, cfg);   /* the race banked the one-thread row: its copy at T */
+            if (_vfft_plan_threads(cfg) > 1)
+            {   /* the race banked the one-thread row: the row at T, its recipe chosen at T on that ranking (or the copy) */
+                const int tr = scr_req ? 0 : _k1_il_t_race(W, cfg, N, _vfft_plan_threads(cfg));
+                if (tr < 0)
+                {
+                    *stale = -1;
+                    return NULL;
+                }
+                if (tr == 0 && vw2_oop_k1_row_at_T(&W->vw2, N, scr_req, 0, _vfft_plan_threads(cfg)))
+                    _vw2_persist(W, cfg);
+            }
             kin = vw2_oop_lookup_k1_il_cell(&W->vw2, N, 0, 0, _vfft_plan_threads(cfg), &kinb) ? &kinb : NULL;
             ki = scr_req ? (vw2_oop_lookup_k1_il_cell(&W->vw2, N, 1, 0, _vfft_plan_threads(cfg), &kib) ? &kib : NULL) : kin;
         }
@@ -331,7 +348,7 @@ static struct vfft_plan_s *_c2c_oop_create_k1_il(const vfft_cfg_t *cfg,
             ilpr = NULL;
         }
         else
-            ilpr = _ilprime_create_banked(W, cfg, N, NULL);
+            ilpr = _ilprime_create_banked(W, cfg, N, NULL, _vfft_plan_threads(cfg));
         _k1pr_release();
         ilr = ilpr ? VFFT_K1_IL_PRIME : VFFT_K1_IL_NONE;   /* truthful: the route names a plan that exists */
         if (ilpr && getenv("VFFT_NAT_LOG"))

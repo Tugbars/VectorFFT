@@ -290,6 +290,20 @@ static inline int vfft_policy_lm_serial_tiles(int rader_stage)
 {
     return !rader_stage;
 }
+
+/* -- a column axis's BLUESTEIN ARM in the N-arm race (2026-11-18, the threading census) --
+ * Bluestein races a column chain only when the chain carries a Rader stage (stage 0 a
+ * prime above the kernel pool, il2d_cols.h VFFT_IL2D_RADER_RADIX). A chain of kernel
+ * radices, odd ones included, is one pass of kernels over the axis; Bluestein is two FFTs
+ * at M >= 2 N - 1 and three passes over M, so it cannot win there: the census (14900KF,
+ * T = 1 to 8) raced it 356 times on such axes and it lost every race, by 2.60x at the
+ * least (median 6.64x). Against a Rader chain (61, 1031, 4099, 4483) it lost its 40 races
+ * by 1.36x at the least (median 2.27x), and the Rader stage's cost turns on the factors
+ * of p - 1, so there it still races. The 2D, 3D and lane-major column axes alike. */
+static inline int vfft_policy_il2d_blu_races(int rader_stage)
+{
+    return rader_stage;
+}
 static inline int vfft_policy_lm_tile_ok(int w, size_t K, int nat)   /* K: the lanes, size_t (w a ladder width) */
 {
     return w < 0 || (size_t)w < K || nat;
