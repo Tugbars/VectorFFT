@@ -1,0 +1,234 @@
+<title>2D FFT Machinery Tiling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/*@FONTS@*/
+/*@CSS@*/
+</style>
+<main>
+<header class="titleblock">
+  <p class="wordmark">2D FFT Machinery Tiling</p>
+  <p class="booktitle">Two-dimensional complex transforms</p>
+  <p class="edition">VectorFFT 0.8.1 &middot; i9-14900KF P-core &middot; AVX2 &middot; FP64 &middot; natural order &middot; out of place</p>
+  <p class="sheets"><a href="tiling_1d.html">1D</a> <b>2D</b> <a href="tiling_3d.html">3D</a></p>
+</header>
+
+<section>
+<h2><span class="num">1</span>The tiling</h2>
+<p>An N1 &times; N2 plane runs a column pass over N1 and a row pass over N2. One plan is one point of the product</p>
+<div class="eq"><div class="math"><span class="m">E</span> = <span class="m">L</span> &times; <span class="m">C</span> &times; <span class="m">M</span> &times; <span class="m">R</span> &times; <span class="m">F</span> &times; <span class="m">T</span>,</div><div class="no">(1)</div></div>
+<p class="where">where <span class="m">L</span> is the cache level of the plane (4), <span class="m">C</span> the class of the
+column length N1 (4), <span class="m">M</span> the column machinery (7), <span class="m">R</span> the row route (4),
+<span class="m">F</span> the threaded form (8) and <span class="m">T</span> the thread count. Figure 1 draws
+<span class="m">L</span> &times; <span class="m">C</span> &times; <span class="m">M</span>: a tile is one class of N1 at one cache
+level, a box one way the code may run the columns there, its italic line the threaded forms. The row route follows N2
+alone and stands in Table 1.</p>
+
+<div class="key" aria-label="Key">
+  <span class="box gr">column chain</span>
+  <span class="box g">banded walk</span>
+  <span class="box p">skewed pass</span>
+  <span class="box b">turn</span>
+  <span class="box d">Rader stage, Bluestein, turned prime pass</span>
+  <span class="box r">row route</span>
+  <span class="kd dia">crossroad</span>
+</div>
+
+<figure>
+<div class="frame"><div class="tiling">
+  <div class="corner">32 bytes a point of the plane: input and output</div>
+  <div class="ch"><span class="lvl">L1</span><span class="sz">48 KiB &middot; N1&middot;N2 &le; 1,536</span><span class="hint">The estimate runs these on one thread: under L1d/2 of plane data, L1d/4 when the rows are prime cells.</span></div>
+  <div class="ch"><span class="lvl">L2</span><span class="sz">2 MiB &middot; N1&middot;N2 &le; 65,536</span><span class="hint">From 64 KiB of plane, 8 threads was the fastest count on 61 of 67 power-of-two planes.</span></div>
+  <div class="ch"><span class="lvl">L3</span><span class="sz">36 MiB &middot; N1&middot;N2 &le; 1,179,648</span><span class="hint">Planes ran 4&ndash;8&times; faster at 8 threads.</span></div>
+  <div class="ch"><span class="lvl">DRAM</span><span class="sz">N1&middot;N2 &gt; 1,179,648</span><span class="hint">Planes ran 2.5&ndash;4&times; faster at 8 threads.</span></div>
+
+  <div class="rh"><span class="cls">Power of two</span><span class="def">N1 = 2<sup>k</sup></span></div>
+  <div>
+    <span class="box gr">column chain<i>one stage up to 64</i></span><span class="box p">skewed pass<i>N1 one kernel; row slabs</i></span><span class="box b">turn<i>N2 one kernel; row slabs</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">32 &times; 32</span><span class="ws">32 KiB</span></div><span class="note">both axes one kernel: the skewed pass on 21 of 21 banked planes</span></li>
+      <li><div class="row"><span class="n">8 &times; 128</span><span class="ws">32 KiB</span></div><span class="note">at T &gt; 1 the estimate serves the one-thread plan; the threaded rules' own plan ran 1.15&times; slower</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>block, strips, tile</i></span><span class="box g">banded walk<i>bands of 8&ndash;256 rows; one thread</i></span><span class="box p">skewed pass<i>N1 &le; 64; row slabs</i></span><span class="box b">turn<i>row slabs</i></span>
+    <p class="cross">N1 above 64: a chain of two stages or more, and the tile form opens</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">64 &times; 64</span><span class="ws">128 KiB</span></div></li>
+      <li><div class="row"><span class="n">128 &times; 128</span><span class="ws">512 KiB</span></div></li>
+      <li><div class="row"><span class="n">64 &times; 1,024</span><span class="ws">2 MiB</span></div><span class="note"><b>the chain at 1 thread, the skewed pass at 8</b></span></li>
+      <li><div class="row"><span class="n">256 &times; 256</span><span class="ws">2 MiB</span></div><span class="note">at 2 threads the tile form wants chain 8&middot;8&middot;4</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>block, strips, tile</i></span><span class="box g">banded walk<i>rows fused while hot; one thread</i></span><span class="box p">skewed pass<i>N1 &le; 64</i></span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">512 &times; 512</span><span class="ws">8 MiB</span></div></li>
+      <li><div class="row"><span class="n">1,024 &times; 1,024</span><span class="ws">32 MiB</span></div></li>
+      <li><div class="row"><span class="n">64 &times; 16,384</span><span class="ws">32 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>block, strips, tile</i></span><span class="box g">banded walk</span><span class="box p">skewed pass<i>N1 &le; 64</i></span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">2,048 &times; 2,048</span><span class="ws">128 MiB</span></div></li>
+      <li><div class="row"><span class="n">4,096 &times; 4,096</span><span class="ws">512 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Composite 2<sup>a</sup> &times; odd</span><span class="def">the odd part's factors 3 to 47</span></div>
+  <div>
+    <span class="box gr">column chain</span><span class="box p">skewed pass<i>N1 one kernel</i></span><span class="box b">turn<i>N2 one kernel</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">24 &times; 24</span><span class="ws">18 KiB</span></div></li>
+      <li><div class="row"><span class="n">12 &times; 96</span><span class="ws">36 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>block, strips, tile</i></span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">100 &times; 100</span><span class="ws">313 KiB</span></div></li>
+      <li><div class="row"><span class="n">60 &times; 1,000</span><span class="ws">1.8 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>up to 8 stages; block, strips, tile</i></span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <p class="cross">4 stages: the chain's reach; past it, the fewest stages up to 8</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,000 &times; 1,000</span><span class="ws">30.5 MiB</span></div><span class="note">the chain; Bluestein is not raced here</span></li>
+      <li><div class="row"><span class="n">6,860 &times; 64</span><span class="ws">13.4 MiB</span></div><span class="note"><b>a 5-stage chain</b> (6,860 = 4&middot;5&middot;7<sup>3</sup>): 947 &micro;s on 1 thread, 180 &micro;s on 8</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain</span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">2,000 &times; 2,000</span><span class="ws">122 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Odd</span><span class="def">every factor 3 to 47</span></div>
+  <div>
+    <span class="box gr">column chain</span><span class="box p">skewed pass<i>N1 one kernel</i></span><span class="box b">turn<i>N2 one kernel</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">27 &times; 27</span><span class="ws">23 KiB</span></div></li>
+      <li><div class="row"><span class="n">15 &times; 45</span><span class="ws">21 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>block, strips, tile</i></span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">243 &times; 243</span><span class="ws">1.8 MiB</span></div><span class="note">the chain; Bluestein is not raced here</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain<i>up to 8 stages</i></span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <p class="cross">4 stages: the chain's reach (12,005 = 5&middot;7<sup>4</sup> needs 5)</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">729 &times; 729</span><span class="ws">16.2 MiB</span></div></li>
+      <li><div class="row"><span class="n">12,005 &times; 32</span><span class="ws">11.7 MiB</span></div><span class="note"><b>a 5-stage chain</b>: 877 &micro;s on 1 thread, 183 &micro;s on 8</span></li>
+      <li><div class="row"><span class="n">3,125 &times; 125</span><span class="ws">11.9 MiB</span></div><span class="note">a split the 1D four-step races for 390,625</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">column chain</span><span class="box g">banded walk</span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">2,187 &times; 2,187</span><span class="ws">146 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Prime factor above 47</span><span class="def">a prime N1, or a chain led by one: no pool radix carries it</span></div>
+  <div>
+    <span class="box d">Rader stage<i>its inner a chain of p &minus; 1</i></span><span class="box d">Bluestein</span><span class="box d">turned prime pass</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">101 &times; 8</span><span class="ws">25 KiB</span></div><span class="note">threads ran 1.2&ndash;3.2&times; slower here (199 &times; 4, 211 &times; 4, 101 &times; 8)</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage<i>live lanes a worker</i></span><span class="box d">Bluestein<i>raced only against a Rader stage</i></span><span class="box d">turned prime pass<i>lanes a worker</i></span><span class="box b">turn<i>N2 one kernel</i></span>
+    <p class="cross">a first radix of 48 or more: the Rader stage leads the chain</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">61 &times; 61</span><span class="ws">116 KiB</span></div></li>
+      <li><div class="row"><span class="n">1,031 &times; 16</span><span class="ws">515 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage<i>live lanes a worker</i></span><span class="box d">Bluestein</span><span class="box d">turned prime pass<i>lanes a worker</i></span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,031 &times; 64</span><span class="ws">2.01 MiB</span></div><span class="note">at the L2 edge; <b>80 &micro;s at 8 threads</b>, the Rader stage on live lanes</span></li>
+      <li><div class="row"><span class="n">4,099 &times; 256</span><span class="ws">32 MiB</span></div><span class="note"><b>7.5&times; at 8 threads</b>, the method raced at T</span></li>
+      <li><div class="row"><span class="n">1,031 &times; 1,031</span><span class="ws">32.4 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage</span><span class="box d">Bluestein</span><span class="box d">turned prime pass</span><span class="box b">turn</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">4,483 &times; 1,024</span><span class="ws">140 MiB</span></div></li>
+    </ul>
+  </div>
+</div></div>
+<figcaption><span class="label">Figure 1.</span> The 2D complex column machinery by the class of N1 and the cache level
+of the plane. A box is a machinery the code admits in its tile (fft2d_create_il.h, il2d_tier.h); which one wins, and in
+which form, is raced on the whole transform for each plane and thread count. In natural order a band width runs on one
+thread; the bands are the threaded form of a scrambled plane.</figcaption>
+</figure>
+
+<div class="note"><p><span class="label">Note.</span> Bluestein columns won 0 of 396 races on this machine: 2.6&times;
+slower or more on small-factor columns, 1.36&times; or more on prime columns (61, 1,031, 4,099, 4,483). So Bluestein races
+only a chain that carries a Rader stage.</p></div>
+
+<p>The row pass is raced with the column verdict, on the whole transform. Threaded rows run over row slabs, one clone of
+the row plan a worker.</p>
+<div class="table"><table>
+  <caption><span class="label">Table 1.</span> The row route, by N2.</caption>
+  <thead><tr><th>Route</th><th>When</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td class="t"><span class="box r">whole-row kernel</span></td><td>N2 &le; 16 on AVX2, 64 on AVX-512, except 25 and 27</td><td>holds the row in registers and is the row engine; no race</td></tr>
+    <tr><td class="t"><span class="box r">batched rows</span></td><td>N2 has a row kernel</td><td>one call runs the radix over a run of rows</td></tr>
+    <tr><td class="t"><span class="box r">two-pass rows</span></td><td>N2 = R1 &times; R2 with row-loop twins</td><td>a tile of 4, 8, 16 or 32 KB, raced; at 256 &times; 256 and 2 threads they won by 1.8 % under strips and ran 6.4 % slower under the tile form that serves</td></tr>
+    <tr><td class="t"><span class="box r">per-row 1D plan</span></td><td>any N2</td><td>a cell of the 1D sheet on every row, odd and prime N2 included; prime-cell rows halve the estimate's one-thread bound</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section>
+<h2><span class="num">2</span>The thread axis</h2>
+<p>The same tile can need a different answer at each thread count <span class="m">T</span>. Table 2 lists six cases,
+measured on this machine's P-cores.</p>
+<div class="table"><table>
+  <caption><span class="label">Table 2.</span> Where the thread count moves the answer.</caption>
+  <thead><tr><th>Plane</th><th>Tile</th><th>What changes</th><th>Measured</th></tr></thead>
+  <tbody>
+    <tr><td class="n">64 &times; 1,024</td><td class="t">Power of two, L2</td><td class="w">the column machinery</td><td>the column chain wins at 1 thread, the skewed pass at 8</td></tr>
+    <tr><td class="n">256 &times; 256</td><td class="t">Power of two, L2</td><td class="w">the chain, with the form</td><td>at 2 threads the column pass timed alone picked chain 8&middot;4&middot;8 under strips; the tile form that serves wants 8&middot;8&middot;4, 61.6 against 65.2 &micro;s for the whole transform. Across forms only the whole transform decides.</td></tr>
+    <tr><td class="n">3,125 &times; 125</td><td class="t">Odd, L3</td><td class="w">the width, with the form</td><td>a split the 1D four-step races (a scrambled plane), at 8 threads: bands of 125 rows in 157.5 &micro;s, unbanded in 469 &micro;s</td></tr>
+    <tr><td class="n">4,099 &times; 256</td><td class="t">Prime factor, L3</td><td class="w">the method's thread count</td><td>chosen at 1 thread, the method runs 1.0&times; at 8 threads; chosen at 8 threads, the Rader-stage chain runs threaded: 7.5&times;</td></tr>
+    <tr><td class="n">1,031 &times; 64</td><td class="t">Prime factor, L2 edge</td><td class="w">a form's workers</td><td>each worker runs the Rader stage on its live lanes: 80 &micro;s at 8 threads (5.6&times;); over every lane it would take 368 &micro;s (1.24&times;)</td></tr>
+    <tr><td class="n">3&ndash;48 KB</td><td class="t">282 planes, L1 and L2</td><td class="w">when threads pay</td><td>at 8 threads, once a plane's one-thread work passes about 2.5&ndash;3 &micro;s: about L1d/2 for chains, half that for prime-cell rows, whose convolution does more work a byte</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section>
+<h2><span class="num">3</span>The other sheets</h2>
+<p>Each 2D kind has a sheet of its own, and most of them reuse the boxes of Figure 1.</p>
+<ul class="book">
+  <li><b>2D real (R2C, C2R).</b> The rows are raced in the row role: the rows kernel (even N2 &le; 32, the whole pass in
+  one call), real mono, real pair, zr2c, ZTT-r, and for odd N2 the real flat DIT and the real Bluestein. The columns run
+  the machinery of Figure 1 on N2/2 + 1 lanes. C2R is its own plan, with its own verdicts.</li>
+  <li><b>Lane-major batches.</b> K planes side by side: the columns over every lane (walk, strips or tile, the Rader stage
+  on live lanes, the turned prime pass); a real batch's rows in groups sized from L1d, one block a group where policy
+  names none.</li>
+  <li><b>Contiguous batches.</b> The plane queue runs one plan K times, as a loop, a queue or groups; the threads take
+  whole planes.</li>
+  <li><b>The 1D four-step.</b> A 1D length above 262,144 runs as a plane on this machinery: the banded walk with its
+  rows fused, its split raced at T.</li>
+  <li><b>Each CPU, ISA and precision.</b> L1d sets the one-thread bound: 24 KiB here, 16 KiB on a Zen 4 with 32 KiB. L2
+  fences the strip widths (N1 &times; width &times; 16 B). AVX-512 widens the whole-row kernel to N2 &le; 64.</li>
+</ul>
+<div class="note"><p><span class="label">Note.</span> The rows are cells of the <a href="tiling_1d.html">1D sheet</a>,
+and so is the turn's N1 plan. The Rader stage's inner is a chain of p &minus; 1 (1,030 = 2&middot;5&middot;103 nests a second
+Rader stage), and Bluestein's inner is a 1D cell. A change on the 1D sheet reaches these tiles.</p></div>
+</section>
+
+<footer><p>Sources: fft2d_create_il.h, il2d_tier.h, il2d_cols.h, il2d_real_plan.h, policy_il.h and estimate_nd_il.h.
+Results measured on this machine, pinned to its P-cores, and the estimate's own measurements.</p></footer>
+</main>

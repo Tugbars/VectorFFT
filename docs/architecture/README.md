@@ -15,6 +15,7 @@ and never edited by hand, so it always matches the tree it was generated from.
 | [`generated/map.md`](generated/map.md) | Plain text, no rendering needed: every file with its one-line role, its includes and who includes it. |
 | [`generated/functions.md`](generated/functions.md) | Plain text: every function with its file, line, callees, the functions it references by name, and its callers. |
 | [`generated/graph.json`](generated/graph.json) | The same data, for other tools. |
+| [`machinery/`](machinery/) | Which machinery runs where, one sheet each for 1D, 2D and 3D complex transforms ([`tiling_1d.html`](machinery/tiling_1d.html), [`tiling_2d.html`](machinery/tiling_2d.html), [`tiling_3d.html`](machinery/tiling_3d.html)): a tile is a length class at a cache level, its boxes the machinery the code admits there, with their threaded forms and example sizes. Written by hand from the code and measurements, not by `archgraph.py`; `machinery/source/build.py` rebuilds the pages. |
 
 The diagrams are [Mermaid](https://mermaid.js.org/); GitHub, GitLab and VS Code
 render them inline. The same diagrams are also rendered as images in

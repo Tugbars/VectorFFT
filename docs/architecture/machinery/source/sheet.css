@@ -1,0 +1,142 @@
+/* The tiling sheets in the user guide's look (how-to-use/source/tools/guide.css, figures/style.py):
+   Computer Modern on white, ink #101010, one muted grey, one hairline grey, square boxes, thin rules; no
+   shadows, rounded corners or sans faces. The Oppenheim & Schafer apparatus: hanging section numbers, a
+   numbered equation, "Figure 1" captions below, "Table 1" captions above, tables ruled above and below.
+   Light only, like the guide. A tint fills a box, its colour strokes it, the lettering inside stays ink;
+   every box also carries its name, so colour never carries the meaning alone. The faces are the guide's
+   vendored Computer Modern Unicode (how-to-use/source/vendor/cmu-0.7.0, SIL Open Font License), subset and
+   embedded by build.py. */
+:root{
+  --paper:#ffffff; --ink:#101010; --muted:#6a6a6a; --rule:#dcdcdc; --link-rule:#8a8a8a;
+  --blue:#2457c5; --blue-t:#dbe4f7;
+  --red:#c8322b; --red-t:#f6dcda;
+  --green:#3b7a3b; --green-t:#e1eedd;
+  --purple:#7a3e9d; --purple-t:#eee3f5;
+  --grey:#6a6a6a; --grey-t:#e2e2e2;
+  /* the ground of the tiling and the tables: the guide's code-box greys (guide.css --code-bg, --code-bar,
+     --code-word), so a table stands off the white page (owner, 2026-11-20: "we need some contrast there") */
+  --ground:#f4f5f7; --head:#e6e8eb; --zebra:#eceef1; --head-muted:#4f4f4f;
+  --serif:'CMU Serif',Georgia,'Times New Roman',serif;
+  --mono:'CMU Typewriter Text',Consolas,'DejaVu Sans Mono',Menlo,monospace;
+  --measure:40rem;
+  --hang:3rem;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html{font-size:112.5%;font-synthesis:none;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:1rem;line-height:1.5;
+  -webkit-font-smoothing:antialiased;font-kerning:normal;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0}
+main{max-width:1180px;margin:0 auto;padding-block:2.6rem 4rem}
+@media (min-width:1000px){main{padding-left:var(--hang)}}
+p{margin:0;max-width:var(--measure);text-wrap:pretty}
+p + p{text-indent:1.5em}
+a{color:inherit;text-decoration:underline;text-decoration-color:var(--link-rule);text-decoration-thickness:1px;
+  text-underline-offset:.2em}
+a:hover{text-decoration-color:var(--ink)}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.tt{font-family:var(--mono)}
+.m{font-style:italic}
+
+/* title block: centred, like the guide's */
+.titleblock{text-align:center;margin:0 0 2.2rem;padding-bottom:1.4rem;border-bottom:1px solid var(--rule)}
+.titleblock p{max-width:none;text-indent:0}
+.wordmark{font-weight:700;font-size:2.4rem;line-height:1.1}
+.booktitle{font-size:1.25rem;margin-top:.3rem}
+.edition{font-size:.86rem;color:var(--muted);margin-top:.8rem}
+.sheets{font-size:.9rem;margin-top:.45rem}
+.sheets a,.sheets b{margin:0 .5em}
+
+/* section heads: the number hangs in the left margin on a wide screen */
+h2{font-size:1.12rem;font-weight:700;line-height:1.25;margin:2.4rem 0 .8rem;text-wrap:balance}
+@media (min-width:1000px){
+  h2{text-indent:calc(-1 * var(--hang))}
+  h2 .num{display:inline-block;width:calc(var(--hang) - .383em);text-indent:0}
+}
+@media (max-width:999px){h2 .num{margin-right:.6em}}
+
+/* a numbered display equation and its "where" */
+.eq{display:grid;grid-template-columns:3em minmax(0,1fr) 3em;align-items:center;margin:.9rem 0;max-width:var(--measure)}
+.eq .math{grid-column:2;text-align:center;font-size:1.06rem;overflow-x:auto}
+.eq .no{grid-column:3;text-align:right}
+p.where{text-indent:0}
+
+/* the boxes: a tint fills, its colour strokes, the lettering is ink; the italic line is the threaded forms */
+.box{display:inline-block;vertical-align:top;border:.8px solid var(--c);background:var(--t);color:var(--ink);
+  padding:.08em .42em .14em;margin:0 .26em .3em 0;font-size:.84rem;line-height:1.3}
+.box i{display:block;font-size:.74rem;line-height:1.25}
+.g{--c:var(--grey);--t:var(--grey-t)}
+.p{--c:var(--purple);--t:var(--purple-t)}
+.gr{--c:var(--green);--t:var(--green-t)}
+.b{--c:var(--blue);--t:var(--blue-t)}
+.r{--c:var(--red);--t:var(--red-t)}
+.d{--c:var(--ink);--t:var(--paper);border-style:dashed}
+.key{display:flex;flex-wrap:wrap;gap:.35rem .8rem;align-items:center;font-size:.86rem;margin:1rem 0 .5rem;max-width:62rem}
+.key .box{margin:0}
+.key .kd{display:inline-flex;align-items:center;font-style:italic}
+.dia::before{content:"";display:inline-block;width:.4em;height:.4em;background:var(--ink);transform:rotate(45deg);
+  margin:0 .55em 0 .1em;vertical-align:.1em}
+
+/* the figure: tiles sharing their ink borders, as figures/style.py draws cells */
+figure{margin:1rem 0 1.6rem}
+.frame{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+figcaption{font-size:.9rem;line-height:1.45;margin-top:.6rem;max-width:var(--measure);text-wrap:pretty}
+figcaption .label,caption .label{font-weight:700;margin-right:.55em}
+.tiling{display:grid;grid-template-columns:9.6rem repeat(4,minmax(12.6rem,1fr));min-width:60rem;
+  border-left:.8px solid var(--ink);border-top:.8px solid var(--ink)}
+.tiling > *{border-right:.8px solid var(--ink);border-bottom:.8px solid var(--ink);padding:.55rem .6rem .65rem;min-width:0;
+  background:var(--ground)}
+.tiling .corner,.tiling .ch,.tiling .rh{background:var(--head)}
+.tiling .corner{font-size:.78rem;font-style:italic;color:var(--head-muted);display:flex;align-items:flex-end}
+.tiling .ch .lvl{display:block;font-weight:700;font-size:1.15rem;line-height:1.15}
+.tiling .ch .sz{display:block;font-family:var(--mono);font-size:.76rem;color:var(--head-muted);margin-top:.1rem}
+.tiling .ch .hint{display:block;font-size:.76rem;font-style:italic;line-height:1.35;margin-top:.3rem}
+.tiling .rh .cls{display:block;font-weight:700;font-size:.95rem;line-height:1.25}
+.tiling .rh .def{display:block;font-size:.76rem;font-style:italic;line-height:1.35;margin-top:.2rem}
+.tiling .span{grid-column:1 / -1;font-size:.84rem;line-height:1.45;display:flex;flex-wrap:wrap;gap:.3rem .8rem;align-items:flex-start}
+.tiling .span p{max-width:none;flex:1 1 30rem}
+.cross{font-size:.8rem;font-style:italic;line-height:1.35;margin:.1rem 0 .25rem}
+.cross::before{content:"";display:inline-block;width:.4em;height:.4em;background:var(--ink);transform:rotate(45deg);
+  margin:0 .5em 0 .05em;vertical-align:.1em}
+.cells{list-style:none;margin:.4rem 0 0;padding:.4rem 0 0;border-top:.6px dashed #b8b8b8}
+.cells li{font-size:.8rem;line-height:1.35;margin:.2rem 0}
+.cells .row{display:flex;justify-content:space-between;gap:.6em;align-items:baseline}
+.cells .n{font-family:var(--mono);font-size:.84rem;white-space:nowrap}
+.cells .ws{color:var(--muted);white-space:nowrap;font-size:.76rem}
+.cells .note{display:block}
+
+/* tables: caption above, rules above and below the head and at the foot, no verticals */
+.table{overflow-x:auto;margin:1.1rem 0 1.6rem}
+table{border-collapse:collapse;width:100%;max-width:62rem;border-top:1.2px solid var(--ink);border-bottom:1.2px solid var(--ink);
+  background:var(--ground)}
+caption{caption-side:top;text-align:left;font-size:.9rem;line-height:1.45;padding-bottom:.45rem;max-width:var(--measure);
+  background:var(--paper)}
+th,td{padding:.32rem 1rem .32rem 0;vertical-align:baseline;text-align:left;font-size:.88rem;line-height:1.38}
+th:first-child,td:first-child{padding-left:.7rem}
+th:last-child,td:last-child{padding-right:.7rem}
+thead th{border-bottom:.8px solid var(--ink);font-weight:700;background:var(--head)}
+tbody tr:nth-child(even) td{background:var(--zebra)}
+tbody tr:first-child td{padding-top:.5rem}
+tbody tr:last-child td{padding-bottom:.5rem}
+td.n{font-family:var(--mono);white-space:nowrap}
+td.t{white-space:nowrap}
+td.w{font-style:italic;white-space:nowrap}
+
+/* lists with a bold lead, as the guide sets them */
+ul.book{margin:.7rem 0;padding-left:1.4em;max-width:var(--measure)}
+ul.book li{margin:.4em 0}
+
+/* a note: a square box whose rule and label word are blue; the text stays ink */
+div.note{border:1px solid var(--blue);padding:.6rem .9rem;margin:1.3rem 0;max-width:var(--measure)}
+div.note p{max-width:none}
+div.note .label{font-weight:700;color:var(--blue);margin-right:.35em}
+
+footer{margin-top:3.4rem;padding-top:1rem;border-top:1px solid var(--rule);text-align:center;color:var(--muted);font-size:.84rem}
+footer p{max-width:46rem;margin:0 auto}
+@media (max-width:640px){
+  html{font-size:100%}
+  main{padding-block:1.6rem 3rem}
+  .wordmark{font-size:1.9rem}
+  .booktitle{font-size:1.1rem}
+}

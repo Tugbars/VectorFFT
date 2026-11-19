@@ -1,0 +1,186 @@
+<title>3D FFT Machinery Tiling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/*@FONTS@*/
+/*@CSS@*/
+</style>
+<main>
+<header class="titleblock">
+  <p class="wordmark">3D FFT Machinery Tiling</p>
+  <p class="booktitle">Three-dimensional complex transforms</p>
+  <p class="edition">VectorFFT 0.8.1 &middot; i9-14900KF P-core &middot; AVX2 &middot; FP64 &middot; natural order &middot; out of place</p>
+  <p class="sheets"><a href="tiling_1d.html">1D</a> <a href="tiling_2d.html">2D</a> <b>3D</b></p>
+</header>
+
+<section>
+<h2><span class="num">1</span>The tiling</h2>
+<p>An N1 &times; N2 &times; N3 cube runs axis 0 over the whole cube, the 2D column pass at a pitch of N2&middot;N3, then a
+structure on every N2 &times; N3 plane: a 2D child plan, or this tier's own axis-1 pass and rows, the flat structure. One
+plan is one point of the product</p>
+<div class="eq"><div class="math"><span class="m">E</span> = <span class="m">L</span> &times; <span class="m">C</span> &times; <span class="m">A</span> &times; <span class="m">S</span> &times; <span class="m">F</span> &times; <span class="m">T</span>,</div><div class="no">(1)</div></div>
+<p class="where">where <span class="m">L</span> is the cache level of the cube (4), <span class="m">C</span> the class of
+the axis-0 length N1 (3), <span class="m">A</span> the axis-0 machinery (5), <span class="m">S</span> the plane structure
+(2), <span class="m">F</span> the threaded form (6) and <span class="m">T</span> the thread count. In Figure 1 a tile is one
+class of N1 at one cache level, a box one piece the tier races there, its italic line the threaded forms.</p>
+
+<div class="key" aria-label="Key">
+  <span class="box gr">axis-0 chain</span>
+  <span class="box g">banded walk</span>
+  <span class="box d">Rader stage, Bluestein, turned prime pass</span>
+  <span class="box b">2D child per plane</span>
+  <span class="box p">flat: axis 1 + rows</span>
+  <span class="box r">natural placement</span>
+  <span class="kd dia">crossroad</span>
+</div>
+
+<figure>
+<div class="frame"><div class="tiling">
+  <div class="corner">32 bytes a point of the cube: input and output</div>
+  <div class="ch"><span class="lvl">L1</span><span class="sz">48 KiB &middot; N1&middot;N2&middot;N3 &le; 1,536</span><span class="hint">The estimate keeps a cube within L1d/2 of data on one thread: 1.051&times; the faster choice over 94 cubes of 8&ndash;512 KB.</span></div>
+  <div class="ch"><span class="lvl">L2</span><span class="sz">2 MiB &middot; &le; 65,536</span><span class="hint">At T &gt; 1 one thread still races up to 32,768 points (512 KiB of data).</span></div>
+  <div class="ch"><span class="lvl">L3</span><span class="sz">36 MiB &middot; &le; 1,179,648</span><span class="hint">Cubes ran 4&ndash;8&times; faster at 8 threads.</span></div>
+  <div class="ch"><span class="lvl">DRAM</span><span class="sz">&gt; 1,179,648</span><span class="hint">Cubes ran 2.5&ndash;4&times; faster at 8 threads.</span></div>
+
+  <div class="rh"><span class="cls">Power of two</span><span class="def">N1 = 2<sup>k</sup></span></div>
+  <div>
+    <span class="box gr">axis-0 chain<i>one stage up to 64</i></span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">8 &times; 8 &times; 8</span><span class="ws">16 KiB</span></div></li>
+      <li><div class="row"><span class="n">8 &times; 8 &times; 16</span><span class="ws">32 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>plane arm: column strips, then plane ranges</i></span><span class="box g">banded walk<i>bands of wl planes, the planes fused while hot</i></span><span class="box b">2D child<i>a clone a worker</i></span><span class="box p">flat<i>a row-plan clone a worker</i></span>
+    <p class="cross">32,768 points: above it one thread no longer races at T</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">16 &times; 32 &times; 32</span><span class="ws">512 KiB</span></div></li>
+      <li><div class="row"><span class="n">32 &times; 32 &times; 32</span><span class="ws">1 MiB</span></div><span class="note">the crossroad</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>plane arm</i></span><span class="box g">banded walk<i>band arm: banked verdicts only</i></span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">64 &times; 64 &times; 64</span><span class="ws">8 MiB</span></div></li>
+      <li><div class="row"><span class="n">64 &times; 128 &times; 128</span><span class="ws">32 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>plane arm; plane team full or half</i></span><span class="box g">banded walk</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <p class="cross">one plane a worker: the half team, two planes each, races the full team</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">128 &times; 128 &times; 128</span><span class="ws">64 MiB</span></div></li>
+      <li><div class="row"><span class="n">8 &times; 128 &times; 2,048</span><span class="ws">64 MiB</span></div><span class="note"><b>half team, flat: the plane phase 2.6 &rarr; 2.0 ms</b> at 8 threads</span></li>
+      <li><div class="row"><span class="n">256 &times; 256 &times; 256</span><span class="ws">512 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Smooth</span><span class="def">2<sup>a</sup> &times; odd or odd, every factor 2 to 47</span></div>
+  <div>
+    <span class="box gr">axis-0 chain</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">9 &times; 9 &times; 9</span><span class="ws">23 KiB</span></div></li>
+      <li><div class="row"><span class="n">6 &times; 10 &times; 20</span><span class="ws">37.5 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>plane arm</i></span><span class="box g">banded walk</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">25 &times; 25 &times; 25</span><span class="ws">488 KiB</span></div></li>
+      <li><div class="row"><span class="n">40 &times; 40 &times; 40</span><span class="ws">1.95 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>up to 8 stages; plane arm</i></span><span class="box g">banded walk</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <p class="cross">4 stages: the chain's reach, on axis 0 as on 2D columns</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">81 &times; 81 &times; 81</span><span class="ws">16.2 MiB</span></div></li>
+      <li><div class="row"><span class="n">100 &times; 100 &times; 100</span><span class="ws">30.5 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">axis-0 chain<i>plane team full or half</i></span><span class="box g">banded walk</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">200 &times; 200 &times; 200</span><span class="ws">244 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Prime factor above 47</span><span class="def">a prime N1, or an axis-0 chain led by one</span></div>
+  <div>
+    <span class="box d">Rader stage</span><span class="box d">Bluestein</span><span class="box d">turned prime pass</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">53 &times; 4 &times; 4</span><span class="ws">26.5 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage</span><span class="box d">Bluestein<i>unbanded: the plane arm only</i></span><span class="box d">turned prime pass<i>lanes a worker</i></span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">61 &times; 16 &times; 16</span><span class="ws">488 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage</span><span class="box d">Bluestein<i>the plane arm only</i></span><span class="box d">turned prime pass</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">61 &times; 61 &times; 61</span><span class="ws">6.9 MiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader stage</span><span class="box d">Bluestein</span><span class="box d">turned prime pass</span><span class="box b">2D child</span><span class="box p">flat</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,031 &times; 64 &times; 64</span><span class="ws">129 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="span">
+    <span class="box r">natural placement<i>cycles; strips at T</i></span>
+    <p><b>Natural order, every tile.</b> Axis 0 stays the scrambled pass, and each finished plane is written out of place
+    to its natural position by following the permutation's cycles, with one plane of buffer. Threaded, the strips form
+    runs wherever axis 0 permutes; the cycles form, workers owning disjoint cycles longest first, where it cannot.</p>
+  </div>
+</div></div>
+<figcaption><span class="label">Figure 1.</span> The 3D complex machinery by the class of N1 and the cache level of the
+cube. A box is a piece the code admits in its tile (fftnd_il.h, il2d_tier.h). The structure and every legal band width
+are arms of one race on a scratch cube; at T &gt; 1 the structure is raced again with the partition.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2><span class="num">2</span>The thread axis</h2>
+<p>The same tile can need a different answer at each thread count <span class="m">T</span>. Table 1 lists six cases, from
+the code's own records and measurements on this machine.</p>
+<div class="table"><table>
+  <caption><span class="label">Table 1.</span> Where the thread count moves the answer.</caption>
+  <thead><tr><th>Cube</th><th>Tile</th><th>What changes</th><th>Measured</th></tr></thead>
+  <tbody>
+    <tr><td class="n">8 &times; 128 &times; 2,048</td><td class="t">Power of two, DRAM</td><td class="w">the plane team</td><td>with one plane a worker, each worker's plane scratch is cold on every call; half the team, two planes each: the plane phase 2.6 &rarr; 2.0 ms at 8 threads (flat structure)</td></tr>
+    <tr><td class="n">534 cubes</td><td class="t">8 threads</td><td class="w">the partition</td><td>the plane arm won 528 of 534 cells against the band arm, so the band arm is not raced; it serves only a verdict stored in wisdom</td></tr>
+    <tr><td class="n">every cube</td><td class="t">T = 1 and T &gt; 1</td><td class="w">the structure</td><td>the structure that wins at 1 thread is not the one that wins threaded, so the 2D child and the flat structure are raced again at every thread count</td></tr>
+    <tr><td class="n">8 &times; 128 &times; 2,048</td><td class="t">Power of two, DRAM</td><td class="w">the one-thread arm</td><td>one thread runs 7.7 ms an execute against 3 ms threaded; above 32,768 points the one-thread arm is not sampled at T</td></tr>
+    <tr><td class="n">8&ndash;512 KB</td><td class="t">94 cubes, L1 and L2</td><td class="w">when threads pay</td><td>one thread within L1d/2 ran 1.051&times; the faster choice; cubes of 34&ndash;37 KB stay mixed whatever the bound (52 &times; 7 &times; 6 1.41, 63 &times; 6 &times; 6 1.28)</td></tr>
+    <tr><td class="n">threaded samples</td><td class="t">every tile at T &gt; 1</td><td class="w">how to time it</td><td>a worker's cache partition settles over the first milliseconds: single executes ran 1.5&ndash;5&times; the steady state, so threaded arms are timed over several executes after warm passes</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section>
+<h2><span class="num">3</span>The other sheets</h2>
+<p>Each 3D kind has a sheet of its own, built from the 2D and 1D sheets' boxes.</p>
+<ul class="book">
+  <li><b>3D real (R2C, C2R).</b> The walks are fixed: R2C runs the planes first, C2R axis 0 first. The structures raced
+  are the 2D real child per plane; pay-once, where axis 0 lands planes and row blocks at their natural places in one
+  write; and a band arm for C2R. Axis 0 runs in place, by dense column strips, or stage by stage (threaded only, R2C).
+  Out of place, natural order.</li>
+  <li><b>Lane-major batches.</b> K cubes side by side: axis 0 over every lane, then a 2D lane-major child for the planes;
+  a real batch inherits the child's row groups.</li>
+  <li><b>Contiguous batches.</b> The volume queue: K walks of the single-cube plan, one a cube.</li>
+  <li><b>Each CPU, ISA and precision.</b> L1d sets the one-thread bound; L2 against the plane's size decides when the
+  half team pays; FP32 halves the bytes, so a cube can sit a cache level lower.</li>
+</ul>
+<div class="note"><p><span class="label">Note.</span> Axis 0, and the flat structure's axis 1, are the 2D column pass at
+a wider pitch: the column machinery of the <a href="tiling_2d.html">2D sheet</a>
+applies to them. The 2D child's planes are cells of the 2D sheet, and the rows are cells of the
+<a href="tiling_1d.html">1D sheet</a>. A change on either sheet reaches these tiles.</p></div>
+</section>
+
+<footer><p>Sources: fftnd_il.h, fftnd_real_il.h, il2d_tier.h, policy_il.h and estimate_nd_il.h. Results from the code's
+own records and measurements on this machine, pinned to its P-cores.</p></footer>
+</main>

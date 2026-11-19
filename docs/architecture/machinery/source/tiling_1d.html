@@ -1,0 +1,245 @@
+<title>FFT Machinery Tiling</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/*@FONTS@*/
+/*@CSS@*/
+</style>
+<main>
+<header class="titleblock">
+  <p class="wordmark">FFT Machinery Tiling</p>
+  <p class="booktitle">One-dimensional complex transforms</p>
+  <p class="edition">VectorFFT 0.8.1 &middot; i9-14900KF P-core &middot; AVX2 &middot; FP64 &middot; natural order &middot; out of place</p>
+  <p class="sheets"><b>1D</b> <a href="tiling_2d.html">2D</a> <a href="tiling_3d.html">3D</a></p>
+</header>
+
+<section>
+<h2><span class="num">1</span>The tiling</h2>
+<p>Different lengths need different machinery, and so do different cache levels. One plan is one point of the product</p>
+<div class="eq"><div class="math"><span class="m">E</span> = <span class="m">L</span> &times; <span class="m">C</span> &times; <span class="m">M</span> &times; <span class="m">F</span> &times; <span class="m">T</span>,</div><div class="no">(1)</div></div>
+<p class="where">where <span class="m">L</span> is the cache level (4 of them), <span class="m">C</span> the length class (5),
+<span class="m">M</span> the machinery (8), <span class="m">F</span> the threaded form (5) and <span class="m">T</span> the thread
+count (4). Of the 160 combinations of <span class="m">L</span> &times; <span class="m">C</span> &times; <span class="m">M</span>, 52
+exist on this CPU: the boxes of Figure 1. Each tile is one length class at one cache level, each box one machinery the
+code admits there, and its italic line the threaded forms that can serve it.</p>
+
+<div class="key" aria-label="Key">
+  <span class="box g">small engines: mono, pair</span>
+  <span class="box p">chain3</span>
+  <span class="box gr">flat DIT</span>
+  <span class="box b">ZTURN-T</span>
+  <span class="box r">four-step (Bailey)</span>
+  <span class="box d">Rader, Bluestein</span>
+  <span class="kd dia">crossroad: two machineries meet</span>
+</div>
+
+<figure>
+<div class="frame"><div class="tiling">
+  <div class="corner">32 bytes a point: input and output</div>
+  <div class="ch"><span class="lvl">L1</span><span class="sz">48 KiB &middot; N &le; 1,536</span><span class="hint">One thread wins: threaded forms ran 2&ndash;4&times; slower.</span></div>
+  <div class="ch"><span class="lvl">L2</span><span class="sz">2 MiB &middot; N &le; 65,536</span><span class="hint">Threads start to pay, after one exchange between cores.</span></div>
+  <div class="ch"><span class="lvl">L3</span><span class="sz">36 MiB &middot; N &le; 1,179,648</span><span class="hint">Most machineries compete here.</span></div>
+  <div class="ch"><span class="lvl">DRAM</span><span class="sz">N &gt; 1,179,648</span><span class="hint">The four-step's ground, to 16,777,216.</span></div>
+
+  <div class="rh"><span class="cls">Power of two</span><span class="def">2<sup>k</sup></span></div>
+  <div>
+    <span class="box g">mono</span><span class="box g">pair</span><span class="box p">chain3</span><span class="box b">ZTURN-T<i>from 16</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">64</span><span class="ws">2 KiB</span></div></li>
+      <li><div class="row"><span class="n">256</span><span class="ws">8 KiB</span></div></li>
+      <li><div class="row"><span class="n">1,024</span><span class="ws">32 KiB</span></div><span class="note">at 2 threads the blocks form ran 4&times; slower</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box b">ZTURN-T alone<i>serial, blocks, tiles</i></span>
+    <p class="cross">2,048: the small engines drop out, at the L1 edge</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">16,384</span><span class="ws">512 KiB</span></div><span class="note"><b>1.01&times;</b> at 2 threads, <b>1.64&times;</b> at 8</span></li>
+      <li><div class="row"><span class="n">65,536</span><span class="ws">2 MiB</span></div><span class="note">at the L2 edge</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box b">ZTURN-T<i>to 262,144; tiles</i></span><span class="box r">four-step<i>from 262,144; banded walk</i></span>
+    <p class="cross">262,144: ZTURN-T and the four-step race each other</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">131,072</span><span class="ws">4 MiB</span></div></li>
+      <li><div class="row"><span class="n">262,144</span><span class="ws">8 MiB</span></div><span class="note">the crossroad</span></li>
+      <li><div class="row"><span class="n">1,048,576</span><span class="ws">32 MiB</span></div><span class="note">near the L3 edge</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box r">four-step alone<i>banded walk, split raced at T</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">4,194,304</span><span class="ws">128 MiB</span></div></li>
+      <li><div class="row"><span class="n">16,777,216</span><span class="ws">512 MiB</span></div><span class="note">the ceiling</span></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Composite 2<sup>a</sup> &times; odd</span><span class="def">the odd part's factors 3 to 47</span></div>
+  <div>
+    <span class="box g">mono</span><span class="box g">pair</span><span class="box p">chain3</span><span class="box gr">flat DIT</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">96</span><span class="ws">3 KiB</span></div></li>
+      <li><div class="row"><span class="n">960</span><span class="ws">30 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box b">ZTURN-T odd<i>a &ge; 4, odd part of 3, 5, 7, 9, 15; blocks, tiles</i></span><span class="box g">pair<i>to 4,096</i></span><span class="box p">chain3<i>no threaded form</i></span><span class="box gr">flat DIT<i>outside the odd band; blocks, tiles</i></span>
+    <p class="cross">2,048: ZTURN-T's odd band opens</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">3,000</span><span class="ws">94 KiB</span></div><span class="note">chain3, which cannot thread</span></li>
+      <li><div class="row"><span class="n">10,000</span><span class="ws">313 KiB</span></div><span class="note">ZTURN-T odd at every thread count</span></li>
+      <li><div class="row"><span class="n">20,480</span><span class="ws">640 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box b">ZTURN-T odd<i>to 262,144</i></span><span class="box p">chain3</span><span class="box gr">flat DIT</span><span class="box r">four-step<i>above 262,144, with a split</i></span>
+    <p class="cross">above 262,144: the four-step joins the flat DIT</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">120,000</span><span class="ws">3.7 MiB</span></div><span class="note">ZTURN-T odd</span></li>
+      <li><div class="row"><span class="n">245,760</span><span class="ws">7.5 MiB</span></div></li>
+      <li><div class="row"><span class="n">1,000,000</span><span class="ws">30.5 MiB</span></div><span class="note">the four-step against the flat DIT</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box r">four-step<i>banded walk</i></span><span class="box gr">flat DIT<i>blocks, tiles</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">6,000,000</span><span class="ws">183 MiB</span></div></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Odd</span><span class="def">every factor 3 to 47</span></div>
+  <div>
+    <span class="box g">mono</span><span class="box g">pair</span><span class="box p">chain3</span><span class="box gr">flat DIT</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">243</span><span class="ws">7.6 KiB</span></div></li>
+      <li><div class="row"><span class="n">1,125</span><span class="ws">35 KiB</span></div></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box g">pair<i>to 4,096</i></span><span class="box p">chain3<i>no threaded form</i></span><span class="box gr">flat DIT<i>blocks, tiles</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">15,625</span><span class="ws">488 KiB</span></div><span class="note">chain3 at 1 thread, <b>the flat DIT</b> at 2, 4 and 8</span></li>
+      <li><div class="row"><span class="n">45,045</span><span class="ws">1.4 MiB</span></div></li>
+      <li><div class="row"><span class="n">59,049</span><span class="ws">1.8 MiB</span></div><span class="note">the flat DIT; another chain at 8 threads</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box p">chain3<i>where 3 radices fit</i></span><span class="box gr">flat DIT<i>to 262,144</i></span><span class="box r">four-step<i>above 262,144, with a split</i></span>
+    <p class="cross">above 262,144: the four-step joins the flat DIT</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">177,147</span><span class="ws">5.4 MiB</span></div><span class="note">the flat DIT</span></li>
+      <li><div class="row"><span class="n">390,625</span><span class="ws">11.9 MiB</span></div><span class="note">the four-step, 625 &times; 625 at 8 threads</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box r">four-step<i>banded walk</i></span><span class="box gr">flat DIT</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,594,323</span><span class="ws">48.7 MiB</span></div></li>
+      <li><div class="row"><span class="n">4,782,969</span><span class="ws">146 MiB</span></div><span class="note">the four-step; the flat DIT 15&ndash;20 % behind</span></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Composite with a prime factor above 47</span><span class="def">no chain radix carries it</span></div>
+  <div>
+    <span class="box gr">flat DIT + Rader stage</span><span class="box d">Bluestein<i>on the whole N</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">212</span><span class="ws">6.6 KiB</span></div><span class="note">4 &times; 53</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">flat DIT + Rader stage</span><span class="box d">Bluestein<i>on the whole N</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">4,124</span><span class="ws">129 KiB</span></div><span class="note">4 &times; 1,031: the flat DIT with a Rader stage</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box gr">flat DIT + Rader stage</span><span class="box d">Bluestein</span><span class="box r">four-step<i>above 262,144, with a split</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">131,968</span><span class="ws">4 MiB</span></div><span class="note">128 &times; 1,031</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box r">four-step</span><span class="box gr">flat DIT + Rader stage</span><span class="box d">Bluestein</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">4,222,976</span><span class="ws">129 MiB</span></div><span class="note">4,096 &times; 1,031</span></li>
+    </ul>
+  </div>
+
+  <div class="rh"><span class="cls">Prime above 47</span><span class="def">Rader: an inner of N &minus; 1. Bluestein: an inner of at least 2N &minus; 1, a power of two or a smooth length.</span></div>
+  <div>
+    <span class="box d">Rader<i>the inner's form + a fork a pass</i></span><span class="box d">Bluestein<i>the inner's form + a fork a pass</i></span>
+    <p class="cross">Rader or Bluestein: raced for each length</p>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,031</span><span class="ws">32 KiB</span></div><span class="note">Rader's inner 1,030 = 2&middot;5&middot;103 needs a second Rader stage; Bluestein's inner sits in L2</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader</span><span class="box d">Bluestein</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">4,099</span><span class="ws">128 KiB</span></div><span class="note">Rader's inner 4,098 = 2&middot;3&middot;683</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader<i>a flat DIT inner stays on one thread</i></span><span class="box d">Bluestein<i>a four-step inner built at T</i></span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">102,881</span><span class="ws">3.1 MiB</span></div><span class="note"><b>Bluestein through a power-of-two machinery</b>: its inner of 205,761 points or more runs on ZTURN-T or the four-step, raced at each T</span></li>
+      <li><div class="row"><span class="n">200,003</span><span class="ws">6.1 MiB</span></div><span class="note">Bluestein with a four-step inner</span></li>
+    </ul>
+  </div>
+  <div>
+    <span class="box d">Rader</span><span class="box d">Bluestein</span>
+    <ul class="cells">
+      <li><div class="row"><span class="n">1,000,003</span><span class="ws">64 MiB inner</span></div><span class="note">Bluestein: its four-step inner of 2 million points puts it in DRAM, though N alone fits L3</span></li>
+      <li><div class="row"><span class="n">4,000,037</span><span class="ws">122 MiB</span></div></li>
+    </ul>
+  </div>
+</div></div>
+<figcaption><span class="label">Figure 1.</span> The 1D complex machinery by length class and cache level. A box is a
+machinery the code admits in its tile (the band map of policy_il.h); which one wins is raced for each length. A Bluestein
+cell sits where its inner sits. Named winners were measured on this machine; the other cells are examples of their tile,
+their winner still to be read from their plans.</figcaption>
+</figure>
+</section>
+
+<section>
+<h2><span class="num">2</span>The thread axis</h2>
+<p>The same box can need a different answer at each thread count <span class="m">T</span>. Table 1 lists five cells where
+<span class="m">T</span> changes it, measured on this machine's P-cores; the last is still to be measured.</p>
+<div class="table"><table>
+  <caption><span class="label">Table 1.</span> Where the thread count moves the answer.</caption>
+  <thead><tr><th>Cell</th><th>Tile</th><th>What changes</th><th>Measured</th></tr></thead>
+  <tbody>
+    <tr><td class="n">15,625</td><td class="t">Odd, L2</td><td class="w">the machinery</td><td>chain3 at 1 thread; the flat DIT at 2, 4 and 8 threads, 1.27&times;, 1.63&times; and 2.08&times; over chain3's plan on those threads, because chain3 has no threaded form</td></tr>
+    <tr><td class="n">59,049</td><td class="t">Odd, L2</td><td class="w">the chain</td><td>two flat DIT chains 3.5 % apart at 1 thread, 9&middot;9&middot;9&middot;9&middot;9 and 9&middot;9&middot;3&middot;27&middot;9, run in 67 and 34.5 &micro;s at 8 threads</td></tr>
+    <tr><td class="n">10,000</td><td class="t">2<sup>a</sup> &times; odd, L2</td><td class="w">the form</td><td>ZTURN-T odd at every T; at 4 threads tiles 2,500 points wide (8.9 &micro;s) beat blocks (10.1 &micro;s) and one thread (11.6 &micro;s)</td></tr>
+    <tr><td class="n">16,384</td><td class="t">Power of two, L2</td><td class="w">the ceiling</td><td>1.01&times; at 2 threads, since one exchange between cores costs about half the compute; 1.64&times; of a 2.05&times; bound at 8</td></tr>
+    <tr><td class="n">1,000,003</td><td class="t">Prime, DRAM</td><td class="w">the inner's form</td><td>Bluestein with a four-step inner, built at T; its threaded time is not measured yet</td></tr>
+  </tbody>
+</table></div>
+</section>
+
+<section>
+<h2><span class="num">3</span>The other sheets</h2>
+<p>Each transform kind has a sheet of its own, with its own machinery, and most of them nest cells of this one.</p>
+<ul class="book">
+  <li><b>R2C and C2R.</b> zr2c (a complex child of N/2 and the fold), ZTT-r (ZTURN-T at N/2 with the fold fused), the
+  real four-step from 2<sup>20</sup>, and for odd N the real flat DIT and the real Bluestein. Threads run the fold and the
+  child's own raced form.</li>
+  <li><b>2D and 3D.</b> Rows and columns are cells of this sheet: see the <a href="tiling_2d.html">2D sheet</a>
+  and the <a href="tiling_3d.html">3D sheet</a>.</li>
+  <li><b>Batches.</b> Contiguous batches run a loop, a queue or groups. Lane-major batches race the column walk, strips
+  or tile, run the Rader stage on live lanes and the turned prime pass, and group a real batch's rows by L1d.</li>
+  <li><b>DCT and DST.</b> A real FFT is the child: Makhoul's method for DST-II and DST-III, one R2C of twice the length for
+  DCT-I and DST-I.</li>
+  <li><b>Each CPU, ISA and precision.</b> The CPU moves the columns: the 9800X3D has a 1 MiB L2 and a 96 MiB L3. The ISA
+  moves the edges: FP64 ZTURN-T starts at 16 points on AVX2 and at 64 on AVX-512. FP32 halves the bytes: ZTURN-T runs
+  to 2<sup>20</sup>, where the four-step starts.</li>
+</ul>
+<div class="note"><p><span class="label">Note.</span> A prime's inner, a real transform's child, the four-step's two
+sides and a plane's rows and columns are all 1D complex cells. A change in one tile of Figure 1 reaches every tile that
+nests it.</p></div>
+</section>
+
+<footer><p>Sources: the band map and <span class="tt">vfft_policy_pool</span> in policy_il.h; ZTURN-T's odd band in ztt.h;
+the cache sizes of this CPU. Results measured on this machine, pinned to its P-cores.</p></footer>
+</main>
