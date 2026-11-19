@@ -3,7 +3,7 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
-## 0.8.1 beta (unreleased)
+## 0.8.1 beta (2026-11-19)
 
 ### Faster
 
@@ -26,6 +26,8 @@ version can change how a function behaves, so compile your program again with ea
 - Column lengths with several factors of 5 or 7 (such as 6,860, 12,005 or 16,807) in 2D
   transforms and lane-major batches, on one thread and on several.
 - Lane-major batches on several threads, most of all batches of few transforms.
+- Lane-major batches of 2D and 3D real transforms (R2C, C2R) of more than 16 transforms
+  with short rows, such as 8 or 16 points.
 - Planning a 2D transform for one thread with the measuring planner takes less time where
   the column length has only small prime factors.
 
