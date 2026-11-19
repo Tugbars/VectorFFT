@@ -10,9 +10,10 @@
 #     (VFFT_BUILD_GAUNTLET), with Intel MKL as the gauntlet's OPTIONAL comparator.
 #   Built as a subproject (add_subdirectory, FetchContent) it is the library alone:
 #   no gauntlet, no examples, no MKL search, no install rules, no build type set.
-#   The DFTI interface (src/shims/dfti/) ships as two source files: a program
-#   compiles vfft_dfti.c with its own files and puts src/shims/dfti/ ahead of
-#   MKL's include folder (src/shims/dfti/mkl_dfti.h).
+#   The DFTI interface (src/shims/dfti/) ships as source files: a program
+#   compiles vfft_dfti.c (DFTI) and vfft_tt.c (the Trigonometric Transforms)
+#   with its own files and puts src/shims/dfti/ ahead of MKL's include folder
+#   (src/shims/dfti/mkl_dfti.h, src/shims/dfti/mkl_trig_transforms.h).
 #
 # Configure, build, install (how-to-use/):
 #   cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_INSTALL_PREFIX=<prefix>

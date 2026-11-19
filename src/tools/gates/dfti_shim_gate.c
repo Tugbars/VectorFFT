@@ -13,7 +13,14 @@
  *      distance 3, a rank-2 real transform on the default strides (3 in place, 6 out of place), an
  *      unserved layout 6, a copy, BACKWARD_SCRAMBLED served in natural order, the readbacks;
  *   M  one descriptor computed from eight threads at once (NUMBER_OF_USER_THREADS 8, then 1), every
- *      result bitwise the one-thread result; THREAD_LIMIT 0 reads back vfft_info().cores.
+ *      result bitwise the one-thread result; THREAD_LIMIT 0 reads back vfft_info().cores;
+ *   T  the Trigonometric Transforms (mkl_trig_transforms.h): the sine, cosine and staggered sine
+ *      transforms at every n from 2 to 40 and at larger ones, both directions, MKL's scales and the
+ *      FFTW mode (ipar[10] = 1), judged on every entry of f against the definitions summed in long
+ *      double; the round trip; init's defaults; the statuses (n below 2, a type out of range, the
+ *      three refused types, ipar[6] not 0, the boundary warning and its tolerance, ipar[7] = 0, ipar[0]
+ *      or ipar[5] changed after the commit, a NULL or foreign handle both ways, single precision); one
+ *      handle computed from eight threads at once, every result bitwise the one-thread result.
  * The interface plans every cell with the estimate (VFFT_FLAG_ESTIMATE): nothing races and the store named by
  * VFFT_WISDOM_DIR is not opened. Usage: dfti_shim_gate --wisdir <dir> */
 #include <math.h>
@@ -21,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../shims/dfti/vfft_dfti.c" /* the interface in this unit: the gate reads its plans */
+#include "../../shims/dfti/vfft_tt.c"   /* the Trigonometric Transforms, likewise */
 #ifdef _WIN32
 #include <process.h>
 #else
@@ -569,6 +577,374 @@ static void shared(int nut)
     free(ref);
 }
 
+/* ── T: the Trigonometric Transforms ───────────────────────────────────── */
+#define TT_PI 3.14159265358979323846264338327950288L
+static const char *tt_name(int t)
+{
+    return t == MKL_SINE_TRANSFORM ? "sine" : t == MKL_COSINE_TRANSFORM ? "cosine" : "staggered sine";
+}
+/* S[m] = sin(pi m / 2n), m < 4n: every angle the three transforms take */
+static long double *tt_table(int n)
+{
+    long double *S = (long double *)malloc((size_t)4 * (size_t)n * sizeof(long double));
+    int m;
+    for (m = 0; m < 4 * n; m++)
+        S[m] = sinl(TT_PI * m / (2.0L * n));
+    return S;
+}
+/* the transform of g into F (n + 1 entries) by its definition: MKL's (the reference's formulas), or with
+ * fftw FFTW's (ipar[10] = 1); the entries outside the transform's range keep g's values */
+static void tt_ref(int t, int fwd, int fftw, int n, const double *g, long double *F, const long double *S)
+{
+    const long long P = 4LL * n;
+    int k, i;
+    for (k = 0; k <= n; k++)
+        F[k] = g[k];
+    if (t == MKL_SINE_TRANSFORM)
+        for (k = 1; k <= n - 1; k++)
+        {   /* 2/n sum_{i=1}^{n-1} f(i) sin(k i pi / n) forward, the sum backward; FFTW's RODFT00: twice the sum */
+            long double s = 0.0L;
+            for (i = 1; i <= n - 1; i++)
+                s += g[i] * S[(2LL * k * i) % P];
+            F[k] = fftw ? 2.0L * s : fwd ? 2.0L * s / n : s;
+        }
+    else if (t == MKL_COSINE_TRANSFORM)
+        for (k = 0; k <= n; k++)
+        {   /* e = f(0) + f(n) cos k pi: (e + 2 sum) / n forward, e / 2 + sum backward; FFTW's REDFT00: e + 2 sum */
+            const long double e = (long double)g[0] + ((k & 1) ? -(long double)g[n] : (long double)g[n]);
+            long double s = 0.0L;
+            for (i = 1; i <= n - 1; i++)
+                s += g[i] * S[(2LL * k * i + n) % P];
+            F[k] = fftw ? e + 2.0L * s : fwd ? (e + 2.0L * s) / n : 0.5L * e + s;
+        }
+    else if (!fftw)
+        for (k = 1; k <= n; k++)
+        {   /* forward sin((2k-1) pi/2) f(n) / n + 2/n sum_{i=1}^{n-1} f(i) sin((2k-1) i pi / 2n);
+             * backward sum_{i=1}^{n} f(i) sin((2i-1) k pi / 2n) */
+            long double s = 0.0L;
+            if (fwd)
+            {
+                for (i = 1; i <= n - 1; i++)
+                    s += g[i] * S[((2LL * k - 1) * i) % P];
+                F[k] = ((k & 1) ? (long double)g[n] : -(long double)g[n]) / n + 2.0L * s / n;
+            }
+            else
+            {
+                for (i = 1; i <= n; i++)
+                    s += g[i] * S[((2LL * i - 1) * k) % P];
+                F[k] = s;
+            }
+        }
+    else
+        for (k = 0; k < n; k++)
+        {   /* FFTW's RODFT01 (forward) and RODFT10 (backward) of f[0..n-1] */
+            long double s = 0.0L;
+            if (fwd)
+            {
+                s = (k & 1) ? -(long double)g[n - 1] : (long double)g[n - 1];
+                for (i = 0; i < n - 1; i++)
+                    s += 2.0L * g[i] * S[((long long)(i + 1) * (2 * k + 1)) % P];
+            }
+            else
+                for (i = 0; i < n; i++)
+                    s += 2.0L * g[i] * S[((long long)(2 * i + 1) * (k + 1)) % P];
+            F[k] = s;
+        }
+}
+static double tt_worst[4];
+static int tt_cells[4];
+static void tt_cell(int t, int n)
+{
+    const size_t m = (size_t)n + 1;
+    MKL_INT nn = n, tt = t, ipar[128], st = 0;
+    DFTI_DESCRIPTOR_HANDLE h = NULL;
+    double *dpar = (double *)malloc(((size_t)5 * (size_t)n / 2 + 2) * sizeof(double));
+    double *f = (double *)malloc(m * sizeof(double)), *g = (double *)malloc(m * sizeof(double));
+    double *g2 = (double *)malloc(m * sizeof(double));
+    long double *F = (long double *)malloc(m * sizeof(long double)), *S = tt_table(n);
+    int fftw, fwd;
+    size_t k;
+    fill(g, m, 31u * (unsigned)n + (unsigned)t);
+    if (t != MKL_COSINE_TRANSFORM)
+        g[0] = 0.0; /* the reference's 0.0 */
+    if (t == MKL_SINE_TRANSFORM)
+        g[n] = 0.0;
+    memcpy(g2, g, m * sizeof(double));
+    g2[0] = 0.3; /* the FFTW mode of the staggered sine transform reads f[0] */
+    memset(ipar, 0x5a, sizeof ipar);
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    CHECK(st == 0 && ipar[0] == n && ipar[1] == 1 && ipar[2] == 1 && ipar[5] == t && ipar[6] == 0 && ipar[7] == 1 &&
+          ipar[8] == 1 && ipar[9] == 1 && ipar[10] == 0 && dpar[0] == 1.0e-12 * n,
+          "T %s n=%d: init's defaults (stat %lld, dpar[0] %g)", tt_name(t), n, (long long)st, dpar[0]);
+    memcpy(f, g, m * sizeof(double));
+    d_commit_trig_transform(f, &h, ipar, dpar, &st);
+    CHECK(st == 0 && h != NULL && !memcmp(f, g, m * sizeof(double)), "T %s n=%d: commit stat %lld (f untouched)",
+          tt_name(t), n, (long long)st);
+    if (!h)
+        goto done;
+    for (fftw = 0; fftw < 2; fftw++)
+        for (fwd = 1; fwd >= 0; fwd--)
+        {
+            const double *in = (fftw && t == MKL_STAGGERED_SINE_TRANSFORM) ? g2 : g;
+            double e = 0.0, mx = 0.0;
+            ipar[10] = fftw;
+            memcpy(f, in, m * sizeof(double));
+            tt_ref(t, fwd, fftw, n, in, F, S);
+            if (fwd)
+                d_forward_trig_transform(f, &h, ipar, dpar, &st);
+            else
+                d_backward_trig_transform(f, &h, ipar, dpar, &st);
+            for (k = 0; k < m; k++)
+            {
+                const double d = fabs((double)((long double)f[k] - F[k]));
+                if (d > e)
+                    e = d;
+                if (fabs((double)F[k]) > mx)
+                    mx = fabs((double)F[k]);
+            }
+            e = mx > 0.0 ? e / mx : e;
+            CHECK(st == 0 && e <= 1e-13, "T %s n=%d %s%s: stat %lld, error %.2e", tt_name(t), n,
+                  fwd ? "forward" : "backward", fftw ? " (FFTW mode)" : "", (long long)st, e);
+            if (e > tt_worst[t])
+                tt_worst[t] = e;
+        }
+    {   /* MKL's pair is an inverse */
+        double e = 0.0, mx = 0.0;
+        ipar[10] = 0;
+        memcpy(f, g, m * sizeof(double));
+        d_forward_trig_transform(f, &h, ipar, dpar, &st);
+        d_backward_trig_transform(f, &h, ipar, dpar, &st);
+        for (k = 0; k < m; k++)
+        {
+            if (fabs(f[k] - g[k]) > e)
+                e = fabs(f[k] - g[k]);
+            if (fabs(g[k]) > mx)
+                mx = fabs(g[k]);
+        }
+        CHECK(st == 0 && e <= 1e-13 * mx, "T %s n=%d: backward of forward off by %.2e", tt_name(t), n, mx > 0 ? e / mx : e);
+    }
+    free_trig_transform(&h, ipar, &st);
+    CHECK(st == 0 && h == NULL, "T %s n=%d: free stat %lld", tt_name(t), n, (long long)st);
+done:
+    tt_cells[t]++;
+    free(dpar);
+    free(f);
+    free(g);
+    free(g2);
+    free(F);
+    free(S);
+}
+/* one routine's status on a fresh init of (n, type) and a commit on f (n + 1 values, the reference's
+ * zeros in place); the handle is left to the caller */
+static MKL_INT tt_commit(int n, int t, MKL_INT *ipar, double *dpar, double *f, DFTI_DESCRIPTOR_HANDLE *h)
+{
+    MKL_INT nn = n, tt = t, st;
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    d_commit_trig_transform(f, h, ipar, dpar, &st);
+    return st;
+}
+static void tt_statuses(void)
+{
+    MKL_INT ipar[128], st, nn, tt;
+    double dpar[5 * 16 / 2 + 2], f[17], fs[17];
+    float spar[4];
+    DFTI_DESCRIPTOR_HANDLE h = NULL, d = NULL;
+    int t;
+    fill(f, 17, 5u);
+    f[0] = 0.0;
+    f[8] = 0.0;
+    nn = 8, tt = MKL_SINE_TRANSFORM;
+    d_init_trig_transform(&nn, &tt, NULL, dpar, &st);
+    CHECK(st == -99999, "T: init without ipar %lld", (long long)st);
+    /* n below 2 and a type out of range: init takes them, commit refuses (-100) */
+    CHECK(tt_commit(1, MKL_SINE_TRANSFORM, ipar, dpar, f, &h) == -100 && ipar[6] == -100 && h == NULL, "T: n = 1");
+    CHECK(tt_commit(0, MKL_COSINE_TRANSFORM, ipar, dpar, f, &h) == -100 && h == NULL, "T: n = 0");
+    CHECK(tt_commit(8, 7, ipar, dpar, f, &h) == -100 && h == NULL, "T: type 7");
+    for (t = 0; t <= 5; t++)
+        if (t == MKL_STAGGERED_COSINE_TRANSFORM || t == MKL_STAGGERED2_COSINE_TRANSFORM || t == MKL_STAGGERED2_SINE_TRANSFORM)
+        {
+            nn = 8, tt = t;
+            d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+            CHECK(st == 0, "T: init of the refused type %d %lld", t, (long long)st);
+            d_commit_trig_transform(f, &h, ipar, dpar, &st);
+            CHECK(st == -100 && h == NULL, "T: the refused type %d at commit %lld", t, (long long)st);
+        }
+    /* ipar[6] not 0 at the commit */
+    nn = 8, tt = MKL_COSINE_TRANSFORM;
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    ipar[6] = 1;
+    d_commit_trig_transform(f, &h, ipar, dpar, &st);
+    CHECK(st == -10000 && h == NULL, "T: commit with ipar[6] = 1 %lld", (long long)st);
+    /* the boundary warning, its tolerance dpar[0] (8e-12 at n = 8), and the forward after it */
+    memcpy(fs, f, sizeof f);
+    fs[0] = 0.5e-12 * 8;
+    CHECK(tt_commit(8, MKL_SINE_TRANSFORM, ipar, dpar, fs, &h) == 0 && h, "T: f[0] within the tolerance");
+    free_trig_transform(&h, ipar, &st);
+    fs[0] = 2e-12 * 8;
+    CHECK(tt_commit(8, MKL_SINE_TRANSFORM, ipar, dpar, fs, &h) == 1 && ipar[6] == 1 && h, "T: f[0] above the tolerance");
+    d_forward_trig_transform(fs, &h, ipar, dpar, &st);
+    CHECK(st == -10000, "T: a forward after a commit that warned %lld", (long long)st);
+    ipar[6] = 0;
+    d_forward_trig_transform(fs, &h, ipar, dpar, &st);
+    CHECK(st == 0, "T: the forward once ipar[6] = 0 %lld", (long long)st);
+    /* ipar[0] or ipar[5] changed after the commit */
+    ipar[0] = 9;
+    d_forward_trig_transform(fs, &h, ipar, dpar, &st);
+    CHECK(st == -10000, "T: ipar[0] changed %lld", (long long)st);
+    ipar[0] = 8, ipar[6] = 0, ipar[5] = MKL_COSINE_TRANSFORM;
+    d_backward_trig_transform(fs, &h, ipar, dpar, &st);
+    CHECK(st == -100, "T: ipar[5] changed %lld", (long long)st);
+    ipar[5] = MKL_SINE_TRANSFORM, ipar[6] = 0;
+    /* the handle the other way: DFTI's routines refuse it, and the TT routines a DFTI descriptor */
+    CHECK(DftiComputeForward(h, fs) == DFTI_BAD_DESCRIPTOR, "T: DftiComputeForward on a TT handle");
+    CHECK(DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)8) == 0, "T: a DFTI descriptor");
+    d_forward_trig_transform(fs, &d, ipar, dpar, &st);
+    CHECK(st == -1000, "T: d_forward_trig_transform on a DFTI descriptor %lld", (long long)st);
+    ipar[6] = 0;
+    free_trig_transform(&d, ipar, &st);
+    CHECK(st == -1000 && d != NULL, "T: free_trig_transform on a DFTI descriptor %lld", (long long)st);
+    DftiFreeDescriptor(&d);
+    free_trig_transform(&h, ipar, &st);
+    CHECK(st == 0 && h == NULL, "T: free %lld", (long long)st);
+    free_trig_transform(&h, ipar, &st);
+    CHECK(st == -1000, "T: free of a NULL handle %lld", (long long)st);
+    /* the staggered sine transform in the FFTW mode reads f[0]: no warning */
+    memcpy(fs, f, sizeof f);
+    fs[0] = 0.5;
+    nn = 8, tt = MKL_STAGGERED_SINE_TRANSFORM;
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    ipar[10] = 1;
+    d_commit_trig_transform(fs, &h, ipar, dpar, &st);
+    CHECK(st == 0 && h, "T: the FFTW-mode staggered sine with f[0] = 0.5 %lld", (long long)st);
+    free_trig_transform(&h, ipar, &st);
+    /* ipar[7] = 0: commit checks and creates no handle */
+    nn = 8, tt = MKL_STAGGERED_SINE_TRANSFORM;
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    ipar[7] = 0;
+    d_commit_trig_transform(f, &h, ipar, dpar, &st);
+    CHECK(st == 0 && h == NULL, "T: commit with ipar[7] = 0 %lld", (long long)st);
+    d_forward_trig_transform(f, &h, ipar, dpar, &st);
+    CHECK(st == -1000, "T: a forward with no handle %lld", (long long)st);
+    /* single precision */
+    nn = 8, tt = MKL_SINE_TRANSFORM;
+    s_init_trig_transform(&nn, &tt, ipar, spar, &st);
+    CHECK(st == -99999 && ipar[6] == -99999, "T: s_init_trig_transform %lld", (long long)st);
+    s_commit_trig_transform((float *)f, &h, ipar, spar, &st);
+    CHECK(st == -10000 && h == NULL, "T: s_commit_trig_transform %lld", (long long)st);
+    s_forward_trig_transform((float *)f, &h, ipar, spar, &st);
+    CHECK(st == -10000, "T: s_forward_trig_transform %lld", (long long)st);
+    s_backward_trig_transform((float *)f, &h, ipar, spar, &st);
+    CHECK(st == -10000, "T: s_backward_trig_transform %lld", (long long)st);
+    printf("T statuses checked\n");
+}
+/* one handle, eight threads: each thread its own f and ipar */
+typedef struct
+{
+    DFTI_DESCRIPTOR_HANDLE *h;
+    double *f, *dpar;
+    const double *in, *ref;
+    MKL_INT ipar[128];
+    size_t m;
+    int reps, bad;
+} tt_mt_t;
+#ifdef _WIN32
+static unsigned __stdcall tt_mt_run(void *v)
+#else
+static void *tt_mt_run(void *v)
+#endif
+{
+    tt_mt_t *c = (tt_mt_t *)v;
+    MKL_INT st;
+    int i;
+    for (i = 0; i < c->reps; i++)
+    {
+        memcpy(c->f, c->in, c->m * sizeof(double));
+        d_forward_trig_transform(c->f, c->h, c->ipar, c->dpar, &st);
+        if (st != 0 || memcmp(c->f, c->ref, c->m * sizeof(double)))
+            c->bad++;
+    }
+    return 0;
+}
+static void tt_shared(void)
+{
+    enum { NT = 8, N = 4096 };
+    const size_t m = N + 1;
+    MKL_INT nn = N, tt = MKL_STAGGERED_SINE_TRANSFORM, ipar[128], st;
+    DFTI_DESCRIPTOR_HANDLE h = NULL;
+    double *dpar = (double *)malloc((5 * N / 2 + 2) * sizeof(double));
+    double *in = (double *)malloc(m * sizeof(double)), *ref = (double *)malloc(m * sizeof(double));
+    static tt_mt_t c[NT];
+    int t, bad = 0;
+    fill(in, m, 99u);
+    in[0] = 0.0;
+    d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+    d_commit_trig_transform(in, &h, ipar, dpar, &st);
+    CHECK(st == 0 && h, "T M: commit %lld", (long long)st);
+    if (!h)
+        return;
+    memcpy(ref, in, m * sizeof(double));
+    d_forward_trig_transform(ref, &h, ipar, dpar, &st);
+    for (t = 0; t < NT; t++)
+    {
+        c[t].h = &h;
+        c[t].f = (double *)malloc(m * sizeof(double));
+        c[t].dpar = dpar;
+        c[t].in = in;
+        c[t].ref = ref;
+        memcpy(c[t].ipar, ipar, sizeof ipar);
+        c[t].m = m;
+        c[t].reps = 100;
+        c[t].bad = 0;
+    }
+#ifdef _WIN32
+    {
+        HANDLE th[NT];
+        for (t = 0; t < NT; t++)
+            th[t] = (HANDLE)_beginthreadex(NULL, 0, tt_mt_run, &c[t], 0, NULL);
+        WaitForMultipleObjects(NT, th, TRUE, INFINITE);
+        for (t = 0; t < NT; t++)
+            CloseHandle(th[t]);
+    }
+#else
+    {
+        pthread_t th[NT];
+        for (t = 0; t < NT; t++)
+            pthread_create(&th[t], NULL, tt_mt_run, &c[t]);
+        for (t = 0; t < NT; t++)
+            pthread_join(th[t], NULL);
+    }
+#endif
+    for (t = 0; t < NT; t++)
+    {
+        bad += c[t].bad;
+        free(c[t].f);
+    }
+    CHECK(bad == 0 && ((struct vt_handle *)(void *)h)->busy == 0, "T M: %d of %d forwards from %d threads differ", bad,
+          NT * 100, NT);
+    printf("T M one handle, %d threads x 100 forwards: %d differ\n", NT, bad);
+    free_trig_transform(&h, ipar, &st);
+    free(dpar);
+    free(in);
+    free(ref);
+}
+static void trig(void)
+{
+    static const int big[] = {63, 64, 65, 100, 127, 128, 255, 256, 257, 1000, 1024, 1031, 4096, 4099};
+    static const int types[3] = {MKL_SINE_TRANSFORM, MKL_COSINE_TRANSFORM, MKL_STAGGERED_SINE_TRANSFORM};
+    int a, n, b;
+    for (a = 0; a < 3; a++)
+    {
+        for (n = 2; n <= 40; n++)
+            tt_cell(types[a], n);
+        for (b = 0; b < (int)(sizeof big / sizeof big[0]); b++)
+            tt_cell(types[a], big[b]);
+        printf("T %s transform: %d lengths, both directions, both scalings: worst error %.2e\n", tt_name(types[a]),
+               tt_cells[types[a]], tt_worst[types[a]]);
+    }
+    tt_statuses();
+    tt_shared();
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = NULL;
@@ -632,6 +1008,7 @@ int main(int argc, char **argv)
     statuses();
     shared(8);
     shared(1);
+    trig();
     printf("%d checks, %d failed\n%s\n", g_checks, g_fail, g_fail ? "*** DFTI INTERFACE GATE FAILED ***" : "DFTI INTERFACE GATE ALL PASS");
     return g_fail ? 1 : 0;
 }

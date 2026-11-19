@@ -34,6 +34,14 @@ version can change how a function behaves, so compile your program again with ea
 - Creating a plan for several threads with the measuring planner takes longer: the
   candidate plans are now timed on those threads.
 
+### The DFTI interface
+
+- MKL's Trigonometric Transform routines (`mkl_trig_transforms.h`, with `vfft_tt.c`
+  compiled beside the library): the sine, cosine and staggered sine transforms, computed
+  by VectorFFT's DST-I, DCT-I and DST-II/III with MKL's scales, and MKL's FFTW
+  compatibility mode (`ipar[10] = 1`). The staggered cosine and staggered2 transforms and
+  the single-precision routines are refused with MKL's status and a printed reason.
+
 ## 0.8.0 beta (2026-11-17)
 
 ### Faster
