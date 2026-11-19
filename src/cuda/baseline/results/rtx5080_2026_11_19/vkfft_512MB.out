@@ -1,0 +1,35 @@
+﻿device: NVIDIA GeForce RTX 5080  compute capability 12.0  SMs 84
+shared memory per block: 49152 B static, 101376 B opt-in
+VkFFT version 10304   buffer: 2^26 complex fp32 = 512 MB   rounds 31 (+8 warm-up)
+
+empty kernel, queued: 0.0056 ms per launch (min 0.0053)
+
+      n   batches upl    q |   fft ms        p10..p90 |    copy8   copy32 |     fwd1     inv1 |   ns/fft x copy    GB/s |  fwd err   rt err
+      8   8388608   1    6 |   1.4501  1.3413..1.5653  |   1.4952   1.4238 |   1.3615   1.3609 |      0.2   1.02     740 |  6.2e-08  6.2e-08
+        plan: [len 8 radices 8 reg/thr 8 block 128x1 smem 8320 B lut 0]  (planned in 97 ms)
+     16   4194304   1    8 |   1.4810  1.3365..1.5364  |   1.4595   1.4578 |   1.3570   1.3517 |      0.4   1.02     725 |  8.7e-08  1.1e-07
+        plan: [len 16 radices 4x4 reg/thr 4 block 32x4 smem 4224 B lut 0]  (planned in 90 ms)
+     32   2097152   1    6 |   1.4814  1.3392..1.5296  |   1.3670   1.4585 |   1.3625   1.3528 |      0.7   1.08     725 |  1.0e-07  1.7e-07
+        plan: [len 32 radices 8x4 reg/thr 8 block 32x4 smem 8448 B lut 0]  (planned in 143 ms)
+     64   1048576   1    6 |   1.4764  1.3401..1.5334  |   1.3691   1.4607 |   1.3660   1.3597 |      1.4   1.08     727 |  1.6e-07  2.5e-07
+        plan: [len 64 radices 8x8 reg/thr 8 block 16x8 smem 8704 B lut 0]  (planned in 186 ms)
+    128    524288   1    6 |   1.4852  1.3392..1.5315  |   1.4534   1.4592 |   1.3601   1.3536 |      2.8   1.02     723 |  2.0e-07  3.1e-07
+        plan: [len 128 radices 8x8x2 reg/thr 8 block 8x16 smem 9216 B lut 0]  (planned in 220 ms)
+    256    262144   1    8 |   1.4407  1.3402..1.4692  |   1.4339   1.4352 |   1.3642   1.3556 |      5.5   1.00     745 |  2.4e-07  3.4e-07
+        plan: [len 256 radices 16x16 reg/thr 16 block 8x16 smem 18432 B lut 0]  (planned in 294 ms)
+    512    131072   1    8 |   1.4760  1.3578..1.5019  |   1.4548   1.4600 |   1.3725   1.3504 |     11.3   1.01     727 |  2.6e-07  4.2e-07
+        plan: [len 512 radices 8x8x8 reg/thr 8 block 64x1 smem 4352 B lut 0]  (planned in 189 ms)
+   1024     65536   1    8 |   1.4554  1.3556..1.4732  |   1.4497   1.4571 |   1.3538   1.3528 |     22.2   1.00     738 |  3.1e-07  4.3e-07
+        plan: [len 1024 radices 32x32 reg/thr 32 block 32x1 smem 8704 B lut 0]  (planned in 605 ms)
+   2048     32768   1    8 |   1.4636  1.3401..1.4851  |   1.4312   1.4377 |   1.3648   1.3464 |     44.7   1.02     734 |  3.6e-07  5.4e-07
+        plan: [len 2048 radices 16x16x8 reg/thr 16 block 128x1 smem 17408 B lut 0]  (planned in 78 ms)
+   4096     16384   1    8 |   1.4314  1.3326..1.4588  |   1.4350   1.4335 |   1.3592   1.3496 |     87.4   1.00     750 |  4.2e-07  6.0e-07
+        plan: [len 4096 radices 16x16x16 reg/thr 16 block 256x1 smem 34816 B lut 0]  (planned in 80 ms)
+   8192      8192   1    6 |   1.4553  1.3310..1.4932  |   1.3655   1.4606 |   1.3549   1.3510 |    177.6   1.07     738 |  4.4e-07  6.5e-07
+        plan: [len 8192 radices 32x32x8 reg/thr 32 block 256x1 smem 69632 B lut 0]  (planned in 774 ms)
+  16384      4096   2    4 |   2.9075  2.6949..2.9756  |   1.3877   1.3872 |   2.8386   2.7366 |    709.8   2.10     369 |  4.0e-07  6.2e-07
+        plan: [len 64 radices 8x8 reg/thr 8 block 16x8 smem 8192 B lut 0] [len 256 radices 16x16 reg/thr 16 block 16x16 smem 34816 B lut 0]  (planned in 610 ms)
+  32768      2048   2    4 |   2.9676  2.6895..3.0045  |   1.3843   1.3868 |   2.8333   2.7074 |   1449.0   2.14     362 |  4.4e-07  7.2e-07
+        plan: [len 64 radices 8x8 reg/thr 8 block 16x8 smem 8192 B lut 0] [len 512 radices 8x8x8 reg/thr 8 block 16x64 smem 69632 B lut 0]  (planned in 329 ms)
+  65536      1024   2    4 |   2.9290  2.7336..2.9882  |   1.3900   1.3832 |   2.8515   2.7117 |   2860.4   2.12     367 |  4.7e-07  7.7e-07
+        plan: [len 128 radices 8x8x2 reg/thr 8 block 16x16 smem 16384 B lut 0] [len 512 radices 8x8x8 reg/thr 8 block 16x64 smem 69632 B lut 0]  (planned in 395 ms)

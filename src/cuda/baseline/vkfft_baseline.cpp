@@ -53,6 +53,7 @@ struct Options {
     double queue_ms = 10.0;    // a queued sample is sized to last about this long
     bool forward_only = false; // profile mode: lone forward launches, no copy kernels
     bool check = true;
+    bool lut = false;          // VkFFT reads twiddles from tables instead of computing them
     std::string csv;
     std::string dump_dir;      // write VkFFT's generated source and binary per size
 };
@@ -88,6 +89,7 @@ void die(const char* what, long code) {
 // byte is read once and written once and the values keep their size.
 // ---------------------------------------------------------------------------
 const char* kCopySource = R"(
+extern "C" __global__ void nop(float2* buf, unsigned long long n) {}
 extern "C" __global__ void copy8(float2* buf, unsigned long long n) {
     unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
@@ -113,6 +115,7 @@ struct CopyKernels {
     CUmodule module = nullptr;
     CUfunction copy8 = nullptr;
     CUfunction copy32 = nullptr;
+    CUfunction nop = nullptr; // an empty kernel: what a queued launch costs by itself
 };
 
 CopyKernels build_copy_kernels(CUdevice dev) {
@@ -148,6 +151,8 @@ CopyKernels build_copy_kernels(CUdevice dev) {
     if (c != CUDA_SUCCESS) die("cuModuleGetFunction(copy8)", c);
     c = cuModuleGetFunction(&k.copy32, k.module, "copy32");
     if (c != CUDA_SUCCESS) die("cuModuleGetFunction(copy32)", c);
+    c = cuModuleGetFunction(&k.nop, k.module, "nop");
+    if (c != CUDA_SUCCESS) die("cuModuleGetFunction(nop)", c);
     return k;
 }
 
@@ -241,13 +246,14 @@ Options parse(int argc, char** argv) {
         else if (a == "--queue-ms") o.queue_ms = std::atof(next("--queue-ms"));
         else if (a == "--forward-only") o.forward_only = true;
         else if (a == "--no-check") o.check = false;
+        else if (a == "--lut") o.lut = true;
         else if (a == "--csv") o.csv = next("--csv");
         else if (a == "--dump-dir") o.dump_dir = next("--dump-dir");
         else {
             std::fprintf(stderr,
                          "usage: vkfft_baseline [--min-log2 K] [--max-log2 K] [--total-log2 K]\n"
                          "                      [--rounds R] [--warmup W] [--queue-ms MS]\n"
-                         "                      [--forward-only] [--no-check] [--csv FILE]\n"
+                         "                      [--forward-only] [--no-check] [--lut] [--csv FILE]\n"
                          "                      [--dump-dir DIR]\n");
             std::exit(2);
         }
@@ -305,7 +311,22 @@ int main(int argc, char** argv) {
     if (cudaMalloc((void**)&buffer, bytes) != cudaSuccess) die("cudaMalloc", 0);
 
     CopyKernels copy;
-    if (!opt.forward_only) copy = build_copy_kernels(dev);
+    if (!opt.forward_only) {
+        copy = build_copy_kernels(dev);
+        // What a queued launch costs with no work in it: the floor under every number below.
+        void* nop_buf = buffer;
+        unsigned long long nop_n = 0;
+        void* nop_args[] = {&nop_buf, &nop_n};
+        std::vector<double> t_nop;
+        for (int r = 0; r < 12; ++r) {
+            const double t0 = seconds_now();
+            for (int q = 0; q < 1000; ++q) launch(copy.nop, 1, 32, nop_args);
+            if (cudaDeviceSynchronize() != cudaSuccess) die("cudaDeviceSynchronize", 0);
+            if (r >= 2) t_nop.push_back((seconds_now() - t0) * 1e3 / 1000.0);
+        }
+        const Stat nop = stat_of(t_nop);
+        std::printf("empty kernel, queued: %.4f ms per launch (min %.4f)\n\n", nop.med, nop.min);
+    }
 
     FILE* csv = nullptr;
     if (!opt.csv.empty()) {
@@ -342,6 +363,7 @@ int main(int argc, char** argv) {
         } else {
             cfg.normalize = 1;
         }
+        if (opt.lut) cfg.useLUT = 1;
         const bool dump = !opt.dump_dir.empty();
         if (dump) {
             cfg.keepShaderCode = 1; // keeps the generated source; also prints it on every launch
