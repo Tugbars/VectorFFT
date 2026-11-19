@@ -483,23 +483,29 @@ static int _zrb_sweep(const vfft_cfg_t *cfg, int N, const struct vfft_wisdom_s *
                 if (pool[c].kind == 4) pool[c].S = pS;
         }
         for (int c = 0; c < nc; c++)
+        {
+            const int T = _vfft_plan_threads(cfg);
+            if (T > 1 && pool[c].kind == 4)
+                pool[c].T = T;   /* a four-step inner's threaded form: built at T, its child's rows keyed at T */
             nb += _zrb_try(cfg, N, Ms[m], &pool[c], 0, a, ref, b, s0, xs, nchk, out, bns);
+            if (T > 1)
+            {   /* AT T EVERY CANDIDATE IN EACH THREADED FORM IT HAS (2026-11-19; before, only the two fastest one-thread
+                 * plans were threaded and a four-step inner never: r2c 200003 ran 1.0x at T = 8): ZTURN-T's walk BLOCKS
+                 * and TILES (zrb_mt.h), a four-step inner built at T its cut passes */
+                if (pool[c].kind == 3)
+                {
+                    _zrb_try(cfg, N, Ms[m], &pool[c], 1, a, ref, b, s0, xs, nchk, out, bns);
+                    _zrb_try(cfg, N, Ms[m], &pool[c], 2, a, ref, b, s0, xs, nchk, out, bns);
+                }
+                else if (pool[c].kind == 4)
+                    _zrb_try(cfg, N, Ms[m], &pool[c], 1, a, ref, b, s0, xs, nchk, out, bns);
+            }
+        }
         built += nb;
         if (getenv("VFFT_ZRACE_VERBOSE"))
             fprintf(stderr, "[zrb] N=%d M=%d: %d of %d inner(s) built; best so far %.0f ns\n", N, Ms[m], nb, nc, bns[0]);
     }
     (void)built;
-    if (_vfft_plan_threads(cfg) > 1)
-    {   /* the threaded forms of the two fastest (zrb_mt.h): BLOCKS and TILES */
-        _ilprime_inner_desc_t sd[2];
-        int sM[2], ns2 = 0;
-        for (int i = 0; i < 2; i++)
-            if (out[i] && _ilprime_desc_parse(&sd[ns2], out[i]->zrb->ikind, out[i]->zrb->ishape, out[i]->zrb->itw))
-                sM[ns2++] = out[i]->zrb->M;
-        for (int i = 0; i < ns2; i++)
-            for (int mt = 1; mt <= 2 && sd[i].kind != 4; mt++)   /* the threaded forms are ZTURN-T's: a four-step inner has none */
-                _zrb_try(cfg, N, sM[i], &sd[i], mt, a, ref, b, s0, xs, nchk, out, bns);
-    }
     for (int i = 0; i < 2; i++)
         if (out[i] && out[i]->zrb->inner.fs && !out[i]->zrb->inner.fs->own && pS)
             out[i]->zrb->inner.fs->own = _k1fs_store_dup(pS);   /* the winner's child rides to the real row from its own copy; the race's store dies here */
@@ -659,7 +665,8 @@ static struct vfft_plan_s *_real_il_odd_race(const vfft_cfg_t *cfg, int N, struc
                     rk.q = 1;
                     rr = vw2_lookup(&W->vw2, &rk);
                     if (!rr || _k1fs_row_put_child(&W->vw2, rr, hw->zrb->inner.fs->own, hw->zrb->inner.fs->N1,
-                                                   hw->zrb->inner.fs->N2, 0, 1) != VW2_OK)
+                                                   hw->zrb->inner.fs->N2, 0,
+                                                   hw->zrb->inner.fs_t > 1 ? hw->zrb->inner.fs_t : 1) != VW2_OK)   /* at its T */
                         fprintf(stderr, "vfft: the real Bluestein's four-step child at N=%d NOT banked -- its inner's child will race again\n", N);
                 }
                 _vw2_persist(W, cfg);
@@ -742,6 +749,8 @@ static struct vfft_plan_s *_real_il_odd_build(const vfft_cfg_t *cfg, int N, stru
                 vw2_real_il_key(&rk, N, c2r, ip, Tk);
                 rk.q = 1;
                 bd.row = vw2_lookup(&W->vw2, &rk);   /* a four-step inner's child replays from this row's fs_ tokens */
+                if (bd.kind == 4 && Tk > 1)
+                    bd.T = Tk;   /* built at the row's T, its child keyed there (the race at T, _zrb_sweep) */
                 hb = _zrb_build_plan(cfg, N, M, &bd);
                 if (hb)
                 {
@@ -750,7 +759,8 @@ static struct vfft_plan_s *_real_il_odd_build(const vfft_cfg_t *cfg, int N, stru
                         const vw2_rec_t *rr = vw2_lookup(&W->vw2, &rk);
                         fprintf(stderr, "vfft: the real Bluestein's four-step inner at N=%d (M=%d, %dx%d) did not replay -- "
                                         "its child raced in the plan's private store\n", N, M, bd.R1, bd.R2);
-                        if (rr && _k1fs_row_put_child(&W->vw2, rr, hb->zrb->inner.fs->own, bd.R1, bd.R2, 0, 1) == VW2_OK)
+                        if (rr && _k1fs_row_put_child(&W->vw2, rr, hb->zrb->inner.fs->own, bd.R1, bd.R2, 0,
+                                                      bd.T > 1 ? bd.T : 1) == VW2_OK)
                             _vw2_persist(W, cfg);
                     }
                     if (bmt) vfft_zrb_mt_bind(hb->zrb, hb->nthreads, bmt); /* the banked threaded arm, at the row's T */

@@ -1126,14 +1126,25 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             _il2d_c2c_build_clone_sets_all(h, cfg, h->nthreads);
             _il2d_nat_sscr_build(&h->il2d_col, N1, N2, h->nthreads);   /* the strips' dense scratch before the race: its arms run the form that serves */
         }
-        _il2d_axis_race(h, W, cfg, N1, N2);
+        _il2d_axis_arm_t axw;
+        double axns = 1e300;
+        int axmt;
+        memset(&axw, 0, sizeof axw);
+        axmt = _il2d_axis_race(h, W, cfg, N1, N2, 0, &axw, &axns);
+        if (h->nthreads > 1 && axmt && !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_FORMS"))
+            /* THE CHAIN RACE AT T: every other chain of the pool in its threaded forms on the whole transform,
+             * against this verdict; a new chain is installed and banked, its forms in il2d_fm */
+            _il2d_chain_race_t(h, W, cfg, N1, N2, &axw, axns, il2d_fm, sizeof il2d_fm);
         if (h->nthreads > 1)
         {
             _il2d_c2c_drop_unneeded_clones(h);
             /* the threading verdict was raced for the OLD route: a new
              * route at this T re-races it (a stale strips verdict replayed
-             * onto the tiled rows made 128x256 slower at T=8 than at 1) */
-            il2d_bcmt = il2d_bcmtt = -1;
+             * onto the tiled rows made 128x256 slower at T=8 than at 1) --
+             * unless the axis race decided it WITH the route (axmt: its per-form
+             * champions and their final), banked on the row: replayed below */
+            il2d_bcmt = axmt ? h->il2d_col.colmt : -1;
+            il2d_bcmtt = axmt ? h->nthreads : -1;
         }
     }
     /* c2c MT. Build the per-worker row clones (the serving

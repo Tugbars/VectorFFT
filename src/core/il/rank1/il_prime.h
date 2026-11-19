@@ -151,6 +151,13 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     in->pt = 0;
 #endif
 }
+/* 1 when the inner THREADS BY ITSELF: a four-step built at T > 1, whose 2D walk runs on the pool whatever the plan's
+ * arm (no serial form to fall to). Such a plan is never a batch's slab copy, as the c2c four-step at T (vfft.c
+ * _tc_inner_mt_safe): a copy run inside a pool worker would dispatch on the pool from that worker. */
+static inline int _ilprime_inner_threads(const _ilprime_inner_t *in)
+{
+    return in && in->fs && in->fs_t > 1;
+}
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const vfft_real *zi, vfft_real *zo)
 {

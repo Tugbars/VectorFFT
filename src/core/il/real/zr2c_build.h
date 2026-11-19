@@ -113,11 +113,13 @@ static inline int _zr2c_kid_arm(const struct vfft_zr2c_kid_s *k)
 {
     return k && ((k->ilp && k->ilp->mt > 0) || (k->b.ztt && k->b.ztt->mt > 0) || (k->b.ifd && k->b.ifd->mt > 0));
 }
-/* 1 when the child runs a threaded form: an arm, or a four-step built at T (its 2D child threads on the pool, with no
- * serial form to fall to: never a slab clone, as the c2c four-step at T) */
+/* 1 when the child runs a threaded form: an arm, or a four-step built at T -- the child itself, or a prime child's
+ * four-step inner (its 2D child threads on the pool, with no serial form to fall to: never a slab clone, as the c2c
+ * four-step at T) */
 static inline int _zr2c_kid_threaded(const struct vfft_zr2c_kid_s *k)
 {
-    return _zr2c_kid_arm(k) || (k && k->b.fs && k->b.fs->nthreads > 1);
+    return _zr2c_kid_arm(k) || (k && k->b.fs && k->b.fs->nthreads > 1) ||
+           (k && k->ilp && _ilprime_inner_threads(&k->ilp->inner));
 }
 
 /* the child's run: z_in -> z_out, the direction the transform needs */
@@ -322,9 +324,11 @@ static void _zr2c_child_of_kid(vw2_zr2c_child_t *o, const struct vfft_zr2c_kid_s
     o->ptw = k->pr.d.tw;
     o->mt = k->ilp ? k->ilp->mt : 0;   /* its threaded arm, on a threaded plan's row */
     if (k->pr.d.kind == 4)
-    {   /* the four-step inner's child: its rows ride on the composite's row as fs_ tokens (the FS route's spelling) */
+    {   /* the four-step inner's child: its rows ride on the composite's row as fs_ tokens (the FS route's spelling),
+         * read under the keys of the T the inner was built at (a threaded plan's row carries the child at T) */
         if (k->ilp && k->ilp->inner.fs && k->ilp->inner.fs->own)
-            (void)_zr2c_fs_str(o->fs, sizeof o->fs, k->ilp->inner.fs->own, k->pr.d.R1, k->pr.d.R2, 0);
+            (void)_zr2c_fs_str_t(o->fs, sizeof o->fs, k->ilp->inner.fs->own, k->pr.d.R1, k->pr.d.R2, 0,
+                                 k->ilp->inner.fs_t > 1 ? k->ilp->inner.fs_t : 1);
         else if (k->pr.fs[0])
             snprintf(o->fs, sizeof o->fs, "%s", k->pr.fs);
     }
@@ -376,9 +380,13 @@ static struct vfft_zr2c_kid_s *_zr2c_kid_build(const vfft_cfg_t *cfg, int n, int
         _ilprime_inner_desc_t d;
         if (pr && pr->m)
         {
+            const int T = _vfft_plan_threads(cfg) > 1 ? _vfft_plan_threads(cfg) : 1;
             d = pr->d;
+            if (d.kind == 4)
+                d.T = T;   /* a four-step inner is built at the real plan's T: its row's child is keyed there */
             if (d.kind == 4 && pr->fs[0])
-                d.seed = _zr2c_fs_store(pr->fs, d.R1, d.R2, 0);   /* the inner's child from the row; the plan takes the store */
+                d.seed = T > 1 ? _zr2c_fs_store_t(pr->fs, d.R1, d.R2, 0, T)
+                               : _zr2c_fs_store(pr->fs, d.R1, d.R2, 0);   /* the inner's child from the row; the plan takes the store */
             k->ilp = _ilprime_build_with(n, pr->m == 1, &d);
             if (d.seed)
                 _vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
@@ -570,8 +578,8 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
         if (pcell && pcell->m)
         {
             _ilprime_inner_desc_t d = pcell->d;
-            if (d.kind == 4 && pcell->fs[0])
-                d.seed = _zr2c_fs_store(pcell->fs, d.R1, d.R2, 0);   /* the inner's child from the first race's rows */
+            if (d.kind == 4 && pcell->fs[0])   /* the inner's child from the first race's rows, keyed at the T it was built at */
+                d.seed = d.T > 1 ? _zr2c_fs_store_t(pcell->fs, d.R1, d.R2, 0, d.T) : _zr2c_fs_store(pcell->fs, d.R1, d.R2, 0);
             _k1pr_ctx.plan = _ilprime_build_with(n, pcell->m == 1, &d);
             if (d.seed)
                 _vfft_wisdom_free((vfft_wisdom *)d.seed);   /* not taken: the build failed */
@@ -593,7 +601,8 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
          * only the cold create paid. No 1D row is read or written: the real
          * row carries its child's recipe (owner, 2026-10-14). */
         if (_k1pr_ctx.plan && pr->d.kind == 4 && _k1pr_ctx.plan->inner.fs && _k1pr_ctx.plan->inner.fs->own)
-            (void)_zr2c_fs_str(pr->fs, sizeof pr->fs, _k1pr_ctx.plan->inner.fs->own, pr->d.R1, pr->d.R2, 0);
+            (void)_zr2c_fs_str_t(pr->fs, sizeof pr->fs, _k1pr_ctx.plan->inner.fs->own, pr->d.R1, pr->d.R2, 0,
+                                 _k1pr_ctx.plan->inner.fs_t > 1 ? _k1pr_ctx.plan->inner.fs_t : 1);   /* at the T it was built at */
         if (pcell && !pcell->m && pr->m)
             *pcell = *pr;   /* kept for the other route */
     }

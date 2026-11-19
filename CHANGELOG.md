@@ -3,6 +3,37 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
+## 0.8.1 beta (unreleased)
+
+### Faster
+
+- 1D transforms on several threads with the measuring planner: the method and its
+  factorization are chosen by timing the candidates on those threads, not on one thread.
+- 2D complex transforms on several threads with the measuring planner: the factorization of
+  the columns, the method of the rows and the way the threads share the plane are chosen
+  together, each timed on the whole transform on those threads. Large 1D transforms
+  computed in four steps gain from it too.
+- 1D lengths of the form 2^k times an odd number (such as 10,000, 20,480 or 120,000) on
+  several threads.
+- Lengths computed with Rader's or Bluestein's method (lengths with a large prime factor) on
+  several threads: the inner transform is chosen for the threads, and a large inner
+  transform now runs on the threads too. The same holds for real transforms (R2C, C2R)
+  whose half length is such a length.
+- 1D real transforms (R2C, C2R) whose length is not a power of two, on several threads: the
+  complex transform inside them runs on the threads too.
+- 2D transforms and lane-major batches whose column length is a prime (such as 1031, 4099
+  or 4483), on several threads.
+- Column lengths with several factors of 5 or 7 (such as 6,860, 12,005 or 16,807) in 2D
+  transforms and lane-major batches, on one thread and on several.
+- Lane-major batches on several threads, most of all batches of few transforms.
+- Planning a 2D transform for one thread with the measuring planner takes less time where
+  the column length has only small prime factors.
+
+### Changed: adjust your program
+
+- Creating a plan for several threads with the measuring planner takes longer: the
+  candidate plans are now timed on those threads.
+
 ## 0.8.0 beta (2026-11-17)
 
 ### Faster

@@ -30,12 +30,21 @@
 
 extern long _vfft_zrb_mt_count;   /* vfft.c: the engagement counter */
 
-/* bind the arm for T: the inner ZTURN-T's walk (1 BLOCKS, 2 TILES); 0 =
- * declined or unbound -- the plan then runs serial */
+/* bind the arm for T: the inner ZTURN-T's walk (1 BLOCKS, 2 TILES), a four-step
+ * inner built at T (1: its own walk, the passes cut over T -- the prime cell's
+ * form, il_prime_mt.h); 0 = declined or unbound -- the plan then runs serial */
 static inline int vfft_zrb_mt_bind(vfft_zrb_plan_t *p, int T, int arm)
 {
     p->mt = 0;
     p->mt_t = 0;
+    if (p->inner.fs)
+    {   /* the four-step threads itself at the T it was built at: the one arm is the passes cut over that T */
+        if (arm < 1 || T < 2 || p->inner.fs_t != T)
+            return 0;
+        p->mt = 1;
+        p->mt_t = T;
+        return 1;
+    }
     if (!p->inner.pt)
         return 0;
     if (!vfft_ztt_mt_bind(p->inner.pt, T, arm))
@@ -107,8 +116,8 @@ static void _zrb_mt_pass(int T, const _zrb_mt_arg *proto, size_t n, size_t step,
     thread_pool_run(T, _zrb_mt_tramp, a, sizeof a[0]);
 }
 static inline void _zrb_mt_inner(const vfft_zrb_plan_t *p, const double *zi, double *zo, int bwd)
-{
-    if (vfft_ztt_execute_mt(p->inner.pt, zi, zo, bwd))
+{   /* ZTURN-T's threaded walk; a four-step inner built at T runs its own threaded walk through the serial call */
+    if (p->inner.pt && vfft_ztt_execute_mt(p->inner.pt, zi, zo, bwd))
         return;
     if (bwd) _ilprime_inner_bwd(&p->inner, zi, zo);
     else     _ilprime_inner_fwd(&p->inner, zi, zo);
@@ -122,7 +131,7 @@ static inline int vfft_zrb_execute_mt(const vfft_zrb_plan_t *p, const double *in
     const int T = thread_pool_workers_for(p->mt_t);
     const size_t N = (size_t)p->N, M = (size_t)p->M, h = (size_t)p->h;
     _zrb_mt_arg a;
-    if (p->mt <= 0 || T < 2 || T != p->mt_t || !p->inner.pt)
+    if (p->mt <= 0 || T < 2 || T != p->mt_t || (!p->inner.pt && !p->inner.fs))
         return 0;
     memset(&a, 0, sizeof a);
     a.p = p;

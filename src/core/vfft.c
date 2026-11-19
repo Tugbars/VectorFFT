@@ -659,8 +659,9 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         /* the real Bluestein: its two planes are the plan's own (a clone owns
          * its own), its inner pair is built directly (il2p / il3p / ZTT, no
          * pool) and its serial execute never touches the pool; the threaded
-         * form (il/real/zrb_mt.h) slabs the pool */
-        return g->zrb->mt == 0;
+         * form (il/real/zrb_mt.h) slabs the pool, and a four-step inner built
+         * at T threads on it by itself (never a slab clone) */
+        return g->zrb->mt == 0 && !_ilprime_inner_threads(&g->zrb->inner);
     if (g->zrbl)
         return 0; /* the lane Bluestein owns its M x K plane */
     if (g->zrp)
@@ -686,7 +687,10 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
         return (g->k1il2p || g->k1il3p || (g->k1ilfd && g->k1ilfd->mt == 0) ||
                 (g->k1ztt && g->k1ztt->mt == 0) || (g->k1fs && g->nthreads <= 1) ||
                 (g->k1_mono_ilf && g->k1_mono_ilb) || /* the mono: one pure kernel, alias-safe in place */
-                (g->k1ilpr && g->k1ilpr->mt == 0))    /* the prime cell's serial form: plan-owned planes, pool-free */
+                (g->k1ilpr && g->k1ilpr->mt == 0 &&
+                 !_ilprime_inner_threads(&g->k1ilpr->inner)))   /* the prime cell's serial form: plan-owned planes,
+                                                                  * pool-free -- not with a four-step inner built at T,
+                                                                  * which threads on the pool by itself */
                    ? 1
                    : 0;
     if (!g->k1_on)
@@ -713,7 +717,9 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
          * to, so it is never a slab clone: its batch runs the serial loop */
         return g->k1fs != NULL && g->nthreads <= 1;
     case VFFT_K1_IL_PRIME:
-        return g->k1ilpr != NULL && g->k1ilpr->mt == 0; /* the threaded form slabs the pool */
+        /* the threaded form slabs the pool; a four-step inner built at T threads on it by itself (no serial form to
+         * fall to: never a slab clone, as the four-step above) */
+        return g->k1ilpr != NULL && g->k1ilpr->mt == 0 && !_ilprime_inner_threads(&g->k1ilpr->inner);
     default:
         return 0; /* no IL route -> convert fallback */
     }

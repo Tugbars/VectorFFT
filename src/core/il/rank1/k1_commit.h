@@ -745,9 +745,10 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                         if (cands[j].d.kind == 4 && (long)cands[j].d.R1 * (long)cands[j].d.R2 == m) seen = 1;
                     if (pS && !seen) _k1_il_fs_warm(pS, W, &pcfg, (int)m);
                     cands[q].d.S = pS;
-                    if (T > 1 && !won)
-                        cands[q].d.T = T;   /* its threaded form: built at T (a composite's in-role race, won, keeps
-                                             * one thread: its recipe carries the child's one-thread rows) */
+                    if (T > 1)
+                        cands[q].d.T = T;   /* its threaded form: built at T, its child's rows keyed at T -- the c2c
+                                             * cell's row at T and a composite's in-role race alike (the real row at T
+                                             * carries the child at T, zr2c_build.h _zr2c_child_of_kid; 2026-11-19) */
                 }
             if (maxM > 0)
             {

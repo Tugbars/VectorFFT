@@ -618,6 +618,28 @@ static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, i
  * it; r2c / c2r 30000 at T = 8 ran 1.0x with the child serial, 2.05 / 2.24x with it threaded. One transform only: a
  * batch's whole transforms and the 2D real rows run their copies one-thread (_tc_slab_role), and the batch rule reads
  * the recipe as it was fitted (est__real_threads_own). A four-step child stays one-thread here. */
+/* A PRIME CHILD'S FOUR-STEP INNER AT T (2026-11-19): the real plan at T > 1 builds its prime child's four-step inner
+ * at its T, the inner's child seeded from the row under the keys of that T (zr2c_build.h _zr2c_kid_build), as the c2c
+ * prime cell's row at T carries it (est_prime_route's fs_t). Any batch size: a batch's per-transform plan is that
+ * row's create at T. The child's arm stays the recipe's (one thread's: 0). fs_t empty when no child at T is written. */
+static inline void est__real_zr2c_prime_fs_t(const est_machine_t *m, est_real_recipe_t *o, int T)
+{   /* also the real Bluestein's (zrb) four-step inner: built at the row's T the same way (odd_build.h _zrb_sweep,
+     * _real_il_odd_build), its child on the zrb row at T */
+    int s1, s2;
+    char w2[16];
+    const char *shape = NULL;
+    o->c.fs_t[0] = 0;
+    if (T < 2)
+        return;
+    if (!strcmp(o->eng, "zr2c") && o->c.k1_il_route == VFFT_K1_IL_PRIME && !strcmp(o->c.prime.in_kind, "fs"))
+        shape = o->c.prime.in_shape;
+    else if (!strcmp(o->eng, "zrb") && !strcmp(o->zrb.kind, "fs"))
+        shape = o->zrb.shape;
+    if (!shape || sscanf(shape, "%d.%d", &s1, &s2) != 2)
+        return;
+    if (est_fs_child(m, s1, s2, T, o->c.fs_t, sizeof o->c.fs_t, w2, sizeof w2) != 0)
+        o->c.fs_t[0] = 0;
+}
 static inline void est__real_zr2c_child_mt(const est_machine_t *m, long long N, est_real_recipe_t *o, int T)
 {
     est_recipe_t t;
@@ -730,6 +752,8 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
             out->tcmt = est__real_batch_whole(m, out, rq->N, rq->howmany);
         why[0] = 0;
     }
+    if (T > 1)
+        est__real_zr2c_prime_fs_t(m, out, T);   /* every batch size: the per-transform plan is the row's create at T */
     return 0;
 }
 
@@ -831,9 +855,11 @@ static inline int est_put_rows_real(vw2_store_t *st, const est_real_recipe_t *rc
         if (vw2_real_il_bank_zrb(st, N, c2r, ip, T, rc->zrb.M, rc->zrb.kind, rc->zrb.shape, rc->zrb.tw,
                                  rc->zrb.mt, 0.0) != VW2_OK) goto real;
         if (!strcmp(rc->zrb.kind, "fs"))
-        {   /* a four-step inner's child rides on the zrb row (odd_build.h:731-734) */
+        {   /* a four-step inner's child rides on the zrb row (odd_build.h:731-734); at T > 1 its child at T (the inner
+             * is built at the row's T: est__real_zr2c_prime_fs_t) */
             vw2_key_t rk;
-            if (!est__split_of(rc->zrb.shape, &n1, &n2) || est__fs_text(rc->c.fs, n1, n2, to_rp, fsb, sizeof fsb) ||
+            if (!est__split_of(rc->zrb.shape, &n1, &n2) ||
+                est__fs_text((T > 1 && rc->c.fs_t[0]) ? rc->c.fs_t : rc->c.fs, n1, n2, to_rp, fsb, sizeof fsb) ||
                 !fsb[0])
                 return est_refuse(why, whylen, "zrb's four-step inner has no child tokens");
             vw2_real_il_key(&rk, N, c2r, ip, T);
@@ -872,7 +898,9 @@ static inline int est_put_rows_real(vw2_store_t *st, const est_real_recipe_t *rc
         if (est__c2c_shape(&rc->c, half, &R1, &R2, why, whylen))
             return -1;
         if (est__fs_split(&rc->c, half, 1, &n1, &n2) &&
-            (est__fs_text(rc->c.fs, n1, n2, to_rp, fsb, sizeof fsb) || strlen(fsb) >= sizeof ch.fs))
+            (est__fs_text((T > 1 && rc->c.k1_il_route == VFFT_K1_IL_PRIME && rc->c.fs_t[0]) ? rc->c.fs_t : rc->c.fs,
+                          n1, n2, to_rp, fsb, sizeof fsb) ||   /* a prime child's four-step inner at T: its child at T */
+             strlen(fsb) >= sizeof ch.fs))
             return est_refuse(why, whylen, "the zr2c child's four-step tokens do not parse or pass the row's %u-byte cap "
                               "(wisdom2_real_il.h:405)", (unsigned)sizeof ch.fs);
         est__zr2c_child(&rc->c, R1, R2, fsb, &ch);
@@ -937,7 +965,10 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
             if (rc->zrb.M < vfft_zrb_min_m(N))
                 return est_refuse(why, whylen, "zrb's M=%d is below (3N-1)/2 = %d at N=%d (zrb.h:59,87)", rc->zrb.M,
                                   vfft_zrb_min_m(N), N);
-            return est__fs_preflight(rc->c.fs, n1, n2, why, whylen);
+            if (est__fs_preflight(rc->c.fs, n1, n2, why, whylen))
+                return -1;
+            /* the row at T carries the inner's child at T (est__real_zr2c_prime_fs_t) */
+            return (est__T(rq) > 1 && rc->c.fs_t[0]) ? est__fs_preflight(rc->c.fs_t, n1, n2, why, whylen) : 0;
         }
         h = _zrb_build_plan(c1, N, rc->zrb.M, &d);   /* odd_build.h:296 */
         break;
@@ -968,7 +999,11 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
                 return est_refuse(why, whylen, "zr2c prime child at %d: its four-step inner %dx%d is not a %s inner of a "
                                   "prime cell (il_prime.h:249, 299-318)", N / 2, n1, n2,
                                   ch->prime.method == 1 ? "Rader" : "Bluestein");
-            return est__fs_preflight(ch->fs, n1, n2, why, whylen);
+            if (est__fs_preflight(ch->fs, n1, n2, why, whylen))
+                return -1;
+            /* the row at T carries a prime child's four-step child at T (est__real_zr2c_prime_fs_t) */
+            return (ch->k1_il_route == VFFT_K1_IL_PRIME && est__T(rq) > 1 && ch->fs_t[0])
+                       ? est__fs_preflight(ch->fs_t, n1, n2, why, whylen) : 0;
         }
         if (ch->k1_il_route == VFFT_K1_IL_PRIME && !vfft_policy_prime_cell(N / 2))
             return est_refuse(why, whylen, "zr2c prime child at %d is not a prime cell", N / 2);
