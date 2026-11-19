@@ -252,7 +252,8 @@ struct vfft_plan_s
     struct vfft_plan_s **lm_roww;  /* its clones for the threaded row blocks, lm_roww_n of them */
     int lm_roww_n;
     struct vfft_wisdom_s *lm_rowS;
-    int lm_G;                      /* the 2D real batch's row group, in blocks (policy; 0 or 1 = a block at a time) */
+    int lm_G;                      /* the 2D real batch's row group, in blocks (policy; 1 = one block a group; 0 = a
+                                    * block at a time through the row child's door: a Rader, Bluestein or turned chain) */
     vfft_real *lm_gscr;            /* its dense scratches, one a worker: N2 / 2 rows of lm_G K complexes each, */
     size_t lm_gscr_sz;             /* lm_gscr_sz doubles apart, */
     int lm_gscr_n;                 /* lm_gscr_n of them */

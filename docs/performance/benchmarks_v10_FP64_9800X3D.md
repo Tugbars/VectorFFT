@@ -6,6 +6,8 @@ FFTW's time / VectorFFT's time: above 1 means VectorFFT is faster.
 - [18 selected transforms](#18-selected-transforms-estimate-plans) in 1D, 2D and 3D, double precision, planned by
   the estimate (`VFFT_FLAG_ESTIMATE`): nothing was measured on this machine and no wisdom was read. Geometric mean
   1.62×, ahead on 16 of 18.
+- [Every 1D length from 2 to 4,096](#every-1d-length-from-2-to-4096-estimate-plans), double precision, planned by
+  the estimate: geometric mean 2.10×, ahead on 3,939 of the 4,095 lengths.
 - [1D powers of two in single precision](#1d-powers-of-two-single-precision-planned-by-measuring), 64 to
   4,194,304 points, planned by measuring: geometric mean 2.27×, ahead on 17 of 17.
 
@@ -26,8 +28,9 @@ This host is not the i9-14900KF of [v1_0_results.md](v1_0_results.md), the Zen 4
 | Operating system | Windows |
 | Instruction set | AVX-512, the program's default on a CPU that runs it |
 
-The runs' files record neither the CPU nor the instruction set: both are as reported by the person who ran them,
-and the cache sizes are the CPU's specification.
+The files of the 2026-11-14 runs record neither the CPU nor the instruction set: both are as reported by the person
+who ran them. The every-length run's files name the CPU and the AVX-512 build. The cache sizes are the CPU's
+specification.
 
 ## 18 selected transforms, estimate plans
 
@@ -78,6 +81,41 @@ VectorFFT is ahead on 16 of the 18 transforms and behind on two, both in one eng
   512×512 up the two orders agree within 5 %. This is one pass: the figures of the small transforms carry that
   spread.
 - **Accuracy:** VectorFFT's output agrees with FFTW's to 3.0e-15 or better at every transform.
+
+## Every 1D length from 2 to 4,096, estimate plans
+
+Complex-to-complex in 1D at every length from 2 to 4,096 points, 4,095 lengths, double precision, interleaved,
+natural order, out of place. The program is the AVX-512 build of `vectorfft_vs_fftw_selected` (the programs of
+[`benchmark_scripts/`](../../benchmark_scripts/README.md)), given the lengths to time (`--cells`) in 16 runs on
+2026-11-18, built from VectorFFT 0.8.0. Every plan comes from the estimate
+(`VFFT_FLAG_ESTIMATE`); before timing, the program checked that the plan it ran was the one the estimate produced.
+FFTW is the package's own 3.3.10 with its SSE2, AVX, AVX2 and AVX-512 kernels, its plans made with `FFTW_MEASURE`.
+
+Each speedup is the worse of the two engine orders (VectorFFT timed first, FFTW timed first).
+
+| Lengths | Count | Geometric mean | Ahead | Level | Behind | Lowest | Highest |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All lengths | 4,095 | **2.10×** | 3,939 | 4 | 152 | 0.68× | 6.61× |
+| Powers of two | 12 | **1.12×** | 9 | 1 | 2 | 0.80× | 1.65× |
+| Primes | 564 | **1.93×** | 542 | 1 | 21 | 0.77× | 4.98× |
+| The other lengths | 3,520 | **2.13×** | 3,388 | 3 | 129 | 0.68× | 6.61× |
+| 2 to 64 | 63 | **1.18×** | 42 | 1 | 20 | 0.68× | 2.47× |
+| 65 to 512 | 448 | **1.98×** | 421 | 0 | 27 | 0.74× | 6.61× |
+| 513 to 4,096 | 3,584 | **2.13×** | 3,476 | 3 | 105 | 0.68× | 6.02× |
+
+### Reading every length
+
+- **Ahead on 3,939 of the 4,095 lengths**, level on 4 and behind on 152. 3,273 lengths read 1.5× or more and 2,131
+  read 2× or more.
+- **Highest:** 323 (6.61×), 3,266 (6.02×), 2,414 (6.01×), 2,698 (5.94×) and 437 (5.81×).
+- **Lowest:** most of the slowest lengths have one prime factor between 151 and 449: 562 = 2 × 281 and 566 = 2 × 283
+  (0.68×), 604 = 4 × 151 (0.70×), 1,347 = 3 × 449 (0.72×), then 628, 302, 879, 878, 1,345 and the prime 439 (0.73×
+  to 0.77×). The others are short lengths, 12 (0.68×), 15 (0.70×) and 48 (0.76×), and two smooth ones, 896 = 2⁷ × 7
+  (0.76×) and 1,600 = 2⁶ × 5² (0.77×).
+- **Powers of two:** 1.12×. Behind at 8 (0.98×) and 16 (0.80×); from 32 up 1.08× to 1.65×, with 512 at 1.00×.
+- **Short lengths:** from 2 to 64, 1.18×, behind on 20 of the 63.
+- **Accuracy:** VectorFFT's output agrees with FFTW's to 2.0e-15 or better at every length (the largest difference,
+  1.95e-15, at 2,971).
 
 ## 1D powers of two, single precision, planned by measuring
 
