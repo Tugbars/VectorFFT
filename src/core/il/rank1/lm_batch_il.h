@@ -196,6 +196,12 @@ static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_c
     const int plain = !c->blu && !c->tpc && c->wl <= 0 && (!c->nat || c->nst >= 2) &&
                       (!c2c || vfft_policy_lm_serial_tiles(c->rd0 != NULL));
     const int strips_ok = !c->blu && !c->tpc && (!c->nat || c->nst >= 2);
+    /* THE THREADED FORM OF A NATURAL CHAIN IS THE TILE (2026-11-17, il2d_tier.h _il2d_col_tile_serves): where it
+     * serves, it takes the walk's place among the arms. Same run, lane-major c2c at 4 and 8 threads, 111 cells of
+     * rank 1 - 3 from L1 to DRAM: the tile 0.63 x the walk's time at 8 threads (0.48 in L2), bitwise the serial
+     * pass on every cell, and the best of serial, tile and strips equal to the best of all four forms -- the walk
+     * was the fastest form on one cell (64 x 32 at 4 threads, 6 %, 32 KiB) */
+    const int tile = _il2d_col_tile_serves(c);
     /* the chain race of this build crowned the serial tile with the chain: kept, never raced again here */
     const int crowned = plain && c->lmsw >= 0;
     /* the arms' planes: the chain's M x K for a c2c batch; a real batch's arm runs its executor, whose
@@ -218,6 +224,13 @@ static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_c
      * memset into freed scratch: 12005 x 32 and 4099 x 32 at 8 threads, 2026-11-01). No threaded arm, no threaded
      * replay. */
     need_mt = workers >= 2 && !c->tpc && !(usable && bcmt >= 0);
+    if (workers >= 2 && !need_mt && !c->tpc && bcmt > 0)
+    {   /* a banked threaded form this door no longer serves for the pass -- the walk where the tile serves, the tile
+         * where it does not -- is no verdict: raced again */
+        const int arm = vw2_ilcol_tok_geti(&W->vw2, key, "mtarm", 0);
+        if ((arm == 0 && tile) || (arm == 2 && !tile))
+            need_mt = 1;
+    }
     if (workers >= 2 && !need_mt && !c->tpc)
     {   /* the threaded verdict from the row at this T */
         c->colmt = bcmt > 0;
@@ -280,7 +293,10 @@ static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_c
     }
     if (need_mt)
     {
-        _LM_ARM("threaded", 1, 0, 0, 0);
+        if (tile)
+            _LM_ARM("tile", 1, 2, 0, 0);
+        else
+            _LM_ARM("threaded", 1, 0, 0, 0);
         if (strips_ok)
         {
             (void)(c->nat ? _il2d_nat_sscr_build(c, N, K, workers) : _lm_sscr_build(c, N, K, workers));
@@ -1430,6 +1446,20 @@ static void _lm_chain_arm(void *v)
     _il2d_race_ctx_t *a = (_il2d_race_ctx_t *)v;
     struct vfft_plan_s *h = a->h;
     h->il2d_col.wc = a->wc;
+    if (a->lmtile)
+    {   /* the candidate as the TILE on the cell's threads (the chain race at T > 1, _il2d_race_heat): the pass the
+         * door serves with that verdict, the plan put back to one thread after (its serial forms share it) */
+        vfft_ilcol_t *c = &h->il2d_col;
+        const int t0 = h->nthreads;
+        h->nthreads = a->T;
+        c->colmt = 1;
+        c->natarm = 2;
+        _lm_cols(h, a->z, a->zo, h->transform == VFFT_C2R);
+        c->colmt = 0;
+        c->natarm = 0;
+        h->nthreads = t0;
+        return;
+    }
     if (h->lm_M > 0)
     {   /* the 1D real batch: its executor (the fused strips, the whole plane, or the three-phase form) */
         if (h->transform == VFFT_C2R)

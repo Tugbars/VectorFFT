@@ -848,6 +848,36 @@ static void _il2d_cmt_body(const void *v, const vfft_real *src, vfft_real *dst)
                              a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)Rl * hp1 : NULL);
         return;
     }
+    if (a->strip == 3)
+    {   /* THE TILE (natural, mtarm = 2): the first stage's sub-problems [lo, hi), each D0 = N1 / R0 rows of the
+         * scratch, this worker's alone -- forward: the middle stages in place on the tile, then its leaf blocks
+         * (scratch -> dst); reverse: its leaf blocks gathered (src -> scratch), then the middle stages reversed
+         * in place. _il2d_cols_mt_desc runs the first stage across the plane before (forward) or after (reverse) */
+        const int nst = c->nst, R0 = c->R[0], Rl = c->R[nst - 1];
+        const size_t D0 = (size_t)a->N1 / (size_t)R0;
+        vfft_real *slot = a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)Rl * hp1 : NULL;
+        size_t t;
+        for (t = a->lo; t < a->hi; t++)
+        {
+            if (!a->reverse)
+            {
+                vfft_real *tile = (vfft_real *)src + 2 * t * D0 * hp1;   /* the scratch: writable */
+                if (nst > 2)
+                    _il2d_col_stages2(tile, tile, (int)D0, hp1, hp1, 1, nst - 1, c->R, c->L, fns, tabs, 0);
+                _il2d_nat_leaf_range(src, dst, a->N1, hp1, Rl, fns[nst - 1], c->natperm, t * D0 / (size_t)Rl,
+                                     (t + 1) * D0 / (size_t)Rl, 0, slot);
+            }
+            else
+            {
+                vfft_real *tile = dst + 2 * t * D0 * hp1;
+                _il2d_nat_leaf_range(src, dst, a->N1, hp1, Rl, fns[nst - 1], c->natperm, t * D0 / (size_t)Rl,
+                                     (t + 1) * D0 / (size_t)Rl, 1, slot);
+                if (nst > 2)
+                    _il2d_col_stages2(tile, tile, (int)D0, hp1, hp1, 1, nst - 1, c->R, c->L, fns, tabs, 1);
+            }
+        }
+        return;
+    }
     if (a->strip == 2)
     {   /* THE COLUMN BLOCKS (2026-10-08): the whole chain over this worker's columns
          * [lo, hi) in sub-strips of msw (0 = the whole range) -- a natural chain through the worker's
@@ -915,6 +945,14 @@ static void _il2d_cmt_tramp(void *v)
         _il2d_cmt_body(a, a->src, a->dst);
 }
 
+/* THE TILE SERVES (mtarm = 2, _il2d_cols_mt_desc): a natural chain of two stages or more whose first stage is no
+ * Rader stage, on an axis with no Bluestein and no turned prime pass, the natural leaf's scratch built. The
+ * lane-major door races it, and the estimate names it, as the threaded form of such a pass. */
+static inline int _il2d_col_tile_serves(const vfft_ilcol_t *c)
+{
+    return c->nat && c->nst >= 2 && !c->blu && !c->tpc && c->f[0] && c->b[0] && c->natscr;
+}
+
 /* Returns 1 when it ran threaded, 0 when the caller must run serial. */
 /* THE THREADED COLUMN PASS over a column descriptor c (N1 rows): the plan's own (il2d_col,
  * through _il2d_real_cols_mt) or a chain race candidate's view at T > 1 (_il2d_arm_chain_mt), so
@@ -953,6 +991,39 @@ static int _il2d_cols_mt_desc(const vfft_ilcol_t *c, int N1, const vfft_real *sr
         }
         thread_pool_run(Ts, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
         return 1;
+    }
+    if (T >= 2 && c->natarm == 2 && _il2d_col_tile_serves(c))
+    {   /* mtarm = 2: THE TILE (2026-11-17; the 2D tier's tile, _il2d_c2c_mt, without its row transform): the first
+         * stage across the plane (src -> scratch; its digit is the row within a sub-problem), then every
+         * sub-problem, N1 / R0 rows of the scratch, one worker's: its middle stages and its leaf blocks; reverse
+         * mirrored. The plane crosses the cores once each way where the walk crosses them at every stage: the
+         * threaded form of a long chain over few lanes (a lane-major batch of K = 8) */
+        const int R0 = c->R[0], Rl = c->R[c->nst - 1];
+        const size_t D0 = (size_t)N1 / (size_t)R0;
+        const int Tt = R0 < T ? R0 : T;
+        vfft_real *scr = c->natscr;
+        if (R0 >= 2 && Tt >= 2 && D0 % (size_t)Rl == 0)
+        {
+            if (!reverse && !_il2d_stage_digits_mt(src, scr, N1, hp1, hp1, R0, c->L[0], c->f[0], c->tf[0], T))
+                _il2d_col_stages(src, scr, N1, hp1, 0, 1, c->R, c->L, c->f, c->tf, 0);
+            for (t = 0; t < Tt; t++)
+            {
+                a[t].c = c; a[t].N1 = N1; a[t].stage = stage;
+                a[t].src = reverse ? src : scr;
+                a[t].dst = reverse ? scr : dst;
+                a[t].reverse = reverse;
+                a[t].strip = 3;
+                a[t].natleaf = 0;
+                a[t].tid = t;
+                a[t].stk = stk;
+                a[t].lo = (size_t)R0 * (size_t)t / (size_t)Tt;
+                a[t].hi = (size_t)R0 * (size_t)(t + 1) / (size_t)Tt;
+            }
+            thread_pool_run(Tt, _il2d_cmt_tramp, a, sizeof a[0]);   /* caller = a[0] */
+            if (reverse && !_il2d_stage_digits_mt(scr, dst, N1, hp1, hp1, R0, c->L[0], c->b[0], c->tb[0], T))
+                _il2d_col_stages(scr, dst, N1, hp1, 0, 1, c->R, c->L, c->b, c->tb, 0);
+            return 1;
+        }
     }
     if (T >= 2 && c->nat)
     {
@@ -2066,6 +2137,8 @@ typedef struct
     int T;                    /* the chain race at T > 1: the candidate timed through the THREADED pass (_il2d_arm_chain_mt) */
     int wc;                   /* a lane-major chain arm (_lm_chain_arm): the lane tile it serves with (0 = none: the walk,
                                * or the real batch's whole plane) */
+    int lmtile;               /* a lane-major chain arm at T > 1: the candidate as the TILE on T threads (_lm_chain_arm,
+                               * mtarm = 2), 0 = a serial form */
 } _il2d_race_ctx_t;
 
 /* A LANE-MAJOR CELL IN THE CHAIN RACE (il/rank1/lm_batch_il.h, rank2/lm_batch2d_il.h, lm_batch2dr_il.h,
@@ -2973,8 +3046,10 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
  * candidate with, each through the door's own pass on a plan carrying the
  * candidate (_lm_chain_arm), in the cell's placement and direction (in place:
  * the plane re-laid from zseed before every sample); its score is its best
- * form, and lm->wc names the winner's. The threaded forms are not in this
- * race: the lane-major race (_lm_race) times them after, on the winning chain.
+ * form, and lm->wc names the winner's serial form. At T > 1 a candidate the
+ * tile serves is also timed as the tile on T threads (its cost turns on the
+ * chain); the lane-major race (_lm_race) decides the threaded form after, on
+ * the winning chain.
  * The winner's candidate index, -1 when none builds; *wns its ns, *wwl its
  * width. */
 static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, const int *idx, int n,
@@ -3002,7 +3077,7 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
     {
         const int ci = idx[k];
         int *perm = NULL;
-        int wlc[14], nwl = 0, w;
+        int wlc[14], nwl = 0, w, tarm = 0;
         if (!_il2d_resolve(cand[ci], lens[ci], cb[nc].ff, cb[nc].fb))
             continue;
         if (nat && lens[ci] > 1)
@@ -3024,10 +3099,15 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
                                         cb[nc].tf, cb[nc].tb, nat && perm != NULL, perm, nscr);
             if (cb[nc].lmh)
                 nwl = _lm_chain_forms(lm, N1, N2, cand[ci], nat && perm != NULL, wlc);
+            /* AT T > 1 THE CANDIDATE AS THE TILE TOO (2026-11-17): the tile's cost turns on the chain (its first radix
+             * is the sub-problems the workers share: 4096 x 8 at 8 threads, 4.4.32.8 the serial forms' pick, the tile
+             * on it 24.9 us against 17.9 on 8.8.8.8), so a chain is timed in the threaded form the door serves it with
+             * as well as in its serial forms; the lane-major race then decides the form on the winner */
+            tarm = cb[nc].lmh && T > 1 && _il2d_col_tile_serves(&cb[nc].lmh->il2d_col);
         }
         else if (banded)
             nwl = _il2d_race_widths(N1, N2, lens[ci], cb[nc].Ls, wlc, 14);
-        if ((lm && !cb[nc].lmh) || na + (lm ? 0 : 1) + nwl > VFFT_RACE_MAX_ARMS)
+        if ((lm && !cb[nc].lmh) || na + (lm ? 0 : 1) + nwl + tarm > VFFT_RACE_MAX_ARMS)
         {   /* no plan carries it, or the heat is full: this chain waits for the next (the caller sizes heats so this
              * is rare) */
             const int full = !lm || cb[nc].lmh;
@@ -3070,14 +3150,33 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
             armc[na] = nc;
             na++;
         }
+        if (tarm)
+        {   /* the tile arm: the candidate's plan on T threads (its serial lane tile irrelevant there) */
+            _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
+                                    lens[ci], cand[ci], cb[nc].Ls, cb[nc].ff, cb[nc].tf,
+                                    nat && perm != NULL, perm, nscr, 0, nstage };
+            c0.zo = zo;
+            c0.h = cb[nc].lmh;
+            c0.wc = 0;
+            c0.T = T;
+            c0.lmtile = 1;
+            rc[na] = c0;
+            arms[na].name = "chain";
+            arms[na].run = _lm_chain_arm;
+            arms[na].ctx = &rc[na];
+            armc[na] = nc;
+            na++;
+        }
         nc++;
     }
     if (na > 0)
     {
         vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL, 1 }; /* min-of-3, alternated */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
         _il2d_ip_reset_t hrs = { z, zseed, lm ? zn : 2 * (size_t)N1 * (size_t)N2 };
-        int best;
-        if (T > 1 && banded && !lm)
+        int best, anytile = 0;
+        for (a = 0; a < na; a++)
+            anytile |= rc[a].lmtile;
+        if ((T > 1 && banded && !lm) || anytile)
         {   /* THREADED arms: two untimed passes per arm first, never paused (a paced pool parks its workers) */
             proto.warm = 2;
             proto.pace = 0;
@@ -3098,13 +3197,26 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
             win = cb[armc[best]].ci;
             *wns = ns[best];
             if (wwl) *wwl = rc[best].wl;
-            if (lm) lm->wc = rc[best].wc;
+            if (lm)
+            {   /* the winner's serial lane tile: the arm's, or where its tile arm won, that chain's best serial form */
+                int bs = best;
+                if (rc[best].lmtile)
+                {
+                    bs = -1;
+                    for (a = 0; a < na; a++)
+                        if (armc[a] == armc[best] && !rc[a].lmtile && (bs < 0 || ns[a] < ns[bs]))
+                            bs = a;
+                }
+                lm->wc = bs >= 0 ? rc[bs].wc : 0;
+            }
         }
         if (getenv("VFFT_IL2D_LOG"))
         {
             fprintf(stderr, "[il2d] chain race %dx%zu (%s%s): %d chain(s), %d arm(s)", N1, N2,
                     nat ? "nat" : "scr",
-                    lm ? (lm->ip ? ", the lane-major serial forms, in place" : ", the lane-major serial forms")
+                    lm ? (lm->ip ? (anytile ? ", the lane-major serial forms and the tile, in place"
+                                            : ", the lane-major serial forms, in place")
+                                 : (anytile ? ", the lane-major serial forms and the tile" : ", the lane-major serial forms"))
                        : (T > 1 && banded) ? ", the threaded pass" : "", nc, na);
             for (a = 0; a < na; a++)
             {
@@ -3112,7 +3224,9 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
                 fprintf(stderr, " ");
                 for (q = 0; q < lens[cb[armc[a]].ci]; q++)
                     fprintf(stderr, "%s%d", q ? "." : "", cand[cb[armc[a]].ci][q]);
-                if (lm)
+                if (lm && rc[a].lmtile)
+                    fprintf(stderr, "/tile");
+                else if (lm)
                     fprintf(stderr, "/sw%d", rc[a].wc);
                 else if (rc[a].wl > 0)
                     fprintf(stderr, "/wl%d", rc[a].wl);
@@ -3164,7 +3278,7 @@ static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
      * lane-major chain its serial forms: the walk or the whole plane + at most
      * the serial ladder's widths) */
     int lad[6];
-    const int lmn = lm ? 1 + _il2d_sw_ladder(N1, N2, 1, lad, 6) : 1;
+    const int lmn = lm ? 1 + _il2d_sw_ladder(N1, N2, 1, lad, 6) + (Tw > 1) : 1;   /* + the tile arm at T > 1 */
     const int heat = lm ? (VFFT_RACE_MAX_ARMS / lmn < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / lmn : VFFT_IL2D_HEAT)
                    : banded ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
     int ns = ncand, win = -1, wwl = 0, i, rounds = 0, heats = 0;
@@ -3915,8 +4029,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     _il2d_lmform_of(key, cfg, &lmf);
                 int win = _il2d_race_chains(N, rn, ncand, cand,
                                             lens, &bns, nat_req, /*banded=*/1, &bwl,
-                                            key->lm ? 1 : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass */
-                                            key->lm ? &lmf : NULL);   /* a lane-major batch: its door's serial forms in its placement, the winner's lane tile kept (its threaded forms are raced after) */
+                                            key->lm ? key->nthreads : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 through its threaded pass; a lane-major cell at T > 1 its tile too */
+                                            key->lm ? &lmf : NULL);   /* a lane-major batch: its door's serial forms in its placement and at T > 1 the tile, the winner's lane tile kept (the threaded form is decided after, _lm_race) */
                 if (win == VFFT_IL2D_RACE_OOM)
                 {   /* OUT OF MEMORY: the race's planes could not be allocated (its reason recorded). That is no
                      * verdict on N's chains: refused with that cause, no other route tried */

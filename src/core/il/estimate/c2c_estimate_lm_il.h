@@ -24,7 +24,7 @@
  *   - at T > 1, est_mt_2d's test: threaded once the plane, 16 N1 lanes bytes, passes
  *     L1d / EST_ND_MT_SERIAL_L1_DIV, except a column of 2 and a column through the turned prime pass; then the
  *     strips at est__msw_2d's width where every worker gets a vector of lanes (the rule below), else the
- *     threaded walk;
+ *     tile where the door's tile serves the pass (est__lm_tile), else the threaded walk;
  *   - the block child: the lower-rank lane-major recipe on one thread, natural, in place.
  * THE BUILD (est_build_lm) takes the steps of c2c_estimate_nd_il.h: the pre-flight, the rows into a store held
  * in memory, the door's replay (est__replay), and the plan the door built checked against the recipe
@@ -70,7 +70,7 @@ typedef struct est_planlm_s
     est_col_t col;               /* the first axis: the column pass at w = the lanes, unbanded */
     int sw;                      /* [sw] the serial lane tile, 0 = the walk */
     int cmt;                     /* [cmt] T > 1: the column pass threaded (1) or serial (0) */
-    int mtarm;                   /* [mtarm] T > 1, threaded: 1 the strips, 0 the threaded walk */
+    int mtarm;                   /* [mtarm] T > 1, threaded: 1 the strips, 2 the tile, 0 the threaded walk */
     int msw;                     /* [msw] the strips' width in lanes, 0 = each worker's whole range */
     est_recipe_t tpcp;           /* [tpc_] N1, in place, natural: col.tpc == 1 */
     struct est_planlm_s *child;  /* [rp_] rank 2: the 1D batch at (N2, K); rank 3: the 2D batch at (N2, N3, K);
@@ -113,7 +113,9 @@ static inline void est_free_lm(est_planlm_t *p)
 
 /* the threaded verdict of a pass that threads (the strips rule above): the strips at est__msw_2d's width where every
  * worker gets a vector of lanes, on a chain with no Rader stage or with a Rader stage among two stages or more, whose
- * strip of EST_LM_STRIP_MIN lanes fits the L2; else the threaded walk.
+ * strip of EST_LM_STRIP_MIN lanes fits the L2; else the TILE where the door's tile serves the pass (est__lm_tile: the
+ * walk's place since 2026-11-17, the door races the tile there and no longer the walk; il2d_tier.h
+ * _il2d_col_tile_serves), else the threaded walk (a Rader first stage, Bluestein, the scrambled real pass).
  * THE RADER CHAIN'S STRIPS (2026-11-03; docs/roadmap/real_estimate_plan.md sections 17 and 18): the walk carries each
  * worker's whole range through every stage; the strips keep a strip in the cache from the Rader stage to the next.
  * Timed with the form the only change at 8 threads. C2C, 26 cells (a prime 53 - 1031 times 2 - 12, rank 1 K 32 -
@@ -121,13 +123,19 @@ static inline void est_free_lm(est_planlm_t *p)
  * serial pass at 212 x 256 and 4124 x 64), the strips 0.874. Real (its first axis and its pass at M), 25 rank-2 and 3
  * cells 4.535 -> 1.026, 26 rank-1 cells 0.948 -> 0.920. A Rader stage alone keeps the walk (the 2026-11-01 study's
  * prime columns; real, 33 cells: the strips 1.13 times slower). */
+/* the door's tile serves the pass (il2d_tier.h _il2d_col_tile_serves): a natural chain of two stages or more, no Rader
+ * first stage (a Rader stage is the column's first), no Bluestein, no turned prime pass */
+static inline int est__lm_tile(const est_planlm_t *p)
+{
+    return p->col.nat && p->col.nst >= 2 && p->col.blu <= 0 && p->col.tpc != 1 && p->col.rd_n == 0;
+}
 static inline void est__lm_threaded(const est_machine_t *m, est_planlm_t *p, long long lanes)
 {
     const int chain = p->col.rd_n ? p->col.nst > 1 : p->col.blu <= 0;
     const int strips = chain && lanes >= (long long)(m->lanes / 2) * p->T &&
                        16LL * p->N1 * EST_LM_STRIP_MIN <= m->l2;   /* m->lanes counts doubles: / 2 = complex lanes */
     p->cmt = 1;
-    p->mtarm = strips;
+    p->mtarm = strips ? 1 : est__lm_tile(p) ? 2 : 0;   /* the tile in the walk's place where it serves (2026-11-17) */
     p->msw = strips ? est__msw_2d(m, p->N1, lanes, p->T) : 0;
 }
 /* est__plan_lm: est_plan_lm's body under opts: EST_LM_TPC the prime column's switch to the turned prime pass (its door
@@ -228,7 +236,9 @@ static inline int est__preflight_lm(const est_planlm_t *p, char *why, size_t why
         for (i = 0, in = (p->msw == 0); i < n; i++)
             in |= lad[i] == p->msw;
         if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
-            (p->cmt && (p->mtarm == 1 ? p->col.blu > 0 || !in : p->mtarm != 0 || p->msw)))
+            (p->cmt && (p->mtarm == 1 ? p->col.blu > 0 || !in
+                        : p->mtarm == 2 ? !est__lm_tile(p) || p->msw
+                        : p->mtarm != 0 || p->msw || est__lm_tile(p))))   /* the walk only where the tile does not serve */
             return est_refuse(why, whylen, "the lane-major batch %s T=%d: cmt=%d mtarm=%d msw=%d is no threaded verdict its "
                               "door serves", sh, p->T, p->cmt, p->mtarm, p->msw);
     }
