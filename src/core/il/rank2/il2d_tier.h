@@ -11,8 +11,9 @@
  * The tier's plan is not one search. It is a chain of races where an earlier
  * verdict decides whether a later axis EXISTS at all:
  *
- *   chain      factorize N1 over the radix pool (depth <= 4, cap 24, and the
- *              cap LOGS when it bites - a truncated pool is a biased pool).
+ *   chain      factorize N1 over the radix pool (within the reach of
+ *              VFFT_IL2D_CHAIN_REACH stages, past it at the fewest stages; the
+ *              storage cap LOGS when it bites - a truncated pool is a biased pool).
  *   wl         the banded column-walk width. A 2D column pass touches every
  *              row, which blows the cache in one sweep; banding keeps the
  *              working set resident. Measured, not computed, because the best
@@ -3378,10 +3379,54 @@ typedef struct
     int nat;
     const int *perm;
     vfft_real *nscr;
+    int T;   /* the cell's T: above 1 every arm is timed through the threaded pass (_il2d_n1arm_mt); 0 or 1 serial */
 } _il2d_n1arm_ctx_t;
+/* THE N-ARM ARMS AT T > 1 (2026-11-18, the threading census): the cell serves its column pass threaded at T, so
+ * the chain and the Bluestein arms run through the threaded pass it serves with (_il2d_cols_mt_desc over a view of
+ * the arm, as the chain race times its candidates, _il2d_arm_chain_mt); 0 = the arm cannot engage at T and the
+ * caller runs its serial pass. The serial races crowned the turned prime pass, which has no threaded form, at
+ * 4099 x 256 and 4483 x 64 lanes at every T, where the Rader chain threaded runs several times faster. */
+static int _il2d_n1arm_mt(const _il2d_n1arm_ctx_t *c, int blu)
+{
+    vfft_ilcol_t cv;
+    if (c->T < 2)
+        return 0;
+    memset(&cv, 0, sizeof cv);
+    cv.N = c->N1;
+    cv.rn = c->N2;
+    if (blu)
+    {   /* the Bluestein pipeline over each worker's lanes (_il2d_blu_cols_range: windows share the scratch
+         * disjointly), the forward chirp and kernel */
+        cv.blu = c->M2;
+        cv.nst = c->bnst;
+        memcpy(cv.R, c->bR, (size_t)c->bnst * sizeof cv.R[0]);
+        memcpy(cv.L, c->bL, (size_t)c->bnst * sizeof cv.L[0]);
+        memcpy(cv.f, c->bf, (size_t)c->bnst * sizeof cv.f[0]);
+        memcpy(cv.b, c->bb, (size_t)c->bnst * sizeof cv.b[0]);
+        memcpy(cv.tf, c->btf, (size_t)c->bnst * sizeof cv.tf[0]);
+        memcpy(cv.tb, c->btb, (size_t)c->bnst * sizeof cv.tb[0]);
+        cv.bluchf = c->bchf;
+        cv.blukf = c->bkf;
+        cv.bluscr = c->bscr;
+    }
+    else
+    {
+        cv.nst = c->nst;
+        memcpy(cv.R, c->R, (size_t)c->nst * sizeof cv.R[0]);
+        memcpy(cv.L, c->L, (size_t)c->nst * sizeof cv.L[0]);
+        memcpy(cv.f, c->f, (size_t)c->nst * sizeof cv.f[0]);
+        memcpy(cv.tf, c->tf, (size_t)c->nst * sizeof cv.tf[0]);
+        cv.nat = c->nat;
+        cv.natperm = (int *)c->perm;
+        cv.natscr = c->nscr;
+    }
+    return _il2d_cols_mt_desc(&cv, c->N1, c->sc, c->sc, 0, c->T, NULL, -1);
+}
 static void _il2d_n1arm_chain(void *v)
 {
     _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    if (_il2d_n1arm_mt(c, 0))
+        return;
     if (c->nat)
         _il2d_col_pass_nat(c->sc, c->sc, c->N1, c->N2, c->nst, c->R, c->L,
                            c->f, c->tf, 0, c->perm, c->nscr, NULL);
@@ -3392,6 +3437,8 @@ static void _il2d_n1arm_chain(void *v)
 static void _il2d_n1arm_blu(void *v)
 {
     _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    if (_il2d_n1arm_mt(c, 1))
+        return;
     _il2d_blu_cols(c->sc, c->sc, c->N1, c->N2, c->M2, c->bnst, c->bR, c->bL,
                    c->bf, c->bb, c->btf, c->btb, c->bchf, c->bkf, c->bscr);
 }
@@ -3853,10 +3900,39 @@ static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
     vfft_aligned_free(c->bluscr);
     c->bluchf = c->bluchb = c->blukf = c->blukb = c->bluscr = NULL;
 }
+/* the tpc race's Bluestein arm: at the cell's T > 1 through the threaded pass the cell serves Bluestein with (each
+ * worker its lanes: _il2d_blu_cols_range), else the serial pipeline. The turned pass has no threaded form: a
+ * one-thread race crowned it at 12005 x 32 lanes at every T (2026-11-18, the threading census) */
+static void _il2d_tpc_blu_arm(const vfft_ilcol_t *c, vfft_real *z, vfft_real *zo, int N, size_t rn, int Tc)
+{
+    if (Tc > 1)
+    {
+        vfft_ilcol_t cv;
+        memset(&cv, 0, sizeof cv);
+        cv.N = N;
+        cv.rn = rn;
+        cv.blu = c->blu;
+        cv.nst = c->nst;
+        memcpy(cv.R, c->R, sizeof cv.R);
+        memcpy(cv.L, c->L, sizeof cv.L);
+        memcpy(cv.f, c->f, sizeof cv.f);
+        memcpy(cv.b, c->b, sizeof cv.b);
+        memcpy(cv.tf, c->tf, sizeof cv.tf);
+        memcpy(cv.tb, c->tb, sizeof cv.tb);
+        cv.bluchf = c->bluchf;
+        cv.blukf = c->blukf;
+        cv.bluscr = c->bluscr;
+        if (_il2d_cols_mt_desc(&cv, N, z, zo, 0, Tc, NULL, -1))
+            return;
+    }
+    _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
+                   c->bluchf, c->blukf, c->bluscr);
+}
 static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
 {
     const char *pin = getenv("VFFT_IL2D_TPC");
+    const int Tc = key->nthreads;   /* the cell's T: the Bluestein arm threaded above 1 */
     const size_t T = (size_t)N * rn;
     vfft_real *z, *zo, tb = 1e300, tt = 1e300;
     size_t i;
@@ -3888,15 +3964,15 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     }
     for (i = 0; i < 2 * T; i++)
         z[i] = (double)(i % 977) / 977.0 - 0.5;
-    /* min of 3, alternated, both arms through their serving functions */
-    _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
-                   c->bluchf, c->blukf, c->bluscr);
+    /* min of 3, alternated, both arms through their serving functions (the Bluestein arm at the cell's T) */
+    if (Tc > 1)
+        _vfft_pool_arm(Tc);
+    _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
     _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
     for (r = 0; r < 3; r++)
     {
         const double t0 = vfft_now_ns();
-        _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
-                       c->bluchf, c->blukf, c->bluscr);
+        _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
         const double t1 = vfft_now_ns();
         _il2d_tpc_cols_range(c, z, zo, rn, 0, rn, 0);
         const double t2 = vfft_now_ns();
@@ -3907,8 +3983,8 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     vfft_aligned_free(zo);
     c->tpc = (tt < tb);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[il2d] tpc race at N=%d x %zu lanes: blu %.0f us, turned %.0f us -> %s\n",
-                N, rn, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
+        fprintf(stderr, "[il2d] tpc race at N=%d x %zu lanes, T=%d: blu %.0f us, turned %.0f us -> %s\n",
+                N, rn, Tc, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
     vw2_ilcol_tok_seti(&W->vw2, key, "tpc", c->tpc);
     _vw2_persist(W, cfg);
     if (c->tpc)
@@ -4364,7 +4440,7 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             sc, N, rn, c->nst, c->R,
                             c->L, c->f, c->tf, M2, bnst, bR,
                             bL, bf, bb, btf, btb, bchf, bkf, bscr,
-                            c->nat, c->natperm, c->natscr };
+                            c->nat, c->natperm, c->natscr, key->nthreads };   /* at T > 1 both arms threaded */
                         const vfft_race_arm_t arms[2] = {
                             { "chain", _il2d_n1arm_chain, &rc },
                             { "bluestein", _il2d_n1arm_blu, &rc } };
@@ -4372,6 +4448,11 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                         vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, _il2d_ip_reset, &srs, 1 }; /* min-of-3, A then B, the plane re-laid before every sample */ /* single-thread arms: paced (VFFT_RACE_PACE_MS) */
                         double ns[2];
                         (void)rr;
+                        if (key->nthreads > 1)
+                        {   /* threaded arms: no pause (it parks the team), the pool armed at T */
+                            proto.pace = 0;
+                            _vfft_pool_arm(key->nthreads);
+                        }
                         memcpy(scs, sc, scn * sizeof(vfft_real));
                         proto.reps = _il2d_race_reps(_il2d_n1arm_chain, &rc, (double)N);
                         vfft_race_run(&proto, arms, 2, ns);
@@ -4385,9 +4466,9 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                     use_blu = (tbu < tc);
                 if (getenv("VFFT_IL2D_LOG"))
                     fprintf(stderr, "[il2d] N-arm race %dx%zu "
-                                    "(c2c %s): chain=%.0f blu=%.0f "
+                                    "(c2c %s, T=%d): chain=%.0f blu=%.0f "
                                     "-> %s\n",
-                            N, rn, c->nat ? "nat" : "scr",
+                            N, rn, c->nat ? "nat" : "scr", key->nthreads,
                             tc, tbu,
                             use_blu ? "BLUESTEIN" : "chain");
                 if (!use_blu && !be && c->nst == 1 && VFFT_IL2D_RADER_RADIX(c->R[0]) && c->rd0 &&
@@ -4403,9 +4484,12 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             tz, N, rn, c->nst, c->R,
                             c->L, c->f, c->tf, M2, bnst, bR,
                             bL, bf, bb, btf, btb, bchf, bkf, bscr,
-                            c->nat, c->natperm, c->natscr };
+                            c->nat, c->natperm, c->natscr, key->nthreads };   /* the chain at T: threaded above 1; the turned
+                                                                               * pass has no threaded form (one thread) */
                         double tch = 1e300, ttp = 1e300;
                         int r3;
+                        if (key->nthreads > 1)
+                            _vfft_pool_arm(key->nthreads);
                         for (i3 = 0; i3 < 2 * (size_t)N * rn; i3++)
                             tz[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
                         _il2d_n1arm_chain(&rc2);
@@ -4422,8 +4506,8 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                             if (t2 - t1 < ttp) ttp = t2 - t1;
                         }
                         if (getenv("VFFT_IL2D_LOG"))
-                            fprintf(stderr, "[il2d] tpc vs the Rader chain at %dx%zu: chain %.0f us, turned %.0f us -> %s\n",
-                                    N, rn, tch / 1e3, ttp / 1e3, ttp < tch ? "TURNED" : "rader chain");
+                            fprintf(stderr, "[il2d] tpc vs the Rader chain at %dx%zu, T=%d: chain %.0f us, turned %.0f us -> %s\n",
+                                    N, rn, key->nthreads, tch / 1e3, ttp / 1e3, ttp < tch ? "TURNED" : "rader chain");
                         if (ttp < tch)
                             use_blu = 2;   /* the turned pass serves: the Bluestein marker, tpc = 1 */
                         else

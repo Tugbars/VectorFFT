@@ -421,8 +421,9 @@ typedef struct est_plan3d_s
 
 /* ── the column chain ───────────────────────────────────────────────────── */
 
-/* the door's column pool at N (il2d_cols.h:160-253): every ordered composition over the column
- * radices, at most 4 stages, a closing-only radix last, a Rader prime first */
+/* the door's column pool at N (il2d_cols.h, _il2d_enum_rec): every ordered composition over the column
+ * radices within VFFT_IL2D_CHAIN_REACH stages (an N with none there: at the fewest stages that compose
+ * it, up to VFFT_IL2D_CHAIN_MAX), a closing-only radix last, a Rader prime first */
 typedef struct
 {
     int c[VFFT_IL2D_POOL_MAX][8];

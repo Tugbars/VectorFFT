@@ -87,8 +87,9 @@ static int _k1fs_pin(int N, int *n1, int *n2)
 }
 
 /* a column side the 2D tier can chain: at least one composition over the
- * tier's own radix pool (il2d_cols.h), depth <= 4 -- the tier's enumerator
- * itself, never a second copy of its pool */
+ * tier's own radix pool (il2d_cols.h), within its reach or at the fewest
+ * stages past it (policy_il.h VFFT_IL2D_CHAIN_REACH) -- the tier's
+ * enumerator itself, never a second copy of its pool */
 static int _k1fs_col_chainable(int N1)
 {
     static int cand[VFFT_IL2D_POOL_MAX][8];   /* planning side, one create at a time */

@@ -585,16 +585,31 @@ static inline int vfft_policy_admits(const vfft_cell_t *c, vfft_fam_t f)
  * The 2D/3D interleaved column axis enumerates every ordered composition of
  * N1 over the radix pool (il2d_cols.h, _il2d_enum_rec) and races them all
  * (owner, 2026-10-03: the pool is complete, raced in heats). POOL_MAX is the
- * pool's STORAGE, not a cap: the largest pool in the enumerator's reach
- * (depth <= 4) is 170 chains, at N1 = 8640. HEAT is the race's heat: the
+ * pool's STORAGE, not a cap: the largest pool within the enumerator's reach
+ * (VFFT_IL2D_CHAIN_REACH stages) is 170 chains, at N1 = 8640; the largest
+ * pool past it (the fewest stages of an N1 with none within the reach) is
+ * 720 chains up to N1 = 200000 (196560 = 2^4 3^3 5 7 13, five stages).
+ * HEAT is the race's heat: the
  * pool races in balanced heats of at most HEAT arms and the heat winners
  * meet in a final (il2d_tier.h, _il2d_race_chains), so no race holds more
  * chains' tables at once. They live here, ahead of every consumer, because
  * the four-step's super-band (il/rank1/k1_fourstep.h) sizes its arrays by
  * the pool and is included long before the enumerator. The no-silent-caps
  * law is enforced by the enumerator itself. */
-#define VFFT_IL2D_POOL_MAX 256
+#define VFFT_IL2D_POOL_MAX 1024
 #define VFFT_IL2D_HEAT 32
+/* -- L2, rank >= 2: the COLUMN CHAIN's REACH (2026-11-18; the threading census) ----
+ * The enumerator offers every composition within VFFT_IL2D_CHAIN_REACH stages. An N1
+ * with none there takes every composition at the fewest stages that compose it, up to
+ * VFFT_IL2D_CHAIN_MAX (the column descriptor's 8 stages): the pool's odd radices are
+ * single factors up to 47 (no 35, no 49), so 12005 = 5 7^4 needs five, and so do 1513
+ * of the 14113 N1 <= 200000 whose primes the pool carries (6860 = 4 5 7^3 the first).
+ * Before, such an N1 had no chain and its column pass ran Bluestein or the turned prime
+ * pass: 12005 x 32 lane-major 1.6 times slower on one thread than the pinned chain
+ * 7.7.7.7.5 and about 10 times at eight threads. An N1 with a chain within the reach
+ * keeps exactly its pool (the fewer stages, the fewer passes over the plane). */
+#define VFFT_IL2D_CHAIN_REACH 4
+#define VFFT_IL2D_CHAIN_MAX 8
 
 /* -- L2, rank >= 2: the BAND-WIDTH LADDER ---------------------------------
  * The widths the 2D c2c tier, the 2D real tier and the 3D tier may race for

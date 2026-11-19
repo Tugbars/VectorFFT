@@ -233,6 +233,7 @@ static int _ilrd_slot(vfft_ilrd_t *rd, int k)
 
 static void _ilrd_window(const vfft_ilrd_t *rd, const vfft_real *src, vfft_real *dst,
                          size_t c0, size_t c1, int bwd, int slot);
+static void _ilrd_nest_live(const vfft_ilrd_t *ne, vfft_real *sc, size_t rn, size_t w, int bwd, int slot);
 
 /* the inner chain over the scratch plane sc (row stride rn, the first w lanes
  * live), forward or reverse; stage 0 is the nested leaf where one exists. */
@@ -245,15 +246,10 @@ static void _ilrd_inner_run(const vfft_ilrd_t *rd, vfft_real *sc, size_t rn, siz
         const int R = rd->Rs[s], D = rd->Ls[s] / R;
         int b;
         if (s == 0 && rd->nest) {
-            /* the nested leaf: the whole scratch row is its column space (the
-             * lanes past w carry stale values and are never read back), in
-             * its own windows */
-            const vfft_ilrd_t *ne = rd->nest;
-            size_t k;
-            for (k = 0; k < ne->ncol; k += ne->W) {
-                const size_t e = (k + ne->W < ne->ncol) ? k + ne->W : ne->ncol;
-                _ilrd_window(ne, sc, sc, k, e, reverse, slot);
-            }
+            /* the nested leaf: its column space is the scratch plane's digits
+             * (M / q of them) times the row's rn lanes, column d * rn + l; only
+             * the w live lanes of each digit run (_ilrd_nest_live) */
+            _ilrd_nest_live(rd->nest, sc, rn, w, reverse, slot);
             continue;
         }
         for (b = 0; b < M / rd->Ls[s]; b++) {
@@ -350,6 +346,44 @@ static void _ilrd_window(const vfft_ilrd_t *rd, const vfft_real *src, vfft_real 
         if (nr == VFFT_ILRD_W_MAX + 1) { _ilrd_window_runs(rd, runs, nr, bwd, slot); nr = 0; }
     }
     if (nr) _ilrd_window_runs(rd, runs, nr, bwd, slot);
+}
+
+/* THE NESTED LEAF OVER THE LIVE LANES (2026-11-18). The nest's column space is the outer scratch
+ * plane's M / q digits times its rn lanes, column d * rn + l (legs D = (M / q) * rn apart; twiddle
+ * set d, _ilrd_dif_tw's twrun = rn). An outer window that carries w < rn live lanes runs the nest
+ * over those lanes only, digit by digit, packed into the nest's windows of ne->W columns as
+ * _ilrd_window packs a contiguous range: at w = rn the same runs and the same windows as the whole
+ * range. The lanes past w used to run too and were never read back; a threaded column pass hands
+ * each worker its own lanes, so a window of 8 live lanes in a 64-lane scratch row ran the nest over
+ * all 64 (1031 x 64 at 8 threads: 348 us against 76 at a window of 8). */
+static void _ilrd_nest_live(const vfft_ilrd_t *ne, vfft_real *sc, size_t rn, size_t w, int bwd, int slot)
+{
+    const vfft_real *tw = bwd ? ne->twb : ne->twf;
+    const size_t grp = (ne->twmode == 2 && ne->twrun) ? ne->twrun : 0;
+    const size_t nd = rn ? ne->ncol / rn : 0;
+    _ilrd_run_t runs[VFFT_ILRD_W_MAX + 2];
+    int nr = 0;
+    size_t acc = 0, d, k;
+    if (!w || !nd) return;
+    if (w > rn) w = rn;
+    for (d = 0; d < nd; d++)
+        for (k = 0; k < w;) {
+            const size_t c = d * rn + k;
+            size_t n = w - k;
+            if (n > ne->W - acc) n = ne->W - acc;
+            if (grp) { const size_t ge = (c / grp + 1) * grp - c; if (ge < n) n = ge; }
+            runs[nr].s0 = sc + 2 * c;
+            runs[nr].ss = ne->D;
+            runs[nr].d0 = sc + 2 * c;
+            runs[nr].ds = ne->D;
+            runs[nr].n = n;
+            runs[nr].gi = 0;
+            if (tw && ne->twmode == 1) runs[nr].gi = tw;   /* one block: set 0 */
+            else if (tw && grp) runs[nr].gi = tw + 2 * (size_t)ne->p * (c / grp);
+            nr++; acc += n; k += n;
+            if (acc == ne->W || nr == VFFT_ILRD_W_MAX + 1) { _ilrd_window_runs(ne, runs, nr, bwd, slot); nr = 0; acc = 0; }
+        }
+    if (nr) _ilrd_window_runs(ne, runs, nr, bwd, slot);
 }
 
 /* the DIF column chain's stage-0 twiddles for a nested leaf: set d (the column

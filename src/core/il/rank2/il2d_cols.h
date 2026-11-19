@@ -27,7 +27,8 @@
  * ON THE POOL
  * -----------
  * The candidate pool is complete: VFFT_IL2D_POOL_MAX is its storage, above
- * the largest pool in reach (170, at N1 = 8640), and the race takes it in
+ * the largest pool in reach (170, at N1 = 8640; past the reach 720, at
+ * N1 = 196560, up to N1 = 200000), and the race takes it in
  * heats (il2d_tier.h). Were the storage ever exceeded the drop is LOGGED -
  * the no-silent-caps law. A truncated pool is a biased pool (the enumerator
  * walks the largest radices first, so a cut drops the small-radix openings),
@@ -48,7 +49,8 @@
 /* ── native IL 2D c2c: column-chain builders
  * (docs/roadmap/fft2d_il_c2c_design.md).
  * _il2d_enum_rec: every ordered composition of N1 over the t2c/n1c radix
- * set (depth <= 4, every one) -- THE candidate pool; the race picks, wisdom
+ * set (within VFFT_IL2D_CHAIN_REACH stages, past it at the fewest stages
+ * that compose N1; every one) -- THE candidate pool; the race picks, wisdom
  * banks. _il2d_env_chain: the VFFT_IL2D_CHAIN pin, and nothing else (a
  * chain is raced, never derived). A chain's stages 0..m-2 resolve t2c
  * pairs, the last resolves the n1c pair.
@@ -152,19 +154,21 @@ static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
     return *p == 0; /* exactly m names */
 }
 
-/* ordered compositions of N1 over the codelet radices, depth <= 4, all of
- * them (stored up to VFFT_IL2D_POOL_MAX, planning/policy_il.h). The
- * recursion is the body; the entry below it is what callers reach, and it
- * enforces the no-silent-caps law ITSELF, so no caller has to remember to
- * warn. */
+/* ordered compositions of N1 over the codelet radices within the reach
+ * (VFFT_IL2D_CHAIN_REACH stages; an N1 with none there: the fewest stages
+ * that compose it, up to VFFT_IL2D_CHAIN_MAX), all of them (stored up to
+ * VFFT_IL2D_POOL_MAX, planning/policy_il.h). The recursion is
+ * _il2d_enum_rec_to, the reach its body _il2d_enum_rec_body; the entry below
+ * them is what callers reach, and it enforces the no-silent-caps law
+ * ITSELF, so no caller has to remember to warn. */
 /* the column radices with an n1c kind and NO t2c kind (the registry's two
  * lists differ by exactly these): legal only as the closing stage */
 static int _il2d_pool_closing_only(int R)
 {
     return R == 2 || R == 6 || R == 10 || R == 12 || R == 14 || R == 22 || R == 26;
 }
-static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
-                                int *lens, int *n, int *dropped)
+static void _il2d_enum_rec_to(int L, int depth, int maxd, int *cur, int (*out)[8],
+                              int *lens, int *n, int *dropped)
 {
 #define _IL2D_POOL_R(r) r,
     static const int POOL[] = { 64, 32, 16, 8, 4,
@@ -194,7 +198,7 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
         (*n)++;
         return;
     }
-    if (depth >= 4)
+    if (depth >= maxd)
         return;
     for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         if (L % POOL[p] == 0)
@@ -206,9 +210,27 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
             if (_il2d_pool_closing_only(POOL[p]) && L != POOL[p])
                 continue;
             cur[depth] = POOL[p];
-            _il2d_enum_rec_body(L / POOL[p], depth + 1, cur, out, lens, n,
-                                dropped);
+            _il2d_enum_rec_to(L / POOL[p], depth + 1, maxd, cur, out, lens, n,
+                              dropped);
         }
+}
+/* THE REACH (planning/policy_il.h VFFT_IL2D_CHAIN_REACH, 2026-11-18): every composition of L
+ * from stage `depth` on (the stages before it are the caller's: the Rader prime at stage 0)
+ * within the reach; an L with none there takes every composition at the fewest stages that
+ * compose it, up to VFFT_IL2D_CHAIN_MAX -- at the next depth the pool holds exactly the
+ * compositions of that many stages, since none has fewer. An L composed within the reach
+ * keeps exactly that pool. */
+static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
+                                int *lens, int *n, int *dropped)
+{
+    const int n0 = *n, d0 = *dropped;
+    int maxd;
+    for (maxd = VFFT_IL2D_CHAIN_REACH; maxd <= VFFT_IL2D_CHAIN_MAX; maxd++)
+    {
+        _il2d_enum_rec_to(L, depth, maxd, cur, out, lens, n, dropped);
+        if (*n > n0 || *dropped > d0)
+            return;
+    }
 }
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
                            int *lens, int *n, int *dropped)
