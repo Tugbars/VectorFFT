@@ -1,0 +1,23 @@
+2026-11-20 16:34:18 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-20 16:34:18 run: 24 cells, contract out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-20 16:34:18 bench: 24 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 17:22:45   benched 24/24 (16777215), 2906 s elapsed
+2026-11-20 17:22:47 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_big_est_avx2_2026-11-20\report_mt8_est.md
+2026-11-20 17:22:47 run: 24 cells, contract out of place, the estimate's plans, bin build/gauntlet
+2026-11-20 17:22:47 bench: 24 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 18:18:02   benched 24/24 (16777215), 3313 s elapsed
+2026-11-20 18:18:04 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_big_est_avx2_2026-11-20\report_est.md
+2026-11-20 18:18:04 run: 24 cells, contract out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-20 18:18:04 bench: 24 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 18:26:23 run: 24 cells, contract out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-20 18:26:23 bench: 3 cells (21 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 18:27:02   benched 3/3 (8388609), 38 s elapsed
+2026-11-20 18:27:04 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_big_est_avx2_2026-11-20\report_mt8_est.md
+2026-11-20 18:27:04 run: 24 cells, contract out of place, the estimate's plans, bin build/gauntlet
+2026-11-20 18:27:04 bench: 3 cells (21 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 18:28:53   benched 3/3 (8388609), 107 s elapsed
+2026-11-20 18:28:55 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_big_est_avx2_2026-11-20\report_est.md
+2026-11-20 18:37:36 run: 24 cells, contract out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-20 18:37:36 bench: 18 cells (6 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 18:49:26   benched 18/18 (16777215), 709 s elapsed
+2026-11-20 18:49:28 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_big_est_avx2_2026-11-20\report_mt4_est.md
