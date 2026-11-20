@@ -1,0 +1,28 @@
+2026-11-20 12:33:28 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-20 12:33:28 run: 144 cells, contract out of place, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 12:33:28 bench: 144 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 12:34:22   benched 25/144 (8194), 52 s elapsed
+2026-11-20 12:35:15   benched 50/144 (16396), 106 s elapsed
+2026-11-20 12:36:15   benched 75/144 (32777), 165 s elapsed
+2026-11-20 12:37:19   benched 100/144 (65542), 230 s elapsed
+2026-11-20 12:38:33   benched 125/144 (131101), 304 s elapsed
+2026-11-20 12:39:31   benched 144/144 (229549), 362 s elapsed
+2026-11-20 12:39:32 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sweep_1d_avx2_2026-11-20\report_est.md
+2026-11-20 12:50:10 run: 144 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 12:50:10 bench: 144 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 12:51:05   benched 25/144 (8194), 54 s elapsed
+2026-11-20 12:51:59   benched 50/144 (16396), 107 s elapsed
+2026-11-20 12:52:54   benched 75/144 (32777), 163 s elapsed
+2026-11-20 12:53:55   benched 100/144 (65542), 224 s elapsed
+2026-11-20 12:54:56   benched 125/144 (131101), 284 s elapsed
+2026-11-20 12:55:47   benched 144/144 (229549), 335 s elapsed
+2026-11-20 12:55:49 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sweep_1d_avx2_2026-11-20\report_mt4_est.md
+2026-11-20 13:01:11 run: 144 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 13:01:11 bench: 144 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 13:02:09   benched 25/144 (8194), 57 s elapsed
+2026-11-20 13:03:07   benched 50/144 (16396), 115 s elapsed
+2026-11-20 13:03:58   benched 75/144 (32777), 166 s elapsed
+2026-11-20 13:04:56   benched 100/144 (65542), 224 s elapsed
+2026-11-20 13:05:52   benched 125/144 (131101), 280 s elapsed
+2026-11-20 13:06:39   benched 144/144 (229549), 326 s elapsed
+2026-11-20 13:06:41 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sweep_1d_avx2_2026-11-20\report_mt8_est.md
