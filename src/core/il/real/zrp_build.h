@@ -747,7 +747,7 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
 {
     const int c2r = cfg->transform == VFFT_C2R, ip = cfg->placement == VFFT_INPLACE;
     const int Tk = _vfft_plan_threads(cfg);   /* the verdict's thread key */
-    enum { NARMS = 4 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };   /* zr2c, zr2c+mt, zrm, zfsr + the lists */
+    enum { NARMS = 5 + VFFT_ZRP_MAX_ARMS + VFFT_ZTTR_MAX_ARMS };   /* zr2c, zr2c+mt, zr2c+fs, zrm, zfsr + the lists */
     const size_t xs = (size_t)N + 2;
     const size_t nchk = c2r ? (size_t)N : xs;
     struct vfft_plan_s *hall[NARMS];
@@ -808,11 +808,13 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
     {
         struct vfft_plan_s *hz = _zr2c_build(cfg, N, W, oom);
         struct vfft_plan_s *hzm = NULL;
+        int zroute;
         if (*oom)
         {   /* out of memory: refused with its reason, the other engines are not raced */
             vfft_aligned_free(a); vfft_aligned_free(b); vfft_aligned_free(ref);
             return NULL;
         }
+        zroute = hz ? hz->zr2c_route : -1;   /* the one-thread winner's route, before its gate */
         if (hz && Tk > 1 && N >= 64)
         {
             hzm = _zr2c_build_route(cfg, N, hz->zr2c_route, &hz->zr2c_kid->c, &hz->zr2c_kid->pr,
@@ -843,6 +845,24 @@ static struct vfft_plan_s *_real_il_race(const vfft_cfg_t *cfg, int N, struct vf
         {
             snprintf(names[nall], sizeof names[nall], "zr2c+mt");
             hall[nall++] = hzm;
+        }
+        /* THE PRIME SIDES AT T (owner, 2026-11-20: "we should apply this to R2C/C2R as well"): where N/2 splits with a
+         * prime side at T only (zr2c_build.h _zr2c_prime_t_band), the child the four-step built at T in the one-thread
+         * winner's route, the fold threaded -- raced in role below against zr2c+mt, the whole-length child's threaded
+         * form, as the c2c door races the four-step at T against the whole-length cell (k1_commit.h _k1_il_t_race) */
+        if (zroute >= 0 && Tk > 1 && N >= 64 && _zr2c_prime_t_band(N / 2, Tk))
+        {
+            struct vfft_plan_s *hzf = _zr2c_build_fs_t(cfg, N, zroute, Tk, W);
+            if (hzf)
+            {
+                hzf->zr2c_fold_mt = 1;
+                ZRPR_GATE(hzf, "zr2c+fs");
+            }
+            if (hzf)
+            {
+                snprintf(names[nall], sizeof names[nall], "zr2c+fs");
+                hall[nall++] = hzf;
+            }
         }
     }
     /* the real mono */

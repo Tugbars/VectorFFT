@@ -143,6 +143,12 @@ static inline int est_recipe_print(const est_any_recipe_t *rc, const est_request
                            ch->prime.in_tw);
                 if (ch->il_mt > 0) est_sb_add(&s, " il_mt=%d", ch->il_mt);
             }
+            if (T > 1 && ch->k1_il_route == VFFT_K1_IL_FS && ch->il_mt > 0)
+            {   /* the four-step child at T (the prime sides, est__real_zr2c_child_mt): its split's N1, its super-band */
+                est_sb_add(&s, " il_mt=%d il_mtsb=", ch->il_mt);
+                if (ch->il_zt_n >= 2) est_sb_chain(&s, ch->il_zt, ch->il_zt_n);
+                else est_sb_add(&s, "0");
+            }
             if (ch->fs[0] && (ch->k1_il_route == VFFT_K1_IL_FS || ch->k1_il_route == VFFT_K1_IL_PRIME)) est_sb_add(&s, " %s", ch->fs);
             est_sb_add(&s, " il_kv=%d il_bkv=%d", ch->il_kv, ch->il_bkv);
         }

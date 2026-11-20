@@ -635,11 +635,12 @@ static double _zr2c_kid_race(const vfft_cfg_t *cfg, int N, int route, vfft_il_ca
  * `pr` and its four-step child's private store `fsS` (taken; child NULL: the
  * child races in role first, banking nothing); `ft`: a four-step child built
  * at T from fsS (_zr2c_kid_build) */
+static struct vfft_plan_s *_zr2c_compose(const vfft_cfg_t *cfg, int N, int route, struct vfft_zr2c_kid_s *kid);
 static struct vfft_plan_s *_zr2c_build_route_ft(const vfft_cfg_t *cfg, int N, int route,
                                                 const vfft_il_cand_t *child, const _zr2c_prime_t *pr,
                                                 struct vfft_wisdom_s *fsS, const _zr2c_fst_t *ft)
 {
-    const int half = N / 2, top = N / 4;
+    const int half = N / 2;
     vfft_il_cand_t raced;
     _zr2c_prime_t rpr;
     struct vfft_zr2c_kid_s *kid;
@@ -664,6 +665,12 @@ static struct vfft_plan_s *_zr2c_build_route_ft(const vfft_cfg_t *cfg, int N, in
         _vfft_warn("vfft_create: zr2c child c2c(%d) does not build from its recipe (route %d)", half, child->route);
         return NULL;
     }
+    return _zr2c_compose(cfg, N, route, kid);
+}
+/* the composite around a child already built (taken: destroyed when the composite's tables cannot be held) */
+static struct vfft_plan_s *_zr2c_compose(const vfft_cfg_t *cfg, int N, int route, struct vfft_zr2c_kid_s *kid)
+{
+    const int top = N / 4;
     struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     /* 🔴 64-BYTE ALIGNED, not plain malloc. Both buffers are streamed by
      * AVX2 kernels: the fold reads aff and writes scr, then the child reads
@@ -966,6 +973,55 @@ static int _zr2c_kid_mt_race(struct vfft_plan_s *h, const vfft_cfg_t *cfg, int T
         return 1;
     }
     return 0;
+}
+
+/* THE PRIME SIDES AT T (owner, 2026-11-20: "we should apply this to R2C/C2R as well";
+ * docs/design/k1_fourstep_prime_sides.md). N/2 a composite with a prime factor past the chain radices that splits with
+ * a prime side at T and not at one thread -- (VFFT_K1FS_PRIME_MIN_N, VFFT_K1FS_MIN_N], where the c2c door races the
+ * four-step at T (k1_commit.h _k1_il_t_race). The child's race runs at one thread, where the four-step is not in the
+ * band, so zr2c and zr2c+mt keep the whole-length child there (threaded on its own form). Above VFFT_K1FS_MIN_N the
+ * one-thread race holds the four-step and zr2c+mt races its splits at T. */
+static inline int _zr2c_prime_t_band(int n, int T)
+{
+    return T > 1 && vfft_k1fs_prime_composite(n) && vfft_k1fs_band_t(n, T) && !vfft_k1fs_band_t(n, 1);
+}
+/* The composite whose child is the four-step built at T, in route `route`: the c2c threaded race's split race (every
+ * split of N/2 built at T on one private store, its row cells warmed into it first: _k1_il_fs_warm_t,
+ * _k1fs_mt_split_race), the winner the child, owning that store with its child at T, as zr2c+mt's four-step child
+ * (_zr2c_kid_mt_race). The real door gates it and races it in role beside zr2c and zr2c+mt (zrp_build.h, zr2c+fs);
+ * as the cell's winner it banks as that child (_zr2c_child_of_kid: il_mt = the split's N1, its child at T) and
+ * replays at T (_zr2c_build_child). NULL when no split builds. W lends the row cells (VFFT_HIGHN_PLAN=borrow). */
+static struct vfft_plan_s *_zr2c_build_fs_t(const vfft_cfg_t *cfg, int N, int route, int T,
+                                            const struct vfft_wisdom_s *W)
+{
+    const int n = N / 2;
+    struct vfft_wisdom_s *mS = _k1fs_store_new();
+    struct vfft_zr2c_kid_s *k;
+    vfft_k1fs_plan_t *w;
+    vfft_cfg_t c2, wc;
+    if (!mS)
+        return NULL;
+    _zr2c_kid_cfg(cfg, n, route, &c2);
+    wc = c2;
+    wc.wisdom = (vfft_wisdom *)mS;
+    wc.wisdom_write = 0;
+    wc.recalibrate = 0;
+    _k1_il_fs_warm_t(mS, W, &wc, n, T);   /* the candidates' row cells, before the race (a nested create races them) */
+    w = _k1fs_mt_split_race(NULL, mS, W, &c2, n, 0, route, T);   /* takes mS */
+    if (!w)
+        return NULL;
+    if (!(k = (struct vfft_zr2c_kid_s *)calloc(1, sizeof *k)))
+    {
+        vfft_k1fs_destroy(w);
+        return NULL;
+    }
+    k->c.route = VFFT_K1_IL_FS;
+    k->c.R1 = w->N1;
+    k->c.R2 = w->N2;
+    k->b.fs = w;   /* owns the race's store: its child at T */
+    k->n = n;
+    k->inplace = route;
+    return _zr2c_compose(cfg, N, route, k);
 }
 
 /* the two arms of the zr2c route race: two finished handles */

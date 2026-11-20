@@ -617,7 +617,8 @@ static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, i
  * the c2c estimate's own arm at N/2 and T (est_c2c keeps the route of T = 1 and adds the arm), and the fold threads with
  * it; r2c / c2r 30000 at T = 8 ran 1.0x with the child serial, 2.05 / 2.24x with it threaded. One transform only: a
  * batch's whole transforms and the 2D real rows run their copies one-thread (_tc_slab_role), and the batch rule reads
- * the recipe as it was fitted (est__real_threads_own). A four-step child stays one-thread here. */
+ * the recipe as it was fitted (est__real_threads_own). A four-step child stays one-thread here, but for the prime
+ * sides below. */
 /* A PRIME CHILD'S FOUR-STEP INNER AT T (2026-11-19): the real plan at T > 1 builds its prime child's four-step inner
  * at its T, the inner's child seeded from the row under the keys of that T (zr2c_build.h _zr2c_kid_build), as the c2c
  * prime cell's row at T carries it (est_prime_route's fs_t). Any batch size: a batch's per-transform plan is that
@@ -644,8 +645,24 @@ static inline void est__real_zr2c_child_mt(const est_machine_t *m, long long N, 
 {
     est_recipe_t t;
     char w2[16];
-    if (strcmp(o->eng, "zr2c") || T < 2 || N < 64 ||
-        (o->c.k1_il_route != VFFT_K1_IL_ZTT && o->c.k1_il_route != VFFT_K1_IL_FLAT))
+    const int n = (int)(N / 2);
+    if (strcmp(o->eng, "zr2c") || T < 2 || N < 64)
+        return;
+    /* THE PRIME SIDES AT T (owner, 2026-11-20: "we should apply this to R2C/C2R as well"): where N/2 is a composite with
+     * a prime factor past the chain radices, the child is the c2c estimate's own plan at N/2 and T when that is the
+     * four-step -- the split with a prime side, its N1 as il_mt and its child at T (est_fs_route_prime) -- as the door's
+     * threaded arms build it: zr2c+fs where N/2 splits at T only (zrp_build.h; the one-thread child race never holds
+     * the four-step there), zr2c+mt's split race at T above VFFT_K1FS_MIN_N, where the one-thread child is the
+     * four-step already. The fold threads with it. A one-thread four-step child of any other N/2 is left as it was. */
+    if (vfft_k1fs_prime_composite(n) && vfft_k1fs_band_t(n, T) &&
+        (o->c.k1_il_route == VFFT_K1_IL_FS || !vfft_k1fs_band_t(n, 1)) &&
+        est_c2c(m, n, 0, o->zr2c.route, T, &t, w2, sizeof w2) == 0 && t.k1_il_route == VFFT_K1_IL_FS && t.il_mt > 0)
+    {
+        o->c = t;
+        o->zr2c.fold_mt = 1;
+        return;
+    }
+    if (o->c.k1_il_route != VFFT_K1_IL_ZTT && o->c.k1_il_route != VFFT_K1_IL_FLAT)
         return;
     if (est_c2c(m, N / 2, 0, o->zr2c.route, T, &t, w2, sizeof w2) == 0 && t.k1_il_route == o->c.k1_il_route &&
         t.il_mt > 0)
@@ -811,10 +828,22 @@ static inline void est__zr2c_child(const est_recipe_t *rc, int R1, int R2, const
         ch->mt = rc->il_mt;    /* the prime child's threaded arm, on a threaded row only (zr2c writes it then) */
     }
     if (rc->k1_il_route == VFFT_K1_IL_ZTT || rc->k1_il_route == VFFT_K1_IL_FLAT)
-    {   /* the ZTURN-T or flat child's threaded arm and its width (est__real_zr2c), on a threaded row only; a four-step
-         * child stays one-thread here */
+    {   /* the ZTURN-T or flat child's threaded arm and its width (est__real_zr2c), on a threaded row only */
         ch->mt = rc->il_mt;
         ch->mt_tw = rc->il_mt == 2 ? rc->il_mt_tw : 0;
+    }
+    if (rc->k1_il_route == VFFT_K1_IL_FS && rc->il_mt > 0)
+    {   /* the four-step built at T (the prime sides, est__real_zr2c_child_mt), on a threaded row only: the N1 of its
+         * split at T, its super-band chain at T (il_mtsb; the c2c T recipe's il_zt, est_fs_route) and its child at T
+         * under fs_, as the door banks such a child (zr2c_build.h _zr2c_child_of_kid) and replays it
+         * (_zr2c_build_child); no one-thread super-band (il_sb) beside them */
+        int q;
+        ch->mt = rc->il_mt;
+        ch->zt_n = 0;
+        memset(ch->zt, 0, sizeof ch->zt);
+        for (q = 0; q < rc->il_zt_n && q < (int)(sizeof ch->mtsb / sizeof ch->mtsb[0]); q++)
+            ch->mtsb[q] = rc->il_zt[q];
+        ch->mtsb_n = rc->il_zt_n >= 2 ? q : 0;
     }
     if (fs && fs[0])
         snprintf(ch->fs, sizeof ch->fs, "%s", fs);
@@ -897,7 +926,7 @@ static inline int est_put_rows_real(vw2_store_t *st, const est_real_recipe_t *rc
             return est_refuse(why, whylen, "zr2c needs an even N");
         if (est__c2c_shape(&rc->c, half, &R1, &R2, why, whylen))
             return -1;
-        if (est__fs_split(&rc->c, half, 1, &n1, &n2) &&
+        if (est__fs_split(&rc->c, half, T, &n1, &n2) &&   /* a four-step child at T: its split at T (il_mt) */
             (est__fs_text((T > 1 && rc->c.k1_il_route == VFFT_K1_IL_PRIME && rc->c.fs_t[0]) ? rc->c.fs_t : rc->c.fs,
                           n1, n2, to_rp, fsb, sizeof fsb) ||   /* a prime child's four-step inner at T: its child at T */
              strlen(fsb) >= sizeof ch.fs))
@@ -989,8 +1018,9 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
         int n1, n2;
         if (est__c2c_shape(ch, N / 2, &R1, &R2, why, whylen))
             return -1;
-        if (est__fs_split(ch, N / 2, 1, &n1, &n2))
-        {   /* a four-step child (or a prime child's four-step inner) is a nested create */
+        if (est__fs_split(ch, N / 2, est__T(rq), &n1, &n2))
+        {   /* a four-step child (or a prime child's four-step inner) is a nested create; a four-step child at T: its
+             * split at T (il_mt) */
             if (ch->k1_il_route == VFFT_K1_IL_FS && !vfft_k1fs_band_t(N / 2, est__T(rq)))   /* the prime sides (2026-11-20) */
                 return est_refuse(why, whylen, "zr2c four-step child at %d is outside the band", N / 2);
             if (ch->k1_il_route == VFFT_K1_IL_PRIME &&
