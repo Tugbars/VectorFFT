@@ -13,6 +13,7 @@ python gauntlet/gauntlet.py run --group primes --max 16384   # the primes to a c
 python gauntlet/gauntlet.py run --group mixed --max 4000000  # 2^a 3^b 5^c lengths
 python gauntlet/gauntlet.py run --group pow2 --threads 8     # the same cells at 8 threads
 python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
+python gauntlet/gauntlet.py run --group pow2 --est           # the same cells, the estimate's plans
 ```
 
 ## What a run does
@@ -38,6 +39,24 @@ python gauntlet/gauntlet.py run --group pow2 --inplace       # in place
    keyed the same replaces the shipped one, a new row is added, rows the run did
    not touch are kept. Without it the verdicts stay in the run's own store (the
    `merge` verb merges a finished run later).
+
+`--est` times the estimate's plans in place of the planner's
+(`VFFT_FLAG_ESTIMATE`: formulas, nothing measured, no wisdom read or saved), in
+any contract. Such a `run` skips the calibrate stage and benches every cell.
+Its files carry `_est` (`gauntlet_est.csv`, `report_2d_mt4_est.md`, ...), so it
+shares a run directory with the planner's run of the same cells. `calibrate`,
+`verify` and `merge` refuse it. The regression test in
+[`tests/regression/`](../tests/regression/README.md) runs its cells both ways.
+
+`--batch contiguous` or `--batch lane-major` with `--k K` times a c2c batch of
+K transforms, 1D, 2D or 3D, out of place, against MKL's batch on the same
+layout, at one thread unless `--threads T` is given. The bench cells are
+`--tcc2c` / `--tc2d` / `--tc3d` (`VFFT_BATCH_CONTIGUOUS`) and `--lmc2c` /
+`--lm2d` / `--lm3d` (`VFFT_BATCH_LANE_MAJOR`). A cell whose K transforms hold
+more than 2^24 points is not benched. Files carry `_k<K>`, and `_k<K>_lm` for
+lane-major (`gauntlet_2d_k16_lm_est.csv`). For now a batch runs with `--est`
+only: the calibrate probe creates no c2c batch, so a batch's planner verdict
+cannot be banked.
 
 `gflops` turns a run into a GFLOPS list, VectorFFT beside MKL, one line per
 cell (`gflops.csv` in the run directory; 5 N log2 N per transform, the best of

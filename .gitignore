@@ -43,6 +43,8 @@ Thumbs.db
 !/benchmark_scripts/CMakeLists.txt
 # ...and the release package's README (benchmark_scripts/scripts/package_release.py ships it)
 !/benchmark_scripts/release/README.txt
+# ...and the regression test's cell files (tests/regression/), which every platform runs unchanged
+!/tests/regression/*.txt
 # the gauntlet's tools as build.py leaves them beside their sources on Linux
 # (no .exe suffix there)
 /gauntlet/bench_1d_vs_mkl

@@ -1,0 +1,89 @@
+# 3d-octaves.txt -- 85 3D shapes N1xN2xN3, the regression test's cells (README.md beside this file)
+# Written by make_cells.py from arithmetic alone; every platform runs the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/regression/3d-octaves.txt
+# N1xN2xN3            # axis-0 class       plane class        volume shape        factors
+8x8x8                 # power of two       power of two       2^9    cube         2^3 x 2^3 x 2^3
+32x4x4                # power of two       power of two       2^9    long axis 0  2^5 x 2^2 x 2^2
+2x16x16               # power of two       power of two       2^9    short axis 0 2 x 2^4 x 2^4
+10x8x8                # 2^a x odd          power of two       2^9    cube         2*5 x 2^3 x 2^3
+18x6x6                # 2^a x odd          2^a x odd          2^9    cube         2*3^2 x 2*3 x 2*3
+6x10x14               # 2^a x odd          2^a x odd          2^9    short axis 0 2*3 x 2*5 x 2*7
+9x8x8                 # odd                power of two       2^9    cube         3^2 x 2^3 x 2^3
+17x5x7                # odd                odd                2^9    cube         17 x 5 x 7
+65x3x3                # odd                odd                2^9    long axis 0  5*13 x 3 x 3
+5x9x15                # odd                odd                2^9    short axis 0 5 x 3^2 x 3*5
+16x16x16              # power of two       power of two       2^12   cube         2^4 x 2^4 x 2^4
+64x8x8                # power of two       power of two       2^12   long axis 0  2^6 x 2^3 x 2^3
+4x32x32               # power of two       power of two       2^12   short axis 0 2^2 x 2^5 x 2^5
+18x16x16              # 2^a x odd          power of two       2^12   cube         2*3^2 x 2^4 x 2^4
+34x10x14              # 2^a x odd          2^a x odd          2^12   cube         2*17 x 2*5 x 2*7
+130x6x6               # 2^a x odd          2^a x odd          2^12   long axis 0  2*5*13 x 2*3 x 2*3
+10x18x30              # 2^a x odd          2^a x odd          2^12   short axis 0 2*5 x 2*3^2 x 2*3*5
+17x16x16              # odd                power of two       2^12   cube         17 x 2^4 x 2^4
+35x9x15               # odd                odd                2^12   cube         5*7 x 3^2 x 3*5
+135x5x7               # odd                odd                2^12   long axis 0  3^3*5 x 5 x 7
+9x17x31               # odd                odd                2^12   short axis 0 3^2 x 17 x 31
+32x32x32              # power of two       power of two       2^15   cube         2^5 x 2^5 x 2^5
+128x16x16             # power of two       power of two       2^15   long axis 0  2^7 x 2^4 x 2^4
+8x64x64               # power of two       power of two       2^15   short axis 0 2^3 x 2^6 x 2^6
+34x32x32              # 2^a x odd          power of two       2^15   cube         2*17 x 2^5 x 2^5
+70x18x30              # 2^a x odd          2^a x odd          2^15   cube         2*5*7 x 2*3^2 x 2*3*5
+270x10x14             # 2^a x odd          2^a x odd          2^15   long axis 0  2*3^3*5 x 2*5 x 2*7
+18x34x62              # 2^a x odd          2^a x odd          2^15   short axis 0 2*3^2 x 2*17 x 2*31
+35x32x32              # odd                power of two       2^15   cube         5*7 x 2^5 x 2^5
+65x17x31              # odd                odd                2^15   cube         5*13 x 17 x 31
+259x9x15              # odd                odd                2^15   long axis 0  7*37 x 3^2 x 3*5
+17x35x63              # odd                odd                2^15   short axis 0 17 x 5*7 x 3^2*7
+53x32x32              # prime > 47         power of two       2^15   cube         53 x 2^5 x 2^5
+64x64x64              # power of two       power of two       2^18   cube         2^6 x 2^6 x 2^6
+256x32x32             # power of two       power of two       2^18   long axis 0  2^8 x 2^5 x 2^5
+16x128x128            # power of two       power of two       2^18   short axis 0 2^4 x 2^7 x 2^7
+70x64x64              # 2^a x odd          power of two       2^18   cube         2*5*7 x 2^6 x 2^6
+130x34x62             # 2^a x odd          2^a x odd          2^18   cube         2*5*13 x 2*17 x 2*31
+516x18x30             # 2^a x odd          2^a x odd          2^18   long axis 0  2^2*3*43 x 2*3^2 x 2*3*5
+34x70x126             # 2^a x odd          2^a x odd          2^18   short axis 0 2*17 x 2*5*7 x 2*3^2*7
+65x64x64              # odd                power of two       2^18   cube         5*13 x 2^6 x 2^6
+135x35x63             # odd                odd                2^18   cube         3^3*5 x 5*7 x 3^2*7
+525x17x31             # odd                odd                2^18   long axis 0  3*5^2*7 x 17 x 31
+35x65x125             # odd                odd                2^18   short axis 0 5*7 x 5*13 x 5^3
+67x64x64              # prime > 47         power of two       2^18   cube         67 x 2^6 x 2^6
+131x53x61             # prime > 47         prime > 47         2^18   cube         131 x 53 x 61
+53x67x127             # prime > 47         prime > 47         2^18   short axis 0 53 x 67 x 127
+106x64x64             # prime factor > 47  power of two       2^18   cube         2*53 x 2^6 x 2^6
+128x128x128           # power of two       power of two       2^21   cube         2^7 x 2^7 x 2^7
+512x64x64             # power of two       power of two       2^21   long axis 0  2^9 x 2^6 x 2^6
+32x256x256            # power of two       power of two       2^21   short axis 0 2^5 x 2^8 x 2^8
+130x128x128           # 2^a x odd          power of two       2^21   cube         2*5*13 x 2^7 x 2^7
+270x70x126            # 2^a x odd          2^a x odd          2^21   cube         2*3^3*5 x 2*5*7 x 2*3^2*7
+1200x34x62            # 2^a x odd          2^a x odd          2^21   long axis 0  2^4*3*5^2 x 2*17 x 2*31
+70x130x250            # 2^a x odd          2^a x odd          2^21   short axis 0 2*5*7 x 2*5*13 x 2*5^3
+135x128x128           # odd                power of two       2^21   cube         3^3*5 x 2^7 x 2^7
+259x65x125            # odd                odd                2^21   cube         7*37 x 5*13 x 5^3
+1029x35x63            # odd                odd                2^21   long axis 0  3*7^3 x 5*7 x 3^2*7
+65x135x255            # odd                odd                2^21   short axis 0 5*13 x 3^3*5 x 3*5*17
+131x128x128           # prime > 47         power of two       2^21   cube         131 x 2^7 x 2^7
+257x67x127            # prime > 47         prime > 47         2^21   cube         257 x 67 x 127
+1031x53x61            # prime > 47         prime > 47         2^21   long axis 0  1031 x 53 x 61
+67x131x251            # prime > 47         prime > 47         2^21   short axis 0 67 x 131 x 251
+134x128x128           # prime factor > 47  power of two       2^21   cube         2*67 x 2^7 x 2^7
+262x106x122           # prime factor > 47  prime factor > 47  2^21   cube         2*131 x 2*53 x 2*61
+106x134x254           # prime factor > 47  prime factor > 47  2^21   short axis 0 2*53 x 2*67 x 2*127
+1029x65x125           # odd                odd                2^22   long axis 0  3*7^3 x 5*13 x 5^3
+512x128x128           # power of two       power of two       2^23   cube         2^9 x 2^7 x 2^7
+2048x64x64            # power of two       power of two       2^23   long axis 0  2^11 x 2^6 x 2^6
+128x256x256           # power of two       power of two       2^23   short axis 0 2^7 x 2^8 x 2^8
+516x128x128           # 2^a x odd          power of two       2^23   cube         2^2*3*43 x 2^7 x 2^7
+270x130x250           # 2^a x odd          2^a x odd          2^23   cube         2*3^3*5 x 2*5*13 x 2*5^3
+1200x70x126           # 2^a x odd          2^a x odd          2^23   long axis 0  2^4*3*5^2 x 2*5*7 x 2*3^2*7
+70x270x510            # 2^a x odd          2^a x odd          2^23   short axis 0 2*5*7 x 2*3^3*5 x 2*3*5*17
+525x128x128           # odd                power of two       2^23   cube         3*5^2*7 x 2^7 x 2^7
+259x135x255           # odd                odd                2^23   cube         7*37 x 3^3*5 x 3*5*17
+65x259x507            # odd                odd                2^23   short axis 0 5*13 x 7*37 x 3*13^2
+521x128x128           # prime > 47         power of two       2^23   cube         521 x 2^7 x 2^7
+257x131x251           # prime > 47         prime > 47         2^23   cube         257 x 131 x 251
+1031x67x127           # prime > 47         prime > 47         2^23   long axis 0  1031 x 67 x 127
+67x257x509            # prime > 47         prime > 47         2^23   short axis 0 67 x 257 x 509
+514x128x128           # prime factor > 47  power of two       2^23   cube         2*257 x 2^7 x 2^7
+262x134x254           # prime factor > 47  prime factor > 47  2^23   cube         2*131 x 2*67 x 2*127
+1027x106x122          # prime factor > 47  prime factor > 47  2^23   long axis 0  13*79 x 2*53 x 2*61
+106x262x511           # prime factor > 47  prime factor > 47  2^23   short axis 0 2*53 x 2*131 x 7*73

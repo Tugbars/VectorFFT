@@ -1,0 +1,184 @@
+# octaves.txt -- 180 1D lengths, the regression test's cells (README.md beside this file)
+# Written by make_cells.py from arithmetic alone; every platform runs the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt
+# length    # class              octave  end        factors
+8           # power of two       2^3     beginning  2^3
+16          # power of two       2^4     beginning  2^4
+32          # power of two       2^5     beginning  2^5
+64          # power of two       2^6     beginning  2^6
+128         # power of two       2^7     beginning  2^7
+256         # power of two       2^8     beginning  2^8
+512         # power of two       2^9     beginning  2^9
+1024        # power of two       2^10    beginning  2^10
+2048        # power of two       2^11    beginning  2^11
+4096        # power of two       2^12    beginning  2^12
+8192        # power of two       2^13    beginning  2^13
+16384       # power of two       2^14    beginning  2^14
+32768       # power of two       2^15    beginning  2^15
+65536       # power of two       2^16    beginning  2^16
+131072      # power of two       2^17    beginning  2^17
+262144      # power of two       2^18    beginning  2^18
+524288      # power of two       2^19    beginning  2^19
+1048576     # power of two       2^20    beginning  2^20
+2097152     # power of two       2^21    beginning  2^21
+4194304     # power of two       2^22    beginning  2^22
+8388608     # power of two       2^23    beginning  2^23
+16777216    # power of two       2^24    beginning  2^24
+10          # 2^a x odd          2^3     beginning  2*5
+14          # 2^a x odd          2^3     end        2*7
+18          # 2^a x odd          2^4     beginning  2*3^2
+30          # 2^a x odd          2^4     end        2*3*5
+34          # 2^a x odd          2^5     beginning  2*17
+62          # 2^a x odd          2^5     end        2*31
+70          # 2^a x odd          2^6     beginning  2*5*7
+126         # 2^a x odd          2^6     end        2*3^2*7
+130         # 2^a x odd          2^7     beginning  2*5*13
+250         # 2^a x odd          2^7     end        2*5^3
+270         # 2^a x odd          2^8     beginning  2*3^3*5
+510         # 2^a x odd          2^8     end        2*3*5*17
+516         # 2^a x odd          2^9     beginning  2^2*3*43
+1014        # 2^a x odd          2^9     end        2*3*13^2
+1200        # 2^a x odd          2^10    beginning  2^4*3*5^2
+2046        # 2^a x odd          2^10    end        2*3*11*31
+2058        # 2^a x odd          2^11    beginning  2*3*7^3
+4070        # 2^a x odd          2^11    end        2*5*11*37
+4704        # 2^a x odd          2^12    beginning  2^5*3*7^2
+8190        # 2^a x odd          2^12    end        2*3^2*5*7*13
+8400        # 2^a x odd          2^13    beginning  2^4*3*5^2*7
+16356       # 2^a x odd          2^13    end        2^2*3*29*47
+18000       # 2^a x odd          2^14    beginning  2^4*3^2*5^3
+32718       # 2^a x odd          2^14    end        2*3*7*19*41
+33614       # 2^a x odd          2^15    beginning  2*7^5
+65518       # 2^a x odd          2^15    end        2*17*41*47
+69984       # 2^a x odd          2^16    beginning  2^5*3^7
+131054      # 2^a x odd          2^16    end        2*7*11*23*37
+131220      # 2^a x odd          2^17    beginning  2^2*3^8*5
+262086      # 2^a x odd          2^17    end        2*3*11^2*19^2
+270000      # 2^a x odd          2^18    beginning  2^4*3^3*5^4
+524238      # 2^a x odd          2^18    end        2*3*11*13^2*47
+525000      # 2^a x odd          2^19    beginning  2^3*3*5^5*7
+1048110     # 2^a x odd          2^19    end        2*3*5*7^2*23*31
+1058400     # 2^a x odd          2^20    beginning  2^5*3^3*5^2*7^2
+2097150     # 2^a x odd          2^20    end        2*3*5^2*11*31*41
+2117682     # 2^a x odd          2^21    beginning  2*3^2*7^6
+4193618     # 2^a x odd          2^21    end        2*11^2*13*31*43
+4354560     # 2^a x odd          2^22    beginning  2^9*3^5*5*7
+8387064     # 2^a x odd          2^22    end        2^3*3^4*7*43^2
+8403500     # 2^a x odd          2^23    beginning  2^2*5^3*7^5
+16777138    # 2^a x odd          2^23    end        2*7*29*31^2*43
+9           # odd                2^3     beginning  3^2
+15          # odd                2^3     end        3*5
+17          # odd                2^4     beginning  17
+31          # odd                2^4     end        31
+35          # odd                2^5     beginning  5*7
+63          # odd                2^5     end        3^2*7
+65          # odd                2^6     beginning  5*13
+125         # odd                2^6     end        5^3
+135         # odd                2^7     beginning  3^3*5
+255         # odd                2^7     end        3*5*17
+259         # odd                2^8     beginning  7*37
+507         # odd                2^8     end        3*13^2
+525         # odd                2^9     beginning  3*5^2*7
+1023        # odd                2^9     end        3*11*31
+1029        # odd                2^10    beginning  3*7^3
+2035        # odd                2^10    end        5*11*37
+2187        # odd                2^11    beginning  3^7
+4095        # odd                2^11    end        3^2*5*7*13
+4375        # odd                2^12    beginning  5^4*7
+8177        # odd                2^12    end        13*17*37
+8505        # odd                2^13    beginning  3^5*5*7
+16359       # odd                2^13    end        3*7*19*41
+16807       # odd                2^14    beginning  7^5
+32759       # odd                2^14    end        17*41*47
+32805       # odd                2^15    beginning  3^8*5
+65527       # odd                2^15    end        7*11*23*37
+65625       # odd                2^16    beginning  3*5^5*7
+131043      # odd                2^16    end        3*11^2*19^2
+137781      # odd                2^17    beginning  3^9*7
+262119      # odd                2^17    end        3*11*13^2*47
+273375      # odd                2^18    beginning  3^7*5^3
+524055      # odd                2^18    end        3*5*7^2*23*31
+531441      # odd                2^19    beginning  3^12
+1048575     # odd                2^19    end        3*5^2*11*31*41
+1058841     # odd                2^20    beginning  3^2*7^6
+2096809     # odd                2^20    end        11^2*13*31*43
+2100875     # odd                2^21    beginning  5^3*7^5
+4193475     # odd                2^21    end        3*5^2*11*13*17*23
+4428675     # odd                2^22    beginning  3^11*5^2
+8388569     # odd                2^22    end        7*29*31^2*43
+8680203     # odd                2^23    beginning  3^11*7^2
+16777095    # odd                2^23    end        3*5*19*37^2*43
+53          # prime > 47         2^5     beginning  53
+61          # prime > 47         2^5     end        61
+67          # prime > 47         2^6     beginning  67
+127         # prime > 47         2^6     end        127
+131         # prime > 47         2^7     beginning  131
+251         # prime > 47         2^7     end        251
+257         # prime > 47         2^8     beginning  257
+509         # prime > 47         2^8     end        509
+521         # prime > 47         2^9     beginning  521
+1021        # prime > 47         2^9     end        1021
+1031        # prime > 47         2^10    beginning  1031
+2039        # prime > 47         2^10    end        2039
+2053        # prime > 47         2^11    beginning  2053
+4093        # prime > 47         2^11    end        4093
+4099        # prime > 47         2^12    beginning  4099
+8191        # prime > 47         2^12    end        8191
+8209        # prime > 47         2^13    beginning  8209
+16381       # prime > 47         2^13    end        16381
+16411       # prime > 47         2^14    beginning  16411
+32749       # prime > 47         2^14    end        32749
+32771       # prime > 47         2^15    beginning  32771
+65521       # prime > 47         2^15    end        65521
+65537       # prime > 47         2^16    beginning  65537
+131071      # prime > 47         2^16    end        131071
+131101      # prime > 47         2^17    beginning  131101
+262139      # prime > 47         2^17    end        262139
+262147      # prime > 47         2^18    beginning  262147
+524287      # prime > 47         2^18    end        524287
+524309      # prime > 47         2^19    beginning  524309
+1048573     # prime > 47         2^19    end        1048573
+1048583     # prime > 47         2^20    beginning  1048583
+2097143     # prime > 47         2^20    end        2097143
+2097169     # prime > 47         2^21    beginning  2097169
+4194301     # prime > 47         2^21    end        4194301
+4194319     # prime > 47         2^22    beginning  4194319
+8388593     # prime > 47         2^22    end        8388593
+8388617     # prime > 47         2^23    beginning  8388617
+16777213    # prime > 47         2^23    end        16777213
+106         # prime factor > 47  2^6     beginning  2*53
+122         # prime factor > 47  2^6     end        2*61
+134         # prime factor > 47  2^7     beginning  2*67
+254         # prime factor > 47  2^7     end        2*127
+262         # prime factor > 47  2^8     beginning  2*131
+511         # prime factor > 47  2^8     end        7*73
+514         # prime factor > 47  2^9     beginning  2*257
+1018        # prime factor > 47  2^9     end        2*509
+1027        # prime factor > 47  2^10    beginning  13*79
+2047        # prime factor > 47  2^10    end        23*89
+2049        # prime factor > 47  2^11    beginning  3*683
+4090        # prime factor > 47  2^11    end        2*5*409
+4097        # prime factor > 47  2^12    beginning  17*241
+8189        # prime factor > 47  2^12    end        19*431
+8193        # prime factor > 47  2^13    beginning  3*2731
+16383       # prime factor > 47  2^13    end        3*43*127
+16385       # prime factor > 47  2^14    beginning  5*29*113
+32767       # prime factor > 47  2^14    end        7*31*151
+32769       # prime factor > 47  2^15    beginning  3^2*11*331
+65535       # prime factor > 47  2^15    end        3*5*17*257
+65541       # prime factor > 47  2^16    beginning  3*7*3121
+131069      # prime factor > 47  2^16    end        53*2473
+131073      # prime factor > 47  2^17    beginning  3*43691
+262143      # prime factor > 47  2^17    end        3^3*7*19*73
+262145      # prime factor > 47  2^18    beginning  5*13*37*109
+524285      # prime factor > 47  2^18    end        5*23*47*97
+524289      # prime factor > 47  2^19    beginning  3*174763
+1048574     # prime factor > 47  2^19    end        2*524287
+1048577     # prime factor > 47  2^20    beginning  17*61681
+2097151     # prime factor > 47  2^20    end        7^2*127*337
+2097153     # prime factor > 47  2^21    beginning  3^2*43*5419
+4194303     # prime factor > 47  2^21    end        3*23*89*683
+4194305     # prime factor > 47  2^22    beginning  5*397*2113
+8388607     # prime factor > 47  2^22    end        47*178481
+8388609     # prime factor > 47  2^23    beginning  3*2796203
+16777215    # prime factor > 47  2^23    end        3^2*5*7*13*17*241

@@ -1,0 +1,149 @@
+# 2d-octaves.txt -- 145 2D shapes N1xN2, the regression test's cells (README.md beside this file)
+# Written by make_cells.py from arithmetic alone; every platform runs the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/regression/2d-octaves.txt
+# N1xN2           # N1 class           N2 class           plane  shape      factors
+8x30              # power of two       2^a x odd          2^7    square     2^3 x 2*3*5
+8x31              # power of two       odd                2^7    square     2^3 x 31
+34x6              # 2^a x odd          2^a x odd          2^7    tall 16:1  2*17 x 2*3
+35x7              # odd                odd                2^7    tall 16:1  5*7 x 7
+16x16             # power of two       power of two       2^8    square     2^4 x 2^4
+64x4              # power of two       power of two       2^8    tall 16:1  2^6 x 2^2
+4x64              # power of two       power of two       2^8    wide 1:16  2^2 x 2^6
+18x16             # 2^a x odd          power of two       2^8    square     2*3^2 x 2^4
+10x30             # 2^a x odd          2^a x odd          2^8    square     2*5 x 2*3*5
+10x31             # 2^a x odd          odd                2^8    square     2*5 x 31
+17x16             # odd                power of two       2^8    square     17 x 2^4
+9x30              # odd                2^a x odd          2^8    square     3^2 x 2*3*5
+9x31              # odd                odd                2^8    square     3^2 x 31
+3x125             # odd                odd                2^8    wide 1:16  3 x 5^3
+32x126            # power of two       2^a x odd          2^11   square     2^5 x 2*3^2*7
+32x125            # power of two       odd                2^11   square     2^5 x 5^3
+32x127            # power of two       prime > 47         2^11   square     2^5 x 127
+32x122            # power of two       prime factor > 47  2^11   square     2^5 x 2*61
+130x30            # 2^a x odd          2^a x odd          2^11   tall 16:1  2*5*13 x 2*3*5
+64x64             # power of two       power of two       2^12   square     2^6 x 2^6
+256x16            # power of two       power of two       2^12   tall 16:1  2^8 x 2^4
+16x256            # power of two       power of two       2^12   wide 1:16  2^4 x 2^8
+70x64             # 2^a x odd          power of two       2^12   square     2*5*7 x 2^6
+34x126            # 2^a x odd          2^a x odd          2^12   square     2*17 x 2*3^2*7
+10x510            # 2^a x odd          2^a x odd          2^12   wide 1:16  2*5 x 2*3*5*17
+34x125            # 2^a x odd          odd                2^12   square     2*17 x 5^3
+34x127            # 2^a x odd          prime > 47         2^12   square     2*17 x 127
+34x122            # 2^a x odd          prime factor > 47  2^12   square     2*17 x 2*61
+65x64             # odd                power of two       2^12   square     5*13 x 2^6
+35x126            # odd                2^a x odd          2^12   square     5*7 x 2*3^2*7
+35x125            # odd                odd                2^12   square     5*7 x 5^3
+135x31            # odd                odd                2^12   tall 16:1  3^3*5 x 31
+9x507             # odd                odd                2^12   wide 1:16  3^2 x 3*13^2
+35x127            # odd                prime > 47         2^12   square     5*7 x 127
+35x122            # odd                prime factor > 47  2^12   square     5*7 x 2*61
+67x64             # prime > 47         power of two       2^12   square     67 x 2^6
+53x126            # prime > 47         2^a x odd          2^12   square     53 x 2*3^2*7
+53x125            # prime > 47         odd                2^12   square     53 x 5^3
+53x127            # prime > 47         prime > 47         2^12   square     53 x 127
+53x122            # prime > 47         prime factor > 47  2^12   square     53 x 2*61
+106x64            # prime factor > 47  power of two       2^12   square     2*53 x 2^6
+128x510           # power of two       2^a x odd          2^15   square     2^7 x 2*3*5*17
+128x507           # power of two       odd                2^15   square     2^7 x 3*13^2
+128x509           # power of two       prime > 47         2^15   square     2^7 x 509
+128x511           # power of two       prime factor > 47  2^15   square     2^7 x 7*73
+516x126           # 2^a x odd          2^a x odd          2^15   tall 16:1  2^2*3*43 x 2*3^2*7
+514x122           # prime factor > 47  prime factor > 47  2^15   tall 16:1  2*257 x 2*61
+256x256           # power of two       power of two       2^16   square     2^8 x 2^8
+1024x64           # power of two       power of two       2^16   tall 16:1  2^10 x 2^6
+64x1024           # power of two       power of two       2^16   wide 1:16  2^6 x 2^10
+270x256           # 2^a x odd          power of two       2^16   square     2*3^3*5 x 2^8
+130x510           # 2^a x odd          2^a x odd          2^16   square     2*5*13 x 2*3*5*17
+34x2046           # 2^a x odd          2^a x odd          2^16   wide 1:16  2*17 x 2*3*11*31
+130x507           # 2^a x odd          odd                2^16   square     2*5*13 x 3*13^2
+130x509           # 2^a x odd          prime > 47         2^16   square     2*5*13 x 509
+130x511           # 2^a x odd          prime factor > 47  2^16   square     2*5*13 x 7*73
+259x256           # odd                power of two       2^16   square     7*37 x 2^8
+135x510           # odd                2^a x odd          2^16   square     3^3*5 x 2*3*5*17
+135x507           # odd                odd                2^16   square     3^3*5 x 3*13^2
+525x125           # odd                odd                2^16   tall 16:1  3*5^2*7 x 5^3
+35x2035           # odd                odd                2^16   wide 1:16  5*7 x 5*11*37
+135x509           # odd                prime > 47         2^16   square     3^3*5 x 509
+135x511           # odd                prime factor > 47  2^16   square     3^3*5 x 7*73
+257x256           # prime > 47         power of two       2^16   square     257 x 2^8
+131x510           # prime > 47         2^a x odd          2^16   square     131 x 2*3*5*17
+131x507           # prime > 47         odd                2^16   square     131 x 3*13^2
+131x509           # prime > 47         prime > 47         2^16   square     131 x 509
+521x127           # prime > 47         prime > 47         2^16   tall 16:1  521 x 127
+53x2039           # prime > 47         prime > 47         2^16   wide 1:16  53 x 2039
+131x511           # prime > 47         prime factor > 47  2^16   square     131 x 7*73
+262x256           # prime factor > 47  power of two       2^16   square     2*131 x 2^8
+134x510           # prime factor > 47  2^a x odd          2^16   square     2*67 x 2*3*5*17
+134x507           # prime factor > 47  odd                2^16   square     2*67 x 3*13^2
+134x509           # prime factor > 47  prime > 47         2^16   square     2*67 x 509
+134x511           # prime factor > 47  prime factor > 47  2^16   square     2*67 x 7*73
+512x2046          # power of two       2^a x odd          2^19   square     2^9 x 2*3*11*31
+512x2035          # power of two       odd                2^19   square     2^9 x 5*11*37
+512x2039          # power of two       prime > 47         2^19   square     2^9 x 2039
+512x2047          # power of two       prime factor > 47  2^19   square     2^9 x 23*89
+2053x509          # prime > 47         prime > 47         2^19   tall 16:1  2053 x 509
+514x2035          # prime factor > 47  odd                2^19   square     2*257 x 5*11*37
+514x2039          # prime factor > 47  prime > 47         2^19   square     2*257 x 2039
+2049x511          # prime factor > 47  prime factor > 47  2^19   tall 16:1  3*683 x 7*73
+1024x1024         # power of two       power of two       2^20   square     2^10 x 2^10
+4096x256          # power of two       power of two       2^20   tall 16:1  2^12 x 2^8
+256x4096          # power of two       power of two       2^20   wide 1:16  2^8 x 2^12
+1200x1024         # 2^a x odd          power of two       2^20   square     2^4*3*5^2 x 2^10
+516x2046          # 2^a x odd          2^a x odd          2^20   square     2^2*3*43 x 2*3*11*31
+2058x510          # 2^a x odd          2^a x odd          2^20   tall 16:1  2*3*7^3 x 2*3*5*17
+130x8190          # 2^a x odd          2^a x odd          2^20   wide 1:16  2*5*13 x 2*3^2*5*7*13
+516x2035          # 2^a x odd          odd                2^20   square     2^2*3*43 x 5*11*37
+516x2039          # 2^a x odd          prime > 47         2^20   square     2^2*3*43 x 2039
+516x2047          # 2^a x odd          prime factor > 47  2^20   square     2^2*3*43 x 23*89
+1029x1024         # odd                power of two       2^20   square     3*7^3 x 2^10
+525x2046          # odd                2^a x odd          2^20   square     3*5^2*7 x 2*3*11*31
+525x2035          # odd                odd                2^20   square     3*5^2*7 x 5*11*37
+2187x507          # odd                odd                2^20   tall 16:1  3^7 x 3*13^2
+135x8177          # odd                odd                2^20   wide 1:16  3^3*5 x 13*17*37
+525x2039          # odd                prime > 47         2^20   square     3*5^2*7 x 2039
+525x2047          # odd                prime factor > 47  2^20   square     3*5^2*7 x 23*89
+1031x1024         # prime > 47         power of two       2^20   square     1031 x 2^10
+521x2046          # prime > 47         2^a x odd          2^20   square     521 x 2*3*11*31
+521x2035          # prime > 47         odd                2^20   square     521 x 5*11*37
+521x2039          # prime > 47         prime > 47         2^20   square     521 x 2039
+131x8191          # prime > 47         prime > 47         2^20   wide 1:16  131 x 8191
+521x2047          # prime > 47         prime factor > 47  2^20   square     521 x 23*89
+1027x1024         # prime factor > 47  power of two       2^20   square     13*79 x 2^10
+514x2046          # prime factor > 47  2^a x odd          2^20   square     2*257 x 2*3*11*31
+514x2047          # prime factor > 47  prime factor > 47  2^20   square     2*257 x 23*89
+134x8189          # prime factor > 47  prime factor > 47  2^20   wide 1:16  2*67 x 19*431
+2048x4070         # power of two       2^a x odd          2^22   square     2^11 x 2*5*11*37
+2048x4095         # power of two       odd                2^22   square     2^11 x 3^2*5*7*13
+2048x4093         # power of two       prime > 47         2^22   square     2^11 x 4093
+2048x4090         # power of two       prime factor > 47  2^22   square     2^11 x 2*5*409
+2058x4070         # 2^a x odd          2^a x odd          2^22   square     2*3*7^3 x 2*5*11*37
+2053x4070         # prime > 47         2^a x odd          2^22   square     2053 x 2*5*11*37
+8209x1021         # prime > 47         prime > 47         2^22   tall 16:1  8209 x 1021
+2049x4070         # prime factor > 47  2^a x odd          2^22   square     3*683 x 2*5*11*37
+2049x4093         # prime factor > 47  prime > 47         2^22   square     3*683 x 4093
+2049x4090         # prime factor > 47  prime factor > 47  2^22   square     3*683 x 2*5*409
+8193x1018         # prime factor > 47  prime factor > 47  2^22   tall 16:1  3*2731 x 2*509
+2048x4096         # power of two       power of two       2^23   square     2^11 x 2^12
+8192x1024         # power of two       power of two       2^23   tall 16:1  2^13 x 2^10
+512x16384         # power of two       power of two       2^23   wide 1:16  2^9 x 2^14
+2058x4096         # 2^a x odd          power of two       2^23   square     2*3*7^3 x 2^12
+8400x1014         # 2^a x odd          2^a x odd          2^23   tall 16:1  2^4*3*5^2*7 x 2*3*13^2
+516x16356         # 2^a x odd          2^a x odd          2^23   wide 1:16  2^2*3*43 x 2^2*3*29*47
+2058x4095         # 2^a x odd          odd                2^23   square     2*3*7^3 x 3^2*5*7*13
+2058x4093         # 2^a x odd          prime > 47         2^23   square     2*3*7^3 x 4093
+2058x4090         # 2^a x odd          prime factor > 47  2^23   square     2*3*7^3 x 2*5*409
+2187x4096         # odd                power of two       2^23   square     3^7 x 2^12
+2187x4070         # odd                2^a x odd          2^23   square     3^7 x 2*5*11*37
+2187x4095         # odd                odd                2^23   square     3^7 x 3^2*5*7*13
+8505x1023         # odd                odd                2^23   tall 16:1  3^5*5*7 x 3*11*31
+525x16359         # odd                odd                2^23   wide 1:16  3*5^2*7 x 3*7*19*41
+2187x4093         # odd                prime > 47         2^23   square     3^7 x 4093
+2187x4090         # odd                prime factor > 47  2^23   square     3^7 x 2*5*409
+2053x4096         # prime > 47         power of two       2^23   square     2053 x 2^12
+2053x4095         # prime > 47         odd                2^23   square     2053 x 3^2*5*7*13
+2053x4093         # prime > 47         prime > 47         2^23   square     2053 x 4093
+521x16381         # prime > 47         prime > 47         2^23   wide 1:16  521 x 16381
+2053x4090         # prime > 47         prime factor > 47  2^23   square     2053 x 2*5*409
+2049x4096         # prime factor > 47  power of two       2^23   square     3*683 x 2^12
+2049x4095         # prime factor > 47  odd                2^23   square     3*683 x 3^2*5*7*13
+514x16383         # prime factor > 47  prime factor > 47  2^23   wide 1:16  2*257 x 3*43*127

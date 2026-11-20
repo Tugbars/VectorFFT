@@ -59,13 +59,37 @@ def read_calibrate(path):
     return out
 
 
+def bench_row(r):
+    """a bench row in the gauntlet's columns. The lane-major batch cells (--lmc2c / --lm2d / --lm3d, gauntlet.py
+    --batch lane-major, 2026-11-20) write the shape in N, MKL on our layout as mkl_mirror_ns / ratio_mirror, the
+    cross-engine error as xerr and no GFLOPS; they read here as N1 / N2 / N3, mkl_ns / ratio_vs_mkl, rt_err (the
+    column the gauntlet's 2D and 3D cells fill with the same compare) and vfft_gflops (5 P log2 P K / ns)"""
+    n = r.get("N") or ""
+    if "N1" not in r and "x" in n:
+        for c, v in zip(("N1", "N2", "N3"), n.split("x")):
+            r[c] = v
+    if "mkl_ns" not in r and "mkl_mirror_ns" in r:
+        r["mkl_ns"], r["ratio_vs_mkl"] = r["mkl_mirror_ns"], r["ratio_mirror"]
+        if "rt_err" not in r and "xerr" in r:
+            r["rt_err"] = r["xerr"]
+        try:
+            pts = 1
+            for v in n.split("x"):
+                pts *= int(v)
+            ns = float(r["vfft_ns"])
+            r["vfft_gflops"] = "%.3f" % (5.0 * pts * math.log2(pts) * int(r.get("K") or 1) / ns) if ns > 0 and pts > 1 else "0"
+        except (KeyError, ValueError):
+            pass
+    return r
+
+
 def read_csv(path):
     rows = collections.defaultdict(list)
     if not os.path.isfile(path):
         return rows
     for r in csv.DictReader(open(path, encoding="utf-8", errors="ignore")):
         try:
-            rows[int(r["N"])].append(r)
+            rows[int(r["N"])].append(bench_row(r))
         except (KeyError, ValueError):
             pass
     return rows
@@ -117,12 +141,13 @@ def build_2d(run_dir, sfx="_2d"):
     if os.path.isfile(p):
         for r in csv.DictReader(open(p, encoding="utf-8", errors="ignore")):
             try:
+                r = bench_row(r)
                 rows[tuple(int(r[c]) for c in ("N1", "N2", "N3") if c in r)].append(r)
             except (KeyError, ValueError):
                 pass
     cal = read_calibrate_2d(os.path.join(run_dir, "calibrate%s.log" % sfx))
     cp = os.path.join(run_dir, "control%s.csv" % sfx)
-    ctl = [float(r["ratio_vs_mkl"]) for r in csv.DictReader(open(cp, encoding="utf-8", errors="ignore"))] if os.path.isfile(cp) else []
+    ctl = [float(bench_row(r)["ratio_vs_mkl"]) for r in csv.DictReader(open(cp, encoding="utf-8", errors="ignore"))] if os.path.isfile(cp) else []
     has_cmp = any(float(r.get("mkl_ns", 0) or 0) > 0 for rs in rows.values() for r in rs)
     cells = {}
     for k, rs in rows.items():
@@ -141,9 +166,11 @@ def build_2d(run_dir, sfx="_2d"):
     keys = sorted(set(cells) | set(cal))
     W("# gauntlet report (%dD)\n" % nd)
     place = "in place" if re.search(r"_ipo?(?=_|$)", sfx) else "out of place"   # --inplace / --owned: the suffix's _ip / _ipo
-    W("run: `%s`  contract: %dD %s interleaved, natural, %s, K=1%s  cells: %d listed, %d benched, comparator: %s\n" % (
+    mk = re.search(r"_k(\d+)", sfx)   # --batch (2026-11-20): a c2c batch of K transforms, _lm when lane-major
+    kk = ("K=%s %s" % (mk.group(1), "lane-major" if "_lm" in sfx else "contiguous")) if mk else "K=1"
+    W("run: `%s`  contract: %dD %s interleaved, natural, %s, %s%s  cells: %d listed, %d benched, comparator: %s\n" % (
         os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "DST-II" if "_dst2" in sfx else "DST-III" if "_dst3" in sfx else "DCT-I" if "_dct1" in sfx else "DST-I" if "_dst1" in sfx else "c2c",   # the real runs (2026-10-07), the real-to-real runs (2026-11-14)
-        place, sfx.replace("_%dd" % nd, ""), len(keys), len(cells),
+        place, kk, sfx.replace("_%dd" % nd, ""), len(keys), len(cells),
         (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else "MKL cosine transform (in place)" if "_dct1" in sfx else "MKL sine transform (in place)" if "_dst1" in sfx else "MKL staggered sine transform (in place)" if "_dst" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
@@ -211,9 +238,10 @@ def build(run_dir, sfx="", isa=""):
         return build_2d(run_dir, sfx)
     rows = read_csv(os.path.join(run_dir, "gauntlet%s.csv" % sfx))
     cal = read_calibrate(os.path.join(run_dir, "calibrate%s.log" % sfx))
-    ctl = [float(r["ratio_vs_mkl"]) for r in csv.DictReader(open(os.path.join(run_dir, "control%s.csv" % sfx), encoding="utf-8", errors="ignore"))] \
+    ctl = [float(bench_row(r)["ratio_vs_mkl"]) for r in csv.DictReader(open(os.path.join(run_dir, "control%s.csv" % sfx), encoding="utf-8", errors="ignore"))] \
         if os.path.isfile(os.path.join(run_dir, "control%s.csv" % sfx)) else []
-    eng = read_prime_engines(os.path.join(run_dir, "store"), isa)
+    # the store's prime engines are the planner's verdicts: an --est run (suffix _est) timed the estimate's plans
+    eng = {} if sfx.endswith("_est") else read_prime_engines(os.path.join(run_dir, "store"), isa)
     has_cmp = any(float(r.get("mkl_ns", 0) or 0) > 0 for rs in rows.values() for r in rs)
     cells = {}
     for n, rs in rows.items():

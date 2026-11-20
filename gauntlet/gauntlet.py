@@ -11,6 +11,8 @@
     python gauntlet/gauntlet.py run       --group 2d-odd | 2d-pow2 | 2d-mixed  (2D: odd/prime columns, the pow2 grid, smooth planes)
     python gauntlet/gauntlet.py run       --group 3d-pow2                      (3D: the pow2 grid, every 2^a x 2^b x 2^c up to 2^22 points)
     python gauntlet/gauntlet.py run       --cells 47x64,23x256 | @shapes.txt    (2D shapes; never mixed with 1D lengths)
+    python gauntlet/gauntlet.py run       --group pow2 --est                   (the estimate's plans: no calibrate, every cell benched, files _est)
+    python gauntlet/gauntlet.py run       --cells 4096,64x64 --est --batch contiguous | lane-major --k 16   (a c2c batch of K transforms; files _k16 / _k16_lm)
     python gauntlet/gauntlet.py calibrate / bench / report / merge / verify / gflops ... (the run's stages, one at a time)
 
 The 2D contract (2026-09-23): 2D c2c, interleaved, natural order, out of place,
@@ -64,6 +66,7 @@ def cpts(c):
     return t
 CONTROL_EVERY = 100
 PACE_MS = 300
+BATCH_MAX_POINTS = 1 << 24   # --batch: a cell whose K transforms hold more points than this is not benched (2026-11-20)
 
 
 def pin_cpu():
@@ -216,7 +219,9 @@ class Run:
                                                           # "dst2" / "dst3" / "dct1" / "dst1" (2026-11-14): the 1D real-to-real cell, reals in and out
         self.dst = self.real in ("dst2", "dst3", "dct1", "dst1")
         self.k = int(getattr(args, "k", 1) or 1)          # the 1D real cell's batch count (transform-contiguous rows)
-        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_ipo" if self.ip == 2 else "_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "")
+        self.est = bool(getattr(args, "est", False))      # --est (2026-11-20): the estimate's plans (VFFT_FLAG_ESTIMATE), not the planner's
+        self.batch = getattr(args, "batch", None)         # --batch (2026-11-20): "contiguous" / "lane-major", a c2c batch of K transforms
+        self.sfx = ("_%dd" % dims if dims >= 2 else "") + ("_" + self.real if self.real else "") + ("_k%d" % self.k if self.k > 1 else "") + ("_lm" if self.batch == "lane-major" else "") + ("_ipo" if self.ip == 2 else "_ip" if self.ip else "") + ("_mt%d" % self.threads if self.threads > 1 else "") + ("_" + self.cmp if self.cmp != "mkl" else "") + ("_est" if self.est else "")
         name = args.name or self.default_name()
         self.dir = os.path.join(RESULTS, name)
         self.store = args.store or os.path.join(self.dir, "store")
@@ -460,7 +465,13 @@ def stage_calibrate(run, cells, recal):
 
 def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
-    if is2d(n) and len(n) == 3 and run.real:
+    if run.batch:
+        # the c2c batch (2026-11-20): K transforms, the length or the shape in the N slot, K in the K slot; the
+        # bench's contiguous cell (--tcc2c / --tc2d / --tc3d) or its lane-major cell (--lmc2c / --lm2d / --lm3d)
+        lm, nd = run.batch == "lane-major", ndim(n)
+        flag = [("--lmc2c" if lm else "--tcc2c") if nd == 1 else ("--lm%dd" if lm else "--tc%dd") % nd] + (["--mt"] if run.threads > 1 else [])
+        nstr, kstr = ckey(n), str(run.k)
+    elif is2d(n) and len(n) == 3 and run.real:
         # the 3D REAL cell (2026-10-07): the shape N1xN2xN3 in the N slot (bench --3dreal; the rank-3 real tier, one thread)
         flag = ["--3dreal", "--realfwd" if run.real == "r2c" else "--realbwd"] + (["--mt"] if run.threads > 1 else []) + (["--realown"] if run.ip == 2 else ["--realip"] if run.ip else [])   # --mt: the threaded cell at $VFFT_MT, MKL at the same T; --realip / --realown: in place, door 1 / door 2 (2026-10-08)
         nstr, kstr = ckey(n), "1"
@@ -489,6 +500,8 @@ def bench_cell(run, n, csv_path):
         nstr, kstr = str(n), "1"
     if run.cmp != "mkl":
         flag = ["--cmp", run.cmp] + flag   # the comparator arm (a --kfr build of the bench)
+    if run.est:
+        flag = ["--est"] + flag   # every create of the cell by the estimate: formulas, nothing measured, no wisdom read or saved
     ok = True
     for flip in ("0", "1"):
         # the bench's wisdom slot: a file inside the store (the bench opens it and serves
@@ -523,17 +536,25 @@ def stage_bench(run, cells):
             f = line.split()
             if len(f) >= 2 and re.match(r"^\d+(x\d+){0,2}$", f[0]) and f[1] == "banked":
                 banked.add(f[0])
+    from gauntlet_report import bench_row   # a lane-major batch cell's row (the shape in N) in the gauntlet's columns
     have = {}
     if os.path.isfile(run.csv):
         for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
             try:
+                r = bench_row(r)
                 k = "x".join(str(int(r[c])) for c in ("N1", "N2", "N3") if c in r) if "N1" in r else str(int(r["N"]))
                 have[k] = have.get(k, 0) + 1
             except (KeyError, ValueError):
                 pass
-    todo = [n for n in cells if ckey(n) in banked and have.get(ckey(n), 0) < 2]
-    skipped = [n for n in cells if ckey(n) not in banked]
-    run.note("bench: %d cells (%d already benched, %d not banked -> not benched)" % (len(todo), sum(1 for n in cells if have.get(ckey(n), 0) >= 2), len(skipped)))
+    # --batch: a cell whose K transforms hold more than BATCH_MAX_POINTS points is not benched
+    over = set(ckey(n) for n in cells if run.batch and cpts(n) * run.k > BATCH_MAX_POINTS)
+    # --est: the estimate plans every cell from formulas, so no cell waits on a banked verdict
+    todo = [n for n in cells if ckey(n) not in over and (run.est or ckey(n) in banked) and have.get(ckey(n), 0) < 2]
+    skipped = [] if run.est else [n for n in cells if ckey(n) not in banked]
+    run.note("bench: %d cells (%d already benched, %d not banked -> not benched%s)%s" % (
+        len(todo), sum(1 for n in cells if have.get(ckey(n), 0) >= 2), len(skipped),
+        ", %d over 2^%d points as a batch of %d -> not benched" % (len(over), BATCH_MAX_POINTS.bit_length() - 1, run.k) if over else "",
+        ", the estimate's plans" if run.est else ""))
     if not todo:
         return
     control_cell(run)
@@ -631,9 +652,11 @@ def stage_gflops(run):
     orders for each engine), written to gflops<sfx>.csv beside the run's csv."""
     if not os.path.isfile(run.csv):
         raise SystemExit("no %s yet -- bench first" % run.csv)
+    from gauntlet_report import bench_row   # a lane-major batch cell's row in the gauntlet's columns
     rows = {}
     for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
         try:
+            r = bench_row(r)
             key = tuple(int(r[c]) for c in ("N1", "N2", "N3") if c in r) if "N1" in r else int(r["N"])
             rows.setdefault(key, []).append(r)
         except (KeyError, ValueError):
@@ -681,11 +704,13 @@ def main():
     ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
     ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D, 2D and 3D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from $VFFT_FFTW_DLL, else the repository's gauntlet/fftw/libfftw3-3.dll on Windows -- FFTW 3.3.10 with AVX-512 and threads -- else vcpkg's fftw3.dll; FFTW_MEASURE, its wisdom in the run's fftw.wis; the 1D/2D/3D c2c cells out of place and the real cells, at one thread or --threads T with an FFTW built with its threads API: --enable-threads --with-combined-threads, CMake ENABLE_THREADS + WITH_COMBINED_THREADS; verify writes FFTW's rows too); its own csv suffix")
     ap.add_argument("--real", choices=["r2c", "c2r", "dst2", "dst3", "dct1", "dst1"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r. dst2 / dst3 (2026-11-14): the 1D DST-II / DST-III cell, N reals in and out, out of place or --inplace, one thread or --threads T, against MKL (its staggered sine transform, in place) or --cmp fftw (RODFT10 / RODFT01); suffix _dst2 / _dst3. dct1 / dst1 (2026-11-14): the 1D DCT-I / DST-I cell, the same contract, against MKL (its cosine / sine transform, in place) or --cmp fftw (REDFT00 / RODFT00); suffix _dct1 / _dst1")
-    ap.add_argument("--k", type=int, default=1, help="the batch count of the 1D real cell: K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2); suffix _k<K>")
+    ap.add_argument("--k", type=int, default=1, help="the batch count: the 1D real cell's K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2), or the c2c batch's K with --batch; suffix _k<K>")
+    ap.add_argument("--batch", choices=["contiguous", "lane-major"], help="a c2c batch of --k K >= 2 transforms (2026-11-20), 1D, 2D or 3D, out of place against MKL's batch on the same layout, one thread unless --threads: contiguous = VFFT_BATCH_CONTIGUOUS (the bench's --tcc2c / --tc2d / --tc3d), lane-major = VFFT_BATCH_LANE_MAJOR (--lmc2c / --lm2d / --lm3d); a cell whose K transforms pass 2^24 points is not benched; suffix _k<K>, lane-major _k<K>_lm; the estimate's plans only for now (--est): the calibrate probe creates no c2c batch")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
     ap.add_argument("--store", help="use this wisdom store instead of a fresh copy of the shipped one")
     ap.add_argument("--bin-dir", help="where the gauntlet binaries are (default: beside the sources, else <build>/gauntlet)")
     ap.add_argument("--calibrate", action="store_true", help="re-race every cell (recalibrate) instead of replaying the shipped verdicts")
+    ap.add_argument("--est", action="store_true", help="the estimate's plans (VFFT_FLAG_ESTIMATE: formulas, nothing measured, no wisdom read or saved) in place of the planner's, in any contract: run skips the calibrate stage and benches every cell; its own csv / report suffix _est, so it shares a run directory with the planner's run of the same cells; not with calibrate, verify, merge, --calibrate or --merge")
     ap.add_argument("--merge", action="store_true", help="after the run, merge the store's verdicts into the shipped wisdom")
     ap.add_argument("--yes", action="store_true", help="do not stop for the duration estimate")
     args = ap.parse_args()
@@ -717,24 +742,38 @@ def main():
         raise SystemExit("--real dst2 / dst3 / dct1 / dst1: the real-to-real cell is 1D, one transform, out of place or --inplace, against MKL or --cmp fftw")
     if run.real and not run.dst and run.ip and dims not in (2, 3):
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
-    if run.k > 1 and (not run.real or dims != 1):
-        raise SystemExit("--k: the batch count belongs to the 1D real cell")
+    if run.k > 1 and not run.batch and (not run.real or dims != 1):
+        raise SystemExit("--k: the batch count of the 1D real cell, or of a c2c batch with --batch")
+    if run.batch and (run.real or run.ip or run.cmp != "mkl" or run.k < 2):
+        raise SystemExit("--batch: a c2c batch of --k K >= 2 transforms, out of place, against MKL")
+    if run.batch and not run.est and args.verb != "cells":
+        raise SystemExit("--batch: the estimate's plans only for now (--est); the calibrate probe creates no c2c batch, so a batch's planner verdict cannot be banked")
+    if run.est and (args.verb in ("calibrate", "verify", "merge") or args.calibrate or args.merge):
+        raise SystemExit("--est: the estimate's plans read and bank no wisdom, so there is nothing to calibrate or merge; verify checks the planner's plans (run it without --est)")
     cal_s, bench_s = estimate_seconds(cells, run.threads, args.calibrate)
+    if run.est:
+        cal_s = 0.0   # no calibrate stage
     if args.verb == "cells":
         print("%d cells: %s%s" % (len(cells), " ".join(ckey(c) for c in cells[:12]), " ..." if len(cells) > 12 else ""))
-        print("estimate on this class of machine: calibrate ~%.0f min%s, bench ~%.0f min" % (cal_s / 60, "" if args.calibrate else " (replay)", bench_s / 60))
+        if run.batch:   # the pace model has no batch cell
+            print("as a %s batch of %d: %d cells within 2^%d points (the rest are not benched); a batch cell's time is not modelled" % (
+                run.batch, run.k, sum(1 for c in cells if cpts(c) * run.k <= BATCH_MAX_POINTS), BATCH_MAX_POINTS.bit_length() - 1))
+        else:
+            print("estimate on this class of machine: %s, bench ~%.0f min" % ("no calibrate (--est)" if run.est else "calibrate ~%.0f min%s" % (cal_s / 60, "" if args.calibrate else " (replay)"), bench_s / 60))
         return 0
 
     run.prepare(cells if args.verb in ("run", "calibrate") else None)
-    run.note("%s: %d cells, contract %s%s%s, bin %s" % (args.verb, len(cells), "2D " if run.dims == 2 else "", "in place" if run.ip else "out of place",
-                                                     ", T=%d" % run.threads if run.threads > 1 else "", run.bin))
+    run.note("%s: %d cells, contract %s%s%s%s%s, bin %s" % (args.verb, len(cells), "2D " if run.dims == 2 else "", "in place" if run.ip else "out of place",
+                                                         ", T=%d" % run.threads if run.threads > 1 else "",
+                                                         ", a %s batch of %d" % (run.batch, run.k) if run.batch else "",
+                                                         ", the estimate's plans" if run.est else "", run.bin))
     if args.verb in ("run", "calibrate") and not args.yes and (cal_s + bench_s) > 1800:
         print("estimated %.0f min (calibrate %.0f + bench %.0f). Pass --yes to skip this prompt." % ((cal_s + bench_s) / 60, cal_s / 60, bench_s / 60))
         if input("continue? [y/N] ").strip().lower() != "y":
             return 1
     keep_awake(True)
     try:
-        if args.verb in ("run", "calibrate"):
+        if args.verb in ("run", "calibrate") and not run.est:   # --est: the estimate needs no verdict
             stage_calibrate(run, cells, args.calibrate)
         if args.verb in ("run", "bench"):
             stage_bench(run, cells)
