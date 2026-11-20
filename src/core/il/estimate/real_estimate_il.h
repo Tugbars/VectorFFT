@@ -828,7 +828,7 @@ static inline int est_put_rows_real(vw2_store_t *st, const est_real_recipe_t *rc
 {
     const int N = rq->N, T = est__T(rq), ip = (rq->placement == VFFT_PLACEMENT_IN);
     const int c2r = (rq->transform == VFFT_C2R), eng = est__eng(rc, rq);
-    char fsb[1024];
+    char fsb[4096];
     int R1, R2, n1 = 0, n2 = 0;
     fsb[0] = 0;
     switch (eng)
@@ -991,11 +991,11 @@ static inline int est__preflight_real(const est_real_recipe_t *rc, const est_req
             return -1;
         if (est__fs_split(ch, N / 2, 1, &n1, &n2))
         {   /* a four-step child (or a prime child's four-step inner) is a nested create */
-            if (ch->k1_il_route == VFFT_K1_IL_FS && !vfft_k1fs_band(N / 2))
+            if (ch->k1_il_route == VFFT_K1_IL_FS && !vfft_k1fs_band_t(N / 2, est__T(rq)))   /* the prime sides (2026-11-20) */
                 return est_refuse(why, whylen, "zr2c four-step child at %d is outside the band", N / 2);
             if (ch->k1_il_route == VFFT_K1_IL_PRIME &&
                 (!vfft_policy_prime_cell(N / 2) || (ch->prime.method == 1 && !vfft_policy_is_prime(N / 2)) ||
-                 !vfft_k1fs_band(n1 * n2) || !est__prime_inner_len_ok(N / 2, ch->prime.method, (long)n1 * n2)))
+                 !vfft_k1fs_band_t(n1 * n2, 1) || !est__prime_inner_len_ok(N / 2, ch->prime.method, (long)n1 * n2)))
                 return est_refuse(why, whylen, "zr2c prime child at %d: its four-step inner %dx%d is not a %s inner of a "
                                   "prime cell (il_prime.h:249, 299-318)", N / 2, n1, n2,
                                   ch->prime.method == 1 ? "Rader" : "Bluestein");

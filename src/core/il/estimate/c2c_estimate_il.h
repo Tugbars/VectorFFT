@@ -101,11 +101,15 @@ static inline int est__fs_get(const char *fs, const char *name, char *out, size_
 }
 /* the four-step child's row plan -- the c2c cell at N2, in place, natural, one thread
  * (k1_fourstep.h:215-230) -- as a recipe, from its tokens in either spelling: fs_row_* /
- * fs_row_bwd_*, or fs_rp_<i>_* under fs_rp_k<i> (the 2D tier's). 0 when it carries none. */
+ * fs_row_bwd_*, or fs_rp_<i>_* under fs_rp_k<i> (the 2D tier's). A prime cell's method row
+ * (role=method, the prime sides of 2026-11-20) gives the recipe its method and inner, and a
+ * four-step inner's own child (its fs_*); the flat chain's Rader stage its il_rd / il_rdw.
+ * 0 when it carries none. */
 static inline int est__fs_row_recipe(const char *fs, est_recipe_t *rr)
 {
-    char buf[1024], *sp = buf, *t, rowp[24] = "fs_row_", bwdp[24] = "fs_row_bwd_";
+    char buf[4096], *sp = buf, *t, rowp[24] = "fs_row_", bwdp[24] = "fs_row_bwd_", methp[24] = "";
     int have = 0, i;
+    size_t foff = 0;
     memset(rr, 0, sizeof *rr);
     if (strlen(fs) >= sizeof buf)
         return 0;
@@ -114,6 +118,7 @@ static inline int est__fs_row_recipe(const char *fs, est_recipe_t *rr)
         if (!strncmp(t, "fs_rp_k", 7) && (i = atoi(t + 7)) > 0)
         {   /* the 2D tier's spelling: which row is the plan, which its backward twin */
             if (strstr(t, "dir=bwd")) snprintf(bwdp, sizeof bwdp, "fs_rp_%d_", i);
+            else if (strstr(t, "role=method")) snprintf(methp, sizeof methp, "fs_rp_%d_", i);
             else if (strstr(t, "place=ip") && strstr(t, "ord=nat")) snprintf(rowp, sizeof rowp, "fs_rp_%d_", i);
         }
     memcpy(buf, fs, strlen(fs) + 1);
@@ -126,6 +131,20 @@ static inline int est__fs_row_recipe(const char *fs, est_recipe_t *rr)
         if (!eq) continue;
         *eq = 0;
         v = eq + 1;
+        if (methp[0] && !strncmp(t, methp, strlen(methp)))
+        {   /* the prime cell's method row: the method, the inner, a four-step inner's child */
+            nm = t + strlen(methp);
+            if (!strcmp(nm, "eng")) rr->prime.method = !strcmp(v, "rader") ? 1 : !strcmp(v, "bluestein") ? 2 : 0;
+            else if (!strcmp(nm, "in")) snprintf(rr->prime.in_kind, sizeof rr->prime.in_kind, "%s", v);
+            else if (!strcmp(nm, "in_sh")) snprintf(rr->prime.in_shape, sizeof rr->prime.in_shape, "%s", v);
+            else if (!strcmp(nm, "in_tw")) rr->prime.in_tw = atoi(v);
+            else if (!strncmp(nm, "fs_", 3))
+            {
+                const int w = snprintf(rr->fs + foff, sizeof rr->fs - foff, "%s%s=%s", foff ? " " : "", nm, v);
+                if (w > 0 && (size_t)w < sizeof rr->fs - foff) foff += (size_t)w;
+            }
+            continue;
+        }
         if (!strncmp(t, bwdp, strlen(bwdp)))
         {   /* the backward twin: its forms are the plan's il_bkv */
             if (!strcmp(t + strlen(bwdp), "il_kv")) rr->il_bkv = atoi(v);
@@ -143,6 +162,8 @@ static inline int est__fs_row_recipe(const char *fs, est_recipe_t *rr)
         else if (!strcmp(nm, "il_tw")) rr->il_tw = atoi(v);
         else if (!strcmp(nm, "il_ztt") && (n = vw2__oop_split_ints(v, a, VFFT_ZTT_MAX_NF)) >= 2) { memcpy(rr->il_zt, a, sizeof(int) * (size_t)n); rr->il_zt_n = n; }
         else if (!strcmp(nm, "il_kv")) rr->il_kv = atoi(v);
+        else if (!strcmp(nm, "il_rd") && (n = vw2__oop_split_ints(v, a, VFFT_ILRD_MAX_NST < 10 ? VFFT_ILRD_MAX_NST : 10)) >= 1) { memcpy(rr->il_rd, a, sizeof(int) * (size_t)n); rr->il_rd_n = n; }
+        else if (!strcmp(nm, "il_rdw")) rr->il_rdw = atoi(v);
     }
     return have;
 }
@@ -306,8 +327,8 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
     {   /* a nested create: the band and the split (k1_fourstep.h:386), the super-band form's law
          * (:387), a threaded split from the race's own ladder (k1_commit.h:1594-1601), the child */
         int n1, n2;
-        if (!vfft_k1fs_band(N))
-            return est_refuse(why, whylen, "N = %d is outside the four-step's band", N);
+        if (!vfft_k1fs_band_t(N, T))   /* the prime sides at this T (2026-11-20) */
+            return est_refuse(why, whylen, "N = %d is outside the four-step's band at T = %d", N, T);
         if (rc->il_kv == 1 && !scr && R2 % 16)
             return est_refuse(why, whylen, "the four-step's super-band form needs N2 %% 16 == 0");
         if (T > 1)
@@ -347,7 +368,7 @@ static inline int est__preflight(const est_recipe_t *rc, const est_request_t *rq
                               rc->prime.in_shape);
         if (d.kind == 4)
         {   /* a four-step inner is a nested create: its band, the method's inner length, its child */
-            if (!est__split_of(rc->prime.in_shape, &n1, &n2) || !vfft_k1fs_band(n1 * n2))
+            if (!est__split_of(rc->prime.in_shape, &n1, &n2) || !vfft_k1fs_band_t(n1 * n2, 1))
                 return est_refuse(why, whylen, "the four-step inner %s is outside the band", rc->prime.in_shape);
             if (!est__prime_inner_len_ok(N, rc->prime.method, (long)n1 * n2))
                 return est_refuse(why, whylen, "the four-step inner %dx%d is not a %s length at N = %d", n1, n2,

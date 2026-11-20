@@ -982,6 +982,146 @@ static inline int est__rader(est_col_t *c, int p)
     c->rdw = (int)W;
     return 0;
 }
+
+/* ── THE FOUR-STEP WITH A PRIME SIDE (owner, 2026-11-20; docs/design/k1_fourstep_prime_sides.md) ──────────
+ * The 1D four-step's 2D child at a split N1 x N2 of a composite with a prime factor past the chain radices,
+ * as the 2D row's tokens a race banks (k1_fourstep.h, _k1fs_row_put_child): the column chain led by the Rader
+ * stage where N1 holds the prime (fs_chain=p.<the rest>, its inner fs_rd and window fs_rdw by the 2D rule above),
+ * fs_blu=0, the unbanded walk wherever a Rader stage leads (every race of the 2026-11-20 probes chose it), the
+ * switches as est__fs_child writes them, and the row plan at N2 -- this procedure's c2c cell, natural, in place,
+ * one thread -- as the rows est_put_rows writes for it (a prime cell's method row among them), in the rp_
+ * spelling under fs_rp_ (vfft_child_row_update, wisdom2_child.h). Where N1 has one column kernel the door also
+ * builds the skewed pass's row plan, N2 out of place (fft2d_create_il.h, whatever the order and the csk verdict):
+ * it rides under fs_csk_ the same way, as est_plan_2d_r writes it for a 2D request (has_csk); without it that
+ * plan raced inside the create (1048577 = 17 x 61681, 8388607 = 47 x 178481). */
+/* one 1D child of that 2D child at N, natural, one thread, in the placement given: its rows by est_put_rows into
+ * a store of their own, spelled as the 2D row carries a child in role: fs_<role>k<i>=<key>,
+ * fs_<role><i>_<token>=<value> */
+static inline int est__fs_role_rows(const est_machine_t *m, int N, int placement, const char *role, est_sb_t *s,
+                                    char *why, size_t whylen)
+{
+    est_recipe_t row;
+    est_request_t rq;
+    struct vfft_wisdom_s *S;
+    int i;
+    if (est_c2c(m, N, 0, placement == VFFT_PLACEMENT_IN, 1, &row, why, whylen) != 0)
+        return -1;
+    memset(&rq, 0, sizeof rq);
+    rq.N = N;
+    rq.transform = VFFT_C2C;
+    rq.order = VFFT_ORDER_NATURAL;
+    rq.placement = placement;
+    rq.nthreads = 1;
+    if (!(S = vfft_child_store_new()))
+        return est_refuse(why, whylen, "out of memory");
+    if (est_put_rows(&S->vw2, &row, &rq, 1, why, whylen))
+    {
+        vfft_child_store_free(S);
+        return -1;
+    }
+    for (i = 0; i < S->vw2.nrec; i++)
+    {
+        const vw2_rec_t *r = &S->vw2.rec[i];
+        char kb[320];
+        size_t j;
+        int t;
+        vw2__key_format(&r->key, kb, sizeof kb);
+        for (j = 0; kb[j]; j++)
+            if (kb[j] == ' ') kb[j] = ',';
+        est_sb_add(s, " fs_%sk%d=%s", role, i + 1, kb);
+        for (t = 0; t < r->ntok; t++)
+            if (r->tok[t].sect == 1)
+                est_sb_add(s, " fs_%s%d_%s=%s", role, i + 1, r->tok[t].name, r->tok[t].val);
+    }
+    vfft_child_store_free(S);
+    return 0;
+}
+static inline int est__fs_child_prime(const est_machine_t *m, int N1, int N2, int T, char *fs, size_t cap,
+                                      char *why, size_t whylen)
+{
+    est_col_t col;
+    est_sb_t s;
+    int c[8], nst = 0, wl, i, odd = 0, multi = 0;
+    const int p = vfft_policy_il2d_rader_prime(N1);
+    memset(&col, 0, sizeof col);
+    if (p)
+    {
+        c[0] = p;
+        nst = 1;
+        if (N1 / p > 1)
+        {
+            const int k = est_fs_col_chain(N1 / p, c + 1);
+            if (!k)
+                return est_refuse(why, whylen, "the four-step %dx%d: no column chain at %d after the Rader stage %d",
+                                  N1, N2, N1 / p, p);
+            nst += k;
+        }
+        col.N = N1;
+        col.w = N2;
+        if (est__rader(&col, p) != 0 || col.rd_n < 1)
+            return est_refuse(why, whylen, "the four-step %dx%d: no Rader inner at %d", N1, N2, p - 1);
+    }
+    else if (!(nst = est_fs_col_chain(N1, c)))
+        return est_refuse(why, whylen, "the four-step %dx%d has no column chain at %d", N1, N2, N1);
+    wl = p ? 0 : est_fs_wl(m, c, nst, N1, N2);
+    est_sb_init(&s, fs, cap);
+    est_sb_add(&s, "fs_chain=");
+    est_sb_chain(&s, c, nst);
+    if (p)
+    {
+        est_sb_add(&s, " fs_rd=");
+        est_sb_chain(&s, col.rd, col.rd_n);
+        est_sb_add(&s, " fs_rdw=%d", col.rdw);
+    }
+    for (i = 0; i < nst; i++)
+    {
+        if (c[i] & 1) odd = 1;
+        if (c[i] == 32) multi = 1;
+    }
+    if (odd) est_sb_add(&s, " fs_blu=0");
+    if (multi)
+    {
+        est_sb_add(&s, " fs_forms=");
+        for (i = 0; i < nst; i++)
+            est_sb_add(&s, "%s%s", i ? "." : "", c[i] == 32 ? "b48" : c[i] == 64 ? "b88" : "-");
+    }
+    est_sb_add(&s, " fs_wl=%d fs_tf=%d fs_ro=0 fs_sw=0 fs_rbk=8 fs_turn=0 fs_csk=0", wl, wl > 0);
+    if (T > 1)
+        est_sb_add(&s, " fs_cmt=1 fs_mtarm=%d fs_msw=%d", wl == 0, wl == 0 ? 128 : 0);
+    /* the row plan at N2, and the skewed pass's row plan where the door builds it (no Bluestein column here) */
+    if (est__fs_role_rows(m, N2, VFFT_PLACEMENT_IN, "rp_", &s, why, whylen) != 0)
+        return -1;
+    if (vfft_k1_mono_ilc_fn(N1, 0) && vfft_k1_mono_ilc_fn(N1, 1) &&
+        est__fs_role_rows(m, N2, VFFT_PLACEMENT_OUT, "csk_", &s, why, whylen) != 0)
+        return -1;
+    if (s.len >= cap)
+        return est_refuse(why, whylen, "the four-step %dx%d: its child's tokens pass %u bytes", N1, N2, (unsigned)cap);
+    return 0;
+}
+/* The four-step route of such an N (est_c2c's step 3): the ladder's first split (vfft_k1fs_splits: the most
+ * balanced, ties to the smaller column side; the splits of one length ran within 14% of each other on 2026-11-20,
+ * against 2-7x over the whole-length plan), the same split at every T (il_mt at T > 1), the child at the plan's T.
+ * o is written only when the child is. */
+static inline int est_fs_route_prime(const est_machine_t *m, long long N, int T, est_recipe_t *o, char *why,
+                                     size_t whylen)
+{
+    int a[VFFT_K1FS_MAX_SPLITS], b[VFFT_K1FS_MAX_SPLITS];
+    est_recipe_t r;
+    const int ns = vfft_k1fs_splits((int)N, a, b, VFFT_K1FS_MAX_SPLITS);
+    if (ns < 1)
+        return est_refuse(why, whylen, "N = %lld has no four-step split with a prime side", N);
+    memset(&r, 0, sizeof r);
+    r.k1_il_route = VFFT_K1_IL_FS;
+    r.il_R1 = a[0];
+    r.il_R2 = b[0];
+    r.il_kv = 0;
+    if (T > 1)
+        r.il_mt = a[0];
+    if (est__fs_child_prime(m, a[0], b[0], T > 1 ? T : 1, r.fs, sizeof r.fs, why, whylen))
+        return -1;
+    *o = r;
+    return 0;
+}
 /* The column pass at N over rows of w (sketch §4-§6): the chain when the pool holds one -- blu=0 where
  * N is not a power of two (the chain beats Bluestein; the race banks blu only then,
  * il2d_tier.h:4200), with the Rader stage's inner and window where it leads; else the column

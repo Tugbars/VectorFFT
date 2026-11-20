@@ -475,9 +475,11 @@ static int _ilprime_inner_cands(int M, _ilprime_inner_desc_t *out, int max)
 #endif
     if (!getenv("VFFT_RD_ONE_LEVEL"))   /* the test of 2026-10-17: no second Rader level under the prime cell */
         n += _ilprime_fd_chains(M, out + n, max - n);   /* the flat chains with a Rader stage (2026-10-13) */
-    if (vfft_k1fs_band(M))
+    if (vfft_k1fs_band_t(M, 1))
     {   /* THE FOUR-STEP's splits at M (2026-10-12): the lengths past ZTURN-T's
-         * ceiling, pow2 and not -- the engine's own ladder, each split an arm */
+         * ceiling, pow2 and not -- the engine's own ladder, each split an arm
+         * (a Rader inner N - 1 with a prime factor past the chain radices takes
+         * the prime sides since 2026-11-20: 8388616 = 136 x 61681 for 8388617) */
         int n1[8], n2[8], ns = vfft_k1fs_splits(M, n1, n2, 8), i;
         for (i = 0; i < ns; i++)
         {
@@ -860,9 +862,18 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * replay instead of running the door's default. Every race whose
  * pool can hold the four-step at N calls it: the K=1 race below, the prime
  * cell's inner race and the real Bluestein's. */
+static void _k1_il_fs_warm_t(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N,
+                             int T);
 static void _k1_il_fs_warm(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N)
 {
-    if (vfft_k1fs_band(N))
+    _k1_il_fs_warm_t(S, W, cfg, N, 1);
+}
+/* the same for the splits a plan at T races (the band at T: the prime sides below VFFT_K1FS_MIN_N are a threaded
+ * plan's only, 2026-11-20); the row cells themselves are one-thread cells either way */
+static void _k1_il_fs_warm_t(struct vfft_wisdom_s *S, const struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N,
+                             int T)
+{
+    if (vfft_k1fs_band_t(N, T))   /* the prime sides too (2026-11-20) */
     {
         int n1[8], n2[8], ns = vfft_k1fs_splits(N, n1, n2, 8), i, j;
         int have[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -942,10 +953,16 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int 
 {
     return _k1_il_plan_race_ex(W, cfg, N, 1);
 }
+static int _k1_il_lean_off = 0;   /* the lean race's second pass, with the whole-length cell's arm (below) */
 static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int bank)
 {
     vfft_il_cand_t top;
     int lines;
+    /* THE LEAN PLANNER above VFFT_K1FS_MIN_N (owner, 2026-11-20; policy_il.h, the prime sides): a composite with a
+     * prime factor past the chain radices that splits races the four-step and the flat chain, never the whole-length
+     * cell -- its arm is not built, so the race holds no prime candidate (dp_planner_il.h _il_dp_enumerate_prime).
+     * Where nothing of that race banks, the race runs again with the arm (the end of this function). */
+    const int lean = !_k1_il_lean_off && bank && vfft_k1fs_prime_composite(N) && vfft_k1fs_band_t(N, 1);
     struct vfft_wisdom_s *fsS;   /* the four-step candidates' children race into it (k1_fourstep.h) */
     vfft_cfg_t fscfg;
     vfft_il_dp_planes_t planes;  /* the planner's planes, held from entry until the context takes them */
@@ -997,8 +1014,9 @@ static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, i
      * race. The verdict's plan is handed to the candidate after the race; a
      * losing plan dies below. */
     _k1pr_release();
-    if (vfft_policy_prime_cell(N) && cfg->layout == VFI_LAYOUT_IL)
-    {
+    if (vfft_policy_prime_cell(N) && cfg->layout == VFI_LAYOUT_IL && !lean && bank)
+    {   /* (bank 0, the ranking for the race at T: a prime cell reaches it only by the prime sides at T, and that race
+         * builds the whole-length cell at T itself -- _k1_il_t_race) */
         _k1pr_ctx.plan = _ilprime_create_banked(W, cfg, N, NULL, _vfft_plan_threads(cfg));
         _k1pr_ctx.N = _k1pr_ctx.plan ? N : 0;
     }
@@ -1060,22 +1078,49 @@ static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, i
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (_k1pr_ctx.plan)
-    {   /* the prime plan outlives the race only as the request's verdict */
+    {   /* the prime plan outlives the race only as the request's verdict; at the prime sides at T the race at T decides
+         * that verdict (_k1_il_t_race, which the door runs next), so the plan built at T waits for it there */
         vfft_oop_il_entry_t pe;
         const int ip_req = (cfg->placement == VFFT_INPLACE);
         const int scr_req = (vfft_policy_ord_k1(cfg, N, ip_req) == VW2_ORD_SCR);
-        if (!(vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, 1, &pe) &&   /* the race banks the one-thread row */
-              pe.k1_il_route == VFFT_K1_IL_PRIME))
+        const int Tq = _vfft_plan_threads(cfg);
+        const int primeT = Tq > 1 && !scr_req && vfft_k1fs_prime_composite(N) && vfft_k1fs_band_t(N, Tq) &&
+                           !vfft_k1fs_band_t(N, 1);
+        if (!primeT && !(vw2_oop_lookup_k1_il_cell(&W->vw2, N, scr_req, ip_req, 1, &pe) &&   /* the race banks the one-thread row */
+                         pe.k1_il_route == VFFT_K1_IL_PRIME))
             _k1pr_release();
     }
-    if (getenv("VFFT_NAT_LOG") &&
-        vfft_il_dp_rank(&_k1_il_dp_ctx, N,
-                        cfg->order == VFI_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
-                                                           : VFFT_IL_ORD_NATURAL,
-                        &top, 1) == 1)
-        fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked, %s cell)\n",
-                N, top.cost_ns, top.route, top.R1, top.R2, lines,
-                cfg->order == VFI_ORDER_SCRAMBLED ? "ord=scr" : "ord=nat");
+    if (getenv("VFFT_NAT_LOG"))
+    {   /* the race's verdict as the context holds it: READ, never planned again. vfft_il_dp_rank plans; a patient
+         * create (every create) re-measures its cached top there, which ran every candidate a second time -- the
+         * four-step's after its store is gone (_k1fs_ctx.W = NULL above), so its children raced again against the
+         * library's own store (2026-11-20: 67 of 209 s at 2097151) */
+        const vfft_il_dp_entry_t *le = _il_dp_lookup(&_k1_il_dp_ctx, N,
+                                                     cfg->order == VFI_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
+                                                                                        : VFFT_IL_ORD_NATURAL);
+        if (le && le->n_top > 0)
+        {
+            top = le->top[0];
+            fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked, %s cell)\n",
+                    N, top.cost_ns, top.route, top.R1, top.R2, lines,
+                    cfg->order == VFI_ORDER_SCRAMBLED ? "ord=scr" : "ord=nat");
+        }
+    }
+    if (lean && lines == 0)
+    {   /* THE LEAN RACE built nothing (every split refused: a 2D child whose column the four-step cannot take, and no
+         * flat chain): the race again, with the whole-length cell's arm */
+        if (getenv("VFFT_NAT_LOG"))
+            fprintf(stderr, "[k1plan] N=%d: no split and no flat chain built -- the race again with the whole-length "
+                            "prime cell\n", N);
+        if (_k1_il_dp_ctx_ready)
+        {   /* the empty verdicts out of the context, so the second pass races in full */
+            vfft_il_dp_forget(&_k1_il_dp_ctx, N, VFFT_IL_ORD_NATURAL);
+            vfft_il_dp_forget(&_k1_il_dp_ctx, N, VFFT_IL_ORD_SCRAMBLED);
+        }
+        _k1_il_lean_off = 1;
+        lines = _k1_il_plan_race_ex(W, cfg, N, bank);
+        _k1_il_lean_off = 0;
+    }
     return lines;
 }
 
@@ -1959,6 +2004,8 @@ typedef struct
     double ns;                   /* its time at T as bound */
     _il_dp_built_t b;            /* built (the bound plan) */
     vfft_k1fs_plan_t *fs;        /* route FS: the four-step at T (owns its store) */
+    vfft_ilprime_plan_t *ilp;    /* route PRIME (the prime sides at T, 2026-11-20): the whole-length cell built at T,
+                                  * its own race at T, bound to its arm (_ilprime_create_banked) */
     const vfft_real *zi;
     vfft_real *zo;
     int ip;
@@ -1968,6 +2015,12 @@ static void _k1t_arm_run(void *v)
     _k1t_arm_t *a = (_k1t_arm_t *)v;
     const vfft_real *in = a->ip ? a->zo : a->zi;
     if (a->fs) { vfft_k1fs_execute(a->fs, VFFT_FORWARD, in, a->zo); return; }
+    if (a->ilp)
+    {
+        if (!(a->ilp->mt > 0 && vfft_ilprime_execute_mt(a->ilp, in, a->zo, 0)))
+            vfft_ilprime_execute_fwd(a->ilp, in, a->zo);
+        return;
+    }
     if (a->b.ztt && a->b.ztt->mt > 0 && vfft_ztt_execute_mt(a->b.ztt, in, a->zo, 0)) return;
     if (a->b.ifd && a->b.ifd->mt > 0 && vfft_ilfd_execute_mt(a->b.ifd, in, a->zo, 0)) return;
     (void)_il_dp_exec_io(&a->c, &a->b, in, a->zo, 0);
@@ -1975,8 +2028,15 @@ static void _k1t_arm_run(void *v)
 static void _k1t_arm_free(_k1t_arm_t *a)
 {
     if (a->fs) vfft_k1fs_destroy(a->fs);
+    else if (a->ilp)
+    {   /* the verdict its race at T left for the door (_ilpr_tv) goes with it */
+        if (_ilpr_tv.p == a->ilp)
+            _ilpr_tv_clear();
+        vfft_ilprime_destroy(a->ilp);
+    }
     else _il_dp_free(&a->b);
     a->fs = NULL;
+    a->ilp = NULL;
     memset(&a->b, 0, sizeof a->b);
 }
 /* build the arm's recipe in the placement and bind it at T: race = 1 races its threaded form (a->mt, a->tw set);
@@ -2092,29 +2152,40 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
     vfft_race_arm_t arms[3 * VFFT_K1T_FINAL + 4];
     double ns[3 * VFFT_K1T_FINAL + 4], scale;
     vfft_real *zorig = NULL, *zref = NULL, *zi = NULL, *zo = NULL;
-    int nl, nc = 0, nfin = 0, i, j, threads = 0, best = 0, rc = 0, verbose = getenv("VFFT_NAT_LOG") != NULL;
-    if (T < 2 || !W || W->vw2_off_oop || vfft_policy_prime_cell(N))
+    int nl, nl2, nc = 0, nfin = 0, i, j, threads = 0, best = 0, rc = 0, verbose = getenv("VFFT_NAT_LOG") != NULL;
+    int have_prime = 0;
+    /* THE PRIME SIDES AT T (owner, 2026-11-20): a composite with a prime factor past the chain radices that splits at T
+     * and not at one thread -- [VFFT_K1FS_PRIME_MIN_N, VFFT_K1FS_MIN_N] -- races its four-step's splits at T against
+     * the one-thread pool's threaded forms and its whole-length cell at T. Every other prime cell keeps its own arm at
+     * T: the four-step's split race above VFFT_K1FS_MIN_N (the lean race banks the four-step there), the prime cell's
+     * race at T (_ilprime_create_banked) for a prime. */
+    const int primeT = T > 1 && vfft_k1fs_prime_composite(N) && vfft_k1fs_band_t(N, T) && !vfft_k1fs_band_t(N, 1);
+    if (T < 2 || !W || W->vw2_off_oop || (vfft_policy_prime_cell(N) && !primeT))
         return 0;
     /* 1. the ranking: this process's last full race of the cell, else the race now */
     if (!(_k1_il_dp_ctx_ready && ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0 && ctx->fam_n[0] > 0))
     {
         const int r = _k1_il_plan_race_ex(W, cfg, N, 0);
         if (r < 0) return -1;
-        if (r == 0 || !(ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0 && ctx->fam_n[0] > 0))
+        if (!primeT && (r == 0 || !(ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0 && ctx->fam_n[0] > 0)))
             return 0;
     }
-    nl = ctx->fam_n[0];
+    /* the prime sides at T go on with an empty ranking (no flat chain at one thread): their own two candidates race */
+    nl = (_k1_il_dp_ctx_ready && ctx->fam_N[0] == N && ctx->fam_ip[0] == ip && ctx->fam_role[0] == 0) ? ctx->fam_n[0] : 0;
     for (i = 0; i < nl; i++)
         threads |= (ctx->fam[0][i].route == VFFT_K1_IL_ZTT || ctx->fam[0][i].route == VFFT_K1_IL_FLAT ||
                     ctx->fam[0][i].route == VFFT_K1_IL_FS);
+    nl2 = nl + (primeT ? 2 : 0);   /* the prime sides at T: the four-step and the whole-length cell, added */
+    if (primeT)
+        threads = 1;
     if (!threads)
         return 0;   /* nothing in the pool threads: the one-thread row's recipe is the plan at T */
     /* the candidates and the planner's input and reference, copied before any nested create touches the context */
     if (ctx->ref_N != N && _il_dp_ref_build(ctx, N) != 0)
         return 0;
     scale = ctx->ref_scale;
-    list = (vfft_il_cand_t *)malloc((size_t)nl * sizeof *list);
-    cand = (_k1t_arm_t *)calloc((size_t)nl, sizeof *cand);
+    list = (vfft_il_cand_t *)calloc((size_t)nl2, sizeof *list);
+    cand = (_k1t_arm_t *)calloc((size_t)nl2, sizeof *cand);
     zorig = (vfft_real *)vfft_aligned_alloc(nb);
     zref = (vfft_real *)vfft_aligned_alloc(nb);
     zi = (vfft_real *)vfft_aligned_alloc(nb);
@@ -2125,19 +2196,40 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
         goto out;
     }
     memcpy(list, ctx->fam[0], (size_t)nl * sizeof *list);
+    if (primeT)
+    {   /* the four-step (every split of its ladder at T, below) and the whole-length cell at T */
+        list[nl].route = VFFT_K1_IL_FS;
+        list[nl + 1].route = VFFT_K1_IL_PRIME;
+    }
     memcpy(zorig, ctx->z_orig, nb);
     memcpy(zref, ctx->z_ref, nb);
     memcpy(zi, zorig, nb);
     _vfft_pool_arm(T);
     /* 2. each candidate bound to its threaded form at T, gated, timed; the four-step once, over every split */
-    for (i = 0; i < nl; i++)
+    for (i = 0; i < nl2; i++)
     {
         _k1t_arm_t *a = &cand[nc];
         a->c = list[i];
         a->zi = zi;
         a->zo = zo;
         a->ip = ip;
-        if (list[i].route == VFFT_K1_IL_FS)
+        if (list[i].route == VFFT_K1_IL_PRIME)
+        {   /* the whole-length cell (the prime sides at T only; elsewhere a prime cell never enters this race): built
+             * at T, its own race at T binding its method, inner and arm, once */
+            if (!primeT || have_prime) continue;
+            have_prime = 1;
+            if (_k1pr_ctx.plan && _k1pr_ctx.N == N)
+            {   /* the cell the one-thread race of this create built at T (_k1_il_plan_race_ex keeps it for this race):
+                 * taken, never raced at T twice */
+                a->ilp = _k1pr_ctx.plan;
+                _k1pr_ctx.plan = NULL;
+                _k1pr_ctx.N = 0;
+            }
+            else
+                a->ilp = _ilprime_create_banked(W, cfg, N, NULL, T);
+            if (!a->ilp) continue;
+        }
+        else if (list[i].route == VFFT_K1_IL_FS)
         {
             struct vfft_wisdom_s *mS = _k1fs_store_new();
             vfft_cfg_t fscfg = *cfg;
@@ -2146,7 +2238,7 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
             fscfg.wisdom_write = 0;
             fscfg.recalibrate = 0;
             fscfg.nthreads = 1;
-            _k1_il_fs_warm(mS, W, &fscfg, N);   /* the candidates' row cells, before the race (a nested create races them) */
+            _k1_il_fs_warm_t(mS, W, &fscfg, N, T);   /* the candidates' row cells, before the race (a nested create races them) */
             a->fs = _k1fs_mt_split_race(NULL, mS, W, cfg, N, 0, ip, T);
             if (!a->fs) continue;
         }
@@ -2162,13 +2254,13 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
         }
         memcpy(zi, zorig, nb);
         a->ns = _k1t_time(a);
-        if (!a->fs)
-            _k1t_arm_free(a);   /* rebuilt for the final from its raced form; the four-step stays built (its store) */
+        if (!a->fs && !a->ilp)
+            _k1t_arm_free(a);   /* rebuilt for the final from its raced form; the four-step and the prime cell stay built */
         nc++;
     }
     /* 3. the fastest VFFT_K1T_FINAL of each route by its time at T, raced against each other */
     {
-        int used[VFFT_IL_DP_FAM_MAX];
+        int used[VFFT_IL_DP_FAM_MAX + 2];   /* + the prime sides' two added candidates */
         memset(used, 0, sizeof used);
         for (j = 0; j < nc && nfin < (int)(sizeof fin / sizeof fin[0]); j++)
         {
@@ -2182,18 +2274,19 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
             for (k = 0, i = 0; k < nfin; k++) i += (fin[k].c.route == r);
             if (i >= VFFT_K1T_FINAL)
             {
-                if (cand[bi].fs) _k1t_arm_free(&cand[bi]);
+                if (cand[bi].fs || cand[bi].ilp) _k1t_arm_free(&cand[bi]);
                 continue;
             }
             fin[nfin] = cand[bi];
             memset(&cand[bi].b, 0, sizeof cand[bi].b);
             cand[bi].fs = NULL;   /* moved into the final */
-            if (!fin[nfin].fs && !_k1t_build(&fin[nfin], N, T, ip, zi, zo, 0))
+            cand[bi].ilp = NULL;
+            if (!fin[nfin].fs && !fin[nfin].ilp && !_k1t_build(&fin[nfin], N, T, ip, zi, zo, 0))
                 continue;
             nfin++;
         }
         for (j = 0; j < nc; j++)
-            if (cand[j].fs) _k1t_arm_free(&cand[j]);   /* a four-step past the final's places */
+            if (cand[j].fs || cand[j].ilp) _k1t_arm_free(&cand[j]);   /* a four-step or prime cell past the final's places */
     }
     if (nfin == 0)
         goto out;
@@ -2233,13 +2326,16 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
         for (j = 0; j < nfin; j++)
         {
             if (fin[j].fs) snprintf(s, sizeof s, "fs %dx%d%s", fin[j].fs->N1, fin[j].fs->N2, fin[j].fs->form ? "/sb" : "");
+            else if (fin[j].ilp) snprintf(s, sizeof s, "prime %s M=%d", fin[j].ilp->method ? "rader" : "bluestein", fin[j].ilp->M);
             else _il_dp_cand_str(&fin[j].c, s, sizeof s);
             fprintf(stderr, " | %s mt%d=%.0f", s, fin[j].fs ? 0 : fin[j].mt, ns[j]);
         }
         fprintf(stderr, " -> %d\n", best);
     }
-    /* 4. the winner's recipe on the row at T, when it threads */
-    if (win->fs || win->mt > 0)
+    /* 4. the winner's recipe on the row at T, when it threads; the whole-length cell (the prime sides at T) banks its
+     * route at T here and goes to the door as the race's own plan (_k1pr_ctx), whose finisher banks its verdict at T
+     * (_ilpr_mt_replay_or_race reads _ilpr_tv) */
+    if (win->fs || win->ilp || win->mt > 0)
     {
         vfft_oop_il_entry_t e;
         const vw2_rec_t *r;
@@ -2251,10 +2347,10 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
         e.place_ip = ip;
         e.ord_scr = 0;
         e.nthreads = T;
-        e.k1_il_route = win->fs ? VFFT_K1_IL_FS : c->route;
-        e.il_R1 = win->fs ? win->fs->N1 : c->R1;
-        e.il_R2 = win->fs ? win->fs->N2 : c->R2;
-        e.il_kv = win->fs ? win->fs->form : c->il_kv;
+        e.k1_il_route = win->fs ? VFFT_K1_IL_FS : win->ilp ? VFFT_K1_IL_PRIME : c->route;
+        e.il_R1 = win->fs ? win->fs->N1 : win->ilp ? 0 : c->R1;
+        e.il_R2 = win->fs ? win->fs->N2 : win->ilp ? 0 : c->R2;
+        e.il_kv = win->fs ? win->fs->form : win->ilp ? 0 : c->il_kv;
         e.il_kv_raced = 1;
         if (!win->fs && c->route == VFFT_K1_IL_FLAT)
         {
@@ -2279,7 +2375,14 @@ static int _k1_il_t_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, 
             const vw2_key_t key = r->key;   /* an update may move the record */
             char b[48];
             int ok = 1;
-            if (win->fs)
+            if (win->ilp)
+            {   /* the plan to the door, its verdict at T banked there */
+                _k1pr_release();
+                _k1pr_ctx.plan = win->ilp;
+                _k1pr_ctx.N = N;
+                win->ilp = NULL;
+            }
+            else if (win->fs)
             {
                 snprintf(b, sizeof b, "%d", win->fs->N1);
                 ok = ok && vw2_update_field(&W->vw2, &key, "il_mt", b) == VW2_OK;
@@ -2308,8 +2411,8 @@ out:
     for (j = 0; j < nfin; j++)
         _k1t_arm_free(&fin[j]);
     if (cand)
-        for (j = 0; j < nl; j++)
-            if (cand[j].fs) _k1t_arm_free(&cand[j]);
+        for (j = 0; j < nl2; j++)
+            if (cand[j].fs || cand[j].ilp) _k1t_arm_free(&cand[j]);
     free(list);
     free(cand);
     vfft_aligned_free(zorig); vfft_aligned_free(zref); vfft_aligned_free(zi); vfft_aligned_free(zo);

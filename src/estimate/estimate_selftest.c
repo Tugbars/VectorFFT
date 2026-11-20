@@ -123,11 +123,16 @@ static const char *st_check_c2c(long long N, const est_recipe_t *r, int scr)
         if (r->il_mt == 2 && !(r->il_tw && N / r->il_tw >= 2)) return "ztt: TILES without 2 tiles";
         return NULL;
     case VFFT_K1_IL_FS:
-        if ((long long)r->il_R1 * r->il_R2 != N || r->il_R1 < 64 || r->il_R2 < 64) return "fs: split";
-        if (!vfft_k1fs_band((int)N)) return "fs: outside the band";
-        if (!strstr(r->fs, "fs_chain=") || !strstr(r->fs, "fs_row_eng=k1")) return "fs: child tokens missing";
+    {   /* the prime sides (2026-11-20): sides from VFFT_K1FS_PSIDE_MIN, the band at the recipe's T (il_mt: threaded),
+         * the row plan in the rp_ spelling (fs_rp_k1=) */
+        const int lo = vfft_k1fs_prime_composite((int)N) ? VFFT_K1FS_PSIDE_MIN : 64;
+        if ((long long)r->il_R1 * r->il_R2 != N || r->il_R1 < lo || r->il_R2 < lo) return "fs: split";
+        if (!vfft_k1fs_band_t((int)N, r->il_mt ? 2 : 1)) return "fs: outside the band";
+        if (!strstr(r->fs, "fs_chain=") || (!strstr(r->fs, "fs_row_eng=k1") && !strstr(r->fs, "fs_rp_k1=")))
+            return "fs: child tokens missing";
         if (r->il_mt && N % r->il_mt) return "fs: il_mt does not divide N";
         return NULL;
+    }
     case VFFT_K1_IL_PRIME:
     {
         const long long M = st_prod_shape(r->prime.in_shape);

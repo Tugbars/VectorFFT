@@ -113,7 +113,7 @@ static inline long vfft_policy_race_max_n(int N)
 {
     const int pow2 = (N & (N - 1)) == 0;
     const int oddband = vfft_policy_ztt_odd_band(N);
-    if (pow2 || vfft_k1fs_band(N))
+    if (pow2 || vfft_k1fs_band_t(N, 1))   /* the prime sides at one thread too (2026-11-20) */
         return (long)VFFT_K1FS_MAX_N;
     if (oddband)
         return (long)VFFT_ZTT_MAX_N;
@@ -174,13 +174,22 @@ static inline int vfft_policy_highn_borrow(void)
  * agree exactly — cells at every pow2 VFFT_POLICY_ZTT_MIN_N..262144 — and policy_gate proves
  * it over the whole domain.)
  *
- * PRIME fills the lengths NO CHAIN CAN CARRY (owner, 2026-10-02): Rader or
- * Bluestein on the WHOLE length, its inner the prime shard's own raced
- * verdict, at an N with a prime factor past the chain radices
- * (vfft_policy_prime_cell). It never races a chain: where a chain exists the
- * chains' race decides, and a convolution of 2-3x the length is not an arm
- * of it. Above the race ceiling the door builds it unraced (its only
- * route). */
+ * PRIME fills the lengths NO CHAIN CAN CARRY: Rader or Bluestein on the
+ * WHOLE length, its inner the prime shard's own raced verdict, at an N with
+ * a prime factor past the chain radices (vfft_policy_prime_cell). Above the
+ * race ceiling the door builds it unraced (its only route).
+ *
+ * THE PRIME SIDES (owner, 2026-11-20; docs/design/k1_fourstep_prime_sides.md):
+ * such an N, when composite, also SPLITS -- the four-step with the prime on
+ * one side, a column chain led by a Rader stage or a row the door serves
+ * (k1_fourstep_band.h vfft_k1fs_band_t). Above VFFT_K1FS_MIN_N at any thread
+ * count, and from VFFT_K1FS_PRIME_MIN_N for a threaded plan. Above
+ * VFFT_K1FS_MIN_N the planner is LEAN: a composite with a split races the
+ * four-step and the flat chain (whose Rader stage carries one such prime),
+ * never the whole-length cell, which the probes saw lose everywhere (2.0-2.3x
+ * at one thread, 6-7x at eight); the whole-length cell races there only when
+ * nothing of that race builds (k1_commit.h _k1_il_plan_race_ex). Primes keep
+ * the whole-length cell: they have no split. */
 /* the largest prime a chain carries: the chain kernels' largest prime radix
  * (n1c / t2cp / t2cs / n1t / t2 / n1 all stop at 47; il_registry_<isa>.h,
  * checked by policy_gate). */
@@ -358,8 +367,9 @@ static inline int vfft_policy_il2d_rader_prime(int N1)
  * once. */
 #define VFFT_POLICY_INNER_MAX_N VFFT_K1FS_MAX_N
 static inline int vfft_policy_prime_cell_unservable(int N)
-{
-    return vfft_policy_prime_cell(N) && !vfft_policy_is_prime(N) && 2L * N - 1 > (long)VFFT_POLICY_INNER_MAX_N;
+{   /* since 2026-11-20 such an N is served when it splits: the four-step's prime sides (16777215 = 4095 x 4097) */
+    return vfft_policy_prime_cell(N) && !vfft_policy_is_prime(N) && 2L * N - 1 > (long)VFFT_POLICY_INNER_MAX_N &&
+           !vfft_k1fs_band_t(N, 1);
 }
 
 /* THE BLUESTEIN INNER SIZES the prime cell races: the next power of two at or past 2N - 1, and
@@ -443,10 +453,11 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_ZTT_ODD);
             return n;
         }
-        if (!pow2 && vfft_k1fs_band(N))
+        if (!pow2 && vfft_k1fs_band_t(N, c->T))
         {   /* the non-pow2 upper band (2026-10-12): the four-step's scrambled
              * class against the flat DIT's, both scrambled writers; the prime
-             * family where a factor past the chain radices leaves no chain */
+             * family where a factor past the chain radices leaves no chain
+             * (the prime sides, 2026-11-20: band_t) */
             VFFT__POOL_PUSH(VFFT_FAM_FS);
             VFFT__POOL_PUSH(VFFT_FAM_FLAT);
             if (vfft_policy_prime_cell(N))
@@ -478,10 +489,12 @@ static inline int vfft_policy_pool(const vfft_cell_t *c, vfft_fam_t *out, int ma
             VFFT__POOL_PUSH(VFFT_FAM_FS);
         return n;
     }
-    if (!pow2 && vfft_k1fs_band(N))
+    if (!pow2 && vfft_k1fs_band_t(N, c->T))
     {   /* the non-pow2 upper band (2026-10-12, field trial item 1): the
          * four-step's splits against the flat DIT; the prime family where
-         * a factor past the chain radices leaves no chain */
+         * a factor past the chain radices leaves no chain (the prime sides,
+         * 2026-11-20: band_t; the prime family's arm is built only where no
+         * split builds, k1_commit.h _k1_il_plan_race_ex) */
         VFFT__POOL_PUSH(VFFT_FAM_FS);
         VFFT__POOL_PUSH(VFFT_FAM_FLAT);
         if (vfft_policy_prime_cell(N))
@@ -548,7 +561,7 @@ static inline int vfft_policy_races(const vfft_cell_t *c)
     const int oddband = vfft_policy_ztt_odd_band(N);
     if (vfft_policy_prime_cell_unservable(N))
         return 0; /* nothing could win: no race (the door refuses, naming the ceiling) */
-    if (pow2 || vfft_k1fs_band(N))
+    if (pow2 || vfft_k1fs_band_t(N, c->T))
         return (long)N <= (long)VFFT_K1FS_MAX_N;
     if (oddband)
         return (long)N <= (long)VFFT_ZTT_MAX_N;
@@ -573,10 +586,11 @@ static inline const char *vfft_policy_c2c_row_refused(int N)
 {
     if (N < 2048 || (N & (N - 1)) == 0)
         return NULL;
-    if ((long)N > (long)VFFT_K1_IL_PLAN_ODD_MAX_N && !vfft_k1fs_band(N))
+    if ((long)N > (long)VFFT_K1_IL_PLAN_ODD_MAX_N && !vfft_k1fs_band_t(N, 1))
         return (long)N > (long)VFFT_K1FS_MAX_N
                    ? "a non-power-of-two length above 16777216 (past the four-step's reach)"
-                   : "a non-power-of-two length above 262144 with no four-step split (no divisor pair with both sides in 64..16384)";
+                   : "a non-power-of-two length above 262144 with no four-step split (no divisor pair with both sides in "
+                     "64..16384, or, with a prime factor above 47, a column side of 4..16384 and a row side of at most 262144)";
     if (vfft_policy_prime_cell_unservable(N))
         return "a composite length with a prime factor above 47 whose Bluestein inner (2N-1) passes the 16777216 inner ceiling";
     return NULL;

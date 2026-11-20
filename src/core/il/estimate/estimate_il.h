@@ -95,11 +95,11 @@ typedef struct est_recipe_s
                                     * four-step: the threaded split's N1 (k1_commit.h:1543-1551) */
     int il_mt_tw;                  /* [il_mt_tw] T > 1, the TILES arm's width: the flat's; ZTURN-T's (its one-thread
                                     * tile, or the span an untiled chain takes at T) */
-    char fs[512];                  /* the four-step's 2D child as the 2D row's tokens, fs_*, with its row
+    char fs[4096];                 /* the four-step's 2D child as the 2D row's tokens, fs_*, with its row
                                     * plan at N2 as fs_row_* and that plan's backward twin as
                                     * fs_row_bwd_*: the four-step route's child, or the prime cell's
                                     * four-step inner's */
-    char fs_t[512];                /* T > 1, the prime cell's four-step inner: its child at T, the T row's fs_*
+    char fs_t[4096];               /* T > 1, the prime cell's four-step inner: its child at T, the T row's fs_*
                                     * (k1_commit.h _ilprime_create_banked builds the inner at T from the row at
                                     * T, its child's rows keyed at T); fs stays the one-thread child, the method
                                     * row's */
@@ -1055,6 +1055,11 @@ static inline int est_fs_wl(const est_machine_t *m, const int *c, int nst, long 
 
 static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, int T, est_recipe_t *o,
                           char *why, size_t whylen);
+/* the four-step with a prime side (estimate_nd_il.h, beside the 2D estimate's Rader stage it reuses) */
+static inline int est_fs_route_prime(const est_machine_t *m, long long N, int T, est_recipe_t *o, char *why,
+                                     size_t whylen);
+static inline int est__fs_child_prime(const est_machine_t *m, int N1, int N2, int T, char *fs, size_t cap,
+                                      char *why, size_t whylen);
 
 /* the c2c K=1 row's tokens in vw2_oop_rec_k1_il's order (wisdom2_oop_il.h:417-500), each name
  * prefixed by pfx */
@@ -1279,6 +1284,17 @@ static inline int est_inner_fs(const est_machine_t *m, long long M, est_inner_t 
                                char *why, size_t whylen)
 {
     int c[2];
+    if (vfft_k1fs_prime_composite((int)M) && vfft_k1fs_band_t((int)M, 1))
+    {   /* the prime sides (2026-11-20): a Rader inner N - 1 with a prime factor past the chain radices, its
+         * ladder's first split and the child est_fs_route_prime writes */
+        int a[VFFT_K1FS_MAX_SPLITS], b[VFFT_K1FS_MAX_SPLITS];
+        if (vfft_k1fs_splits((int)M, a, b, VFFT_K1FS_MAX_SPLITS) < 1) return 0;
+        if (est__fs_child_prime(m, a[0], b[0], 1, fs, cap, why, whylen) != 0) return -1;
+        c[0] = a[0];
+        c[1] = b[0];
+        est_inner_set(in, "fs", c, 2, 0, 0);
+        return 1;
+    }
     if (!vfft_k1fs_band((int)M) || !est_fs_split(M, 0, &c[0], &c[1])) return 0;
     if (est_fs_child(m, c[0], c[1], 1, fs, cap, why, whylen) != 0) return -1;
     est_inner_set(in, "fs", c, 2, 0, 0);
@@ -1365,7 +1381,9 @@ static inline int est_prime_route(const est_machine_t *m, long long N, int T, es
         const long long Mr = N - 1;
         if (est_ztt_len(Mr)) rader = 1;
         else if (est_lpf(Mr) <= 23 && N <= m->l1d / 16 && est_rader_inner_exists(Mr)) rader = 1;
-        else if (2 * N - 1 > VFFT_POLICY_INNER_MAX_N && est_fs_split(Mr, 0, &n1, &n2)) rader = 1;
+        else if (2 * N - 1 > VFFT_POLICY_INNER_MAX_N &&
+                 (est_fs_split(Mr, 0, &n1, &n2) || (vfft_k1fs_prime_composite((int)Mr) && vfft_k1fs_band_t((int)Mr, 1))))
+            rader = 1;   /* N - 1 with a prime factor past the chain radices splits by the prime sides (2026-11-20) */
     }
     if (rader)
     {
@@ -1427,7 +1445,8 @@ inner_done:
         int s1, s2;
         if (sscanf(in.shape, "%d.%d", &s1, &s2) != 2)
             return est_refuse(why, whylen, "the four-step inner %s is not a split", in.shape);
-        if (est_fs_child(m, s1, s2, T, o->fs_t, sizeof o->fs_t, why, whylen) != 0)
+        if ((vfft_k1fs_prime_composite(s1 * s2) ? est__fs_child_prime(m, s1, s2, T, o->fs_t, sizeof o->fs_t, why, whylen)
+                                                : est_fs_child(m, s1, s2, T, o->fs_t, sizeof o->fs_t, why, whylen)) != 0)
             return -1;
     }
     return 0;
@@ -1462,9 +1481,18 @@ static inline int est_c2c(const est_machine_t *m, long long N, int scr, int ip, 
          * pointwise passes over M (the owner's rule of 2026-10-23, taken past 262144 on 2026-11-16). Never past
          * the measuring planner's own refusal (vfft_policy_prime_cell_unservable: no race, the door refuses),
          * so the two planning ways serve the same lengths. */
-        if (!scr && (N <= VFFT_ZTT_MAX_N || (vfft_k1fs_band((int)N) && !vfft_policy_prime_cell_unservable((int)N))) &&
+        if (!scr && (N <= VFFT_ZTT_MAX_N || (vfft_k1fs_band_t((int)N, 1) && !vfft_policy_prime_cell_unservable((int)N))) &&
             (k = est_rader_flat_chain(N, c)) > 0)
             goto flat_chain;
+        /* THE PRIME SIDES (owner, 2026-11-20; docs/design/k1_fourstep_prime_sides.md): a composite that splits takes
+         * the four-step with the prime on one side -- above VFFT_K1FS_MIN_N at any T, above VFFT_K1FS_PRIME_MIN_N
+         * when threaded -- where the flat chain's Rader stage does not carry it. Measured 2026-11-20 (14900KF, the
+         * measuring planner's own split against this procedure's whole-length Bluestein): 2.0-2.3x at one thread,
+         * 6-7x at eight (2097151, 4194303, 4194305). A split whose child cannot be written leaves the whole-length
+         * cell, the next test. */
+        if (!scr && vfft_k1fs_prime_composite((int)N) && (N > VFFT_K1FS_MIN_N || (T > 1 && N > VFFT_K1FS_PRIME_MIN_N)) &&
+            vfft_k1fs_band_t((int)N, T) && est_fs_route_prime(m, N, T, o, why, whylen) == 0)
+            return 0;
         if (vfft_policy_prime_cell_unservable((int)N))
             return est_refuse(why, whylen, "N = %lld has a prime factor above %d and is not prime: its Bluestein "
                               "inner (2N - 1) passes %d", N, VFFT_POLICY_CHAIN_MAX_PRIME, VFFT_POLICY_INNER_MAX_N);
@@ -1669,7 +1697,7 @@ static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, e
  * Returns 0, or -1 when a token is malformed or the text does not fit cap. */
 static inline int est__fs_text(const char *in, int n1, int n2, int to_rp, char *out, size_t cap)
 {
-    char buf[1024], *sp = buf, *t, kr[192], kb[192];
+    char buf[4096], *sp = buf, *t, kr[192], kb[192];
     size_t off = 0, j;
     int has_row = 0, has_rp = 0, has_bwd = 0, pass, w;
     vw2_key_t k2, krow, kbwd;
@@ -1750,7 +1778,7 @@ static inline int est__fs_has_child(const char *fs)
  * _k1fs_row_put_child puts them on a row (k1_fourstep.h:615-640) */
 static inline int est__put_fs(vw2_store_t *st, const vw2_key_t *key, const char *fs)
 {
-    char buf[1024], *sp = buf, *t;
+    char buf[4096], *sp = buf, *t;
     if (strlen(fs) >= sizeof buf)
         return -1;
     memcpy(buf, fs, strlen(fs) + 1);
@@ -1848,7 +1876,7 @@ static inline int est_put_rows(vw2_store_t *st, const est_recipe_t *rc, const es
 {
     const int N = rq->N, T = rq->nthreads > 1 ? rq->nthreads : 1, ip = (rq->placement == VFFT_PLACEMENT_IN);
     const int scr = (rq->order == VFFT_ORDER_SCRAMBLED), route = rc->k1_il_route;
-    char b[128], fsb[1024], fsbT[1024];
+    char b[128], fsb[4096], fsbT[4096];
     int R1, R2, n1 = 0, n2 = 0;
     vfft_oop_il_entry_t e;
     const vw2_rec_t *r;

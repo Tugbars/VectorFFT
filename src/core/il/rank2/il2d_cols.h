@@ -232,8 +232,26 @@ static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8],
             return;
     }
 }
+static void _il2d_enum_rec_w(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped,
+                             int warn);
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
                            int *lens, int *n, int *dropped)
+{
+    _il2d_enum_rec_w(L, depth, cur, out, lens, n, dropped, 1);
+}
+/* does a column of N1 chain at all: the pool _il2d_enum_rec builds (the Rader leaf where it applies) is not
+ * empty -- asked by the four-step's ladder (k1_fourstep.h _k1fs_col_chainable), a test and not a build, so a
+ * full pool is a yes and nothing is warned */
+static int _il2d_col_chains(int N1)
+{
+    static int cand[VFFT_IL2D_POOL_MAX][8];   /* planning side, one create at a time */
+    static int cl[VFFT_IL2D_POOL_MAX];
+    int cur[8], n = 0, dropped = 0;
+    _il2d_enum_rec_w(N1, 0, cur, cand, cl, &n, &dropped, 0);
+    return n > 0 || dropped > 0;
+}
+static void _il2d_enum_rec_w(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped,
+                             int warn)
 {
     /* THE LEAF CANDIDATES (docs/roadmap/rader_leaf_design.md section 13): an N1 whose
      * part above the pool is one prime p (planning/policy_il.h) takes p as stage 0, the
@@ -260,7 +278,7 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
     }
     else
         _il2d_enum_rec_body(L, depth, cur, out, lens, n, dropped);
-    if (depth == 0 && *dropped)
+    if (warn && depth == 0 && *dropped)
         _vfft_warn("il2d chain pool storage (%d) exceeded (%d candidate(s) dropped) "
                    "at N1=%d -- the race saw a truncated pool",
                    VFFT_IL2D_POOL_MAX, *dropped, L);

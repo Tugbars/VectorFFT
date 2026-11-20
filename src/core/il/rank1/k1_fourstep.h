@@ -70,6 +70,7 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls, vfft_real
 static long _il2d_chain_prod(const int *Rs, int m);
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
 static void _il2d_enum_rec_body(int L, int depth, int *cur, int (*out)[8], int *lens, int *n, int *dropped);
+static int _il2d_col_chains(int N1);
 
 #include "k1_fourstep_band.h"  /* the band + the side ladder (bench-visible) */
 
@@ -88,27 +89,28 @@ static int _k1fs_pin(int N, int *n1, int *n2)
 
 /* a column side the 2D tier can chain: at least one composition over the
  * tier's own radix pool (il2d_cols.h), within its reach or at the fewest
- * stages past it (policy_il.h VFFT_IL2D_CHAIN_REACH) -- the tier's
- * enumerator itself, never a second copy of its pool */
+ * stages past it (policy_il.h VFFT_IL2D_CHAIN_REACH), led by the Rader stage
+ * where the side's part past the pool is one prime (vfft_policy_il2d_rader_prime,
+ * since 2026-11-20: the prime sides) -- the tier's enumerator itself, never a
+ * second copy of its pool */
 static int _k1fs_col_chainable(int N1)
 {
-    static int cand[VFFT_IL2D_POOL_MAX][8];   /* planning side, one create at a time */
-    static int cl[VFFT_IL2D_POOL_MAX];
-    int cur[8], n = 0, dropped = 0;
-    _il2d_enum_rec_body(N1, 0, cur, cand, cl, &n, &dropped);
-    return n > 0 || dropped > 0;
+    return _il2d_col_chains(N1);
 }
 /* a row side the K=1 door serves as a 1D cell: its race budget admits it
- * (vfft_policy_races) and no prime factor past the chain radices -- a
- * Bluestein row inside a chain is not an arm of the four-step; that N is
- * the prime family's on the whole length (policy_il.h) */
+ * (vfft_policy_races); a side with a prime factor past the chain radices
+ * (the prime sides, 2026-11-20) when the door serves it -- its prime cell,
+ * its flat chain's Rader stage -- and it is no longer than
+ * VFFT_K1FS_PSIDE_ROW_MAX (no row is a four-step itself) */
 static int _k1fs_row_servable(int N2)
 {
     vfft_cell_t c;
-    if (N2 < 4 || vfft_policy_prime_cell(N2)) return 0;
+    if (N2 < 4) return 0;
     memset(&c, 0, sizeof c);
     c.N = N2; c.K = 1; c.rank = 1; c.T = 1;
     c.layout = VW2_LAY_IL; c.ord = VW2_ORD_NAT;
+    if (vfft_policy_prime_cell(N2))
+        return N2 <= VFFT_K1FS_PSIDE_ROW_MAX && vfft_policy_k1_direct_cell(&c) && !vfft_policy_prime_cell_unservable(N2);
     return vfft_policy_races(&c);
 }
 /* the splits (N1, N2) with N1 * N2 = N; returns the count (<= max). A
@@ -117,7 +119,11 @@ static int _k1fs_row_servable(int N2)
  * [VFFT_K1FS_SIDE_MIN, VFFT_K1FS_SIDE_MAX] whose column side chains and
  * whose row side the door serves, the VFFT_K1FS_MAX_SPLITS most balanced
  * (|ln N1 - ln N2| smallest) first -- the ladder is declared, not a silent
- * cap: its length is the band's own constant. */
+ * cap: its length is the band's own constant. A composite N with a prime
+ * factor past the chain radices (the prime sides, 2026-11-20,
+ * k1_fourstep_band.h) scans the prime side range instead, from
+ * VFFT_K1FS_PRIME_MIN_N: whether a thread count admits it there is the
+ * band's (vfft_k1fs_band_t) and the create's, not the ladder's. */
 static int vfft_k1fs_splits(int N, int *n1, int *n2, int max)
 {
     int i, j, n = 0;
@@ -142,13 +148,23 @@ static int vfft_k1fs_splits(int N, int *n1, int *n2, int max)
          * (ties: the smaller column side, which the ascending scan meets first), so no buffer bounds
          * the pairs an N may have (1058400 has 146) */
         int d, cap = max < VFFT_K1FS_MAX_SPLITS ? max : VFFT_K1FS_MAX_SPLITS;
+        int lo = VFFT_K1FS_SIDE_MIN, hi = VFFT_K1FS_SIDE_MAX, rlo = VFFT_K1FS_SIDE_MIN, rhi = VFFT_K1FS_SIDE_MAX;
+        const int prime = N >= VFFT_K1FS_PRIME_MIN_N && N <= VFFT_K1FS_MAX_N && vfft_k1fs_prime_composite(N);
         double bal[VFFT_K1FS_MAX_SPLITS];
-        if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N || cap <= 0) return 0;
-        for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX; d++)
+        if (prime)
+        {   /* the prime side range: the column sides vfft_k1fs_prime_col_range names, the row side to its own cap */
+            vfft_k1fs_prime_col_range(N, &lo, &hi);
+            rlo = VFFT_K1FS_PSIDE_MIN;
+            rhi = VFFT_K1FS_PSIDE_ROW_MAX;
+        }
+        else if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N)
+            return 0;
+        if (cap <= 0) return 0;
+        for (d = lo; d <= hi; d++)
         {
             const int e = N / d;
             double b;
-            if (N % d || e < VFFT_K1FS_SIDE_MIN || e > VFFT_K1FS_SIDE_MAX) continue;
+            if (N % d || e < rlo || e > rhi) continue;
             b = fabs(log((double)d) - log((double)e));
             if (n == cap && b >= bal[cap - 1]) continue;   /* no more balanced than the last one kept */
             if (!_k1fs_col_chainable(d) || !_k1fs_row_servable(e)) continue;
@@ -389,7 +405,7 @@ static vfft_k1fs_plan_t *vfft_k1fs_create(int N, int N1, int N2, int scr,
     vfft_cfg_t rc;
     int nst, B, na, q, a, b;
     size_t rec;
-    if (N != N1 * N2 || !vfft_k1fs_band(N) || N1 < 4 || N2 < 4) return NULL;
+    if (N != N1 * N2 || !vfft_k1fs_band_t(N, nthreads > 0 ? nthreads : 1) || N1 < 4 || N2 < 4) return NULL;
     if (!scr && form == 1 && (N2 % 16)) return NULL;   /* the super-band's run store walks 16-wide k2 blocks */
     p = (vfft_k1fs_plan_t *)calloc(1, sizeof *p);
     if (!p) return NULL;
