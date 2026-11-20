@@ -1,0 +1,28 @@
+2026-11-20 04:08:14 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-20 04:08:14 run: 145 cells, contract 2D out of place, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 04:08:14 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 04:08:55   benched 25/145 (35x7), 39 s elapsed
+2026-11-20 04:09:38   benched 50/145 (130x510), 82 s elapsed
+2026-11-20 04:10:41   benched 75/145 (270x256), 145 s elapsed
+2026-11-20 04:15:00   benched 100/145 (525x2035), 405 s elapsed
+2026-11-20 04:29:43   benched 125/145 (2053x4093), 1288 s elapsed
+2026-11-20 04:44:33   benched 145/145 (8505x1023), 2178 s elapsed
+2026-11-20 04:44:35 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-20\report_2d_est.md
+2026-11-20 05:16:06 run: 145 cells, contract 2D out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 05:16:06 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 05:16:46   benched 25/145 (35x7), 39 s elapsed
+2026-11-20 05:17:25   benched 50/145 (130x510), 78 s elapsed
+2026-11-20 05:18:08   benched 75/145 (270x256), 121 s elapsed
+2026-11-20 05:19:42   benched 100/145 (525x2035), 214 s elapsed
+2026-11-20 05:22:39   benched 125/145 (2053x4093), 391 s elapsed
+2026-11-20 05:25:32   benched 145/145 (8505x1023), 565 s elapsed
+2026-11-20 05:25:34 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-20\report_2d_mt4_est.md
+2026-11-20 05:44:15 run: 145 cells, contract 2D out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 05:44:15 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 05:44:58   benched 25/145 (35x7), 41 s elapsed
+2026-11-20 05:45:40   benched 50/145 (130x510), 83 s elapsed
+2026-11-20 05:46:23   benched 75/145 (270x256), 126 s elapsed
+2026-11-20 05:47:39   benched 100/145 (525x2035), 201 s elapsed
+2026-11-20 05:49:51   benched 125/145 (2053x4093), 334 s elapsed
+2026-11-20 05:52:02   benched 145/145 (8505x1023), 465 s elapsed
+2026-11-20 05:52:04 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-20\report_2d_mt8_est.md

@@ -138,28 +138,25 @@ static int vfft_k1fs_splits(int N, int *n1, int *n2, int max)
         }
         return n;
     }
-    {
-        enum { CAP = 64 };
-        int a[CAP], b[CAP], k = 0, d, cap = max < VFFT_K1FS_MAX_SPLITS ? max : VFFT_K1FS_MAX_SPLITS;
-        double bal[CAP];
-        if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N) return 0;
-        for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX && k < CAP; d++)
+    {   /* every divisor pair is scanned and the cap most balanced are kept in order as the scan goes
+         * (ties: the smaller column side, which the ascending scan meets first), so no buffer bounds
+         * the pairs an N may have (1058400 has 146) */
+        int d, cap = max < VFFT_K1FS_MAX_SPLITS ? max : VFFT_K1FS_MAX_SPLITS;
+        double bal[VFFT_K1FS_MAX_SPLITS];
+        if (N < VFFT_K1FS_MIN_N || N > VFFT_K1FS_MAX_N || cap <= 0) return 0;
+        for (d = VFFT_K1FS_SIDE_MIN; d <= VFFT_K1FS_SIDE_MAX; d++)
         {
             const int e = N / d;
+            double b;
             if (N % d || e < VFFT_K1FS_SIDE_MIN || e > VFFT_K1FS_SIDE_MAX) continue;
+            b = fabs(log((double)d) - log((double)e));
+            if (n == cap && b >= bal[cap - 1]) continue;   /* no more balanced than the last one kept */
             if (!_k1fs_col_chainable(d) || !_k1fs_row_servable(e)) continue;
-            a[k] = d; b[k] = e;
-            bal[k] = fabs(log((double)d) - log((double)e));
-            k++;
-        }
-        while (n < cap && n < k)
-        {   /* the most balanced next (selection by balance, ties by the smaller column side) */
-            int best = -1;
-            for (i = 0; i < k; i++)
-                if (a[i] > 0 && (best < 0 || bal[i] < bal[best] || (bal[i] == bal[best] && a[i] < a[best])))
-                    best = i;
-            n1[n] = a[best]; n2[n] = b[best]; n++;
-            a[best] = 0;
+            for (i = n < cap ? n++ : cap - 1; i > 0 && bal[i - 1] > b; i--)
+            {
+                n1[i] = n1[i - 1]; n2[i] = n2[i - 1]; bal[i] = bal[i - 1];
+            }
+            n1[i] = d; n2[i] = e; bal[i] = b;
         }
         return n;
     }

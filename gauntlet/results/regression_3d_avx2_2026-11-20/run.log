@@ -1,0 +1,22 @@
+2026-11-20 04:44:35 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-20 04:44:35 run: 85 cells, contract out of place, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 04:44:35 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 04:45:21   benched 25/85 (35x9x15), 44 s elapsed
+2026-11-20 04:51:17   benched 50/85 (130x6x6), 400 s elapsed
+2026-11-20 04:58:09   benched 75/85 (521x128x128), 812 s elapsed
+2026-11-20 05:03:01   benched 85/85 (2048x64x64), 1103 s elapsed
+2026-11-20 05:03:02 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_3d_avx2_2026-11-20\report_3d_est.md
+2026-11-20 05:25:34 run: 85 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 05:25:34 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 05:26:16   benched 25/85 (35x9x15), 40 s elapsed
+2026-11-20 05:28:14   benched 50/85 (130x6x6), 159 s elapsed
+2026-11-20 05:30:28   benched 75/85 (521x128x128), 293 s elapsed
+2026-11-20 05:31:54   benched 85/85 (2048x64x64), 378 s elapsed
+2026-11-20 05:31:56 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_3d_avx2_2026-11-20\report_3d_mt4_est.md
+2026-11-20 05:52:04 run: 85 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-20 05:52:04 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-20 05:52:50   benched 25/85 (35x9x15), 44 s elapsed
+2026-11-20 05:54:23   benched 50/85 (130x6x6), 138 s elapsed
+2026-11-20 05:56:06   benched 75/85 (521x128x128), 240 s elapsed
+2026-11-20 05:57:10   benched 85/85 (2048x64x64), 304 s elapsed
+2026-11-20 05:57:12 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_3d_avx2_2026-11-20\report_3d_mt8_est.md
