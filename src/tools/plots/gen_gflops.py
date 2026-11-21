@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Throughput in GFLOPS, VectorFFT vs MKL, from the gauntlet CSV.
 
-    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy] [--cmp NAME] [--replace]
+    python3 gen_gflops.py sweep.csv [more.csv ...] [--out name.svg] [--logy] [--cmp NAME] [--replace] [--smooth]
 
 Input rows:  N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
 
@@ -17,7 +17,10 @@ MKL's follows from the same operation count: mkl_gflops = vfft_gflops *
 vfft_ns / mkl_ns. Each size is the median over the order-flipped arms; the
 sizes are joined in N, one connected line per engine, with a dot per size
 while the series is sparse enough to show them. --logy puts the y axis on a
-log scale, where equal speed ratios are equal vertical gaps."""
+log scale, where equal speed ratios are equal vertical gaps. --smooth draws each
+engine as the running geometric mean of every size within an eighth of an
+octave of N instead of joining the sizes (a dense sweep's neighbouring sizes
+swing between smooth and rough lengths), the legend in the bottom right."""
 import sys, math, statistics
 from collections import defaultdict
 import matplotlib
@@ -33,6 +36,7 @@ CMR, CMB = FD + "cmr10.ttf", FD + "cmb10.ttf"
 args = sys.argv[1:]
 out = args[args.index("--out") + 1] if "--out" in args else "vectorfft-gflops.svg"
 LOGY = "--logy" in args
+SMOOTH = "--smooth" in args
 CMP = args[args.index("--cmp") + 1] if "--cmp" in args else "MKL"
 files = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--out", "--cmp"))]
 if not files: sys.exit(__doc__)
@@ -176,8 +180,22 @@ L.append('</g>')
 dense = len(pts) > 256
 wd, op = (1.0, 0.8) if dense else (1.8, 1.0)
 rad = 0 if dense else (4.6 if len(pts) <= 64 else 2.6)
-poly([(xr(n), yr(m)) for n, v, m in pts], MK, wd, op)
-poly([(xr(n), yr(v)) for n, v, m in pts], VF, wd, op)
+if SMOOTH:
+    # one line per engine over every size: the running geometric mean of the sizes within an eighth of an octave of
+    # N; the gap between the lines is the geometric mean speedup there
+    R8 = 2 ** 0.125
+    def rungm(idx):
+        out = []
+        for n, v, m in pts:
+            w = [math.log(q[idx]) for q in pts if n / R8 <= q[0] <= n * R8]
+            out.append((xr(n), yr(math.exp(sum(w) / len(w)))))
+        return out
+    poly(rungm(2), MK, 2.4, 1.0)
+    poly(rungm(1), VF, 2.4, 1.0)
+    rad = 0
+else:
+    poly([(xr(n), yr(m)) for n, v, m in pts], MK, wd, op)
+    poly([(xr(n), yr(v)) for n, v, m in pts], VF, wd, op)
 if rad:
     for n, v, m in pts: dot(xr(n), yr(m), rad, MK)
     for n, v, m in pts: dot(xr(n), yr(v), rad, VF)
@@ -190,10 +208,16 @@ xform = "r2c" if r0[2].endswith("r2c") else "c2r" if r0[2].endswith("c2r") else 
 tw = put(f"FP64 1D {xform}, {lay}, {ordr} order, {plc}, K = {r0[1]}", 18, x=X0 + 16, baseline=Y0 + 30, fname=CMB)
 E.append(f'<rect x="{X0+4}" y="{Y0+2}" width="{tw+24}" height="40" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
 
-lx, ly = X0 + 30, Y0 + 60
-E.append(f'<rect x="{lx-12}" y="{ly-6}" width="186" height="64" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
-line(lx - 4, ly + 12, lx + 16, ly + 12, 2.4, col=VF); dot(lx + 6, ly + 12, 4.6, VF); put("VectorFFT", 16, x=lx + 22, baseline=ly + 17, fname=CMR)
-line(lx - 4, ly + 38, lx + 16, ly + 38, 2.4, col=MK); dot(lx + 6, ly + 38, 4.6, MK); put(CMP, 16, x=lx + 22, baseline=ly + 43, fname=CMR)
+if SMOOTH:   # lines only, in the bottom right, where a throughput curve does not reach
+    lx, ly = X1 - 196, Y1 - 72
+    E.append(f'<rect x="{lx-12}" y="{ly-6}" width="186" height="64" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
+    line(lx - 4, ly + 12, lx + 26, ly + 12, 2.6, col=VF); put("VectorFFT", 16, x=lx + 36, baseline=ly + 17, fname=CMR)
+    line(lx - 4, ly + 38, lx + 26, ly + 38, 2.6, col=MK); put(CMP, 16, x=lx + 36, baseline=ly + 43, fname=CMR)
+else:
+    lx, ly = X0 + 30, Y0 + 60
+    E.append(f'<rect x="{lx-12}" y="{ly-6}" width="186" height="64" fill="{PAPER}" stroke="{INK}" stroke-width="2"/>')
+    line(lx - 4, ly + 12, lx + 16, ly + 12, 2.4, col=VF); dot(lx + 6, ly + 12, 4.6, VF); put("VectorFFT", 16, x=lx + 22, baseline=ly + 17, fname=CMR)
+    line(lx - 4, ly + 38, lx + 16, ly + 38, 2.4, col=MK); dot(lx + 6, ly + 38, 4.6, MK); put(CMP, 16, x=lx + 22, baseline=ly + 43, fname=CMR)
 
 # the speedup per cell is the gauntlet's: MKL time over ours, the WORSE of the
 # two engine orders; the GFLOPS summary is over the POWERS OF TWO in the
@@ -202,7 +226,8 @@ worst = {n: min(r) for n, r in byR.items()}
 med_all = statistics.median(worst.values())
 p2 = [p for p in pts if p[0] & (p[0] - 1) == 0]
 cap1 = (f"GFLOPS = {'5' if xform == 'c2c' else '2.5'} N K log2(N) flops over wall time, the same count for both engines; {len(pts):,} sizes, N = {nmin:,}..{nmax:,}, "
-        f"each the median of two order-flipped arms, joined in N.")
+        f"each the median of two order-flipped arms" + ("; each line the running geometric mean over an eighth of an octave."
+                                                       if SMOOTH else ", joined in N."))
 cap2 = f"Median speedup over all sizes x{med_all:.2f} ({CMP} time over VectorFFT time, the worse of the two orders)."
 if p2:
     mv = statistics.median(v for _, v, _ in p2); mm = statistics.median(m for _, _, m in p2)

@@ -41,15 +41,10 @@ to it; worked 3D examples are in [`how-to-use/examples/`](how-to-use/examples/).
 
 ### 1D throughput, every N from 2 to 4,096 — VectorFFT vs Intel MKL
 
-![Throughput, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-gflops.svg)
+![Throughput, VectorFFT vs MKL, every N from 2 to 4096](src/tools/plots/vectorfft-gflops-smooth.svg)
 
-One line per engine, one point per length, joined in N. Each point is the median
-of two timing arms with the engine order flipped; every ratio below takes the
-**worse** of the two arms, so a win is never an artefact of order. The saw-tooth is
-the arithmetic of the lengths themselves: powers of two and smooth composites reach
-60-77 GFLOPS, primes and rough composites run at 5-10 GFLOPS on both engines, and on
-those VectorFFT sits above MKL by a steady offset (log scale: equal speed ratios are
-equal vertical gaps).
+One line per engine: the running geometric mean of every length's throughput over an eighth of an octave. Every
+ratio below takes the **worse** of two timings with the engine order flipped.
 
 | Lengths | Cells | Median speedup | At or above parity |
 |---|---|---|---|
