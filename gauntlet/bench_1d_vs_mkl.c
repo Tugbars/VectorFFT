@@ -6531,12 +6531,19 @@ int main(int argc, char **argv)
     vw2_open(&g_k1z_store, k1z_dir(), getenv("VFFT_WISDOM_DIR") != NULL);
     g_k1z_oopw_loaded = (g_k1z_store.nrec > 0);
 
-    FILE *f = fopen(wpath, "r");
-    if (!f)
+    /* the measuring planner's plans replay this store's rows, so a missing wisdom file stops the bench there;
+     * the estimate's plans (--est) read no wisdom, and the file need not exist (2026-11-21) */
+    if (!g_est)
     {
-        fprintf(stderr, "cannot open wisdom %s\n", wpath);
-        return 1;
+        FILE *wf = fopen(wpath, "r");
+        if (!wf)
+        {
+            fprintf(stderr, "cannot open wisdom %s\n", wpath);
+            return 1;
+        }
+        fclose(wf);
     }
+
     FILE *out = fopen(csv, target_N ? "a" : "w");
     g_csv_path = csv;   /* the K=1 cell path replaces its own earlier row (2026-09-21) */
     /* THE HEADER GOES ON THE FILE, NOT ON THE MODE (2026-09-19): a gauntlet
@@ -6596,13 +6603,11 @@ int main(int argc, char **argv)
             printf("--f32 needs the cell's N\n");
             if (out)
                 fclose(out);
-            fclose(f);
             return 2;
         }
         run_k1z_cell_f32(target_N, (argc >= 6 && target_K > 1) ? (size_t)target_K : 1u, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         printf("\nbenched 1 cell.  CSV -> %s\n", csv);
         return 0;
     }
@@ -6749,7 +6754,6 @@ int main(int argc, char **argv)
         }
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_zr2c)
@@ -6794,7 +6798,6 @@ int main(int argc, char **argv)
             fclose(fdout);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_kzbr)
@@ -6803,7 +6806,6 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "--lmr2c / --lmc2r need the cell's N and K (K >= 2)\n");
             if (out) fclose(out);
-            fclose(f);
             return 2;
         }
         printf("=== dag vs MKL — 1D %s LANE-MAJOR batch, OOP (%s; pace=%dms) ===\n"
@@ -6815,7 +6817,6 @@ int main(int argc, char **argv)
         run_kzbr_cell(target_N, (int)target_K, g_kzbr == 2, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_lm2dr)
@@ -6835,7 +6836,6 @@ int main(int argc, char **argv)
         run_lm2dr_cell(n1, n2, (int)target_K, g_lm2dr == 2, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_lm3dr)
@@ -6857,7 +6857,6 @@ int main(int argc, char **argv)
         run_lm3dr_cell(n, (int)target_K, g_lm3dr == 2, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_tcb)
@@ -6871,7 +6870,6 @@ int main(int argc, char **argv)
                    nd == 3 ? "the shape N1xN2xN3" : nd == 2 ? "the shape N1xN2" : "N");
             if (out)
                 fclose(out);
-            fclose(f);
             return 2;
         }
         printf("=== dag vs MKL — %dD C2C CONTIGUOUS batch, OOP natural (%s; pace=%dms) ===\n"
@@ -6883,7 +6881,6 @@ int main(int argc, char **argv)
         run_tcb_cell(nd, n, (int)target_K, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_lm2d)
@@ -6904,7 +6901,6 @@ int main(int argc, char **argv)
         run_lm2d_cell(nd, n, (int)target_K, out, cool_ms, flip);
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
     if (g_kzb)
@@ -6944,7 +6940,6 @@ int main(int argc, char **argv)
         }
         if (out)
             fclose(out);
-        fclose(f);
         return 0;
     }
 
@@ -6996,8 +6991,6 @@ int main(int argc, char **argv)
             pace(pace_ms);
         }
     }
-    if (f)
-        fclose(f);
 
     /* --k1nat sub-2048 direct cell (il_coverage_plan.md Phase B5): these
      * cells have NO kind-4 line (they are the K=1 IL-tier band, and no
