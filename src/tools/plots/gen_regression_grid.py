@@ -7,7 +7,11 @@ gauntlet's convention) in gen_2d_pow2.py's blue / red steps, the cell and its sp
 file with no row in the run (not created in that build) is a grey band. Right of a row: the class's geometric mean;
 under a column: the octave's.
 
-usage:  python3 gen_regression_grid.py <rank 1|2|3> <cell file> <out prefix>
+--vertical turns the grid on its side: a row per octave, a column per class, the runs side by side; in 1D a square's
+cells sit side by side, each block its speedup on top and its size below. --mean (with --vertical) prints one
+geometric mean per square instead of every cell.
+
+usage:  python3 gen_regression_grid.py <rank 1|2|3> <cell file> <out prefix> [--vertical [--mean]]
                  --run <gauntlet csv> <competitor> <heading> [--run ...]
         -> <out prefix>.svg and <out prefix>.png
 
@@ -20,6 +24,12 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
 argv = sys.argv[1:]
+VERTICAL = "--vertical" in argv
+if VERTICAL:
+    argv.remove("--vertical")
+MEAN = "--mean" in argv          # with --vertical: one geometric mean per square instead of every cell
+if MEAN:
+    argv.remove("--mean")
 runs = []
 while "--run" in argv:
     i = argv.index("--run")
@@ -80,6 +90,152 @@ def fill(x):
 
 def label(k):
     return "x".join(str(t) for t in k)
+
+
+plt.rcParams.update({"font.family": "serif", "font.serif": ["cmr10"], "mathtext.fontset": "cm",
+                     "axes.unicode_minus": False, "svg.fonttype": "path", "axes.formatter.use_mathtext": True})
+CMPS = {c for _, c, _ in runs}
+ONE_CMP = next(iter(CMPS)) if len(CMPS) == 1 else None
+
+
+def vertical():
+    """the grid on its side; one unit = one inch"""
+    two = RANK == 1                                   # 1D: blocks side by side, two lines; 2D / 3D: one-line bands
+    cw = 1.05 if MEAN else {1: 1.5, 2: 1.75, 3: 1.95}[RANK]   # a class column's width
+    bh = 0.36 if MEAN else (0.46 if two else 0.25)    # a block's height (1D) / a band's height (2D, 3D)
+    lm, rs = 0.95, 0.8
+    mem = defaultdict(list)
+    for k, c, o in cells:
+        mem[(c, o)].append(k)
+    for v in mem.values():
+        v.sort(key=lambda k: (pts(k), k))
+    rowh = {o: bh if (two or MEAN) else bh * max([len(mem[(c, o)]) for c in CLASSES] + [1]) for o in OCT}
+    pw = lm + cw * len(CLASSES) + rs
+    W = 0.25 + pw * len(runs) + 0.3 * (len(runs) - 1) + 0.25
+    fig = plt.figure(figsize=(W, 10))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, W)
+    ax.set_ylim(10, 0)
+    ax.axis("off")
+    rend = fig.canvas.get_renderer()
+    right = lambda t: t.get_window_extent(rend).x1 / fig.dpi          # a text's right edge in inches
+    heads = [ax.text(0.25, 0.4, "VectorFFT's speedup, %dD, one thread" % RANK, fontsize=14, va="center")]
+    sps = []
+    for p, (path, cmp_name, heading) in enumerate(runs):
+        sp = worse_of_flips(path)
+        sps.append(sp)
+        got = list(sp.values())
+        xp = 0.25 + p * (pw + 0.3)
+        heads.append(ax.text(xp, 1.02, heading, fontsize=11.5, va="center", fontweight="bold"))
+        heads.append(ax.text(xp, 1.34, "%d of the file's %d %s measured, geometric mean %.2fx, %d at or above 1"
+                             % (sum(1 for k, _, _ in cells if k in sp), len(cells), UNIT, gm(got),
+                                sum(x >= 1 for x in got)), fontsize=9.5, va="center", color="#333333"))
+
+    def block(xs, ys, w, h, k, x):
+        ax.add_patch(Rectangle((xs, ys), w, h, facecolor=fill(x) if x else NONE, edgecolor="white", lw=0.8))
+        ink = "white" if x and step(x) == 4 else "black"
+        val = ("%.2f" % x if x < 10 else "%.1f" % x) if x else "not run"
+        sty = "italic" if (x and x < 1) or not x else "normal"
+        if MEAN:
+            ax.text(xs + w / 2, ys + h / 2, val, ha="center", va="center", fontsize=10, color=ink, fontstyle=sty)
+        elif two:
+            ax.text(xs + w / 2, ys + h / 2 - 0.085, val, ha="center", va="center", fontsize=9.6, color=ink, fontstyle=sty)
+            ax.text(xs + w / 2, ys + h / 2 + 0.125, label(k), ha="center", va="center", fontsize=7.6, color=ink)
+        else:
+            ax.text(xs + 0.07, ys + h / 2, label(k), ha="left", va="center", fontsize=7.4, color=ink)
+            ax.text(xs + w - 0.07, ys + h / 2, val, ha="right", va="center", fontsize=8.6, color=ink, fontstyle=sty)
+
+    # the key, top right; on its own line under the headings when it would run into them
+    over = ("speedup over %s" % ONE_CMP) if ONE_CMP else "speedup over the competitor"
+    size = {1: "the FFT size $N$", 2: "the FFT size $N_1\\times N_2$", 3: "the FFT size $N_1\\times N_2\\times N_3$"}[RANK]
+    keyt = ["top: the " + over, "bottom: " + size] if two else ["left: " + size, "right: the " + over]
+    if MEAN:
+        keyt = ["the geometric mean of the " + over, "of the class's %s in that octave" % UNIT]
+    sample = {1: ((4096,), 1.69), 2: ((64, 64), 2.06), 3: ((64, 64, 64), 2.29)}[RANK]
+    sw, sh = (cw, bh) if MEAN else ((cw / 2, bh) if two else (cw, bh))
+    kh = max(sh, 0.46) + 0.24
+    ts = [ax.text(0, 0, t, ha="left", va="center", fontsize=9) for t in keyt]
+    tw = max(t.get_window_extent(rend).width for t in ts) / fig.dpi
+    kw = 0.12 + sw + 0.18 + tw + 0.18
+    kx = W - 0.25 - kw
+    if kx < max(right(t) for t in heads) + 0.25:
+        ky, top = 1.62, 1.62 + kh + 0.2
+    else:
+        ky, top = 0.1, 1.65
+    for t, dy in zip(ts, (-0.1, 0.1)):
+        t.set_position((kx + 0.12 + sw + 0.18, ky + kh / 2 + dy))
+    ax.add_patch(Rectangle((kx, ky), kw, kh, facecolor="white", edgecolor="black", lw=0.8))
+    block(kx + 0.12, ky + (kh - sh) / 2, sw, sh, sample[0], sample[1])
+
+    grid = sum(rowh.values())
+    H = top + 0.6 + grid + 0.5 + 1.65
+    fig.set_size_inches(W, H)
+    ax.set_ylim(H, 0)
+    head = {"power of two": "power\nof two", "2^a x odd": "$2^a\\times$odd", "odd": "odd",
+            "prime > 47": "prime\n$>47$", "prime factor > 47": "prime factor\n$>47$"}
+    octname = {1: "octave of\nthe length", 2: "octave of\nthe plane", 3: "octave of\nthe volume"}[RANK]
+    for p, sp in enumerate(sps):
+        got = list(sp.values())
+        x0 = 0.25 + p * (pw + 0.3) + lm
+        yh = top + 0.3
+        ax.text(x0 - 0.12, yh, octname, ha="right", va="center", fontsize=8.6, fontstyle="italic")
+        for j, c in enumerate(CLASSES):
+            ax.text(x0 + cw * (j + 0.5), yh, head[c], ha="center", va="center", fontsize=10.5)
+        ax.text(x0 + cw * len(CLASSES) + rs / 2, yh, "geometric\nmean", ha="center", va="center", fontsize=8.6,
+                fontstyle="italic")
+        y = top + 0.6
+        for o in OCT:
+            h = rowh[o]
+            ax.text(x0 - 0.12, y + h / 2, f"$2^{{{o}}}$", ha="right", va="center", fontsize=11.5)
+            for j, c in enumerate(CLASSES):
+                xs = x0 + cw * j
+                ks = mem[(c, o)]
+                if not ks:
+                    ax.add_patch(Rectangle((xs, y), cw, h, facecolor="#f7f7f7", edgecolor="white", lw=1.6))
+                    continue
+                if MEAN:
+                    v = [sp[k] for k in ks if k in sp]
+                    block(xs, y, cw, h, None, gm(v) if v else None)
+                else:
+                    for b, k in enumerate(ks):
+                        if two:
+                            block(xs + b * cw / len(ks), y, cw / len(ks), h, k, sp.get(k))
+                        else:
+                            block(xs, y + b * h / len(ks), cw, h / len(ks), k, sp.get(k))
+                ax.add_patch(Rectangle((xs, y), cw, h, facecolor="none", edgecolor="white", lw=2.0))
+            v = [sp[k] for k, _, oo in cells if oo == o and k in sp]
+            if v:
+                ax.text(x0 + cw * len(CLASSES) + rs / 2, y + h / 2, "%.2f" % gm(v), ha="center", va="center",
+                        fontsize=9.6)
+            y += h
+        ax.text(x0 - 0.12, y + 0.27, "geometric\nmean", ha="right", va="center", fontsize=8.6, fontstyle="italic")
+        for j, c in enumerate(CLASSES):
+            v = [sp[k] for k, cc, _ in cells if cc == c and k in sp]
+            if v:
+                ax.text(x0 + cw * (j + 0.5), y + 0.27, "%.2f" % gm(v), ha="center", va="center", fontsize=10)
+        ax.text(x0 + cw * len(CLASSES) + rs / 2, y + 0.27, "%.2f" % gm(got), ha="center", va="center", fontsize=10.5,
+                fontweight="bold")
+    # the legend: the strip, then the grey block, then the reading
+    yl = y + 0.75
+    xl = 0.25 + lm + 0.95
+    for n, col in enumerate(list(reversed(RED)) + BLUE):
+        ax.add_patch(Rectangle((xl + n * 0.42, yl), 0.42, 0.24, facecolor=col, edgecolor="white", lw=0.8))
+    for n, t in enumerate(["0.5", "0.67", "0.8", "0.91", "1", "1.1", "1.25", "1.5", "2"], 1):
+        ax.text(xl + n * 0.42, yl + 0.38, t, ha="center", va="center", fontsize=8.2)
+    ax.text(xl - 0.1, yl + 0.12, ("%s faster" % ONE_CMP) if ONE_CMP else "the competitor faster", ha="right",
+            va="center", fontsize=9, fontstyle="italic")
+    ax.text(xl + 10 * 0.42 + 0.1, yl + 0.12, "VectorFFT faster", ha="left", va="center", fontsize=9)
+    ax.add_patch(Rectangle((xl, yl + 0.62), 0.42, 0.24, facecolor=NONE, edgecolor="white"))
+    ax.text(xl + 0.52, yl + 0.74, "not run: the build did not create the cell", ha="left", va="center", fontsize=9)
+    ax.text(0.25, yl + 1.12, "speedup = %s time over VectorFFT's, the worse of the cell's two engine orders"
+            % (("%s's" % ONE_CMP) if ONE_CMP else "the competitor's"), fontsize=8.6, va="center", color="#333333")
+    fig.savefig(OUT + ".svg")
+    fig.savefig(OUT + ".png", dpi=110)
+    print("wrote", OUT + ".svg", OUT + ".png", "size %.1f x %.1f in" % (W, H))
+
+if VERTICAL:
+    vertical()
+    sys.exit(0)
 
 
 # ---------------- geometry (data units; one unit = S inches, so the type sizes below hold) ----------------
