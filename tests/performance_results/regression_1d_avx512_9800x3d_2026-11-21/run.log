@@ -1,0 +1,43 @@
+2026-11-21 16:20:13 store: fresh copy of this CPU's shipped wisdom (C:\tmp\vfft512_src\src\wisdom\amd-f26m68-49152-1048576-100663296-8-0)
+2026-11-21 16:20:13 run: 161 cells, contract out of place, the estimate's plans, bin <package folder>\bin
+2026-11-21 16:20:13 bench: 161 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 16:20:40   benched 25/161 (126), 26 s elapsed
+2026-11-21 16:21:09   benched 50/161 (1014), 55 s elapsed
+2026-11-21 16:21:45   benched 75/161 (4375), 91 s elapsed
+2026-11-21 16:22:31   benched 100/161 (32769), 137 s elapsed
+2026-11-21 16:23:58   benched 125/161 (262143), 224 s elapsed
+2026-11-21 16:35:41   benched 150/161 (2097143), 928 s elapsed
+2026-11-21 16:51:27   benched 161/161 (4194303), 1873 s elapsed
+2026-11-21 16:51:28 report: <package folder>\gauntlet\results\regression_1d_avx512\report_fftw_est.md
+2026-11-21 16:51:28 run: 161 cells, contract out of place, T=4, the estimate's plans, bin <package folder>\bin
+2026-11-21 16:51:28 bench: 161 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 16:51:49   benched 25/161 (126), 21 s elapsed
+2026-11-21 16:52:11   benched 50/161 (1014), 42 s elapsed
+2026-11-21 16:52:33   benched 75/161 (4375), 64 s elapsed
+2026-11-21 16:52:55   benched 100/161 (32769), 86 s elapsed
+2026-11-21 16:53:16   benched 125/161 (262143), 108 s elapsed
+2026-11-21 16:53:46   benched 150/161 (2097143), 137 s elapsed
+2026-11-21 16:54:14   benched 161/161 (4194303), 165 s elapsed
+2026-11-21 16:54:15 report: <package folder>\gauntlet\results\regression_1d_avx512\report_mt4_est.md
+2026-11-21 16:54:15 run: 161 cells, contract out of place, T=8, the estimate's plans, bin <package folder>\bin
+2026-11-21 16:54:15 bench: 161 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 16:54:37   benched 25/161 (126), 21 s elapsed
+2026-11-21 16:54:58   benched 50/161 (1014), 42 s elapsed
+2026-11-21 16:55:20   benched 75/161 (4375), 64 s elapsed
+2026-11-21 16:55:42   benched 100/161 (32769), 86 s elapsed
+2026-11-21 16:56:03   benched 125/161 (262143), 107 s elapsed
+2026-11-21 16:56:31   benched 150/161 (2097143), 135 s elapsed
+2026-11-21 16:56:56   benched 161/161 (4194303), 160 s elapsed
+2026-11-21 16:56:57 report: <package folder>\gauntlet\results\regression_1d_avx512\report_mt8_est.md
+2026-11-21 17:02:17 run: 19 cells, contract out of place, the estimate's plans, bin <package folder>\bin
+2026-11-21 17:02:17 bench: 19 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 19:34:03   benched 19/19 (16777216), 9105 s elapsed
+2026-11-21 19:34:04 report: <package folder>\gauntlet\results\regression_1d_avx512\report_fftw_est.md
+2026-11-21 19:34:04 run: 19 cells, contract out of place, T=4, the estimate's plans, bin <package folder>\bin
+2026-11-21 19:34:04 bench: 19 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 19:37:04   benched 19/19 (16777216), 179 s elapsed
+2026-11-21 19:37:05 report: <package folder>\gauntlet\results\regression_1d_avx512\report_mt4_est.md
+2026-11-21 19:37:05 run: 19 cells, contract out of place, T=8, the estimate's plans, bin <package folder>\bin
+2026-11-21 19:37:05 bench: 19 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 19:39:57   benched 19/19 (16777216), 171 s elapsed
+2026-11-21 19:39:58 report: <package folder>\gauntlet\results\regression_1d_avx512\report_mt8_est.md

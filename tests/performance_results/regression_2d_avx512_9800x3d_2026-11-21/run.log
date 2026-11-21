@@ -1,0 +1,28 @@
+2026-11-21 19:52:26 store: fresh copy of this CPU's shipped wisdom (C:\tmp\vfft512_src\src\wisdom\amd-f26m68-49152-1048576-100663296-8-0)
+2026-11-21 19:52:26 run: 145 cells, contract 2D out of place, the estimate's plans, bin <package folder>\bin
+2026-11-21 19:52:26 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 19:52:54   benched 25/145 (35x7), 28 s elapsed
+2026-11-21 19:53:27   benched 50/145 (130x510), 60 s elapsed
+2026-11-21 19:54:19   benched 75/145 (270x256), 112 s elapsed
+2026-11-21 20:02:48   benched 100/145 (525x2035), 622 s elapsed
+2026-11-21 20:16:21   benched 125/145 (2053x4093), 1434 s elapsed
+2026-11-21 20:28:40   benched 145/145 (8505x1023), 2173 s elapsed
+2026-11-21 20:28:41 report: <package folder>\gauntlet\results\regression_2d_avx512\report_2d_fftw_est.md
+2026-11-21 20:28:41 run: 145 cells, contract 2D out of place, T=4, the estimate's plans, bin <package folder>\bin
+2026-11-21 20:28:41 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 20:29:02   benched 25/145 (35x7), 20 s elapsed
+2026-11-21 20:29:22   benched 50/145 (130x510), 40 s elapsed
+2026-11-21 20:29:43   benched 75/145 (270x256), 61 s elapsed
+2026-11-21 20:30:18   benched 100/145 (525x2035), 97 s elapsed
+2026-11-21 20:31:26   benched 125/145 (2053x4093), 165 s elapsed
+2026-11-21 20:32:35   benched 145/145 (8505x1023), 234 s elapsed
+2026-11-21 20:32:36 report: <package folder>\gauntlet\results\regression_2d_avx512\report_2d_mt4_est.md
+2026-11-21 20:32:36 run: 145 cells, contract 2D out of place, T=8, the estimate's plans, bin <package folder>\bin
+2026-11-21 20:32:36 bench: 145 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 20:32:57   benched 25/145 (35x7), 20 s elapsed
+2026-11-21 20:33:17   benched 50/145 (130x510), 40 s elapsed
+2026-11-21 20:33:38   benched 75/145 (270x256), 61 s elapsed
+2026-11-21 20:34:08   benched 100/145 (525x2035), 91 s elapsed
+2026-11-21 20:35:01   benched 125/145 (2053x4093), 144 s elapsed
+2026-11-21 20:36:00   benched 145/145 (8505x1023), 203 s elapsed
+2026-11-21 20:36:01 report: <package folder>\gauntlet\results\regression_2d_avx512\report_2d_mt8_est.md

@@ -1,0 +1,29 @@
+2026-11-21 16:20:13 part 1 (1d_small) started, threads [1, 4, 8]
+2026-11-21 16:51:28 part 1, 1 thread: exit 0, 31 min
+2026-11-21 16:54:15 part 1, 4 threads: exit 0, 3 min
+2026-11-21 16:56:57 part 1, 8 threads: exit 0, 3 min
+2026-11-21 16:56:57 part 1 ended after 37 min
+2026-11-21 17:02:17 part 2 (1d_large) started, threads [1, 4, 8]
+2026-11-21 19:34:04 part 2, 1 thread: exit 0, 152 min
+2026-11-21 19:37:05 part 2, 4 threads: exit 0, 3 min
+2026-11-21 19:39:58 part 2, 8 threads: exit 0, 3 min
+2026-11-21 19:39:58 part 2 ended after 158 min
+2026-11-21 19:52:26 part 3 (2d) started, threads [1, 4, 8]
+2026-11-21 20:28:41 part 3, 1 thread: exit 0, 36 min
+2026-11-21 20:32:36 part 3, 4 threads: exit 0, 4 min
+2026-11-21 20:36:01 part 3, 8 threads: exit 0, 3 min
+2026-11-21 20:36:01 part 3 ended after 44 min
+2026-11-21 21:08:36 part 4 (3d) started, threads [1, 4, 8]
+2026-11-21 21:23:31 part 4, 1 thread: exit 0, 15 min
+2026-11-21 21:25:46 part 4, 4 threads: exit 0, 2 min
+2026-11-21 21:27:46 part 4, 8 threads: exit 0, 2 min
+2026-11-21 21:27:46 part 4 ended after 19 min
+2026-11-21 21:28:28 part 5 (prime_sides) started, threads [1, 4, 8]
+2026-11-21 21:30:35 part 5, 1 thread: exit 1, 2 min
+2026-11-21 21:30:42 part 5, 4 threads: exit 1, 0 min
+2026-11-21 21:30:42 part 5, 8 threads: exit 1, 0 min
+2026-11-21 21:30:42 part 5 ended after 2 min, runs that failed: [1, 4, 8] threads
+2026-11-21 21:30:59 part 5 (prime_sides) started, threads [1, 4, 8]
+2026-11-21 22:42:15 part 5, 1 thread: exit 0, 71 min
+2026-11-21 22:45:03 part 5, 4 threads: exit 0, 3 min
+2026-11-21 22:47:42 part 5, 8 threads: exit 0, 3 min

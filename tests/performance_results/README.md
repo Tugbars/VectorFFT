@@ -1,13 +1,15 @@
 # Performance results
 
 The regression test's runs ([`tests/regression/`](../regression/README.md)), one folder per cell file, instruction set
-and date. All of them come from one machine, an Intel Core i9-14900KF (L1d 48 KiB and L2 2 MiB per P-core, L3
-36 MiB), which has no AVX-512 and so runs the AVX2 build alone. Every plan is the estimate's (`VFFT_FLAG_ESTIMATE`);
-the planner's runs are not in the folder.
+and date. The folders without a machine in their name come from an Intel Core i9-14900KF (L1d 48 KiB and L2 2 MiB per
+P-core, L3 36 MiB), which has no AVX-512 and so runs the AVX2 build alone; the `_9800x3d` folders come from an AMD
+Ryzen 7 9800X3D running the AVX-512 build (the last section). Every plan is the estimate's (`VFFT_FLAG_ESTIMATE`); the
+planner's runs are not in the folder.
 
-Every figure on this page is VectorFFT's speedup over MKL, MKL's time divided by VectorFFT's: 2.00x means VectorFFT
-runs in half of MKL's time, and a figure below 1.00x means MKL is faster. A cell takes the worse of its two engine
-orders. Each folder holds the gauntlet's csv and report of each run in it (`gauntlet_mt4_est.csv` and
+Every speedup on this page is VectorFFT's speedup over its section's competitor (MKL on the 14900KF, FFTW on the
+9800X3D), the competitor's time divided by VectorFFT's: 2.00x means VectorFFT runs in half of the competitor's time,
+and a figure below 1.00x means the competitor is faster. Only the thread columns of Table 8 compare VectorFFT with
+itself. A cell takes the worse of its two engine orders. Each folder holds the gauntlet's csv and report of each run in it (`gauntlet_mt4_est.csv` and
 `report_mt4_est.md` at 4 threads, `gauntlet_2d_k8_lm_est.csv` for a lane-major batch of 8 planes, and so on).
 
 ## Single transforms at 1, 4 and 8 threads
@@ -185,3 +187,81 @@ lane-major ones.
 |  | Odd | 2.13x (20) | 2.29x (16) | 4.16x (20) | 5.79x (16) |
 |  | Prime above 47 | 2.80x (8) | 3.05x (4) | 3.43x (8) | 4.57x (4) |
 |  | Prime factor above 47 | 2.55x (4) | 1.86x (1) | 3.51x (4) | 3.87x (1) |
+
+## Single transforms on an AMD Ryzen 7 9800X3D (AVX-512)
+
+> **Competitor:** FFTW 3.3.10 (`FFTW_MEASURE`) at one thread; at 4 and 8 threads VectorFFT ran alone  
+> **Records:** [`regression_1d_avx512_9800x3d_2026-11-21`](regression_1d_avx512_9800x3d_2026-11-21/),
+> [`regression_2d_avx512_9800x3d_2026-11-21`](regression_2d_avx512_9800x3d_2026-11-21/),
+> [`regression_3d_avx512_9800x3d_2026-11-21`](regression_3d_avx512_9800x3d_2026-11-21/) (2026-11-21, the library of
+> commit 7229967d built for any AVX-512 CPU, `-mavx512f -mavx512dq -mfma`); each folder also holds the machine's
+> `machine.txt` and the run's `parts.log`. A fourth folder,
+> [`prime_sides_1d_avx512_9800x3d_2026-11-21`](prime_sides_1d_avx512_9800x3d_2026-11-21/), holds the same run's 83
+> 1D lengths with a prime factor above 47, read in
+> [`docs/performance/regression_FP64_9800X3D.md`](../../docs/performance/regression_FP64_9800X3D.md)  
+> **Machine:** AMD Ryzen 7 9800X3D, 8 cores, L1d 48 KiB and L2 1 MiB per core, L3 96 MiB  
+> **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1  
+> **Cells:** the test's three files: 179 of the 180 lengths, 145 planes and 85 volumes  
+> **Method:** as above, with FFTW in MKL's place; at 4 and 8 threads a cell's two readings are VectorFFT's alone
+
+At one thread VectorFFT's output and FFTW's differ by at most 6.1e-15, relative to the largest value of FFTW's output,
+except the 1D lengths 8,388,617 and 16,777,213 at 2.0e-14 and 1.9e-14. At 4 and 8 threads, with no competitor, the
+column is VectorFFT's round trip, at most 2.9e-14. The length 8,388,609 was not created in this build. FFTW is faster
+at the 1D lengths up to 16 (0.65x to 0.91x), at 8,190 (0.38x) and at a few small volumes (32 x 4 x 4 at 0.77x). The
+1D control cell read 1.33x to 1.71x through its run, so a single 1D cell is less certain than one of 2D (2.05x to
+2.22x) or 3D (2.22x to 2.29x).
+
+**Table 6.** By rank, one thread, against FFTW.
+
+| Rank | Cells | Geomean speedup | Median speedup | At or above parity |
+|---|---|---|---|---|
+| 1D | 179 | 1.89x | 1.89x | 93% |
+| 2D | 145 | 2.29x | 2.28x | 98% |
+| 3D | 85 | 2.15x | 2.25x | 94% |
+
+**Table 7.** By class (as in Table 2), one thread, geomean speedup over FFTW (cells).
+
+| Rank | Power of two | 2^a × odd | Odd | Prime above 47 | Prime factor above 47 |
+|---|---|---|---|---|---|
+| 1D | 1.44x (22) | 1.67x (42) | 1.95x (42) | 2.09x (38) | 2.26x (35) |
+| 2D | 1.74x (33) | 2.29x (32) | 2.42x (33) | 2.72x (26) | 2.60x (21) |
+| 3D | 1.51x (18) | 1.99x (23) | 2.42x (24) | 2.81x (12) | 2.87x (8) |
+
+**Table 8.** By one transform's bytes (16 times its points) against the caches (L1d 48 KiB, L2 1 MiB, L3 96 MiB):
+the geomean speedup over FFTW at one thread (cells), then VectorFFT's own speedup at 4 and 8 threads over its
+one-thread time, each run taking the faster of its two readings.
+
+| Rank | One transform | Over FFTW, one thread | VectorFFT, 4 threads over 1 | VectorFFT, 8 threads over 1 |
+|---|---|---|---|---|
+| 1D | up to 48 KiB | 1.54x (67) | 1.13x | 1.11x |
+|  | 48 KiB to 1 MiB | 1.91x (41) | 1.86x | 2.20x |
+|  | 1 to 96 MiB | 2.32x (58) | 2.80x | 3.91x |
+|  | past 96 MiB | 2.12x (13) | 2.16x | 2.35x |
+| 2D | up to 48 KiB | 1.86x (14) | 1.10x | 1.11x |
+|  | 48 KiB to 1 MiB | 2.36x (36) | 2.70x | 3.72x |
+|  | 1 to 96 MiB | 2.61x (60) | 4.10x | 7.28x |
+|  | past 96 MiB | 1.93x (35) | 3.02x | 4.13x |
+| 3D | up to 48 KiB | 1.15x (10) | 1.16x | 1.16x |
+|  | 48 KiB to 1 MiB | 2.11x (23) | 2.70x | 3.44x |
+|  | 1 to 96 MiB | 2.61x (33) | 3.78x | 6.79x |
+|  | past 96 MiB | 2.20x (19) | 2.89x | 3.72x |
+
+## Every cell at one thread on the 9800X3D
+
+Each figure is the 9800X3D against FFTW at one thread: a row per class of the test's cell file (the length's class
+in 1D, N1's in 2D and 3D), a column per octave of the length, plane or volume, and in each square one band per cell,
+coloured by that cell's own speedup and printed with it. A grey band is a cell the build did not create. The figures
+are drawn by [`src/tools/plots/gen_regression_grid.py`](../../src/tools/plots/gen_regression_grid.py) from the
+one-thread csv files of the `_9800x3d` folders.
+
+![VectorFFT's speedup over FFTW at one thread on the 9800X3D, every 1D length of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
+
+**Figure 3.** 1D: the test's 180 lengths.
+
+![VectorFFT's speedup over FFTW at one thread on the 9800X3D, every 2D plane of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-2d.svg)
+
+**Figure 4.** 2D: the test's 145 planes.
+
+![VectorFFT's speedup over FFTW at one thread on the 9800X3D, every 3D volume of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-3d.svg)
+
+**Figure 5.** 3D: the test's 85 volumes.

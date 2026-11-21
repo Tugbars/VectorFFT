@@ -51,21 +51,32 @@ the arithmetic of the lengths themselves: powers of two and smooth composites re
 those VectorFFT sits above MKL by a steady offset (log scale: equal speed ratios are
 equal vertical gaps).
 
-| Lengths | Cells | Median speedup | At or above parity | Best |
-|---|---|---|---|---|
-| 2..16 | 15 | 1.39x | 80% | 2.83x (N=2) |
-| 17..64 | 48 | 1.56x | 96% | 4.17x (N=61) |
-| 65..256 | 192 | 1.64x | 98% | 7.04x (N=89) |
-| 257..1,024 | 768 | 1.40x | 93% | 4.15x (N=508) |
-| 1,025..2,048 | 1,024 | 1.27x | 91% | 3.74x (N=1946) |
-| 2,049..4,096 | 2,048 | 1.23x | 86% | 4.00x (N=2209) |
-| **all, 2..4,096** | **4,095** | **1.29x** | **89%** | 7.04x (N=89) |
-
-| Family | Cells | Median speedup | At or above parity |
+| Lengths | Cells | Median speedup | At or above parity |
 |---|---|---|---|
+| 2..64 | 63 | 1.54x | 92% |
+| 65..1,024 | 960 | 1.46x | 94% |
+| 1,025..4,096 | 3,072 | 1.26x | 88% |
 | Powers of two | 12 | 1.13x | 75% |
 | Primes | 564 | 1.18x | 89% |
 | Other composites | 3,520 | 1.30x | 89% |
+| **all, 2..4,096** | **4,095** | **1.29x** | **89%** |
+
+### AVX-512 1D throughput — AMD Ryzen 7 9800X3D vs FFTW
+
+> **Platform:** AMD Ryzen 7 9800X3D, the AVX-512 build for any AVX-512 CPU (`-mavx512f -mavx512dq -mfma`), GCC 16.2, single thread  
+> **Competitor:** FFTW 3.3.10 (`FFTW_MEASURE`), single thread  
+> **Plans:** VectorFFT's estimate (`VFFT_FLAG_ESTIMATE`), computed from formulas with nothing measured  
+> **Contract:** complex-to-complex FP64, interleaved, natural order, out of place, K = 1  
+> **Cells:** the regression test's cells ([`tests/regression/`](tests/regression/)): 179 1D lengths from 8 to 2^24, 145 planes and 85 volumes  
+> **Record:** the three `regression_*_9800x3d` folders of [`tests/performance_results/`](tests/performance_results/README.md) (2026-11-21, commit 7229967d)
+
+![VectorFFT's speedup over FFTW at one thread on the AMD Ryzen 7 9800X3D, every 1D length of the test](src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
+
+| Rank | Cells | Median speedup | At or above parity | Best |
+|---|---|---|---|---|
+| 1D | 179 | 1.89x | 93% | 4.46x (N=516) |
+| 2D | 145 | 2.28x | 98% | 5.03x (17x16) |
+| 3D | 85 | 2.25x | 94% | 4.41x (67x64x64) |
 
 ### 2D throughput, every power-of-two plane up to 4M points — VectorFFT vs Intel MKL
 

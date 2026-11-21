@@ -1,0 +1,22 @@
+2026-11-21 21:08:37 store: fresh copy of this CPU's shipped wisdom (C:\tmp\vfft512_src\src\wisdom\amd-f26m68-49152-1048576-100663296-8-0)
+2026-11-21 21:08:37 run: 85 cells, contract out of place, the estimate's plans, bin <package folder>\bin
+2026-11-21 21:08:37 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 21:09:08   benched 25/85 (35x9x15), 31 s elapsed
+2026-11-21 21:13:45   benched 50/85 (130x6x6), 307 s elapsed
+2026-11-21 21:19:17   benched 75/85 (521x128x128), 639 s elapsed
+2026-11-21 21:23:30   benched 85/85 (2048x64x64), 892 s elapsed
+2026-11-21 21:23:31 report: <package folder>\gauntlet\results\regression_3d_avx512\report_3d_fftw_est.md
+2026-11-21 21:23:31 run: 85 cells, contract out of place, T=4, the estimate's plans, bin <package folder>\bin
+2026-11-21 21:23:31 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 21:23:52   benched 25/85 (35x9x15), 21 s elapsed
+2026-11-21 21:24:32   benched 50/85 (130x6x6), 60 s elapsed
+2026-11-21 21:25:15   benched 75/85 (521x128x128), 103 s elapsed
+2026-11-21 21:25:45   benched 85/85 (2048x64x64), 134 s elapsed
+2026-11-21 21:25:46 report: <package folder>\gauntlet\results\regression_3d_avx512\report_3d_mt4_est.md
+2026-11-21 21:25:46 run: 85 cells, contract out of place, T=8, the estimate's plans, bin <package folder>\bin
+2026-11-21 21:25:46 bench: 85 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 21:26:08   benched 25/85 (35x9x15), 21 s elapsed
+2026-11-21 21:26:43   benched 50/85 (130x6x6), 56 s elapsed
+2026-11-21 21:27:21   benched 75/85 (521x128x128), 93 s elapsed
+2026-11-21 21:27:45   benched 85/85 (2048x64x64), 118 s elapsed
+2026-11-21 21:27:46 report: <package folder>\gauntlet\results\regression_3d_avx512\report_3d_mt8_est.md
