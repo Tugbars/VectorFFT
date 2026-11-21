@@ -1,0 +1,31 @@
+2026-11-21 02:35:46 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-21 02:35:46 run: 53 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:35:46 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:36:35   benched 25/53 (65554), 47 s elapsed
+2026-11-21 02:37:29   benched 50/53 (4194302), 102 s elapsed
+2026-11-21 02:38:28   benched 53/53 (16777214), 161 s elapsed
+2026-11-21 02:38:30 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_real_after_avx2_2026-11-21\report_r2c_mt4_est.md
+2026-11-21 02:41:39 run: 53 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:41:39 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:42:27   benched 25/53 (65554), 46 s elapsed
+2026-11-21 02:43:18   benched 50/53 (4194302), 97 s elapsed
+2026-11-21 02:44:08   benched 53/53 (16777214), 147 s elapsed
+2026-11-21 02:44:10 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_real_after_avx2_2026-11-21\report_r2c_mt8_est.md
+2026-11-21 02:47:36 run: 53 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:47:36 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:48:27   benched 25/53 (65554), 49 s elapsed
+2026-11-21 02:49:22   benched 50/53 (4194302), 104 s elapsed
+2026-11-21 02:50:24   benched 53/53 (16777214), 166 s elapsed
+2026-11-21 02:50:26 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_real_after_avx2_2026-11-21\report_c2r_mt4_est.md
+2026-11-21 02:53:42 run: 53 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:53:42 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:54:31   benched 25/53 (65554), 47 s elapsed
+2026-11-21 02:55:23   benched 50/53 (4194302), 100 s elapsed
+2026-11-21 02:56:15   benched 53/53 (16777214), 152 s elapsed
+2026-11-21 02:56:17 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_real_after_avx2_2026-11-21\report_c2r_mt8_est.md
+2026-11-21 03:02:28 run: 53 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 03:02:28 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 03:03:27   benched 25/53 (65554), 57 s elapsed
+2026-11-21 03:05:00   benched 50/53 (4194302), 151 s elapsed
+2026-11-21 03:08:01   benched 53/53 (16777214), 331 s elapsed
+2026-11-21 03:08:03 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_real_after_avx2_2026-11-21\report_dst2_mt8_est.md

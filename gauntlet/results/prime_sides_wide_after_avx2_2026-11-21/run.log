@@ -1,0 +1,22 @@
+2026-11-21 01:23:16 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-21 01:23:16 run: 83 cells, contract out of place, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 01:23:16 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 01:25:26   benched 25/83 (524478), 128 s elapsed
+2026-11-21 01:30:13   benched 50/83 (1122593), 415 s elapsed
+2026-11-21 01:47:47   benched 75/83 (4194429), 1469 s elapsed
+2026-11-21 01:57:09   benched 83/83 (6400192), 2031 s elapsed
+2026-11-21 01:57:10 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_after_avx2_2026-11-21\report_est.md
+2026-11-21 02:08:08 run: 83 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:08:08 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:09:16   benched 25/83 (524478), 67 s elapsed
+2026-11-21 02:10:47   benched 50/83 (1122593), 158 s elapsed
+2026-11-21 02:14:12   benched 75/83 (4194429), 363 s elapsed
+2026-11-21 02:15:54   benched 83/83 (6400192), 465 s elapsed
+2026-11-21 02:15:56 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_after_avx2_2026-11-21\report_mt4_est.md
+2026-11-21 02:25:47 run: 83 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 02:25:47 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:26:54   benched 25/83 (524478), 65 s elapsed
+2026-11-21 02:28:14   benched 50/83 (1122593), 146 s elapsed
+2026-11-21 02:30:59   benched 75/83 (4194429), 310 s elapsed
+2026-11-21 02:32:20   benched 83/83 (6400192), 392 s elapsed
+2026-11-21 02:32:22 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_after_avx2_2026-11-21\report_mt8_est.md

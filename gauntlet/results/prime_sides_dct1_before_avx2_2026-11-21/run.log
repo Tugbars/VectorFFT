@@ -1,0 +1,7 @@
+2026-11-21 03:08:03 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-21 03:08:03 run: 53 cells, contract out of place, T=8, the estimate's plans, bin C:\Users\Tugbars\AppData\Local\Temp\claude\9663899961c0c8e5\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\bins\b3ed47f2
+2026-11-21 03:08:03 bench: 53 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 03:09:15   benched 25/53 (32778), 69 s elapsed
+2026-11-21 03:11:05   benched 50/53 (2097152), 180 s elapsed
+2026-11-21 03:14:24   benched 53/53 (8388608), 379 s elapsed
+2026-11-21 03:14:26 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_dct1_before_avx2_2026-11-21\report_dct1_mt8_est.md

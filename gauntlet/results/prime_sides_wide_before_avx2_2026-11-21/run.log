@@ -1,0 +1,22 @@
+2026-11-21 00:45:08 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-21 00:45:08 run: 83 cells, contract out of place, the estimate's plans, bin C:\Users\Tugbars\AppData\Local\Temp\claude\9663899961c0c8e5\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\bins\f2b6ea20
+2026-11-21 00:45:08 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 00:47:28   benched 25/83 (524478), 138 s elapsed
+2026-11-21 00:52:48   benched 50/83 (1122593), 459 s elapsed
+2026-11-21 01:12:34   benched 75/83 (4194429), 1644 s elapsed
+2026-11-21 01:23:14   benched 83/83 (6400192), 2285 s elapsed
+2026-11-21 01:23:16 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_before_avx2_2026-11-21\report_est.md
+2026-11-21 01:57:10 run: 83 cells, contract out of place, T=4, the estimate's plans, bin C:\Users\Tugbars\AppData\Local\Temp\claude\9663899961c0c8e5\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\bins\f2b6ea20
+2026-11-21 01:57:10 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 01:58:23   benched 25/83 (524478), 71 s elapsed
+2026-11-21 02:00:18   benched 50/83 (1122593), 186 s elapsed
+2026-11-21 02:05:23   benched 75/83 (4194429), 491 s elapsed
+2026-11-21 02:08:06   benched 83/83 (6400192), 654 s elapsed
+2026-11-21 02:08:07 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_before_avx2_2026-11-21\report_mt4_est.md
+2026-11-21 02:15:56 run: 83 cells, contract out of place, T=8, the estimate's plans, bin C:\Users\Tugbars\AppData\Local\Temp\claude\9663899961c0c8e5\27b0e069-91d2-436b-9879-9b1ee2cc36cc\scratchpad\bins\f2b6ea20
+2026-11-21 02:15:56 bench: 83 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-21 02:17:06   benched 25/83 (524478), 68 s elapsed
+2026-11-21 02:18:48   benched 50/83 (1122593), 171 s elapsed
+2026-11-21 02:23:19   benched 75/83 (4194429), 442 s elapsed
+2026-11-21 02:25:45   benched 83/83 (6400192), 588 s elapsed
+2026-11-21 02:25:47 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\prime_sides_wide_before_avx2_2026-11-21\report_mt8_est.md

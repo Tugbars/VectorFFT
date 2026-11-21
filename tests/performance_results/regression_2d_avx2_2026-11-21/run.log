@@ -1,0 +1,33 @@
+2026-11-21 03:49:59 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-21 03:49:59 run: 145 cells, contract 2D out of place, a contiguous batch of 4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 03:49:59 bench: 110 cells (0 already benched, 0 not banked -> not benched, 35 over 2^24 points as a batch of 4 -> not benched), the estimate's plans
+2026-11-21 03:50:40   benched 25/110 (35x7), 40 s elapsed
+2026-11-21 03:51:25   benched 50/110 (130x510), 84 s elapsed
+2026-11-21 03:53:25   benched 75/110 (270x256), 204 s elapsed
+2026-11-21 04:00:08   benched 100/110 (1024x64), 607 s elapsed
+2026-11-21 04:02:39   benched 110/110 (4096x256), 758 s elapsed
+2026-11-21 04:02:40 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-21\report_2d_k4_est.md
+2026-11-21 05:10:30 run: 145 cells, contract 2D out of place, a lane-major batch of 4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 05:10:30 bench: 110 cells (0 already benched, 0 not banked -> not benched, 35 over 2^24 points as a batch of 4 -> not benched), the estimate's plans
+2026-11-21 05:11:20   benched 25/110 (35x7), 48 s elapsed
+2026-11-21 05:12:16   benched 50/110 (130x510), 104 s elapsed
+2026-11-21 05:15:41   benched 75/110 (270x256), 309 s elapsed
+2026-11-21 05:28:07   benched 100/110 (1024x64), 1055 s elapsed
+2026-11-21 05:32:58   benched 110/110 (4096x256), 1346 s elapsed
+2026-11-21 05:33:00 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-21\report_2d_k4_lm_est.md
+2026-11-21 06:28:54 run: 145 cells, contract 2D out of place, a contiguous batch of 8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 06:28:54 bench: 110 cells (0 already benched, 0 not banked -> not benched, 35 over 2^24 points as a batch of 8 -> not benched), the estimate's plans
+2026-11-21 06:29:35   benched 25/110 (35x7), 40 s elapsed
+2026-11-21 06:30:25   benched 50/110 (130x510), 89 s elapsed
+2026-11-21 06:33:50   benched 75/110 (270x256), 295 s elapsed
+2026-11-21 06:46:43   benched 100/110 (1024x64), 1068 s elapsed
+2026-11-21 06:51:29   benched 110/110 (4096x256), 1354 s elapsed
+2026-11-21 06:51:31 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-21\report_2d_k8_est.md
+2026-11-21 07:44:08 run: 145 cells, contract 2D out of place, a lane-major batch of 8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-21 07:44:08 bench: 110 cells (0 already benched, 0 not banked -> not benched, 35 over 2^24 points as a batch of 8 -> not benched), the estimate's plans
+2026-11-21 07:44:58   benched 25/110 (35x7), 48 s elapsed
+2026-11-21 07:46:04   benched 50/110 (130x510), 114 s elapsed
+2026-11-21 07:52:09   benched 75/110 (270x256), 480 s elapsed
+2026-11-21 08:16:21   benched 100/110 (1024x64), 1932 s elapsed
+2026-11-21 08:25:29   benched 110/110 (4096x256), 2479 s elapsed
+2026-11-21 08:25:31 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_2d_avx2_2026-11-21\report_2d_k8_lm_est.md

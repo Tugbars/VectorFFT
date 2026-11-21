@@ -55,8 +55,10 @@ then with the estimate's (`--est`, whose files carry `_est`).
 python gauntlet/wisdom_folder.py     # names this CPU's wisdom folder, src/wisdom/<folder>
 python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --store src/wisdom/<folder>
 python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est
-python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch contiguous --k 16
-python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch lane-major --k 16
+python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch contiguous --k 4
+python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch lane-major --k 4
+python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch contiguous --k 8
+python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name regression_1d_avx2 --bin-dir build-avx2/gauntlet --est --batch lane-major --k 8
 ```
 
 - **The planner's run** calibrates first. A cell the store holds replays its
@@ -66,11 +68,12 @@ python gauntlet/gauntlet.py run --cells @tests/regression/octaves.txt --name reg
 - **Threads:** add `--threads T` for T = 2, 4 and 8, up to the platform's
   cores. Each T writes its own files (`_mt4` and so on) in the same run
   directory.
-- **Batches:** each file also runs as a batch of 16 transforms in both
-  layouts, `--batch contiguous --k 16` and `--batch lane-major --k 16`, at one
-  thread unless asked. A cell whose 16 transforms pass 2^24 points is not
-  benched, which leaves 144 of the 1D cells, 86 of the 2D and 48 of the 3D.
-  For now the batches run with the estimate's plans only.
+- **Batches:** each file also runs as a batch of 4 transforms and as a batch
+  of 8, in both layouts (`--batch contiguous` and `--batch lane-major`, with
+  `--k 4`, then `--k 8`), at one thread unless asked. A cell whose K
+  transforms pass 2^24 points is not benched. That leaves 162 of the 1D cells,
+  110 of the 2D and 66 of the 3D at K = 4, and 153, 110 and 51 at K = 8. For
+  now the batches run with the estimate's plans only.
 - **Duration:** the `cells` verb in place of `run` lists the cells and
   estimates a run's duration without running anything.
 
@@ -98,7 +101,7 @@ csv).
   each one picked.
 - **The efficiency of each ISA:** the cell's time in the AVX2 run directory
   over its time in the AVX-512 run directory, on the same machine.
-- **Batches:** their files (`gauntlet_k16_est.csv`, `gauntlet_2d_k16_lm_est.csv`
+- **Batches:** their files (`gauntlet_k4_est.csv`, `gauntlet_2d_k8_lm_est.csv`
   and so on) are read the same way. Until the planner's batch runs exist, they
   give the ISA comparison only.
 - **Across platforms:** those ratios side by side, by class and by each
