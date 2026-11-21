@@ -70,7 +70,7 @@ equal vertical gaps).
 > **Cells:** the regression test's cells ([`tests/regression/`](tests/regression/)): 179 1D lengths from 8 to 2^24, 145 planes and 85 volumes  
 > **Record:** the three `regression_*_9800x3d` folders of [`tests/performance_results/`](tests/performance_results/README.md) (2026-11-21, commit 7229967d)
 
-![VectorFFT's speedup over FFTW at one thread on the AMD Ryzen 7 9800X3D, every 1D length of the test](src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
+![VectorFFT's speedup over FFTW at one thread on the AMD Ryzen 7 9800X3D, 1D, the geometric mean of each class and octave](src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
 
 | Rank | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
