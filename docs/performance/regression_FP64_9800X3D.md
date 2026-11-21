@@ -31,10 +31,12 @@ The numbers are **not comparable** with other machines' pages.
 
 ## Reading the figures
 
-Each figure has a row per class of the test's cells and a column per octave of the length, plane or volume. A square
-holds one block per cell, coloured by that cell's speedup over FFTW: blue where VectorFFT is faster, red where FFTW
-is. The key at the top right says what a block prints. A grey block is a cell the build did not create. Right of a
-row is the class's geometric mean, under a column the octave's. The figures are drawn by
+The 1D figure has a row per octave of the length and a column per class of the test's cells; each square is the
+geometric mean of the class's speedups over FFTW in that octave, blue where VectorFFT is faster and red where FFTW
+is. The 2D and 3D figures have a row per class and a column per octave of the plane or volume, and each square holds
+one block per cell, coloured by that cell's own speedup; the key at the top right says what a block prints. A grey
+block is a cell the build did not create. Beside and under each grid are the geometric means of its rows and
+columns. The figures are drawn by
 [`src/tools/plots/gen_regression_grid.py`](../../src/tools/plots/gen_regression_grid.py) from the records' csv files.
 
 The classes are the test's: a power of two; 2^a × odd and odd, every prime factor at most 47; a prime above 47; a
@@ -45,7 +47,7 @@ below, such as 17 or 31, is in the odd row.
 
 ## 1D, 179 lengths
 
-![VectorFFT's speedup over FFTW at one thread on the Ryzen 7 9800X3D, every 1D length of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
+![VectorFFT's speedup over FFTW at one thread on the Ryzen 7 9800X3D, 1D, the geometric mean of each class and octave](../../src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
 
 | Class | Lengths | Geometric mean |
 | --- | ---: | ---: |

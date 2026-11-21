@@ -248,13 +248,14 @@ one-thread time, each run taking the faster of its two readings.
 
 ## Every cell at one thread on the 9800X3D
 
-Each figure is the 9800X3D against FFTW at one thread: a row per class of the test's cell file (the length's class
-in 1D, N1's in 2D and 3D), a column per octave of the length, plane or volume, and in each square one band per cell,
-coloured by that cell's own speedup and printed with it. A grey band is a cell the build did not create. The figures
+Each figure is the 9800X3D against FFTW at one thread. In 1D a row per octave of the length and a column per class
+of the test's cell file, each square the geometric mean of the class's speedups in that octave. In 2D and 3D a row
+per class (N1's) and a column per octave of the plane or volume, each square one band per cell, coloured by that
+cell's own speedup and printed with it. A grey band is a cell the build did not create. The figures
 are drawn by [`src/tools/plots/gen_regression_grid.py`](../../src/tools/plots/gen_regression_grid.py) from the
 one-thread csv files of the `_9800x3d` folders.
 
-![VectorFFT's speedup over FFTW at one thread on the 9800X3D, every 1D length of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
+![VectorFFT's speedup over FFTW at one thread on the 9800X3D, 1D, the geometric mean of each class and octave](../../src/tools/plots/vectorfft-avx512-9800x3d-1d.svg)
 
 **Figure 3.** 1D: the test's 180 lengths.
 
