@@ -215,11 +215,13 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
                        "VFFT_DST2 and VFFT_DST3 only, not VFFT_%s", _vfft_tname(p->transform));
             return 0;
         }
-        if (p->rank > 3 && (p->transform != VFFT_C2C || p->howmany > 1))
-        {   /* rank 4 to 7: one VFFT_C2C transform (il/estimate/c2c_estimate_nd_il.h, est_plan_rn) */
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, and one VFFT_C2C transform at ranks 4 to 7, "
-                       "not rank %d VFFT_%s with howmany = %zu", p->rank, _vfft_tname(p->transform),
-                       p->howmany ? p->howmany : (size_t)1);
+        if (p->rank > 3 && (p->transform != VFFT_C2C || (p->howmany > 1 && p->batch == VFFT_BATCH_LANE_MAJOR)))
+        {   /* rank 4 to 7: one VFFT_C2C transform or a contiguous batch of them (il/estimate/c2c_estimate_nd_il.h,
+             * est_plan_rn) */
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, and at ranks 4 to 7 one VFFT_C2C transform "
+                       "or a contiguous batch of them, not rank %d VFFT_%s with howmany = %zu%s", p->rank,
+                       _vfft_tname(p->transform), p->howmany ? p->howmany : (size_t)1,
+                       p->howmany > 1 && p->batch == VFFT_BATCH_LANE_MAJOR ? " lane-major" : "");
             return 0;
         }
         if (p->rank > 1 && p->order == VFFT_ORDER_SCRAMBLED)

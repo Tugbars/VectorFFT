@@ -1525,9 +1525,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     if (cfg->transform != VFFT_C2C || K != 1)
     {
         _vfft_warn("vfft_create: %dD INTERLEAVED serves C2C one transform per plan, either placement, "
-                   "every order at rank 3 and natural order above it (at rank 3 a batch of howmany >= 2 as "
-                   "contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the volume "
-                   "queue over this plan; lane-major when named through its own door), every dim >= 2 "
+                   "every order at rank 3 and natural order above it (a batch of howmany >= 2 as contiguous "
+                   "transforms, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the queue over this "
+                   "plan; at rank 3 lane-major when named through its own door), every dim >= 2 "
                    "(got %s, howmany=%zu, %s); real has its own tier at rank 3",
                    rank, _vfft_tname(cfg->transform), K, shp);
         return NULL;

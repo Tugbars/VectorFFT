@@ -70,24 +70,35 @@ static void _pq_drop_clones(struct vfft_plan_s ***set, int *n)
 /* howmany > 1: the PLANE QUEUE at rank 2 and, one rank up, the VOLUME QUEUE
  * at rank 3 (2026-10-18): one primary K = 1 plan at the caller's T, run K
  * times at the per-transform distances (the dispatcher refused every layout,
- * geometry and transform it cannot express). */
+ * geometry and transform it cannot express). Rank 4 to 7 (2026-11-22): the
+ * same queue over the rank-N c2c tier's plan, c2c only. */
 static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                                     struct vfft_wisdom_s *W,
                                     size_t K)
 {
-    const int rank3 = (cfg->dims == 3);
-    const int N1q = cfg->n[0], N2q = cfg->n[1], N3q = rank3 ? cfg->n[2] : 0;
-    const size_t leadq = rank3 ? (size_t)N1q * (size_t)N2q : (size_t)N1q;   /* the extents before the last axis */
-    const size_t lastq = (size_t)(rank3 ? N3q : N2q);
+    const int rankq = cfg->dims;   /* 2, 3; 4 to 7: c2c (the rank-N tier's plan) */
+    const int rank3 = (rankq == 3);
+    const int N1q = cfg->n[0], N2q = cfg->n[1], N3q = rankq >= 3 ? cfg->n[2] : 0;
+    size_t leadq = 1;                                                         /* the extents before the last axis */
+    const size_t lastq = (size_t)cfg->n[rankq - 1];
     const size_t hlq = lastq / 2 + 1;                                         /* the CCE row's bins */
     const int ipq = (cfg->placement == VFFT_INPLACE);
-    char shape[40];
+    char shape[96];
     vfft_cfg_t ic;
     struct vfft_plan_s *h;
-    if (rank3)
-        snprintf(shape, sizeof shape, "%dx%dx%d", N1q, N2q, N3q);
-    else
-        snprintf(shape, sizeof shape, "%dx%d", N1q, N2q);
+    {
+        size_t off = 0;
+        int i;
+        shape[0] = 0;
+        for (i = 0; i < rankq; i++)
+        {
+            const int w = off < sizeof shape ? snprintf(shape + off, sizeof shape - off, "%s%d", i ? "x" : "", cfg->n[i]) : 0;
+            if (w > 0)
+                off += (size_t)w;
+            if (i < rankq - 1)
+                leadq *= (size_t)cfg->n[i];
+        }
+    }
     ic = *cfg;
     ic.howmany = 1;
     ic.destroy_input = 0;   /* the permission is the K = 1 plan's own (policy_il.h): the queue's
@@ -110,6 +121,13 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
     h->N = N1q;
     h->N2 = N2q;
     h->N3 = N3q;
+    if (rankq > 3)
+    {   /* rank 4 to 7: the extents after the third */
+        h->N4 = cfg->n[3];
+        h->N5 = rankq > 4 ? cfg->n[4] : 0;
+        h->N6 = rankq > 5 ? cfg->n[5] : 0;
+        h->N7 = rankq > 6 ? cfg->n[6] : 0;
+    }
     h->K = K;
     h->nthreads = _vfft_plan_threads(cfg);
     h->pq_n = K;
@@ -228,7 +246,7 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                            "or the clones disagree (bitwise among "
                            "themselves, 1e-10 against the primary) — "
                            "queue declines, the serial loop serves",
-                           rank3 ? "volume" : "plane", shape);
+                           rankq > 3 ? "block" : rank3 ? "volume" : "plane", shape);
                 for (t = 0; t < T; t++)
                     if (h->pq_w[t])
                         vfft_destroy(h->pq_w[t]);

@@ -88,6 +88,9 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
         return _vfft_create_pq_il(cfg, W, K);     /* the VOLUME QUEUE (plane_queue.h one rank up, 2026-10-18): K contiguous
                                                    * volumes, real or c2c, through the single-volume plan; the in-place real
                                                    * batch was admitted at the front door by the same law */
+    if (cfg->dims >= 4 && K > 1 && vfft_policy_ilnd_batch_ok(cfg, K))
+        return _vfft_create_pq_il(cfg, W, K);     /* a contiguous c2c batch of rank 4 to 7 (2026-11-22): the queue over
+                                                   * the rank-N tier's plan of one transform, as the volume queue */
     if (cfg->dims >= 3)   /* rank 3 to 7 (the front door bounds the rank) */
         return _vfft_create_rank34_il(cfg, W, K);
     if (cfg->dims == 2)

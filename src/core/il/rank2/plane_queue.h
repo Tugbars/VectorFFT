@@ -232,13 +232,31 @@ static void _pq_mt_arm_groups(void *v)
     c->h->pq_mt = 2;
     _pq_execute(c->h, c->dir, c->src, c->dst);
 }
-/* the cell's shape for the log lines: N1xN2 at rank 2, N1xN2xN3 at rank 3 */
+/* the queue's rank and extents off its handle: N, N2, ... up to N7, the first zero ends them */
+static int _pq_extents(const struct vfft_plan_s *h, int *n)
+{
+    const int e[7] = { h->N, h->N2, h->N3, h->N4, h->N5, h->N6, h->N7 };
+    int r = 2;
+    while (r < 7 && e[r] > 0)
+        r++;
+    memcpy(n, e, sizeof e);
+    return r;
+}
+/* the cell's shape for the log lines: N1xN2 at rank 2, N1xN2xN3 at rank 3, ... */
 static const char *_pq_shape(const struct vfft_plan_s *h, char *b, size_t n)
 {
-    if (h->N3 > 0)
-        snprintf(b, n, "%dx%dx%d", h->N, h->N2, h->N3);
-    else
-        snprintf(b, n, "%dx%d", h->N, h->N2);
+    int e[7], i;
+    const int r = _pq_extents(h, e);
+    size_t off = 0;
+    if (n)
+        b[0] = 0;
+    for (i = 0; i < r && off < n; i++)
+    {
+        const int w = snprintf(b + off, n - off, "%s%d", i ? "x" : "", e[i]);
+        if (w < 0)
+            break;
+        off += (size_t)w;
+    }
     return b;
 }
 /* the batch's own row (vw2__pq_key): the request's transform, order class, placement and layout, the
@@ -246,8 +264,12 @@ static const char *_pq_shape(const struct vfft_plan_s *h, char *b, size_t n)
 static void _pq_row_key(const struct vfft_plan_s *h, const vfft_cfg_t *cfg, vw2_key_t *k)
 {
     const int t = h->transform == VFFT_C2C ? VW2_T_C2C : h->transform == VFFT_R2C ? VW2_T_R2C : VW2_T_C2R;
-    vw2__pq_key(k, t, h->N3 > 0 ? 3 : 2, h->N, h->N2, h->N3, h->pq_n, vfft_policy_ord_rankn(cfg),
+    int e[7], i;
+    const int r = _pq_extents(h, e);
+    vw2__pq_key(k, t, r, h->N, h->N2, h->N3, h->pq_n, vfft_policy_ord_rankn(cfg),
                 h->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), h->nthreads);
+    for (i = 3; i < r; i++)   /* rank 4 to 7: the extents after the third */
+        k->n[i] = e[i];
 }
 
 static double _pq_mt_race(struct vfft_plan_s *h);
@@ -258,7 +280,7 @@ static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
                                   const vfft_cfg_t *cfg)
 {
     vw2_key_t k;
-    char sb[40];
+    char sb[96];
     const int pin = getenv("VFFT_PQ_NO_MT") != NULL;
     double ns;
     _pq_row_key(h, cfg, &k);
@@ -301,7 +323,7 @@ static double _pq_mt_race(struct vfft_plan_s *h)
     const int grp = (h->pq_gn > 0 && (size_t)h->pq_gn == h->pq_n);   /* the groups arm's clone set exists */
     int r;
     size_t i;
-    char shp[40];
+    char shp[96];
     const char *ce = getenv("VFFT_PQ_NO_MT");
     if (ce)
     {   /* 1 kills (the loop); 0 pins the queue, 2 the groups -- an absent set is the loop */

@@ -1015,11 +1015,16 @@ static inline int vfft_policy_pq_groups_ok(const vfft_cfg_t *cfg, size_t howmany
  * door's (vfft_policy_batch_lane_major). The tier itself stays one volume per
  * plan. */
 static inline int vfft_policy_ilnd_batch_ok(const vfft_cfg_t *cfg, size_t howmany)
-{
-    return cfg && cfg->transform == VFFT_C2C && cfg->dims == 3 && howmany >= 2 &&
-           cfg->layout == VFI_LAYOUT_IL &&
-           (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
-           cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+{   /* rank 3; rank 4 to 7 too since 2026-11-22 (the same queue over the tier's plan of that rank) */
+    int i;
+    if (!(cfg && cfg->transform == VFFT_C2C && cfg->dims >= 3 && cfg->dims <= 7 && howmany >= 2 &&
+          cfg->layout == VFI_LAYOUT_IL &&
+          (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS)))
+        return 0;
+    for (i = 0; i < cfg->dims; i++)
+        if (cfg->n[i] < 2)
+            return 0;
+    return 1;
 }
 /* the strip form's default width: N1 x w complex within 256 KB (half of L2's
  * way set, measured 2026-10-07 on the probe), at least 8 columns, at most the
