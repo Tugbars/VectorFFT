@@ -674,11 +674,13 @@ static inline void est__real_zr2c_child_mt(const est_machine_t *m, long long N, 
 }
 
 /* the contiguous batch's copies on T threads (vfft.c, the wrapper's clones: each built in the slab role and kept
- * when _tc_inner_mt_safe holds): every real engine but the real four-step (its team threads on the pool) and ZTT-r
- * in place (the plan owns one scratch plane beside the caller's buffer, zttr.h:100) */
+ * when _tc_inner_mt_safe holds): every real engine but the real four-step (its team threads on the pool), ZTT-r
+ * in place (the plan owns one scratch plane beside the caller's buffer, zttr.h:100) and a plan whose four-step
+ * inner is built at T (fs_t, est__real_zr2c_prime_fs_t: the odd Bluestein's, a composite's prime child's; that
+ * inner threads on the pool with no serial form to fall to, il_prime.h _ilprime_inner_threads) */
 static inline int est__real_copies(const est_real_recipe_t *rc, int ip)
 {
-    return strcmp(rc->eng, "zfsr") && !(ip && !strcmp(rc->eng, "zttr"));
+    return strcmp(rc->eng, "zfsr") && !(ip && !strcmp(rc->eng, "zttr")) && !rc->c.fs_t[0];
 }
 /* THE CONTIGUOUS REAL BATCH'S WAY ON T THREADS (the owner's rule, 2026-11-03; docs/roadmap/real_estimate_plan.md section
  * 12, fitted on the study's two ways timed at every cell, 176 cells at 8 threads, 20 lengths x K 3 - 24, both
@@ -751,12 +753,15 @@ static inline int est_plan_real(const est_machine_t *m, const est_request_t *rq,
         return -1;
     if (rq->howmany <= 1 && T > 1)
         est__real_zr2c_child_mt(m, rq->N, out, T);
+    if (T > 1)
+        est__real_zr2c_prime_fs_t(m, out, T);   /* before the batch's way: a four-step inner built at T has no copy */
     if (rq->howmany > 1 && T > 1)
     {
         const int ip = rq->placement == VFFT_PLACEMENT_IN;
         est_real_recipe_t zr;
         if (ip && !strcmp(out->eng, "zttr") &&
             !est__real_zr2c(m, rq->N, rq->transform == VFFT_C2R, 1, T, &zr, why, whylen) &&
+            (est__real_zr2c_prime_fs_t(m, &zr, T), est__real_copies(&zr, ip)) &&
             est__real_batch_whole(m, &zr, rq->N, rq->howmany))
         {   /* whole transforms per thread need the batch's copies; ZTT-r in place owns one scratch plane and gets none
              * (vfft.c _tc_inner_mt_safe), so its batch ran serially: zr2c, the planner's engine there, as the 2D real

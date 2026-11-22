@@ -24,6 +24,11 @@ version can change how a function behaves, so compile your program again with ea
   returned a wrong result at lengths of the form 2^k times an odd number, such as 10,000,
   50,000 or 100,000. AVX2 builds of 0.8.1 were affected; natural order, one thread, powers
   of two and AVX-512 builds were not.
+- With `VFFT_FLAG_ESTIMATE`, `vfft_create()` refused a contiguous batch of 1D transforms on
+  two or more threads at long lengths with a large prime factor: real transforms (R2C, C2R)
+  from about 200,000 points up (200,003 and 262,146 are two such lengths), and complex
+  transforms above 131,072 points on a processor whose L2 cache is larger than 2 MiB. One
+  transform, one thread and the measuring planner were not affected.
 
 ## 0.8.1 beta (2026-11-19)
 

@@ -659,7 +659,7 @@ static inline struct vfft_plan_s *est_build_c2c(const est_recipe_t *rc, const es
         return NULL;
     }
     T = rq->nthreads > 1 ? rq->nthreads : 1;
-    copies = cfg->howmany > 1 && T > 1 && rc->k1_il_route != VFFT_K1_IL_FS;   /* the batch's copies: none of a four-step at T > 1 */
+    copies = cfg->howmany > 1 && T > 1 && est_c2c_copies(rc);   /* the batch's copies: none of a four-step at T > 1 */
     if (rq->transform != VFFT_C2C || cfg->transform != VFFT_C2C || cfg->dims > 1 || cfg->n[0] != rq->N ||
         !est__batch_ok(cfg) || cfg->layout != VFI_LAYOUT_IL || (cfg->nthreads > 1 ? cfg->nthreads : 1) != T ||
         (cfg->howmany > 1 ? cfg->howmany : 1) != (rq->howmany > 1 ? rq->howmany : 1))

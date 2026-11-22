@@ -1650,6 +1650,14 @@ static inline int est_batch_whole(const est_machine_t *m, size_t bytes, size_t K
         return 1;
     return K % (size_t)T == 0 && bytes <= (size_t)m->l2;
 }
+/* 1 where the door keeps the contiguous batch's copies of this plan on T > 1 threads (vfft.c, the wrapper's clones,
+ * kept when _tc_inner_mt_safe holds): not of the four-step, whose 2D child threads on the pool with no serial form
+ * to fall to, nor of a prime cell whose four-step inner is built at T (fs_t; il_prime.h _ilprime_inner_threads),
+ * the same child. Such a batch runs all threads on each transform in turn */
+static inline int est_c2c_copies(const est_recipe_t *rc)
+{
+    return rc->k1_il_route != VFFT_K1_IL_FS && !(rc->k1_il_route == VFFT_K1_IL_PRIME && rc->fs_t[0]);
+}
 
 /* est_plan_1d: the machine and the request -> the recipe. Returns 0 with *out filled, or -1 with
  * the reason in why (cut to whylen; why may be NULL when whylen is 0). Pure. Refused besides the
@@ -1679,7 +1687,7 @@ static inline int est_plan_1d(const est_machine_t *m, const est_request_t *rq, e
         return -1;
     if (T == 1 && out->k1_il_route == VFFT_K1_IL_FLAT)
         est_rader_window(rq->N, out);
-    if (rq->howmany > 1 && T > 1 && out->k1_il_route != VFFT_K1_IL_FS)
+    if (rq->howmany > 1 && T > 1 && est_c2c_copies(out))
         out->tcmt = est_batch_whole(m, 16 * (size_t)rq->N, rq->howmany, T);
     return 0;
 }
