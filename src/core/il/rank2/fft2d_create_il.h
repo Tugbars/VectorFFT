@@ -71,7 +71,8 @@ static void _pq_drop_clones(struct vfft_plan_s ***set, int *n)
  * at rank 3 (2026-10-18): one primary K = 1 plan at the caller's T, run K
  * times at the per-transform distances (the dispatcher refused every layout,
  * geometry and transform it cannot express). Rank 4 to 7 (2026-11-22): the
- * same queue over the rank-N c2c tier's plan, c2c only. */
+ * same queue over the rank-N c2c tier's plan, and out of place over the real
+ * plan of that rank (rank3/fftnd_realn_il.h). */
 static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                                     struct vfft_wisdom_s *W,
                                     size_t K)

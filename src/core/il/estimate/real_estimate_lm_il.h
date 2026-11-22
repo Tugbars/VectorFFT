@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_estimate_lm_il.h — the ESTIMATE create of a LANE-MAJOR REAL batch (VFFT_FLAG_ESTIMATE on R2C or C2R at
- * howmany = K >= 2 in the lane-major geometry: the real batch's DEFAULT at rank 1, named at rank 2 and 3) at rank 1, 2
- * and 3: the batch's row written from the formulas and replayed by the door with nothing measured
+ * howmany = K >= 2 in the lane-major geometry: the real batch's DEFAULT at rank 1, named above it) at rank 1 to 7
+ * (rank 4 to 7 since 2026-11-22, out of place: the rank-3 batch's recipe one rank up, formula for formula): the
+ * batch's row written from the formulas and replayed by the door with nothing measured
  * (docs/roadmap/real_estimate_plan.md, stages 2 and 4).
  *
  * THE DOORS. Rank 1 (il/rank1/lm_batch_il.h, _vfft_create_lmr_il): an even N >= 4. Element e of transform t at
@@ -46,7 +47,8 @@ typedef struct est_planlmr_s
     est_planlm_t pass;            /* rank 1: the scrambled pass at M = N1 / 2 over K lanes; rank 2 and 3: the first axis
                                    * at N1 over the spectrum's lanes, natural (a rank-1 recipe at those lanes) */
     struct est_planlmr_s *child;  /* [rp_] rank 2: the 1D real batch at (N2, K); rank 3: the 2D real batch at (N2, N3, K);
-                                   * one thread */
+                                   * rank 4 to 7: the batch one rank down; one thread */
+    int Nx[4];                    /* rank 4 to 7: the extents after N3, 0 below rank 4 */
 } est_planlmr_t;
 
 /* THE TWO LANE-MAJOR REAL RULES AT RANK 1 (the owner's, 2026-11-03; docs/roadmap/real_estimate_plan.md section 12, each
@@ -104,16 +106,53 @@ static inline const char *est__lmr_shape(const est_planlmr_t *p, char *b, size_t
         snprintf(b, n, "%d x %zu", p->N1, p->K);
     else if (p->rank == 2)
         snprintf(b, n, "%dx%d x %zu", p->N1, p->N2, p->K);
-    else
+    else if (p->rank == 3)
         snprintf(b, n, "%dx%dx%d x %zu", p->N1, p->N2, p->N3, p->K);
+    else
+    {   /* rank 4 to 7 */
+        const int e[7] = { p->N1, p->N2, p->N3, p->Nx[0], p->Nx[1], p->Nx[2], p->Nx[3] };
+        size_t off = 0;
+        int i;
+        if (n)
+            b[0] = 0;
+        for (i = 0; i < p->rank && i < 7 && off < n; i++)
+        {
+            const int w = snprintf(b + off, n - off, "%s%d", i ? "x" : "", e[i]);
+            if (w < 0)
+                break;
+            off += (size_t)w;
+        }
+        if (off < n)
+            snprintf(b + off, n - off, " x %zu", p->K);
+    }
     return b;
 }
-/* the first axis's lanes: rank 1 K (the pass at M), rank 2 H K, rank 3 N2 H K (H the real axis's bins) */
+/* the first axis's lanes: rank 1 K (the pass at M), rank 2 H K, rank 3 N2 H K, rank 4 to 7 the extents between the
+ * first and the last times H K (H the real axis's bins) */
 static inline long long est__lmr_lanes(const est_planlmr_t *p)
 {
-    return p->rank == 1 ? (long long)p->K
-           : p->rank == 2 ? (long long)(p->N2 / 2 + 1) * (long long)p->K
-                          : (long long)p->N2 * (long long)(p->N3 / 2 + 1) * (long long)p->K;
+    const int e[7] = { p->N1, p->N2, p->N3, p->Nx[0], p->Nx[1], p->Nx[2], p->Nx[3] };
+    long long l;
+    int i;
+    if (p->rank <= 3)
+        return p->rank == 1 ? (long long)p->K
+               : p->rank == 2 ? (long long)(p->N2 / 2 + 1) * (long long)p->K
+                              : (long long)p->N2 * (long long)(p->N3 / 2 + 1) * (long long)p->K;
+    l = (long long)(e[p->rank - 1] / 2 + 1) * (long long)p->K;
+    for (i = 1; i < p->rank - 1; i++)
+        l *= (long long)e[i];
+    return l;
+}
+/* c has the shape of p's block child: p's extents with the first dropped */
+static inline int est__lmr_child_shape(const est_planlmr_t *p, const est_planlmr_t *c)
+{
+    const int e[7] = { p->N1, p->N2, p->N3, p->Nx[0], p->Nx[1], p->Nx[2], p->Nx[3] };
+    const int f[7] = { c->N1, c->N2, c->N3, c->Nx[0], c->Nx[1], c->Nx[2], c->Nx[3] };
+    int i;
+    for (i = 0; i < 6; i++)
+        if (f[i] != e[i + 1])
+            return 0;
+    return f[6] == 0;
 }
 
 /* est__lmr_first_axis: the first axis of a real batch of rank 2 or 3, and of one real transform of rank 4 to 7
@@ -155,24 +194,45 @@ static inline int est__lmr_first_axis(const est_machine_t *m, int N1, long long 
     }
     return 0;
 }
-/* est__plan_lmrn: the lane-major real batch's recipe at rank 1, 2 or 3 (the header's list; at rank 1 the two rules
- * above); top = 0 for a block child. Returns 0 with *out filled (its child allocated: est_free_lmr), or -1 with the
- * reason. Pure. */
+/* est__plan_lmrn_n: the lane-major real batch's recipe at rank 1 to 7, the shape as n[0 .. rank - 1] (the header's
+ * list; at rank 1 the two rules above); top = 0 for a block child. Returns 0 with *out filled (its child allocated:
+ * est_free_lmr), or -1 with the reason. Pure. */
+static inline int est__plan_lmrn_n(const est_machine_t *m, int rank, const int *n, size_t K, int T, int ip, int top,
+                                   est_planlmr_t *out, char *why, size_t whylen);
+/* est__plan_lmrn: the same at rank 1, 2 or 3, the shape as three extents */
 static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int ip,
                                  int top, est_planlmr_t *out, char *why, size_t whylen)
 {
+    const int n[3] = { N1, N2, N3 };
+    if (rank > 3)
+    {
+        memset(out, 0, sizeof *out);
+        return est_refuse(why, whylen, "a lane-major real batch at rank %d: its shape goes to est__plan_lmrn_n", rank);
+    }
+    return est__plan_lmrn_n(m, rank, n, K, T, ip, top, out, why, whylen);
+}
+static inline int est__plan_lmrn_n(const est_machine_t *m, int rank, const int *n, size_t K, int T, int ip, int top,
+                                   est_planlmr_t *out, char *why, size_t whylen)
+{
     est_planlm_t *p = &out->pass;
-    const int L = rank == 1 ? N1 : rank == 2 ? N2 : N3;
+    const int N1 = rank >= 1 ? n[0] : 0, L = (rank >= 1 && rank <= 7) ? n[rank - 1] : 0;
     long long M, lanes;
+    int i, small = 0;
     memset(out, 0, sizeof *out);
-    if (rank < 1 || rank > 3 || L < 4 || (L & 1) || K < 2 || (rank >= 2 && N1 < 2) || (rank == 3 && N2 < 2))
+    for (i = 0; i < rank - 1 && i < 6; i++)
+        small |= n[i] < 2;
+    if (rank < 1 || rank > 7 || L < 4 || (L & 1) || K < 2 || small)
         return est_refuse(why, whylen, "a lane-major real batch at rank %d of K = %zu: the door serves an even last extent of "
                           "at least 4, every other extent at least 2 and K of at least 2 (an odd last extent has no real "
                           "column engine)", rank, K);
+    if (rank > 3 && ip)
+        return est_refuse(why, whylen, "a lane-major real batch at rank %d: served out of place", rank);
     out->rank = rank;
     out->N1 = N1;
-    out->N2 = rank >= 2 ? N2 : 0;
-    out->N3 = rank == 3 ? N3 : 0;
+    out->N2 = rank >= 2 ? n[1] : 0;
+    out->N3 = rank >= 3 ? n[2] : 0;
+    for (i = 3; i < rank; i++)
+        out->Nx[i - 3] = n[i];
     out->K = K;
     out->T = T > 1 ? T : 1;
     out->ip = rank == 3 && ip;
@@ -184,7 +244,7 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
             return -1;
         if (!(out->child = (est_planlmr_t *)calloc(1, sizeof *out->child)))
             return est_refuse(why, whylen, "out of memory");
-        if (est__plan_lmrn(m, rank - 1, N2, rank == 3 ? N3 : 0, 0, K, 1, 0, 0, out->child, why, whylen))
+        if (est__plan_lmrn_n(m, rank - 1, n + 1, K, 1, 0, 0, out->child, why, whylen))
         {
             est_free_lmr(out->child);
             free(out->child);
@@ -258,6 +318,7 @@ static inline void est__lmr_key(vw2_ilcol_key_t *ck, const est_planlmr_t *p)
         ck->n2 = (size_t)p->N3;
         ck->q = p->K;
         ck->ip = p->ip;
+        memcpy(ck->nx, p->Nx, sizeof ck->nx);   /* rank 4 to 7: the extents after the third */
     }
     ck->ord = VW2_ORD_NAT;
     ck->real = 1;
@@ -294,8 +355,7 @@ static inline int est__preflight_lmr(const est_planlmr_t *p, char *why, size_t w
     if (p->rank >= 2)
     {
         const est_planlmr_t *c = p->child;
-        if (!c || c->rank != p->rank - 1 || c->N1 != p->N2 || c->N2 != (p->rank == 3 ? p->N3 : 0) || c->K != p->K ||
-            c->T != 1)
+        if (!c || c->rank != p->rank - 1 || !est__lmr_child_shape(p, c) || c->K != p->K || c->T != 1)
             return est_refuse(why, whylen, "the lane-major real batch %s: the block child is not the batch one rank down "
                               "on one thread", sh);
         if (est__preflight_lmr(c, w2, sizeof w2))
@@ -345,7 +405,8 @@ static inline int est__check_lmr(const struct vfft_plan_s *h, const est_planlmr_
     char sh[64], b[64];
     snprintf(sh, sizeof sh, "%s %s", c2r ? "C2R" : "R2C", est__lmr_shape(p, b, sizeof b));
     if (!h || !h->lm || h->transform != (c2r ? VFFT_C2R : VFFT_R2C) || h->N != p->N1 || h->N2 != p->N2 ||
-        (p->rank == 3 && h->N3 != p->N3) || h->K != p->K || (p->rank == 1 && h->lm_M != p->N1 / 2))
+        (p->rank >= 3 && h->N3 != p->N3) || h->N4 != p->Nx[0] || h->N5 != p->Nx[1] || h->N6 != p->Nx[2] ||
+        h->N7 != p->Nx[3] || h->K != p->K || (p->rank == 1 && h->lm_M != p->N1 / 2))
         return est_refuse(why, whylen, "the door built no lane-major real batch %s", sh);
     if (est__check_lm_pass(h, &p->pass, sh, why, whylen))
         return -1;
@@ -381,7 +442,8 @@ static inline struct vfft_plan_s *est_build_lmr(const est_planlmr_t *p, const vf
     if (!p || !cfg || (cfg->transform != VFFT_R2C && cfg->transform != VFFT_C2R) || cfg->layout != VFI_LAYOUT_IL ||
         (p->rank == 1 ? cfg->batch_geom == VFFT_BATCH_CONTIGUOUS : cfg->batch_geom != VFFT_BATCH_LANE_MAJOR) ||
         !vfft_policy_batch_lane_major(cfg) || cfg->howmany != p->K || (cfg->dims < 2 ? 1 : cfg->dims) != p->rank ||
-        cfg->n[0] != p->N1 || (p->rank >= 2 && cfg->n[1] != p->N2) || (p->rank == 3 && cfg->n[2] != p->N3) ||
+        cfg->n[0] != p->N1 || (p->rank >= 2 && cfg->n[1] != p->N2) || (p->rank >= 3 && cfg->n[2] != p->N3) ||
+        (p->rank > 3 && memcmp(cfg->n + 3, p->Nx, sizeof(int) * (size_t)(p->rank - 3))) ||
         (cfg->nthreads > 1 ? cfg->nthreads : 1) != p->T || (p->rank == 3 && (cfg->placement == VFFT_INPLACE) != p->ip))
     {
         est_refuse(why, whylen, "estimate builds a lane-major interleaved real batch at the recipe's rank, shape, K and "
@@ -426,8 +488,8 @@ static vfft_plan _vfft_create_estimate_lmr(const est_machine_t *m, const vfft_cf
     struct vfft_plan_s *h = NULL;
     est_planlmr_t p;
     const int rank = cfg->dims < 2 ? 1 : cfg->dims;
-    if (!est_plan_lmrn(m, rank, cfg->n[0], rank >= 2 ? cfg->n[1] : 0, rank == 3 ? cfg->n[2] : 0, cfg->howmany,
-                       cfg->nthreads, cfg->placement == VFFT_INPLACE, &p, why, sizeof why))
+    if (!est__plan_lmrn_n(m, rank, cfg->n, cfg->howmany, cfg->nthreads, cfg->placement == VFFT_INPLACE, 1, &p, why,
+                          sizeof why))
         h = est_build_lmr(&p, cfg, NULL, why, sizeof why);
     est_free_lmr(&p);
     if (!h)

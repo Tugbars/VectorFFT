@@ -21,7 +21,8 @@
  * The row: t=r2c n=N1x..xNr q=1 on the lay=lm axis (the batch's row at one transform: at K = 1 the two batch
  * geometries are the same addressing), direction-shared, the first axis's column tokens on it.
  *
- * Not served here: in place, a batch (howmany >= 2), scrambled order. Included after lm_batch3dr_il.h. */
+ * Not served here: in place, scrambled order, and a batch -- a contiguous batch (howmany >= 2) is the queue over
+ * this plan (rank2/fft2d_create_il.h _vfft_create_pq_il). Included after lm_batch3dr_il.h. */
 #ifndef VFFT_IL_RANK3_FFTND_REALN_IL_H
 #define VFFT_IL_RANK3_FFTND_REALN_IL_H
 
@@ -88,7 +89,8 @@ static vfft_plan _vfft_create_realn_il(const vfft_cfg_t *cfg, struct vfft_wisdom
         cfg->layout != VFI_LAYOUT_IL || cfg->placement == VFFT_INPLACE || cfg->order == VFI_ORDER_SCRAMBLED || small)
     {
         _vfft_warn("vfft_create: %dD INTERLEAVED %s serves one transform per plan, out of place, natural order, every "
-                   "extent >= 2 (got %s, howmany=%zu, %s%s); a batch and the in-place form are served up to rank 3",
+                   "extent >= 2 (got %s, howmany=%zu, %s%s); a contiguous batch runs through the queue over this plan, "
+                   "out of place; lane-major and the in-place form are served up to rank 3",
                    rank, _vfft_tname(cfg->transform), shp, K, cfg->placement == VFFT_INPLACE ? "in place" : "out of place",
                    cfg->order == VFI_ORDER_SCRAMBLED ? ", scrambled order" : "");
         return NULL;

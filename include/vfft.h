@@ -61,7 +61,7 @@ extern "C"
    * At rank 2 and above the data is row-major, the last axis contiguous, and
    * the real transforms halve the last axis (N_last/2 + 1 bins). VFFT_C2C is
    * served at ranks 1 to 7; VFFT_R2C and VFFT_C2R at ranks 1 to 7 too, at ranks
-   * 4 to 7 one transform per plan, out of place.
+   * 4 to 7 out of place.
    *
    * Real-to-real, 1D only, N reals in and out, unnormalized. SERVED, each at
    * any N from its shortest length up, one transform per plan (howmany = 1),
@@ -139,9 +139,12 @@ extern "C"
    * even N3 >= 4): element (i, j, k) of transform t at
    * z[2 ((i N2 N3 + j N3 + k) K + t)], real data x[(i N2 N3 + j N3 + k) K + t],
    * bins z[2 ((i N2 H + j H + f) K + t)] with H = N3/2 + 1. A batch of rank 4 to 7
-   * (C2C) is contiguous transforms by default, each a block of N1 N2 .. Nr points,
-   * one after another, or lane-major when named: the element at row-major position
-   * e of transform t at z[2 (e K + t)].
+   * is contiguous transforms by default, each a block of its own, one after another
+   * (C2C: N1 N2 .. Nr points; R2C and C2R, out of place: N1 .. Nr reals, and
+   * N1 .. N(r-1) H bins with H = Nr/2 + 1), or lane-major when named (C2C; R2C and
+   * C2R out of place at every extent >= 2 and an even Nr >= 4): the element at
+   * row-major position e of transform t at z[2 (e K + t)], real data x[e K + t],
+   * bin b at z[2 (b K + t)].
    */
   typedef enum
   {
@@ -184,8 +187,7 @@ extern "C"
                                             rank 1 to 7 in natural order (at rank 2 and
                                             3 not with VFFT_FLAG_OWN_PITCH). One transform
                                             or a batch of them (howmany > 1), contiguous or
-                                            lane-major (the real transforms of rank 4 to 7:
-                                            one transform). VFFT_DCT1, VFFT_DST1, VFFT_DST2 and
+                                            lane-major. VFFT_DCT1, VFFT_DST1, VFFT_DST2 and
                                             VFFT_DST3: the real transforms inside them
                                             planned this way.
                                             vfft_create() refuses the flag on any

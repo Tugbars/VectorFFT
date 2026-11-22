@@ -272,8 +272,18 @@ static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
                 return 0;
         return 1;
     }
-    if (cfg->dims > 3)   /* a real batch above rank 3 is not served */
-        return 0;
+    if (cfg->dims > 3)
+    {   /* the real batch of rank 4 to 7 (il/rank3/lm_batch3dr_il.h one rank up, 2026-11-22): the named geometry, out
+         * of place, every extent >= 2, and the 1D real batch's law on the last one: even, >= 4 */
+        int i;
+        if (!(cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) || cfg->batch_geom != VFFT_BATCH_LANE_MAJOR ||
+            cfg->placement == VFFT_INPLACE || cfg->n[cfg->dims - 1] < 4 || (cfg->n[cfg->dims - 1] % 2))
+            return 0;
+        for (i = 0; i < cfg->dims - 1; i++)
+            if (cfg->n[i] < 2)
+                return 0;
+        return 1;
+    }
     if (cfg->dims == 3)   /* the real 3D batch (il/rank3/lm_batch3dr_il.h, 2026-10-19): the named geometry (DEFAULT
                            * stays contiguous volumes at rank 3: the volume queue's law below), N1 >= 2 (a column
                            * pass of N1 rows: the c2c law's floor), and the 2D real child's own law at (N2, N3):
@@ -992,6 +1002,23 @@ static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howma
            (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
            (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL) &&
            cfg->n[0] >= 2 && cfg->n[1] >= 2 && cfg->n[2] >= 2;
+}
+/* -- rank 4 to 7, REAL, THE CONTIGUOUS BATCH (2026-11-22): K >= 2 transforms one after another, out of place --
+ * transform t at x + t N1 .. Nr reals, its bins at z + t 2 N1 .. N(r-1) (Nr/2 + 1) doubles -- each the
+ * single-transform contract of il/rank3/fftnd_realn_il.h, on the DEFAULT geometry or the explicit one. Served by
+ * the queue over that plan, as the volume queue at rank 3. In place and lane-major are not this law's. */
+static inline int vfft_policy_ilrn_batch_ok(const vfft_cfg_t *cfg, size_t howmany)
+{
+    int i;
+    if (!(cfg && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims >= 4 && cfg->dims <= 7 &&
+          howmany >= 2 && cfg->layout == VFI_LAYOUT_IL && cfg->placement == VFFT_OUTOFPLACE &&
+          (cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS) &&
+          (cfg->order == VFI_ORDER_DEFAULT || cfg->order == VFI_ORDER_NATURAL)))
+        return 0;
+    for (i = 0; i < cfg->dims; i++)
+        if (cfg->n[i] < 2)
+            return 0;
+    return 1;
 }
 /* -- the GROUPS arm of the volume queue (plane_queue.h, 2026-10-19): K groups of
  * G = T / K threads, one volume each, all at once in one pool run, raced at create

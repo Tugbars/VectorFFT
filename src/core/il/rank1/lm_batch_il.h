@@ -161,8 +161,9 @@ static void _lm_arm_run(void *v)
     c->natarm = a->natarm;
     c->msw = a->msw;
     c->wc = a->wc;
-    if (a->h->N4 > 0 && a->h->transform != VFFT_C2C)
-    {   /* R2C / C2R of rank 4 to 7 (rank3/fftnd_realn_il.h): the blocks over the clones and the first axis */
+    if (a->h->N4 > 0 && a->h->transform != VFFT_C2C && a->h->K == 1)
+    {   /* one R2C / C2R of rank 4 to 7 (rank3/fftnd_realn_il.h): the blocks over the clones and the first axis; a
+         * lane-major real batch of that rank (K >= 2) is the real batch's branch below */
         if (a->h->transform == VFFT_R2C)
             _ilrn_exec_r2c(a->h, VFFT_FORWARD, a->z, a->zo);
         else

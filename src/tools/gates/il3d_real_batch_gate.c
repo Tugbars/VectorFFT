@@ -894,18 +894,21 @@ static void refusals(void)
     p = mk(VFFT_R2C, 3, n3, 2, VFFT_BATCH_DEFAULT, 1, VFFT_ORDER_NATURAL, 1, VFFT_FLAG_OWN_PITCH);
     CHECK(p == NULL, "R: VFFT_FLAG_OWN_PITCH on a rank-3 r2c batch is served (door 2 is one volume)");
     if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "drop the flag") != NULL, "R: the OWN_PITCH refusal does not say to drop the flag: %s", vfft_error());
-    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1, 0);   /* a real batch above rank 3 (a c2c one is served since 2026-11-22) */
-    CHECK(p == NULL, "R: a rank-4 r2c batch is served");
+    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_DEFAULT, 1, VFFT_ORDER_NATURAL, 1, 0);   /* a real batch above rank 3: out of place only (served since 2026-11-22) */
+    CHECK(p == NULL, "R: a rank-4 r2c batch in place is served");
     if (p) vfft_destroy(p);
-    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1, 0);
-    CHECK(p == NULL, "R: a rank-4 lane-major r2c batch is served");
+    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1, 0);
+    CHECK(p == NULL, "R: a rank-4 lane-major r2c batch in place is served");
+    if (p) vfft_destroy(p);
+    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1, 0);
+    CHECK(p != NULL, "R: a rank-4 r2c batch at 8x8x8x8 x 2 out of place is refused: %s", vfft_error());
     if (p) vfft_destroy(p);
     p = mk(VFFT_R2C, 3, n3, 1, VFFT_BATCH_CONTIGUOUS, 0, VFFT_ORDER_NATURAL, 1, 0);
     CHECK(p != NULL, "R: K=1 with the CONTIGUOUS flag refused (it is the ordinary plan): %s", vfft_error());
     if (p) { CHECK(strcmp(vfft_plan_route(p), "-") != 0, "R: K=1 took the queue"); vfft_destroy(p); }
     printf("R refusals: lane-major rank-3 real at an odd N3 (both placements, the contiguous volumes named; served at an even N3),\n"
            "            a dim below 2 (real and c2c),\n"
-           "            SCRAMBLED on a real batch, OWN_PITCH on a batch, rank 4; K=1 with CONTIGUOUS ordinary\n");
+           "            SCRAMBLED on a real batch, OWN_PITCH on a batch, a rank-4 real batch in place (out of place served); K=1 with CONTIGUOUS ordinary\n");
 }
 
 int main(int argc, char **argv)

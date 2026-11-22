@@ -113,24 +113,41 @@ static void _lm2dr_rows(struct vfft_plan_s *h, const vfft_real *in, vfft_real *o
     else
         thread_pool_run(T, _lm2dr_rows_tramp, a, sizeof a[0]);
 }
+/* a block's last extent L and the rows of it a block holds, M: rank 2 (the 1D child) L = N2, M = 1; rank 3 L = N3,
+ * M = N2; rank 4 to 7 L the last extent, M the extents between the first and the last */
+static void _lm2dr_LM(const struct vfft_plan_s *h, size_t *L, size_t *M)
+{
+    const int e[6] = { h->N2, h->N3, h->N4, h->N5, h->N6, h->N7 };
+    int r = 1, i;
+    while (r < 6 && e[r] > 0)
+        r++;
+    *M = 1;
+    for (i = 0; i < r - 1; i++)
+        *M *= (size_t)e[i];
+    *L = (size_t)e[r - 1];
+}
 /* the executors (bound at create: a direction each, the other refused by the door). The blocks are the
  * child's: at rank 2 the 1D real batch's rows (L = N2 reals a lane, M = 1), at rank 3 (the 3D real batch,
  * rank3/lm_batch3dr_il.h) the 2D real batch's planes (L = N3, M = N2 rows each) -- a real block M L K,
  * its spectrum block M (L + 2) K (2 (L / 2 + 1) = L + 2 at an even L), the padded block the same */
 static int _lm2dr_exec_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *xin, vfft_real *zout)
 {
-    const size_t K = h->K, L = (size_t)(h->N3 > 0 ? h->N3 : h->N2), M = (size_t)(h->N3 > 0 ? h->N2 : 1);
+    const size_t K = h->K;
+    size_t L, M;
     const int ip = h->placement == VFFT_INPLACE;
     (void)dir;
+    _lm2dr_LM(h, &L, &M);
     _lm2dr_rows(h, xin, zout, M * (ip ? L + 2 : L) * K, M * (L + 2) * K, VFFT_FORWARD);
     _lm_cols(h, zout, zout, 0);   /* the first axis over the spectrum, in place */
     return 0;
 }
 static int _lm2dr_exec_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zin, vfft_real *xout)
 {
-    const size_t K = h->K, L = (size_t)(h->N3 > 0 ? h->N3 : h->N2), M = (size_t)(h->N3 > 0 ? h->N2 : 1);
+    const size_t K = h->K;
+    size_t L, M;
     const int ip = h->placement == VFFT_INPLACE;
     (void)dir;
+    _lm2dr_LM(h, &L, &M);
     if (ip)
     {
         _lm_cols(h, zin, xout, 1);   /* zin == xout: in place on the padded plane */

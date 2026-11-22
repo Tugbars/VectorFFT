@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
-/* real_estimate_rn_il.h — the ESTIMATE create of one R2C or C2R transform of rank 4 to 7 (VFFT_FLAG_ESTIMATE): the
- * door's rows written from the formulas and replayed by it with nothing measured.
+/* real_estimate_rn_il.h — the ESTIMATE create of one R2C or C2R transform of rank 4 to 7 (VFFT_FLAG_ESTIMATE), or of
+ * a contiguous batch of them: the door's rows written from the formulas and replayed by it with nothing measured.
  *
  * THE DOOR (il/rank3/fftnd_realn_il.h). r2c: the N1 blocks behind the first axis through the real plan one rank down
  * (the rank-3 real tier at rank 4, the door's own plan above; its rows under rp_), then one complex column pass of N1
@@ -16,6 +16,9 @@
  *     real_estimate_nd_il.h); above it this recipe one rank down at one thread.
  * THE BUILD (est_build_realn) takes the steps of the other estimate builds: the pre-flight, the rows into a store held
  * in memory, the door's replay (est__replay), the plan the door built checked against the recipe.
+ * THE CONTIGUOUS BATCH (howmany = K > 1): the queue over the plan of one transform, as est_build_real_ndb builds it
+ * at rank 2 and 3 -- on T threads the copies' one-thread recipe and the way on the batch's own row, the real
+ * batches' rule (est__real_nd_batch_whole) at one transform's spectrum bytes.
  *
  * POSITION IN vfft.c: included by c2c_estimate_il.h after real_estimate_lm_il.h, whose pieces it reuses. */
 #ifndef VFFT_IL_REAL_ESTIMATE_RN_IL_H
@@ -224,15 +227,19 @@ static inline int est__check_realn(const struct vfft_plan_s *h, const est_planrr
 
 /* est_build_realn: the recipe p of the request cfg -> a plan built with nothing measured, or NULL with the reason in
  * why and the outcome in rep (may be NULL). cfg is the request as the front door translated it: one interleaved R2C or
- * C2R transform at the recipe's rank, shape, direction and thread count, out of place, natural; its store and save
- * flag are not used. Holds the create lock from the pre-flight to the end. The caller owns the plan (vfft_destroy). */
-static inline struct vfft_plan_s *est_build_realn(const est_planrr_t *p, const vfft_cfg_t *cfg, est_build_report_t *rep,
-                                                  char *why, size_t whylen)
+ * C2R transform at the recipe's rank, shape, direction and thread count, out of place, natural, or a contiguous batch
+ * of them; its store and save flag are not used. A batch on T threads also takes the copies' one-thread recipe (q)
+ * and the way (whole: 1 whole transforms per thread, 0 all threads on each transform in turn). Holds the create lock
+ * from the pre-flight to the end. The caller owns the plan (vfft_destroy). */
+static inline struct vfft_plan_s *est_build_realn(const est_planrr_t *p, const est_planrr_t *q, int whole,
+                                                  const vfft_cfg_t *cfg, est_build_report_t *rep, char *why, size_t whylen)
 {
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL;
     struct vfft_plan_s *h = NULL;
+    const struct vfft_plan_s *h1;
     est__meter_t m0;
+    const int T = cfg && cfg->nthreads > 1 ? cfg->nthreads : 1, batch = cfg && cfg->howmany > 1 && T > 1;
     if (!rep)
         rep = &lrep;
     memset(rep, 0, sizeof *rep);
@@ -241,18 +248,23 @@ static inline struct vfft_plan_s *est_build_realn(const est_planrr_t *p, const v
         why[0] = 0;
     if (!p || !cfg || (cfg->transform != VFFT_R2C && cfg->transform != VFFT_C2R) ||
         (cfg->transform == VFFT_C2R) != (p->c2r != 0) || cfg->layout != VFI_LAYOUT_IL || cfg->dims != p->rank ||
-        memcmp(cfg->n, p->n, sizeof(int) * (size_t)p->rank) || cfg->howmany > 1 || cfg->placement == VFFT_INPLACE ||
-        cfg->order == VFI_ORDER_SCRAMBLED || (cfg->nthreads > 1 ? cfg->nthreads : 1) != p->T)
+        memcmp(cfg->n, p->n, sizeof(int) * (size_t)p->rank) || cfg->placement == VFFT_INPLACE ||
+        (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR) ||
+        cfg->order == VFI_ORDER_SCRAMBLED || T != p->T ||
+        (batch ? !q || q->T != 1 || q->rank != p->rank || memcmp(q->n, p->n, sizeof(int) * (size_t)p->rank) ||
+                     !q->c2r != !p->c2r || (whole != 0 && whole != 1)
+               : q || whole))
     {
         est_refuse(why, whylen, "estimate builds one interleaved R2C or C2R transform of rank 4 to 7, out of place, in "
-                   "natural order, at the recipe's shape, direction and thread count");
+                   "natural order, at the recipe's shape, direction and thread count, or a contiguous batch of them "
+                   "(on more than one thread with its copies' one-thread recipe)");
         return NULL;
     }
     vfft_env_init();          /* the pre-flight's tables in the create's FP mode */
     _vfft_create_lock();      /* recursive: the pre-flight touches the create's process statics */
     _vfft_create_depth++;     /* the whole build inside a create: a clock read enters a scope */
     est__meter_read(&m0);
-    if (est__preflight_realn(p, why, whylen))
+    if (est__preflight_realn(p, why, whylen) || (batch && est__preflight_realn(q, why, whylen)))
         goto out;
     if (!(S = vfft_child_store_new()))
     {
@@ -261,9 +273,26 @@ static inline struct vfft_plan_s *est_build_realn(const est_planrr_t *p, const v
     }
     if (est_put_rows_realn(&S->vw2, p, why, whylen))
         goto out;
+    if (batch)
+    {   /* the copies' one-thread row; the way on the batch's own row, as _pq_mt_replay_or_race reads it */
+        vw2_key_t key;
+        int i;
+        if (est_put_rows_realn(&S->vw2, q, why, whylen))
+            goto out;
+        vw2__pq_key(&key, p->c2r ? VW2_T_C2R : VW2_T_R2C, p->rank, cfg->n[0], cfg->n[1], cfg->n[2], cfg->howmany,
+                    vfft_policy_ord_rankn(cfg), VW2_PL_OOP, _vw2_lay_of(cfg), T);
+        for (i = 3; i < p->rank; i++)   /* the extents after the third (plane_queue.h, _pq_row_key) */
+            key.n[i] = cfg->n[i];
+        if (vw2_pq_bank(&S->vw2, &key, whole, 0.0) != VW2_OK)
+        {
+            est_refuse(why, whylen, "the batch's row (pq) was refused at %d threads", T);
+            goto out;
+        }
+    }
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && est__check_realn(h, p, why, whylen))
-    {
+    if (h && (est__batch_one(h, cfg, whole, &h1, why, whylen) || est__check_realn(h1, p, why, whylen) ||
+              (whole && est__check_realn(h->pq_w[0], q, why, whylen))))
+    {   /* with whole transforms per thread the first copy is the one-thread recipe's plan too */
         rep->status = EST_NOPLAN;
         vfft_destroy((vfft_plan)h);
         h = NULL;
@@ -284,16 +313,35 @@ static vfft_plan _vfft_create_estimate_realn(const est_machine_t *m, const vfft_
 {
     char why[640];
     struct vfft_plan_s *h = NULL;
+    const int T = cfg->nthreads > 1 ? cfg->nthreads : 1, batch = cfg->howmany > 1 && T > 1, c2r = cfg->transform == VFFT_C2R;
     est_planrr_t *p = (est_planrr_t *)calloc(1, sizeof *p);   /* off the stack */
-    if (!p)
+    est_planrr_t *q = batch ? (est_planrr_t *)calloc(1, sizeof *q) : NULL;   /* the queue's copies: the plan on one thread */
+    if (!p || (batch && !q))
         snprintf(why, sizeof why, "out of memory");
-    else if (cfg->howmany > 1 || cfg->placement == VFFT_INPLACE || cfg->order == VFI_ORDER_SCRAMBLED)
-        snprintf(why, sizeof why, "R2C and C2R of rank %d are served one transform per plan, out of place, in natural "
-                 "order", cfg->dims);
-    else if (!est_plan_realn(m, cfg->dims, cfg->n, cfg->transform == VFFT_C2R, cfg->nthreads, 1, p, why, sizeof why))
-        h = est_build_realn(p, cfg, NULL, why, sizeof why);
+    else if (cfg->placement == VFFT_INPLACE || cfg->order == VFI_ORDER_SCRAMBLED ||
+             (cfg->howmany > 1 && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR))
+        snprintf(why, sizeof why, "R2C and C2R of rank %d are served out of place, in natural order, one transform or a "
+                 "contiguous batch", cfg->dims);
+    else if (!est_plan_realn(m, cfg->dims, cfg->n, c2r, T, 1, p, why, sizeof why) &&
+             (!q || !est_plan_realn(m, cfg->dims, cfg->n, c2r, 1, 1, q, why, sizeof why)))
+    {
+        int whole = 0, i;
+        if (batch)
+        {   /* the way: the real batches' rule at one transform's spectrum bytes */
+            size_t bytes = 16 * ((size_t)cfg->n[cfg->dims - 1] / 2 + 1);
+            for (i = 0; i < cfg->dims - 1; i++)
+                bytes *= (size_t)cfg->n[i];
+            whole = est__real_nd_batch_whole(m, bytes, cfg->howmany, T);
+        }
+        h = est_build_realn(p, q, whole, cfg, NULL, why, sizeof why);
+    }
     est_free_realn(p);
     free(p);
+    if (q)
+    {
+        est_free_realn(q);
+        free(q);
+    }
     if (!h)
         _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);
     return (vfft_plan)h;

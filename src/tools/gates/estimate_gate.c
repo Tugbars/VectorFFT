@@ -76,7 +76,7 @@
  *   M  nothing measured at any create: the races counted (_vfft_create_race_count, vfft.c) and the race
  *      scopes entered (vfft_measure_scopes) do not move across it.
  *   R  the refusals: a real transform at its own pitch at rank 2, a lane-major real batch at an odd last extent or
- *      below N = 4, a scrambled real one, a real-to-real transform, rank 8, a real batch at rank 4, SPLIT, the flag with
+ *      below N = 4, a scrambled real one, a real-to-real transform, rank 8, an in-place real batch at rank 4, SPLIT, the flag with
  *      VFFT_FLAG_RECALIBRATE and with VFFT_FLAG_PATIENT;
  *      at rank 2 and 3 scrambled order (a lane-major batch too), an axis of length 1, a last axis
  *      with no 1D engine, a column whose Bluestein length passes 2^30 (refused at once: the create
@@ -1483,8 +1483,8 @@ int main(int argc, char **argv)
         refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 only, not VFFT_DHT");
         memset(&c, 0, sizeof c); c.rank = 8; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8;
         refused("rank 8", &c, "rank 8 out of range");
-        memset(&c, 0, sizeof c); c.rank = 4; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8; c.transform = VFFT_R2C; c.howmany = 2;
-        refused("R2C rank 4 batch", &c, "are served one transform per plan, out of place, in natural order");
+        memset(&c, 0, sizeof c); c.rank = 4; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8; c.transform = VFFT_R2C; c.howmany = 2; c.placement = VFFT_PLACEMENT_IN;
+        refused("R2C rank 4 batch in place", &c, "are served out of place, in natural order, one transform or a contiguous batch");
         memset(&c, 0, sizeof c); c.rank = 2; c.n[0] = 64; c.n[1] = 64; c.order = VFFT_ORDER_SCRAMBLED;
         refused("rank 2 scrambled", &c, "plans rank 2 and above in natural order only, not VFFT_ORDER_SCRAMBLED");
         memset(&c, 0, sizeof c); c.rank = 3; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.order = VFFT_ORDER_SCRAMBLED;

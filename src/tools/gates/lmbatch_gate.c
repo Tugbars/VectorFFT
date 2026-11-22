@@ -11,7 +11,7 @@
  *   the 2D and 3D c2c batches, the 2D real batch (step 6), and the 3D REAL batch as two sections of its own
  *   (SECTION 3DR2C, SECTION 3DC2R: pieces 3 and 4 of the rank-3 real batch design, 2026-10-19);
  *   R  the refusals named: the real lane-major batches at an odd last extent (and a rank-3 one at N3 = 2, N1 = 1,
- *      N2 = 1), any rank-4 lane-major request; K = 1 with the lane-major flag is the ordinary plan.
+ *      N2 = 1), a rank-4 real one at an odd last extent or in place; K = 1 with the lane-major flag is the ordinary plan.
  * Cold scratch store: every cell races. Usage: lmbatch_gate --wisdir <dir> [--section 3DR2C|3DC2R|R] */
 #include <stdio.h>
 #include <stdlib.h>
@@ -406,9 +406,9 @@ static void refusals(void)
     CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
     {   /* ranks 2 and 3 are served (step 6; the real 3D batch 2026-10-19); a real batch at an odd last extent, a real
-         * 3D batch at N3 = 2, N1 = 1 or N2 = 1, and a real batch at rank 4 are refused with their reason (a non-empty
-         * vfft_error); a c2c batch at rank 4 is served (2026-11-22) */
-        const int n3[3] = { 4, 4, 4 }, n4[4] = { 8, 8, 8, 8 }, n2odd[2] = { 64, 15 };
+         * 3D batch at N3 = 2, N1 = 1 or N2 = 1, and a real batch at rank 4 at an odd last extent or in place are
+         * refused with their reason (a non-empty vfft_error); a batch at rank 4, c2c or real, is served (2026-11-22) */
+        const int n3[3] = { 4, 4, 4 }, n4[4] = { 8, 8, 8, 8 }, n4odd[4] = { 8, 8, 8, 7 }, n2odd[2] = { 64, 15 };
         const int n3odd[3] = { 16, 16, 15 }, n3two[3] = { 16, 16, 2 }, n3one[3] = { 1, 16, 16 }, n3one2[3] = { 16, 1, 16 };
         p = mk(VFFT_R2C, 2, n2odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
         CHECK(p == NULL, "R: a rank-2 lane-major r2c batch at an odd N2 is served (no real column engine)");
@@ -437,15 +437,23 @@ static void refusals(void)
         CHECK(p != NULL, "R: a rank-4 lane-major c2c batch at 8x8x8x8 x 4 is refused: %s", vfft_error());
         if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the rank-4 batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
         p = mk(VFFT_R2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
-        CHECK(p == NULL, "R: a rank-4 lane-major r2c batch is served");
-        CHECK(vfft_error()[0] != 0, "R: the rank-4 real batch refusal gives no reason");
+        CHECK(p != NULL, "R: a rank-4 lane-major r2c batch at 8x8x8x8 x 4 is refused: %s", vfft_error());
+        if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the rank-4 real batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
+        p = mk(VFFT_R2C, 4, n4odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-4 lane-major r2c batch at an odd last extent is served");
+        CHECK(vfft_error()[0] != 0, "R: the rank-4 real batch refusal at an odd last extent gives no reason");
+        if (p) vfft_destroy(p);
+        p = mk(VFFT_R2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 1, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-4 lane-major r2c batch in place is served");
+        CHECK(vfft_error()[0] != 0, "R: the rank-4 in-place real batch refusal gives no reason");
         if (p) vfft_destroy(p);
     }
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
     CHECK(p != NULL, "R: K=1 with the lane-major flag refused (it is the ordinary plan)");
     if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") != 0, "R: K=1 took the batch door"); vfft_destroy(p); }
     printf("R refusals: odd-N r2c and c2r in both placements, a real rank-2 batch at an odd N2, a real rank-3 batch at an odd N3 "
-           "(both placements), at N3=2, N1=1 and N2=1, a rank-4 lane-major request; the rank-3 real batch served; K=1 ordinary\n");
+           "(both placements), at N3=2, N1=1 and N2=1, a rank-4 real one at an odd last extent and in place; the rank-3 and "
+           "rank-4 real batches served; K=1 ordinary\n");
 }
 
 /* ── THE 2D AND 3D LANE-MAJOR BATCHES (step 6): K planes of N1 x N2 (volumes of N1 x N2 x N3) side by side,
