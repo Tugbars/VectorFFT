@@ -686,9 +686,11 @@ static inline int vfft_ztt_tile_legal_ord(int N, const int *chain, int nf, size_
     if (nf < 3) return 0;
     if ((size_t)N % tile) return 0;
     if (tile % ((size_t)chain[nf - 2] * (size_t)chain[nf - 1])) return 0;
-#if VFFT_ZTT_VW >= 8
-    if ((tile / (size_t)chain[nf - 1]) % VFFT_ZTT_VW) return 0;   /* whole 8-column last-stage iterations */
-#endif
+    /* whole last-stage iterations in every block: the terminator runs VFFT_ZTT_VW blocks of R_{nf-1} a step and
+     * does nothing with a shorter rest. At every vector width (2026-11-22): a power-of-two width always passed at
+     * 4 columns, but the widths the race at T offers a 2^a x odd chain (ztt_mt.h vfft_ztt_mt_tile_cands) do not --
+     * 10000 = 4.5.5.5.5.4 at the width 500 left one block of every 125 untouched, a wrong transform */
+    if ((tile / (size_t)chain[nf - 1]) % VFFT_ZTT_VW) return 0;
     return tile < (size_t)N;
 }
 
