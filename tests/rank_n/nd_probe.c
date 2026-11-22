@@ -23,7 +23,7 @@
  *                z[2 (e K + t)]; the data and the reference are laid that way before the plan runs
  *   --real       the real transforms, out of place: the VFFT_R2C plan on seeded reals, its N1 x .. x (Nr/2 + 1)
  *                bins checked against the reference's (fwd); then the VFFT_C2R plan on those bins, checked against
- *                the reals (rt). One transform: not with --ip, --batch or --lm.
+ *                the reals (rt). With --batch K a batch of them, contiguous or with --lm lane-major. Not with --ip.
  * exit 0 when fwd and rt are both below 1e-11, 1 otherwise, 2 on a usage or create error.
  *
  * build (from the repository root, after the gauntlet target built build/gauntlet/libvfft_core.a):
@@ -169,12 +169,16 @@ static void to_lm(double *dst, const double *src, size_t pts, size_t K)
         }
 }
 
-/* --real: the R2C plan forward against the reference's half spectrum, then the C2R plan backward on the round trip */
+/* --real: the R2C plan forward against the reference's half spectrum, then the C2R plan backward on the round trip.
+ * A batch of K transforms (--batch K) is contiguous -- transform t at x + t P reals, its bins at z + t 2 S doubles,
+ * P the points and S the bins of one transform -- or with --lm lane-major: the real at row-major position e of
+ * transform t at x[e K + t], bin b of it at z[2 (b K + t)]. Every transform is checked against the reference. */
 static int probe_real(const char *shape, const int *n, int rank, int est, int T, const char *store, const char *ref,
-                      int reps)
+                      int reps, size_t K, int lm)
 {
-    size_t pts = 1, lead = 1, q, o;
+    size_t pts = 1, lead = 1, q, o, t;
     const size_t L = (size_t)n[rank - 1], H = L / 2 + 1;
+    size_t S;
     double *x, *z, *r, *w, efwd = 0, ert = 0, mref = 0, mx = 0, best = 1e300;
     vfft_config_t c;
     vfft_plan pf, pb;
@@ -183,11 +187,14 @@ static int probe_real(const char *shape, const int *n, int rank, int est, int T,
     for (i = 0; i < rank; i++)
         pts *= (size_t)n[i];
     lead = pts / L;
+    S = lead * H;
     memset(&c, 0, sizeof c);
     c.transform = VFFT_R2C;
     c.rank = rank;
     for (i = 0; i < rank; i++)
         c.n[i] = n[i];
+    c.howmany = K;
+    c.batch = lm ? VFFT_BATCH_LANE_MAJOR : (K > 1 ? VFFT_BATCH_CONTIGUOUS : VFFT_BATCH_DEFAULT);
     c.placement = VFFT_PLACEMENT_OUT;
     c.nthreads = T;
     c.flags = est ? VFFT_FLAG_ESTIMATE : 0;
@@ -195,51 +202,65 @@ static int probe_real(const char *shape, const int *n, int rank, int est, int T,
     pf = vfft_create(&c);
     if (!pf)
     {
-        printf("%-22s rank %d T=%d %s r2c  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", vfft_error());
+        printf("%-22s rank %d T=%d %s r2c K=%zu%s  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", K,
+               lm ? " lm" : "", vfft_error());
         return 2;
     }
     c.transform = VFFT_C2R;
     pb = vfft_create(&c);
     if (!pb)
     {
-        printf("%-22s rank %d T=%d %s c2r  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", vfft_error());
+        printf("%-22s rank %d T=%d %s c2r K=%zu%s  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", K,
+               lm ? " lm" : "", vfft_error());
         return 2;
     }
     vfft_info(pf, &info);
-    x = (double *)vfft_malloc(sizeof(double) * pts);
-    z = (double *)vfft_malloc(sizeof(double) * 2 * lead * H);
+    x = (double *)vfft_malloc(sizeof(double) * pts * K);
+    z = (double *)vfft_malloc(sizeof(double) * 2 * S * K);
     r = (double *)vfft_malloc(sizeof(double) * 2 * pts);
-    w = (double *)vfft_malloc(sizeof(double) * pts);
+    w = (double *)vfft_malloc(sizeof(double) * pts * K);
     if (!x || !z || !r || !w)
     {
         fprintf(stderr, "nd_probe: out of memory\n");
         return 2;
     }
-    for (q = 0; q < pts; q++)
-    {
-        x[q] = rnd();
-        r[2 * q] = x[q];
-        r[2 * q + 1] = 0.0;
-    }
-    for (a = 0; a < rank; a++)
-    {
-        if (!strcmp(ref, "lines"))
-        {
-            if (ref_axis_lines(r, n, rank, a))
-                return 2;
-        }
-        else
-            ref_axis_direct(r, n, rank, a, -1);
-    }
+#define XAT(e, t) (lm ? (e) * K + (t) : (t) * pts + (e))          /* the real at position e of transform t */
+#define ZAT(b, t) (lm ? 2 * ((b) * K + (t)) : 2 * ((t) * S + (b))) /* bin b of transform t (its real part) */
+    for (t = 0; t < K; t++)
+        for (q = 0; q < pts; q++)
+            x[XAT(q, t)] = rnd();
     if (vfft_execute(pf, VFFT_FORWARD, x, z)) { printf("%s: r2c execute refused: %s\n", shape, vfft_error()); return 2; }
-    for (o = 0; o < lead; o++)
-        for (q = 0; q < 2 * H; q++)
-        {   /* bin f of row o: the reference's bin f of the same row */
-            const double ref1 = r[2 * o * L + q], d = fabs(z[2 * o * H + q] - ref1), m = fabs(ref1);
-            if (d > efwd) efwd = d;
-            if (m > mref) mref = m;
-            if (z[2 * o * H + q] != z[2 * o * H + q]) bad = 1;
+    for (t = 0; t < K; t++)
+    {   /* the reference of transform t: the complex DFT of its reals along every axis */
+        for (q = 0; q < pts; q++)
+        {
+            r[2 * q] = x[XAT(q, t)];
+            r[2 * q + 1] = 0.0;
         }
+        for (a = 0; a < rank; a++)
+        {
+            if (!strcmp(ref, "lines"))
+            {
+                if (ref_axis_lines(r, n, rank, a))
+                    return 2;
+            }
+            else
+                ref_axis_direct(r, n, rank, a, -1);
+        }
+        for (o = 0; o < lead; o++)
+            for (q = 0; q < H; q++)
+            {   /* bin q of row o: the reference's bin q of the same row */
+                const size_t zi = ZAT(o * H + q, t);
+                int cpt;
+                for (cpt = 0; cpt < 2; cpt++)
+                {
+                    const double ref1 = r[2 * (o * L + q) + (size_t)cpt], d = fabs(z[zi + (size_t)cpt] - ref1), m = fabs(ref1);
+                    if (d > efwd) efwd = d;
+                    if (m > mref) mref = m;
+                    if (z[zi + (size_t)cpt] != z[zi + (size_t)cpt]) bad = 1;
+                }
+            }
+    }
     efwd /= mref > 0 ? mref : 1;
     for (i = 0; i < reps; i++)
     {
@@ -251,10 +272,10 @@ static int probe_real(const char *shape, const int *n, int rank, int est, int T,
     {   /* FNV-1a over the bins' bytes, before the C2R plan runs on them */
         const unsigned char *b = (const unsigned char *)z;
         uint64_t hsh = 1469598103934665603ull;
-        for (q = 0; q < sizeof(double) * 2 * lead * H; q++)
+        for (q = 0; q < sizeof(double) * 2 * S * K; q++)
             hsh = (hsh ^ b[q]) * 1099511628211ull;
         if (vfft_execute(pb, VFFT_BACKWARD, z, w)) { printf("%s: c2r execute refused: %s\n", shape, vfft_error()); return 2; }
-        for (q = 0; q < pts; q++)
+        for (q = 0; q < pts * K; q++)
         {
             const double d = fabs(w[q] / (double)pts - x[q]), m = fabs(x[q]);
             if (d > ert) ert = d;
@@ -262,10 +283,12 @@ static int probe_real(const char *shape, const int *n, int rank, int est, int T,
         }
         ert /= mx > 0 ? mx : 1;
         bad |= !(efwd < 1e-11) || !(ert < 1e-11);
-        printf("%-22s rank %d T=%d %s real  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
-               shape, rank, T, est ? "est " : "meas", efwd, ert, best, best / (double)pts, info.nthreads,
-               (unsigned long long)hsh, bad ? "FAIL" : "ok");
+        printf("%-22s rank %d T=%d %s real K=%zu%s  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
+               shape, rank, T, est ? "est " : "meas", K, lm ? " lm" : "", efwd, ert, best, best / (double)(pts * K),
+               info.nthreads, (unsigned long long)hsh, bad ? "FAIL" : "ok");
     }
+#undef XAT
+#undef ZAT
     vfft_destroy(pf);
     vfft_destroy(pb);
     vfft_free(x); vfft_free(z); vfft_free(r); vfft_free(w);
@@ -329,12 +352,12 @@ int main(int argc, char **argv)
     }
     if (real)
     {
-        if (ip || lm || K != 1)
+        if (ip || (lm && K < 2))
         {
-            fprintf(stderr, "nd_probe: --real probes one transform out of place (not with --ip, --batch or --lm)\n");
+            fprintf(stderr, "nd_probe: --real probes out of place (not with --ip); --lm needs --batch K\n");
             return 2;
         }
-        return probe_real(shape, n, rank, est, T, store, ref, reps);
+        return probe_real(shape, n, rank, est, T, store, ref, reps, K, lm);
     }
     for (i = 0; i < rank; i++)
         pts *= (size_t)n[i];

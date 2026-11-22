@@ -1,12 +1,13 @@
 # Rank 4 to 7: the tests
 
 Checks and timing cells for transforms of rank 4 to 7: complex (`VFFT_C2C`, interleaved, natural order), one
-transform or a batch, and real (`VFFT_R2C`, `VFFT_C2R`), one transform out of place. The complex transforms are
+transform or a batch, and real (`VFFT_R2C`, `VFFT_C2R`), one transform or a batch, out of place. The complex transforms are
 the rank-N tier,
 [`src/core/il/rank3/fftnd_il.h`](../../src/core/il/rank3/fftnd_il.h); a contiguous batch is the queue over its plan
 ([`plane_queue.h`](../../src/core/il/rank2/plane_queue.h)), a lane-major batch its own door
 ([`lm_batch3d_il.h`](../../src/core/il/rank3/lm_batch3d_il.h)); the real transforms are
-[`fftnd_realn_il.h`](../../src/core/il/rank3/fftnd_realn_il.h).
+[`fftnd_realn_il.h`](../../src/core/il/rank3/fftnd_realn_il.h), a contiguous real batch the same queue over that
+plan and a lane-major real batch the door [`lm_batch3dr_il.h`](../../src/core/il/rank3/lm_batch3dr_il.h).
 
 ## What is here
 
@@ -34,7 +35,8 @@ python tests/rank_n/nd_sweep.py
   transforms, or four lane-major ones. Every transform of the batch is checked against the reference.
 - **The real transforms.** Every shape also runs through the R2C plan, its bins checked against the reference's
   half spectrum, and then through the C2R plan, checked against the input; on one thread, and at 8 threads from
-  256 points.
+  256 points. A shape of up to 300,000 points also runs as real batches: three contiguous transforms, and four
+  lane-major ones where the last extent is even and at least 4 (the lane-major real batch serves those).
 - **The shapes.** Powers of two, composites, odd extents, a prime above 47 on each axis in turn, extents of 2 and
   3, and arrays up to 16.7 million points.
 - **Measured plans.** `--store DIR` also plans a part of the list by measuring, batches among them, in the scratch
@@ -70,3 +72,16 @@ python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> 
 
 The bench's cells are `--tcnd` and `--lmnd`, the 3D batch cells' protocol. A cell whose K transforms hold more than
 2^24 points is not timed.
+
+The real transforms, one transform (`--real r2c` or `--real c2r`; the bench's cell is `--ndreal`), or a batch:
+
+```
+python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> --bin-dir build/gauntlet --est --real r2c
+python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> --bin-dir build/gauntlet --est --real r2c --batch contiguous --k 4
+python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> --bin-dir build/gauntlet --est --real r2c --batch lane-major --k 4
+```
+
+The contiguous real batch cell (`--tcndr2c`, `--tcndc2r`) times every shape against MKL's contiguous batch. The
+lane-major one (`--lmndr2c`, `--lmndc2r`) times the lane-major batch against MKL on that layout (`vfft_ns`,
+`mkl_mirror_ns`, `ratio_mirror`: the run's verdict) and the contiguous batch beside it (`contig_ns`,
+`mkl_home_ns`, `ratio_contig`); a shape whose last extent is odd has no lane-major real batch and no row there.

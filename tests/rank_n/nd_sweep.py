@@ -5,7 +5,9 @@ Every shape runs with estimate plans (VFFT_FLAG_ESTIMATE, nothing measured, no w
 and a part of them in place and at 4 and 8 threads. A shape of up to BATCH_MAX points also runs as a batch: three
 contiguous transforms, or four lane-major ones (VFFT_BATCH_LANE_MAJOR), at 1 and 8 threads, a part of them in place.
 Every shape also runs as a real transform (the R2C plan against the reference's half spectrum, then the C2R plan on
-the round trip) on one thread, and at 8 threads from 256 points.
+the round trip) on one thread, and at 8 threads from 256 points; a shape of up to BATCH_MAX points also as real
+batches: three contiguous transforms, and four lane-major ones where the last extent is even and at least 4 (the
+lane-major real batch's law), at 1 thread and a part of them at 8.
 A shape of up to DIRECT_MAX points is checked against the direct DFT along every axis, a larger one against the
 library's 1D plans line by line. The list is fixed: it comes from arithmetic alone, the same on every machine.
 
@@ -95,12 +97,27 @@ def main():
         runs.append((sh, ["--est", "--real"]))
         if points(sh) >= 256:
             runs.append((sh, ["--est", "--real", "--threads", "8"]))
+        last = int(sh.split("x")[-1])
+        lm_real = last >= 4 and last % 2 == 0   # the lane-major real batch serves an even last extent of at least 4
+        if points(sh) <= BATCH_MAX:
+            # the real batches: contiguous, and lane-major where its law holds
+            runs.append((sh, ["--est", "--real", "--batch", "3"]))
+            if i % 2 == 0:
+                runs.append((sh, ["--est", "--real", "--threads", "8", "--batch", "3"]))
+            if lm_real:
+                runs.append((sh, ["--est", "--real", "--batch", "4", "--lm"]))
+                if i % 2 == 1:
+                    runs.append((sh, ["--est", "--real", "--threads", "8", "--batch", "4", "--lm"]))
         if a.store and points(sh) <= 70000 and i % 4 == 0:
             runs.append((sh, ["--store", a.store]))
             runs.append((sh, ["--store", a.store, "--threads", "8"]))
         if a.store and points(sh) <= 70000 and i % 4 == 2:
             runs.append((sh, ["--store", a.store, "--real"]))
             runs.append((sh, ["--store", a.store, "--real", "--threads", "8"]))
+        if a.store and points(sh) <= 20000 and i % 8 == 5:
+            runs.append((sh, ["--store", a.store, "--real", "--threads", "8", "--batch", "3"]))
+            if lm_real:
+                runs.append((sh, ["--store", a.store, "--real", "--threads", "8", "--batch", "4", "--lm"]))
         if a.store and points(sh) <= 20000 and i % 8 == 1:
             runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "3"]))
             runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "4", "--lm"]))
