@@ -330,10 +330,14 @@ static inline int est__preflight_rn(const est_planrn_t *p, char *why, size_t why
         if (est__preflight_rn(c, w2, sizeof w2))
             return est_refuse(why, whylen, "%s, the block child: %s", sh, w2);
     }
-    if (p->T > 1 && p->cmt > 0)
-    {   /* the block phase's batch: the plan of one block at T, the way 0 or 1 */
-        if (p->bpq != 0 && p->bpq != 1)
-            return est_refuse(why, whylen, "%s T=%d: the block batch's way %d", sh, p->T, p->bpq);
+    if (p->T > 1 && p->cmt > 0 && p->bpq)
+    {   /* the block phase on the plane team: no batch plan */
+        if (p->bpq != 1 || p->c3t || p->cnt)
+            return est_refuse(why, whylen, "%s T=%d: the plane team's block phase with a block batch (way %d)", sh, p->T,
+                              p->bpq);
+    }
+    else if (p->T > 1 && p->cmt > 0)
+    {   /* the block phase's batch plan: the plan of one block at T */
         if (p->rank == 4)
         {
             const est_plan3d_t *c = p->c3t;
@@ -486,17 +490,18 @@ static inline int est__check_rn(const struct vfft_plan_s *h, const est_planrn_t 
         return -1;
     if (p->rank == 4 ? est__check_3d(d->child, p->c3, why, whylen) : est__check_rn(d->child, p->cn, why, whylen))
         return -1;
-    if (mt)
-    {   /* the block phase's batch plan: the recipe's way over the plan of one block at T */
+    if (mt && !p->bpq)
+    {   /* the block phase's batch plan: all threads on each block in turn, over the plan of one block at T */
         const struct vfft_plan_s *b = d->bq;
-        if (!b || !b->pq_inner || b->pq_n != (size_t)p->n[0] || b->pq_gn || b->pq_mt != p->bpq || (p->bpq && b->pq_wn < 1))
+        if (!b || !b->pq_inner || b->pq_n != (size_t)p->n[0] || b->pq_gn || b->pq_mt != 0)
             return est_refuse(why, whylen, "%s T=%d: the door did not serve the block phase as the batch of %d blocks "
-                              "with %s", sh, T, p->n[0], p->bpq ? "whole blocks per thread" : "all threads on each block in turn");
+                              "with all threads on each block in turn", sh, T, p->n[0]);
         if (p->rank == 4 ? est__check_3d(b->pq_inner, p->c3t, why, whylen) : est__check_rn(b->pq_inner, p->cnt, why, whylen))
             return -1;
     }
     else if (d->bq)
-        return est_refuse(why, whylen, "%s: the door built a block batch on a plan that does not thread", sh);
+        return est_refuse(why, whylen, "%s: the door built a block batch where the recipe's block phase is the plane "
+                          "team's", sh);
     if (p->col.tpc == 1 &&
         est__check_child(d->ax0.tpcplan, &p->tpcp, p->n[0], VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))
         return -1;

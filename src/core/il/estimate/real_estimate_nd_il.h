@@ -932,14 +932,22 @@ out:
  * over 576 fresh ones (other shapes, K 2 - 28), every rank x direction x placement 1.001 - 1.026; the C2C rule 1.060 /
  * 1.062 (to 2.7 x: 2 transforms on 8 threads whole, 6 threads idle). The groups arm was never the faster. Fitted at 8
  * threads on one machine (i9-14900KF, L2 2 MiB): other thread counts and machines are untested. */
+/* the rule's two sides (m->l2 > 0, K >= 1, T >= 1): *s the speedup of one transform on T threads, e T by its
+ * bytes against the L2; *q the speedup of whole transforms per thread, K / ceil(K / T) */
+static inline void est__real_nd_batch_sides(const est_machine_t *m, size_t bytes, size_t K, int T, double *s, double *q)
+{
+    const double x = (double)bytes / (double)m->l2;
+    const double e = x < 1.0 / 256 ? 0.5 : x < 1.0 / 16 ? 0.125 : x < 0.25 ? 0.25 : x < 1.0 ? 0.5 : 1.0;
+    *s = e * T;
+    *q = (double)K / (double)((K + (size_t)T - 1) / (size_t)T);
+}
 static inline int est__real_nd_batch_whole(const est_machine_t *m, size_t bytes, size_t K, int T)
 {
-    double x, e;
+    double s, q;
     if (T < 2 || K < 2 || m->l2 <= 0)
         return 0;
-    x = (double)bytes / (double)m->l2;
-    e = x < 1.0 / 256 ? 0.5 : x < 1.0 / 16 ? 0.125 : x < 0.25 ? 0.25 : x < 1.0 ? 0.5 : 1.0;
-    return e * T < (double)K / (double)((K + (size_t)T - 1) / (size_t)T);
+    est__real_nd_batch_sides(m, bytes, K, T, &s, &q);
+    return s < q;
 }
 
 /* est_build_real_ndb: p2 or p3 the recipe at T, q2 or q3 the copies' one-thread recipe (T > 1; else NULL), g3 the

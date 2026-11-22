@@ -202,8 +202,9 @@ typedef struct vfft_ilnd_s {
     struct vfft_plan_s **childw;  /* arm 1 clones */
     struct vfft_plan_s *bq;       /* rank 4 to 7, threaded: THE BLOCK PHASE AS ONE PLAN, the contiguous batch of the
                                    * N[0] blocks (the queue over the child plan, rank2/plane_queue.h) at the plan's T,
-                                   * in role on the child's store; its own verdict says how the blocks share the
-                                   * threads. NULL below rank 4, on one thread, under a serial verdict */
+                                   * in role on the child's store, kept where its verdict is all threads on each
+                                   * block in turn. NULL = the plane team: below rank 4, on one thread, under a
+                                   * serial verdict, or where whole blocks per worker is the way */
     struct vfft_plan_s **roww;    /* arm 2 row clones */
     vfft_ilcol_t *ax1w;           /* arm 2 axis-1 descriptors: shared tables, own scratch */
     int ip;                       /* the plan's placement (1 = in place): the races run the
@@ -612,15 +613,18 @@ static int _ilnd_half_team(const vfft_ilnd_t *d, int T)
     return (Tp >= 4 && d->N[0] < 2 * Tp) ? Tp / 2 : 0;
 }
 
-/* ── rank 4 to 7, threaded: THE BLOCK PHASE AS ONE PLAN (2026-11-22). The N[0] blocks behind axis 0 are N[0]
- * contiguous transforms of the child's shape, so the phase is the contiguous batch of them: the queue over the
- * child plan (rank2/plane_queue.h), created here through the front door, in role on the child's store, at the
- * plan's T. The queue's own verdict (pq=, on the batch's row in that store: raced by a measuring create, the
- * batch rule's under the estimate) says how the blocks share the threads: whole blocks per worker, as the plane
- * team deals them, or all the threads on each block in turn. The second is what a first axis shorter than the
- * team and a block past a core's L2 need: 2x64x64x64 on 8 threads ran its two blocks on two workers in 542 us,
- * and runs each on the eight in turn in 164; 8x64x64x64 its eight 4 MiB blocks, one a worker, in 1.1 ms against
- * 0.66 in turn. Rank 3 keeps the plane team: its planes are the 2D child's, with no threads of their own. */
+/* ── rank 4 to 7, threaded: THE BLOCK PHASE AS ONE PLAN (2026-11-22). The plane team gives every worker whole
+ * blocks, each on one thread: a first axis shorter than the team leaves workers idle (2x64x64x64 on 8 threads:
+ * two blocks on two workers, 542 us). The N[0] blocks behind axis 0 are N[0] contiguous transforms of the
+ * child's shape, so the phase is also the contiguous batch of them, the queue over the child plan
+ * (rank2/plane_queue.h), which can put all the threads on each block in turn (the same two blocks: 164 us). It
+ * is created here through the front door, in role on the child's store, at the plan's T, and kept only where its
+ * verdict (pq=, on the batch's row in that store) is that way: 0, all threads on each block in turn. Under 1,
+ * whole blocks per worker, the plane team serves as before and no batch plan stays: the team's own form of it
+ * is the faster (the block phase of 24^4 on 8 threads 74 us against the queue's 79, of 16x16x16x32 25.5 against
+ * 28.9). The verdict: the estimate writes it (estimate_nd_il.h est_mt_rn); a measuring create takes the queue's
+ * own race of its two ways, which times the queue's whole blocks, not the plane team's. Rank 3 keeps the plane
+ * team: its planes are the 2D child's, with no threads of their own. */
 static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir, const double *sre, double *dre);   /* rank2/plane_queue.h */
 static int _ilnd_build_batch(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T)
 {
@@ -642,9 +646,21 @@ static int _ilnd_build_batch(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T)
     bc.wisdom = (vfft_wisdom *)d->childS;   /* the child's own store: the batch's row and its plan at T beside the child's */
     bc.wisdom_write = 0;
     bc.recalibrate = cfg->recalibrate;
+    if (!cfg->recalibrate)
+    {   /* a banked way of whole blocks per worker: the plane team, nothing to build (the batch's row,
+         * plane_queue.h _pq_row_key) */
+        vw2_key_t k;
+        int i;
+        vw2__pq_key(&k, VW2_T_C2C, d->rank - 1, d->N[1], d->N[2], d->N[3], (size_t)d->N[0], vfft_policy_ord_rankn(&bc),
+                    bc.placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, VW2_LAY_IL, T);
+        for (i = 3; i < d->rank - 1; i++)
+            k.n[i] = d->N[i + 1];
+        if (vw2_pq_lookup(&d->childS->vw2, &k) == 1)
+            return 0;
+    }
     d->bq = (struct vfft_plan_s *)_vfft_create_cfg(&bc);
-    if (d->bq && !d->bq->pq_inner)
-    {   /* not the queue: not this phase's plan */
+    if (d->bq && (!d->bq->pq_inner || d->bq->pq_mt != 0))
+    {   /* not the queue, or its way is whole blocks per worker: the plane team serves */
         vfft_destroy((vfft_plan)d->bq);
         d->bq = NULL;
     }
