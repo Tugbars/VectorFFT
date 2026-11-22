@@ -17,32 +17,60 @@
  * (serial inside: its thread count is one), the whole execute one threaded verdict (cmt=)
  * raced with the column pass's arms. Both placements: the column pass moves src -> dst in
  * its first stage, the blocks run in place on dst. The row: the 3D cell at q = K on the
- * lay=lm axis. C2C only. Included after lm_batch2d_il.h and before the door. */
+ * lay=lm axis. C2C only. Included after lm_batch2d_il.h and before the door.
+ *
+ * RANK 4 TO 7 (2026-11-22): the same door one rank up again. Element (i1, .., ir) of transform t
+ * sits at z[2 (((i1 N2 + i2) N3 + ..) K + t)]. The first axis is one column pass of N1 rows over
+ * N2 .. Nr K lanes; the rest is N1 blocks of the lane-major batch one rank down at (N2, .., Nr, K):
+ * this door's own plan at rank r - 1 (the 2D batch below rank 4), in role under rp_, serial inside.
+ * Natural order only above rank 3. The row: the cell of that rank and shape at q = K on the
+ * lay=lm axis. */
 #ifndef VFFT_IL_LM_BATCH3D_IL_H
 #define VFFT_IL_LM_BATCH3D_IL_H
 
 /* ── THE DOOR: the lane-major 3D c2c batch's create ──────────────────────── */
 static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, size_t K)
 {
-    const int T = _vfft_plan_threads(cfg), N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
+    const int T = _vfft_plan_threads(cfg), rank = cfg->dims, N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
     const int ord = vfft_policy_ord_rankn(cfg);   /* the cell's order class: the first axis carries it */
-    const size_t lanes = (size_t)N2 * (size_t)N3 * K;
+    size_t lanes = K;                             /* every extent after the first, times K */
     vw2_ilcol_key_t ck;
     vw2_key_t pk;
     vfft_ilcol_t col;
     vfft_cfg_t rc;
-    char forms[64];
-    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0;
+    char forms[64], shp[96];
+    int bwl = -1, btf = -1, bro = -1, bcmt = -1, bcmtt = -1, bblu = -1, oom = 0, i;
     struct vfft_plan_s *h;
-    if (!vfft_policy_batch_lane_major(cfg))
+    {   /* the shape for the messages: N1xN2x..xNr */
+        size_t off = 0;
+        shp[0] = 0;
+        for (i = 0; i < rank && i < 7 && off < sizeof shp; i++)
+        {
+            const int w = snprintf(shp + off, sizeof shp - off, "%s%d", i ? "x" : "", cfg->n[i]);
+            if (w < 0)
+                break;
+            off += (size_t)w;
+        }
+    }
+    if (rank < 3 || rank > 7 || !vfft_policy_batch_lane_major(cfg))
     {
-        _vfft_warn("vfft_create: the lane-major interleaved 3D batch serves C2C at howmany >= 2 with every extent "
-                   ">= 2 (got %s %dx%dx%d howmany=%zu); unsupported",
-                   _vfft_tname(cfg->transform), N1, N2, N3, K);
+        _vfft_warn("vfft_create: the lane-major interleaved %dD batch serves C2C at howmany >= 2 with every extent "
+                   ">= 2 (got %s %s howmany=%zu); unsupported",
+                   rank, _vfft_tname(cfg->transform), shp, K);
         return NULL;
     }
+    if (rank > 3 && ord != VW2_ORD_NAT)
+    {   /* above rank 3 natural order only, as the rank-N tier (the scrambled class is not built there) */
+        _vfft_warn("vfft_create: the lane-major interleaved %dD batch %s x %zu serves natural order only "
+                   "(VFFT_ORDER_NATURAL, the default); VFFT_ORDER_SCRAMBLED is served up to rank 3", rank, shp, K);
+        return NULL;
+    }
+    for (i = 1; i < rank; i++)
+        lanes *= (size_t)cfg->n[i];
     memset(&ck, 0, sizeof ck);
-    ck.rank = 3; ck.n0 = N1; ck.n1 = (size_t)N2; ck.n2 = (size_t)N3; ck.q = K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;
+    ck.rank = rank; ck.n0 = N1; ck.n1 = (size_t)N2; ck.n2 = (size_t)N3; ck.q = K; ck.ord = ord; ck.nthreads = T; ck.lm = 1;
+    for (i = 3; i < rank; i++)   /* rank 4 to 7: the extents after the third */
+        ck.nx[i - 3] = cfg->n[i];
     /* the Bluestein inner's chain provider for this create, as the 2D create sets it: the lanes are the width */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
@@ -54,8 +82,8 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
                          &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, &oom))
     {
         if (!oom)   /* out of memory: the builder's reason stands */
-            _vfft_warn("vfft_create: lane-major interleaved 3D batch %dx%dx%d x %zu: no column pass serves the first axis "
-                       "(the column builder refused); unsupported", N1, N2, N3, K);
+            _vfft_warn("vfft_create: lane-major interleaved %dD batch %s x %zu: no column pass serves the first axis "
+                       "(the column builder refused); unsupported", rank, shp, K);
         return NULL;
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -70,6 +98,13 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     h->N = N1;
     h->N2 = N2;
     h->N3 = N3;
+    if (rank > 3)
+    {   /* rank 4 to 7: the extents after the third */
+        h->N4 = cfg->n[3];
+        h->N5 = rank > 4 ? cfg->n[4] : 0;
+        h->N6 = rank > 5 ? cfg->n[5] : 0;
+        h->N7 = rank > 6 ? cfg->n[6] : 0;
+    }
     h->K = K;
     h->nthreads = T;
     h->lm = 1;
@@ -80,17 +115,18 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     h->il2d_col.cut = 0;
     h->il2d_col.tfuse = 0;
     h->il2d_col.wc = 0;
-    /* THE CHILD IN ROLE (owner, 2026-10-02): the lane-major 2D batch at (N2, N3, K) on its own
-     * store, seeded from this cell's row (rp_*); it never reads or writes a 2D row */
+    /* THE CHILD IN ROLE (owner, 2026-10-02): the lane-major batch one rank down at (N2, .., K) -- the
+     * 2D batch at rank 3, this door's own plan above it -- on its own store, seeded from this cell's
+     * row (rp_*); it never reads or writes a row of its own rank */
     vw2__ilcol_key(&ck, &pk);
     h->lm_rowS = vfft_child_store_for(&W->vw2, &pk, "rp_");
     memset(&rc, 0, sizeof rc);
     rc.transform = VFFT_C2C;
     rc.placement = VFFT_INPLACE;
     rc.rigor = cfg->rigor;
-    rc.dims = 2;
-    rc.n[0] = N2;
-    rc.n[1] = N3;
+    rc.dims = rank - 1;
+    for (i = 1; i < rank; i++)
+        rc.n[i - 1] = cfg->n[i];
     rc.howmany = K;
     rc.order = VFI_ORDER_NATURAL;
     rc.layout = VFI_LAYOUT_IL;
@@ -103,7 +139,7 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
     {   /* the child's own reason first (an out of memory among them), then whose child it was */
         char why[VFFT_ERR_CAP];
         snprintf(why, sizeof why, "%s", h->lm_rowS ? _vfft_err_buf : "vfft_create: out of memory (the child's store)");
-        _vfft_warn("%s [the child of the lane-major interleaved 3D batch %dx%dx%d x %zu]", why, N1, N2, N3, K);
+        _vfft_warn("%s [the child of the lane-major interleaved %dD batch %s x %zu]", why, rank, shp, K);
         vfft_child_store_free(h->lm_rowS);
         _il2d_col_free(&h->il2d_col);
         free(h);
@@ -134,6 +170,6 @@ static vfft_plan _vfft_create_lm3d_il(const vfft_cfg_t *cfg, struct vfft_wisdom_
             _vw2_persist(W, cfg);
     }
     (void)bcmtt; (void)bwl; (void)btf; (void)bro; (void)bblu;
-    return (vfft_plan)h;   /* the door binds _lm2d_exec (il_execute.h): the 2D batch's executor, the block N2 N3 K */
+    return (vfft_plan)h;   /* the door binds _lm2d_exec (il_execute.h): the 2D batch's executor, the block N2 .. Nr K */
 }
 #endif /* VFFT_IL_LM_BATCH3D_IL_H */

@@ -1,7 +1,10 @@
 # Rank 4 to 7: the tests
 
-Checks and timing cells for complex transforms of rank 4 to 7 (`VFFT_C2C`, interleaved, natural order). The
-transforms themselves are the rank-N tier, [`src/core/il/rank3/fftnd_il.h`](../../src/core/il/rank3/fftnd_il.h).
+Checks and timing cells for complex transforms of rank 4 to 7 (`VFFT_C2C`, interleaved, natural order), one
+transform or a batch. The transforms themselves are the rank-N tier,
+[`src/core/il/rank3/fftnd_il.h`](../../src/core/il/rank3/fftnd_il.h); a contiguous batch is the queue over its plan
+([`plane_queue.h`](../../src/core/il/rank2/plane_queue.h)), a lane-major batch its own door
+([`lm_batch3d_il.h`](../../src/core/il/rank3/lm_batch3d_il.h)).
 
 ## What is here
 
@@ -25,9 +28,12 @@ python tests/rank_n/nd_sweep.py
   double. A larger one is checked against the library's own 1D plans applied line by line.
 - **The runs.** Every shape runs with an estimate plan (`VFFT_FLAG_ESTIMATE`) out of place on one thread; a part of
   them also in place and at 4 and 8 threads.
+- **The batches.** A shape of up to 300,000 points also runs as a batch at 1 and 8 threads: three contiguous
+  transforms, or four lane-major ones. Every transform of the batch is checked against the reference.
 - **The shapes.** Powers of two, composites, odd extents, a prime above 47 on each axis in turn, extents of 2 and
   3, and arrays up to 16.7 million points.
-- **Measured plans.** `--store DIR` also plans a part of the list by measuring, in the scratch wisdom folder `DIR`.
+- **Measured plans.** `--store DIR` also plans a part of the list by measuring, batches among them, in the scratch
+  wisdom folder `DIR`.
   The probe refuses a measured plan without `--store`, so a test never plans into the library's own store.
 - **The result.** One line a failure, then a summary; the exit status is 1 when any run failed. A run fails when
   either error passes 1e-11.

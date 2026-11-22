@@ -1,9 +1,10 @@
 """nd_sweep.py -- the correctness sweep of the rank-4 to 7 complex transforms: nd_probe over a fixed list of shapes.
 
 Every shape runs with estimate plans (VFFT_FLAG_ESTIMATE, nothing measured, no wisdom) out of place on one thread,
-and a part of them in place and at 4 and 8 threads. A shape of up to DIRECT_MAX points is checked against the direct
-DFT along every axis, a larger one against the library's 1D plans line by line. The list is fixed: it comes from
-arithmetic alone, the same on every machine.
+and a part of them in place and at 4 and 8 threads. A shape of up to BATCH_MAX points also runs as a batch: three
+contiguous transforms, or four lane-major ones (VFFT_BATCH_LANE_MAJOR), at 1 and 8 threads, a part of them in place.
+A shape of up to DIRECT_MAX points is checked against the direct DFT along every axis, a larger one against the
+library's 1D plans line by line. The list is fixed: it comes from arithmetic alone, the same on every machine.
 
     python tests/rank_n/nd_sweep.py [--probe build/nd_probe.exe] [--quick] [--store DIR]
 
@@ -16,6 +17,7 @@ import subprocess
 import sys
 
 DIRECT_MAX = 70000      # points: the direct reference is O(points x extent) an axis
+BATCH_MAX = 300000      # points: a shape up to here also runs as a batch
 
 
 def shapes():
@@ -80,9 +82,19 @@ def main():
             runs.append((sh, ["--est", "--threads", "8"]))
         if i % 3 == 0:
             runs.append((sh, ["--est", "--threads", "8", "--ip"]))
+        if points(sh) <= BATCH_MAX:
+            # the batches: contiguous on the even shapes, lane-major on the odd ones
+            geo = ["--batch", "3"] if i % 2 == 0 else ["--batch", "4", "--lm"]
+            runs.append((sh, ["--est"] + geo))
+            runs.append((sh, ["--est", "--threads", "8"] + geo))
+            if i % 3 == 1:
+                runs.append((sh, ["--est", "--threads", "8", "--ip"] + geo))
         if a.store and points(sh) <= 70000 and i % 4 == 0:
             runs.append((sh, ["--store", a.store]))
             runs.append((sh, ["--store", a.store, "--threads", "8"]))
+        if a.store and points(sh) <= 20000 and i % 8 == 1:
+            runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "3"]))
+            runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "4", "--lm"]))
     bad = 0
     for sh, extra in runs:
         ok, last = run(a.probe, sh, extra)

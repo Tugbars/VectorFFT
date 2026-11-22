@@ -138,8 +138,9 @@ extern "C"
    * even N3 >= 4): element (i, j, k) of transform t at
    * z[2 ((i N2 N3 + j N3 + k) K + t)], real data x[(i N2 N3 + j N3 + k) K + t],
    * bins z[2 ((i N2 H + j H + f) K + t)] with H = N3/2 + 1. A batch of rank 4 to 7
-   * (C2C) is contiguous transforms, each a block of N1 N2 .. Nr points, one after
-   * another; lane-major is not served there.
+   * (C2C) is contiguous transforms by default, each a block of N1 N2 .. Nr points,
+   * one after another, or lane-major when named: the element at row-major position
+   * e of transform t at z[2 (e K + t)].
    */
   typedef enum
   {

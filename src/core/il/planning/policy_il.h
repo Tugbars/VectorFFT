@@ -254,15 +254,26 @@ static inline int vfft_policy_rough47_is_prime(int r)
  * width, then the 2D batch per block), and the real 2D and 3D requests the same way
  * (il/rank2/lm_batch2dr_il.h: N1 blocks of the 1D real batch, then the first axis over the spectrum;
  * il/rank3/lm_batch3dr_il.h: N1 blocks of the 2D real batch, then the first axis over N2 H K lanes).
+ * Rank 4 to 7 (2026-11-22), C2C: the 3D batch's door one rank up (il/rank3/lm_batch3d_il.h: the first axis
+ * over the lanes of every later extent, then the batch one rank down per block).
  * The real 1D batches: below. The geometries never race each other in a create (the owner's rule):
  * a lane-major request is served lane-major or refused with its reason. */
 static inline int vfft_policy_batch_lane_major(const vfft_cfg_t *cfg)
 {
-    if (!cfg || cfg->dims > 3 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
+    if (!cfg || cfg->dims > 7 || cfg->layout != VFI_LAYOUT_IL || cfg->howmany < 2)
         return 0;
-    if (cfg->transform == VFFT_C2C)   /* rank 1, and ranks 2 and 3 (step 6: every axis a column pass) */
-        return cfg->batch_geom == VFFT_BATCH_LANE_MAJOR && cfg->n[0] >= 2 && (cfg->dims < 2 || cfg->n[1] >= 2) &&
-               (cfg->dims < 3 || cfg->n[2] >= 2);
+    if (cfg->transform == VFFT_C2C)
+    {   /* rank 1, ranks 2 and 3 (step 6: every axis a column pass), ranks 4 to 7 the same way */
+        int i;
+        if (cfg->batch_geom != VFFT_BATCH_LANE_MAJOR || cfg->n[0] < 2)
+            return 0;
+        for (i = 1; i < cfg->dims; i++)
+            if (cfg->n[i] < 2)
+                return 0;
+        return 1;
+    }
+    if (cfg->dims > 3)   /* a real batch above rank 3 is not served */
+        return 0;
     if (cfg->dims == 3)   /* the real 3D batch (il/rank3/lm_batch3dr_il.h, 2026-10-19): the named geometry (DEFAULT
                            * stays contiguous volumes at rank 3: the volume queue's law below), N1 >= 2 (a column
                            * pass of N1 rows: the c2c law's floor), and the 2D real child's own law at (N2, N3):

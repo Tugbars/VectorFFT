@@ -28,8 +28,11 @@ static void _lm2d_rows_tramp(void *v)
     _lm2d_rows_arg_t *a = (_lm2d_rows_arg_t *)v;
     struct vfft_plan_s *h = a->h;
     struct vfft_plan_s *rp = a->tid > 0 ? h->lm_roww[a->tid - 1] : h->lm_row;
-    const size_t blk = 2 * (size_t)h->N2 * (size_t)(h->N3 > 0 ? h->N3 : 1) * h->K;   /* the 3D batch's block: N2 N3 K */
+    size_t blk = 2 * (size_t)h->N2 * (size_t)(h->N3 > 0 ? h->N3 : 1) * h->K;   /* the 3D batch's block: N2 N3 K */
     size_t r;
+    if (h->N4 > 0)   /* rank 4 to 7: every extent after the first */
+        blk *= (size_t)h->N4 * (size_t)(h->N5 > 0 ? h->N5 : 1) * (size_t)(h->N6 > 0 ? h->N6 : 1) *
+               (size_t)(h->N7 > 0 ? h->N7 : 1);
     for (r = a->lo; r < a->hi; r++)
         _vfft_exec6((vfft_plan)rp, a->dir, a->z + r * blk, NULL, a->z + r * blk, NULL);
 }
@@ -95,7 +98,11 @@ static int _lm2d_clones_build(struct vfft_plan_s *h, const vfft_cfg_t *rc, int T
         h->lm_roww_n = t + 1;
         if (!c || !_tc_clone_equiv(h->lm_row, c))
         {
-            if (h->N3 > 0)
+            if (h->N4 > 0)
+                _vfft_warn("lane-major %s batch of rank 4 to 7, %dx%dx%dx%d.. x %zu: child clone %d %s; the blocks stay "
+                           "serial", _vfft_tname(h->transform), h->N, h->N2, h->N3, h->N4, h->K, t,
+                           c ? "differs from the primary" : "failed to create");
+            else if (h->N3 > 0)
                 _vfft_warn("lane-major 3D %s batch %dx%dx%d x %zu: child clone %d %s; the blocks stay serial",
                            _vfft_tname(h->transform), h->N, h->N2, h->N3, h->K, t, c ? "differs from the primary" : "failed to create");
             else

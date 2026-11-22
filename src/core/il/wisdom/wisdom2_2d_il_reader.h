@@ -81,8 +81,8 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
     }
     if (ck->lm)
     {   /* the lane-major batches on their own layout axis: rank 1 = the 1D cell at q = K (n1 = K),
-         * rank 2 = the 2D cell at q = K (n2 = K), rank 3 = the 3D cell at q = K (q) */
-        if (ck->rank == 3) k->q = (int64_t)ck->q;
+         * rank 2 = the 2D cell at q = K (n2 = K), rank 3 to 7 = the cell of that rank at q = K (q) */
+        if (ck->rank >= 3) k->q = (int64_t)ck->q;
         else if (ck->rank == 2) { k->n[2] = 0; k->q = (int64_t)ck->n2; }
         else { k->rank = 1; k->n[1] = 0; k->q = (int64_t)ck->n1; }
         k->lay = VW2_LAY_LM;
@@ -265,8 +265,8 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
             r->key.n[i] = ck->nx[i - 3];
     }
     if (ck->lm)
-    {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2), rank 3 at q = K (q) */
-        if (ck->rank == 3) r->key.q = (int64_t)ck->q;
+    {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2), rank 3 to 7 at q = K (q) */
+        if (ck->rank >= 3) r->key.q = (int64_t)ck->q;
         else if (ck->rank == 2) { r->key.n[2] = 0; r->key.q = (int64_t)ck->n2; }
         else { r->key.rank = 1; r->key.n[1] = 0; r->key.q = (int64_t)ck->n1; }
         r->key.lay = VW2_LAY_LM;

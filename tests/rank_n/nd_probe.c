@@ -15,9 +15,12 @@
  * output's bits (two builds that print the same sum ran the same arithmetic: the same plan).
  *
  * usage: nd_probe N1xN2[x...] [--est] [--threads T] [--ip] [--store DIR] [--ref direct|lines] [--reps R] [--batch K]
+ *                 [--lm]
  *   --est        plan with VFFT_FLAG_ESTIMATE (else by measuring, on the store --store names: REQUIRED then, so a
  *                test never plans into the library's own store)
  *   --batch K    a contiguous batch of K transforms (howmany = K); each transform is checked against the reference
+ *   --lm         with --batch K: the lane-major geometry (VFFT_BATCH_LANE_MAJOR), element e of transform t at
+ *                z[2 (e K + t)]; the data and the reference are laid that way before the plan runs
  * exit 0 when fwd and rt are both below 1e-11, 1 otherwise, 2 on a usage or create error.
  *
  * build (from the repository root, after the gauntlet target built build/gauntlet/libvfft_core.a):
@@ -150,9 +153,22 @@ static int ref_axis_lines(double *z, const int *n, int rank, int a)
     return 0;
 }
 
+/* K contiguous blocks of pts complex points (src) into the lane-major layout (dst): element e of transform t at
+ * dst[2 (e K + t)] */
+static void to_lm(double *dst, const double *src, size_t pts, size_t K)
+{
+    size_t t, e;
+    for (t = 0; t < K; t++)
+        for (e = 0; e < pts; e++)
+        {
+            dst[2 * (e * K + t)] = src[2 * (t * pts + e)];
+            dst[2 * (e * K + t) + 1] = src[2 * (t * pts + e) + 1];
+        }
+}
+
 int main(int argc, char **argv)
 {
-    int n[MAXR], rank = 0, est = 0, T = 1, ip = 0, reps = 5, i, a, bad = 0;
+    int n[MAXR], rank = 0, est = 0, T = 1, ip = 0, reps = 5, i, a, bad = 0, lm = 0;
     const char *store = NULL, *ref = "direct";
     size_t pts = 1, K = 1, q, t;
     double *x, *y, *r, *w, efwd = 0, ert = 0, mref = 0, mx = 0, best = 1e300;
@@ -163,7 +179,7 @@ int main(int argc, char **argv)
     if (argc < 2)
     {
         fprintf(stderr, "usage: nd_probe N1xN2[x...] [--est] [--threads T] [--ip] [--store DIR] [--ref direct|lines] "
-                        "[--reps R] [--batch K]\n");
+                        "[--reps R] [--batch K] [--lm]\n");
         return 2;
     }
     snprintf(shape, sizeof shape, "%s", argv[1]);
@@ -187,6 +203,7 @@ int main(int argc, char **argv)
     {
         if (!strcmp(argv[i], "--est")) est = 1;
         else if (!strcmp(argv[i], "--ip")) ip = 1;
+        else if (!strcmp(argv[i], "--lm")) lm = 1;
         else if (!strcmp(argv[i], "--threads") && i + 1 < argc) T = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--store") && i + 1 < argc) store = argv[++i];
         else if (!strcmp(argv[i], "--ref") && i + 1 < argc) ref = argv[++i];
@@ -211,6 +228,7 @@ int main(int argc, char **argv)
     for (i = 0; i < rank; i++)
         c.n[i] = n[i];
     c.howmany = K;
+    c.batch = lm ? VFFT_BATCH_LANE_MAJOR : VFFT_BATCH_DEFAULT;
     c.placement = ip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;
     c.nthreads = T;
     c.flags = est ? VFFT_FLAG_ESTIMATE : 0;
@@ -246,6 +264,13 @@ int main(int argc, char **argv)
             else
                 ref_axis_direct(r + 2 * pts * t, n, rank, a, -1);
         }
+    if (lm)
+    {   /* the plan's own layout, the data and the reference alike: every check below is element by element */
+        to_lm(w, x, pts, K);
+        memcpy(x, w, sizeof(double) * 2 * pts * K);
+        to_lm(w, r, pts, K);
+        memcpy(r, w, sizeof(double) * 2 * pts * K);
+    }
     /* forward */
     if (ip)
     {
@@ -293,8 +318,9 @@ int main(int argc, char **argv)
         uint64_t hsh = 1469598103934665603ull;
         for (q = 0; q < sizeof(double) * 2 * pts * K; q++)
             hsh = (hsh ^ b[q]) * 1099511628211ull;
-        printf("%-22s rank %d T=%d %s %s K=%zu  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
-               shape, rank, T, est ? "est " : "meas", ip ? "ip " : "oop", K, efwd, ert, best, best / (double)(pts * K),
+        printf("%-22s rank %d T=%d %s %s K=%zu%s  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
+               shape, rank, T, est ? "est " : "meas", ip ? "ip " : "oop", K, lm ? " lm" : "", efwd, ert, best,
+               best / (double)(pts * K),
                info.nthreads, (unsigned long long)hsh, bad ? "FAIL" : "ok");
     }
     vfft_destroy(p);

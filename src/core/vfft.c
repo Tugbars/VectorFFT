@@ -958,7 +958,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
     { /* the lane-major batch: the extents, the column descriptor's chain and class, its raced knobs
        * and the kernels by identity (a 2D or 3D batch's child is compared through its own plan) */
         const vfft_ilcol_t *x = &a->il2d_col, *y = &b->il2d_col;
-        if (a->N != b->N || a->N2 != b->N2 || a->N3 != b->N3 || a->K != b->K || x->nst != y->nst ||
+        if (a->N != b->N || a->N2 != b->N2 || a->N3 != b->N3 || a->N4 != b->N4 || a->N5 != b->N5 || a->N6 != b->N6 ||
+            a->N7 != b->N7 || a->K != b->K || x->nst != y->nst ||
             memcmp(x->R, y->R, sizeof(int) * (size_t)(x->nst > 0 ? x->nst : 0)) ||
             x->nat != y->nat || x->blu != y->blu || x->tpc != y->tpc || x->wc != y->wc ||
             x->colmt != y->colmt || x->natarm != y->natarm || x->msw != y->msw ||

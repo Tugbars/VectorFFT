@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* c2c_estimate_lm_il.h — the ESTIMATE create of a LANE-MAJOR c2c batch (VFFT_FLAG_ESTIMATE with
- * VFFT_BATCH_LANE_MAJOR, howmany = K >= 2) at rank 1, 2 and 3: the batch's rows written from the formulas and
+ * VFFT_BATCH_LANE_MAJOR, howmany = K >= 2) at rank 1 to 7: the batch's rows written from the formulas and
  * replayed by the lane-major doors with nothing measured (docs/roadmap/lane_major_estimate_plan.md).
  *
  * THE DOORS (il/rank1/lm_batch_il.h, il/rank2/lm_batch2d_il.h, il/rank3/lm_batch3d_il.h). Element i of transform
  * t sits at z[2 (i K + t)], so every axis is a column pass over lanes. Rank 1: one column pass of N rows over K
  * lanes. Rank 2: one column pass of N1 rows over N2 K lanes, then N1 blocks, each the 1D lane-major batch at
  * (N2, K) on one thread, in place (the block child, its rows under rp_). Rank 3: one column pass of N1 rows over
- * N2 N3 K lanes, then N1 blocks of the 2D lane-major batch at (N2, N3, K). Each create plans on the batch's own
+ * N2 N3 K lanes, then N1 blocks of the 2D lane-major batch at (N2, N3, K). Rank 4 to 7 (2026-11-22): the same one
+ * rank up, one column pass of N1 rows over the lanes of every later extent times K, then N1 blocks of the batch
+ * one rank down; the recipe is the rank-3 batch's, formula for formula. Each create plans on the batch's own
  * row, t=c2c n=<shape> q=K ord place=oop lay=lm nthreads=T (both placements share it): the column builder's
  * verdicts (_il2d_col_build: the chain, its forms, a Rader stage, Bluestein, the turned prime pass and its plan
  * under tpc_), the serial lane tile sw= and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race), the block
@@ -62,7 +64,7 @@
 /* The lane-major batch's row, tokens in [brackets]. */
 typedef struct est_planlm_s
 {
-    int rank;                    /* 1, 2 or 3 */
+    int rank;                    /* 1 to 7 */
     int N1, N2, N3;              /* the shape; N2 = 0 at rank 1, N3 = 0 below rank 3 */
     size_t K;                    /* the batch: K transforms side by side */
     int T;                       /* the threads: 1, or T > 1 = the row keyed nthreads=T with the threaded verdict */
@@ -74,15 +76,39 @@ typedef struct est_planlm_s
     int msw;                     /* [msw] the strips' width in lanes, 0 = each worker's whole range */
     est_recipe_t tpcp;           /* [tpc_] N1, in place, natural: col.tpc == 1 */
     struct est_planlm_s *child;  /* [rp_] rank 2: the 1D batch at (N2, K); rank 3: the 2D batch at (N2, N3, K);
-                                  * one thread, natural, in place */
+                                  * rank 4 to 7: the batch one rank down; one thread, natural, in place */
+    int Nx[4];                   /* rank 4 to 7: the extents after N3, 0 below rank 4 */
 } est_planlm_t;
 
 /* the lanes the first axis's column pass runs over */
 static inline long long est__lm_lanes(const est_planlm_t *p)
 {
-    return p->rank == 1 ? (long long)p->K
-           : p->rank == 2 ? (long long)p->N2 * (long long)p->K
-                          : (long long)p->N2 * (long long)p->N3 * (long long)p->K;
+    long long l = p->rank == 1 ? (long long)p->K
+                  : p->rank == 2 ? (long long)p->N2 * (long long)p->K
+                                 : (long long)p->N2 * (long long)p->N3 * (long long)p->K;
+    int i;
+    for (i = 3; i < p->rank && i < 7; i++)   /* rank 4 to 7: the extents after the third */
+        l *= (long long)p->Nx[i - 3];
+    return l;
+}
+/* the batch's extents, seven of them: zero after its rank */
+static inline void est__lm_extents(const est_planlm_t *p, int *e)
+{
+    e[0] = p->N1;
+    e[1] = p->N2;
+    e[2] = p->N3;
+    memcpy(e + 3, p->Nx, sizeof p->Nx);
+}
+/* c has the shape of p's block child: p's extents with the first dropped */
+static inline int est__lm_child_shape(const est_planlm_t *p, const est_planlm_t *c)
+{
+    int e[7], f[7], i;
+    est__lm_extents(p, e);
+    est__lm_extents(c, f);
+    for (i = 0; i < 6; i++)
+        if (f[i] != e[i + 1])
+            return 0;
+    return f[6] == 0;
 }
 static inline const char *est__lm_shape(const est_planlm_t *p, char *b, size_t n)
 {
@@ -90,8 +116,25 @@ static inline const char *est__lm_shape(const est_planlm_t *p, char *b, size_t n
         snprintf(b, n, "%d x %zu", p->N1, p->K);
     else if (p->rank == 2)
         snprintf(b, n, "%dx%d x %zu", p->N1, p->N2, p->K);
-    else
+    else if (p->rank == 3)
         snprintf(b, n, "%dx%dx%d x %zu", p->N1, p->N2, p->N3, p->K);
+    else
+    {   /* rank 4 to 7 */
+        int e[7], i;
+        size_t off = 0;
+        est__lm_extents(p, e);
+        if (n)
+            b[0] = 0;
+        for (i = 0; i < p->rank && i < 7 && off < n; i++)
+        {
+            const int w = snprintf(b + off, n - off, "%s%d", i ? "x" : "", e[i]);
+            if (w < 0)
+                break;
+            off += (size_t)w;
+        }
+        if (off < n)
+            snprintf(b + off, n - off, " x %zu", p->K);
+    }
     return b;
 }
 /* the lanes up to which a column with a Rader stage at the prime p runs as Bluestein with the turned prime pass:
@@ -155,22 +198,49 @@ static inline int est_plan_lm(const est_machine_t *m, int rank, int N1, int N2, 
 {
     return est__plan_lm(m, rank, N1, N2, N3, K, T, nat, EST_LM_TPC | EST_LM_UNB, out, why, whylen);
 }
+/* est__plan_lm_n: est__plan_lm's body, the shape as n[0 .. rank - 1], rank 1 to 7 */
+static inline int est__plan_lm_n(const est_machine_t *m, int rank, const int *n, size_t K, int T, int nat,
+                                 int opts, est_planlm_t *out, char *why, size_t whylen);
 static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2, int N3, size_t K, int T, int nat,
                                int opts, est_planlm_t *out, char *why, size_t whylen)
 {
+    const int n[3] = { N1, N2, N3 };
+    if (rank > 3)
+    {   /* three extents here: a higher rank brings its shape to est_plan_lm_n */
+        memset(out, 0, sizeof *out);
+        return est_refuse(why, whylen, "a lane-major batch at rank %d: its shape goes to est_plan_lm_n", rank);
+    }
+    return est__plan_lm_n(m, rank, n, K, T, nat, opts, out, why, whylen);
+}
+/* est_plan_lm_n: est_plan_lm at rank 1 to 7, the shape as n[0 .. rank - 1] */
+static inline int est_plan_lm_n(const est_machine_t *m, int rank, const int *n, size_t K, int T, int nat,
+                                est_planlm_t *out, char *why, size_t whylen)
+{
+    return est__plan_lm_n(m, rank, n, K, T, nat, EST_LM_TPC | EST_LM_UNB, out, why, whylen);
+}
+static inline int est__plan_lm_n(const est_machine_t *m, int rank, const int *n, size_t K, int T, int nat,
+                                 int opts, est_planlm_t *out, char *why, size_t whylen)
+{
+    const int N1 = rank >= 1 ? n[0] : 0;
     long long lanes;
     unsigned rules = 0u;
+    int i;
     memset(out, 0, sizeof *out);
     if (est__machine_ok(m, why, whylen))
         return -1;
-    if (rank < 1 || rank > 3 || K < 2 || N1 < 2 || (rank >= 2 && N2 < 2) || (rank == 3 && N3 < 2))
+    if (rank < 1 || rank > 7 || K < 2)
         return est_refuse(why, whylen, "a lane-major batch at rank %d of K = %zu: every extent and K at least 2", rank, K);
+    for (i = 0; i < rank; i++)
+        if (n[i] < 2)
+            return est_refuse(why, whylen, "a lane-major batch at rank %d of K = %zu: every extent and K at least 2", rank, K);
     if (rank >= 2 && !nat)
         return est_refuse(why, whylen, "a lane-major batch at rank %d: estimate plans natural order there", rank);
     out->rank = rank;
     out->N1 = N1;
-    out->N2 = rank >= 2 ? N2 : 0;
-    out->N3 = rank == 3 ? N3 : 0;
+    out->N2 = rank >= 2 ? n[1] : 0;
+    out->N3 = rank >= 3 ? n[2] : 0;
+    for (i = 3; i < rank; i++)
+        out->Nx[i - 3] = n[i];
     out->K = K;
     out->T = T > 1 ? T : 1;
     out->nat = nat;
@@ -195,7 +265,7 @@ static inline int est__plan_lm(const est_machine_t *m, int rank, int N1, int N2,
     {
         if (!(out->child = (est_planlm_t *)calloc(1, sizeof *out->child)))
             return est_refuse(why, whylen, "out of memory");
-        if (est_plan_lm(m, rank - 1, N2, rank == 3 ? N3 : 0, 0, K, 1, 1, out->child, why, whylen))
+        if (est_plan_lm_n(m, rank - 1, n + 1, K, 1, 1, out->child, why, whylen))
         {
             free(out->child);
             out->child = NULL;
@@ -249,8 +319,7 @@ static inline int est__preflight_lm(const est_planlm_t *p, char *why, size_t why
     if (p->rank >= 2)
     {
         const est_planlm_t *c = p->child;
-        if (!c || c->rank != p->rank - 1 || c->N1 != p->N2 || c->N2 != (p->rank == 3 ? p->N3 : 0) || c->K != p->K ||
-            c->T != 1 || !c->nat)
+        if (!c || c->rank != p->rank - 1 || !est__lm_child_shape(p, c) || c->K != p->K || c->T != 1 || !c->nat)
             return est_refuse(why, whylen, "the lane-major batch %s: the block child is not the batch one rank down, one "
                               "thread, natural", sh);
         if (est__preflight_lm(c, w2, sizeof w2))
@@ -281,6 +350,7 @@ static inline void est__lm_key(vw2_ilcol_key_t *ck, const est_planlm_t *p)
         ck->n1 = (size_t)p->N2;
         ck->n2 = (size_t)p->N3;
         ck->q = p->K;
+        memcpy(ck->nx, p->Nx, sizeof ck->nx);   /* rank 4 to 7: the extents after the third */
     }
     ck->ord = p->nat ? VW2_ORD_NAT : VW2_ORD_SCR;
     ck->nthreads = p->T;
@@ -363,7 +433,8 @@ static inline int est__check_lm(const struct vfft_plan_s *h, const est_planlm_t 
 {
     char sh[64];
     est__lm_shape(p, sh, sizeof sh);
-    if (!h || !h->lm || h->N != p->N1 || h->N2 != p->N2 || h->N3 != p->N3 || h->K != p->K)
+    if (!h || !h->lm || h->N != p->N1 || h->N2 != p->N2 || h->N3 != p->N3 || h->N4 != p->Nx[0] || h->N5 != p->Nx[1] ||
+        h->N6 != p->Nx[2] || h->N7 != p->Nx[3] || h->K != p->K)
         return est_refuse(why, whylen, "the door built no lane-major batch %s", sh);
     if (est__check_lm_pass(h, p, sh, why, whylen))
         return -1;
@@ -399,7 +470,9 @@ static inline struct vfft_plan_s *est_build_lm(const est_planlm_t *p, const vfft
     if (!p || !cfg || cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL ||
         cfg->batch_geom != VFFT_BATCH_LANE_MAJOR || !vfft_policy_batch_lane_major(cfg) || cfg->howmany != p->K ||
         cfg->dims != p->rank || cfg->n[0] != p->N1 || (p->rank >= 2 && cfg->n[1] != p->N2) ||
-        (p->rank == 3 && cfg->n[2] != p->N3) || (cfg->nthreads > 1 ? cfg->nthreads : 1) != p->T ||
+        (p->rank >= 3 && cfg->n[2] != p->N3) ||
+        (p->rank > 3 && memcmp(cfg->n + 3, p->Nx, sizeof(int) * (size_t)(p->rank - 3))) ||
+        (cfg->nthreads > 1 ? cfg->nthreads : 1) != p->T ||
         (cfg->order == VFI_ORDER_SCRAMBLED) == (p->nat != 0))
     {
         est_refuse(why, whylen, "estimate builds a lane-major interleaved c2c batch at the recipe's shape, K, order and "
@@ -446,8 +519,8 @@ static vfft_plan _vfft_create_estimate_lm(const est_machine_t *m, const vfft_cfg
     if (!vfft_policy_batch_lane_major(cfg) || cfg->transform != VFFT_C2C)
         snprintf(why, sizeof why, "the lane-major door does not serve this request (it serves C2C at howmany >= 2 "
                  "with every extent at least 2)");
-    else if (!est_plan_lm(m, cfg->dims, cfg->n[0], cfg->dims >= 2 ? cfg->n[1] : 0, cfg->dims == 3 ? cfg->n[2] : 0,
-                          cfg->howmany, cfg->nthreads, cfg->order != VFI_ORDER_SCRAMBLED, &p, why, sizeof why))
+    else if (!est_plan_lm_n(m, cfg->dims, cfg->n, cfg->howmany, cfg->nthreads, cfg->order != VFI_ORDER_SCRAMBLED, &p,
+                            why, sizeof why))
     {
         h = est_build_lm(&p, cfg, NULL, why, sizeof why);
         est_free_lm(&p);
