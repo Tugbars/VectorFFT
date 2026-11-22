@@ -627,6 +627,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double
 #include "il/rank2/lm_batch2dr_il.h" /* its real twin, r2c and c2r: the 1D real batch per block, a complex column pass over the spectrum */
 #include "il/rank3/lm_batch3d_il.h"  /* the LANE-MAJOR 3D batch: the first axis a column pass over the volume's width, the 2D batch per block (2026-10-15) */
 #include "il/rank3/lm_batch3dr_il.h" /* its real twin, r2c and c2r: the 2D real batch per block, a complex column pass over the spectrum (2026-10-19) */
+#include "il/rank3/fftnd_realn_il.h" /* R2C and C2R of rank 4 to 7: the real plan one rank down per block, a complex column pass over the spectrum (2026-11-22) */
 #include "il/il_create.h"            /* the INTERLEAVED create: the IL side of the one fork */
 #include "il/real/real_create_il.h"  /* the 1D real door, interleaved (the bridge deleted 2026-11-06) */
 #include "il/real/dst.h"             /* DST-II / DST-III: one real FFT of length N between two passes (2026-11-14) */
@@ -1579,6 +1580,8 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->dims == 3 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom == VFFT_BATCH_LANE_MAJOR)
         return _vfft_create_lm3dr_il(cfg, W, K); /* the LANE-MAJOR 3D real batch (lm_batch3dr_il.h): the same executors, before the fork so the lean door never rebinds them */
+    if (cfg->dims >= 4 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->layout == VFI_LAYOUT_IL)
+        return _vfft_create_realn_il(cfg, W, K); /* R2C and C2R of rank 4 to 7 (fftnd_realn_il.h): its own executors, before the fork as the real batches above */
     if (cfg->dims < 2 && (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && K > 1 &&
         cfg->layout == VFI_LAYOUT_IL && cfg->batch_geom != VFFT_BATCH_CONTIGUOUS)
         return _vfft_create_lmr_il(cfg, W, N, K); /* the LANE-MAJOR real batch, r2c or c2r (lm_batch_il.h): the policy admitted it above */
@@ -1998,6 +2001,8 @@ static const char *_vfft_plan_route(vfft_plan p)
                                                                                           : "plane+payonce")
                                               : (f == 2 ? "plane+child+strips" : "plane+child");
     }
+    if (h->lm && h->N4 > 0 && h->transform != VFFT_C2C)
+        return "child"; /* R2C and C2R of rank 4 to 7 (il/rank3/fftnd_realn_il.h): the real plan one rank down per block, then the first axis */
     if (h->lm)
         return h->il2d_col.blu ? (h->il2d_col.tpc ? "lm+tpc" : "lm+blu") : "lm"; /* the lane-major batch on the column pass, c2c, r2c and c2r at ranks 1 to 3 (the 1D real batch's chain at N / 2; the 2D and 3D real batches' first axis over the spectrum) */
     if (h->N2 > 0 && h->N3 == 0 && h->il2d_col.nst > 0)

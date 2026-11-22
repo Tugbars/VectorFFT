@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* nd_probe.c -- a correctness probe for complex transforms of rank 2 to 7 (VFFT_C2C, interleaved, natural order),
- * through the public API alone.
+ * and with --real for the real ones (VFFT_R2C and VFFT_C2R), through the public API alone.
  *
  * For one shape N1xN2x...xNr it creates the plan the arguments name (measured or estimate, out of place or in place,
  * at a thread count), runs it forward on seeded data and checks the output against a REFERENCE that shares nothing
@@ -15,12 +15,15 @@
  * output's bits (two builds that print the same sum ran the same arithmetic: the same plan).
  *
  * usage: nd_probe N1xN2[x...] [--est] [--threads T] [--ip] [--store DIR] [--ref direct|lines] [--reps R] [--batch K]
- *                 [--lm]
+ *                 [--lm] [--real]
  *   --est        plan with VFFT_FLAG_ESTIMATE (else by measuring, on the store --store names: REQUIRED then, so a
  *                test never plans into the library's own store)
  *   --batch K    a contiguous batch of K transforms (howmany = K); each transform is checked against the reference
  *   --lm         with --batch K: the lane-major geometry (VFFT_BATCH_LANE_MAJOR), element e of transform t at
  *                z[2 (e K + t)]; the data and the reference are laid that way before the plan runs
+ *   --real       the real transforms, out of place: the VFFT_R2C plan on seeded reals, its N1 x .. x (Nr/2 + 1)
+ *                bins checked against the reference's (fwd); then the VFFT_C2R plan on those bins, checked against
+ *                the reals (rt). One transform: not with --ip, --batch or --lm.
  * exit 0 when fwd and rt are both below 1e-11, 1 otherwise, 2 on a usage or create error.
  *
  * build (from the repository root, after the gauntlet target built build/gauntlet/libvfft_core.a):
@@ -166,9 +169,112 @@ static void to_lm(double *dst, const double *src, size_t pts, size_t K)
         }
 }
 
+/* --real: the R2C plan forward against the reference's half spectrum, then the C2R plan backward on the round trip */
+static int probe_real(const char *shape, const int *n, int rank, int est, int T, const char *store, const char *ref,
+                      int reps)
+{
+    size_t pts = 1, lead = 1, q, o;
+    const size_t L = (size_t)n[rank - 1], H = L / 2 + 1;
+    double *x, *z, *r, *w, efwd = 0, ert = 0, mref = 0, mx = 0, best = 1e300;
+    vfft_config_t c;
+    vfft_plan pf, pb;
+    vfft_info_t info;
+    int i, a, bad = 0;
+    for (i = 0; i < rank; i++)
+        pts *= (size_t)n[i];
+    lead = pts / L;
+    memset(&c, 0, sizeof c);
+    c.transform = VFFT_R2C;
+    c.rank = rank;
+    for (i = 0; i < rank; i++)
+        c.n[i] = n[i];
+    c.placement = VFFT_PLACEMENT_OUT;
+    c.nthreads = T;
+    c.flags = est ? VFFT_FLAG_ESTIMATE : 0;
+    c.wisdom_dir = est ? NULL : store;
+    pf = vfft_create(&c);
+    if (!pf)
+    {
+        printf("%-22s rank %d T=%d %s r2c  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", vfft_error());
+        return 2;
+    }
+    c.transform = VFFT_C2R;
+    pb = vfft_create(&c);
+    if (!pb)
+    {
+        printf("%-22s rank %d T=%d %s c2r  CREATE REFUSED: %s\n", shape, rank, T, est ? "est " : "meas", vfft_error());
+        return 2;
+    }
+    vfft_info(pf, &info);
+    x = (double *)vfft_malloc(sizeof(double) * pts);
+    z = (double *)vfft_malloc(sizeof(double) * 2 * lead * H);
+    r = (double *)vfft_malloc(sizeof(double) * 2 * pts);
+    w = (double *)vfft_malloc(sizeof(double) * pts);
+    if (!x || !z || !r || !w)
+    {
+        fprintf(stderr, "nd_probe: out of memory\n");
+        return 2;
+    }
+    for (q = 0; q < pts; q++)
+    {
+        x[q] = rnd();
+        r[2 * q] = x[q];
+        r[2 * q + 1] = 0.0;
+    }
+    for (a = 0; a < rank; a++)
+    {
+        if (!strcmp(ref, "lines"))
+        {
+            if (ref_axis_lines(r, n, rank, a))
+                return 2;
+        }
+        else
+            ref_axis_direct(r, n, rank, a, -1);
+    }
+    if (vfft_execute(pf, VFFT_FORWARD, x, z)) { printf("%s: r2c execute refused: %s\n", shape, vfft_error()); return 2; }
+    for (o = 0; o < lead; o++)
+        for (q = 0; q < 2 * H; q++)
+        {   /* bin f of row o: the reference's bin f of the same row */
+            const double ref1 = r[2 * o * L + q], d = fabs(z[2 * o * H + q] - ref1), m = fabs(ref1);
+            if (d > efwd) efwd = d;
+            if (m > mref) mref = m;
+            if (z[2 * o * H + q] != z[2 * o * H + q]) bad = 1;
+        }
+    efwd /= mref > 0 ? mref : 1;
+    for (i = 0; i < reps; i++)
+    {
+        double t0 = now_ns();
+        vfft_execute(pf, VFFT_FORWARD, x, z);
+        t0 = now_ns() - t0;
+        if (t0 < best) best = t0;
+    }
+    {   /* FNV-1a over the bins' bytes, before the C2R plan runs on them */
+        const unsigned char *b = (const unsigned char *)z;
+        uint64_t hsh = 1469598103934665603ull;
+        for (q = 0; q < sizeof(double) * 2 * lead * H; q++)
+            hsh = (hsh ^ b[q]) * 1099511628211ull;
+        if (vfft_execute(pb, VFFT_BACKWARD, z, w)) { printf("%s: c2r execute refused: %s\n", shape, vfft_error()); return 2; }
+        for (q = 0; q < pts; q++)
+        {
+            const double d = fabs(w[q] / (double)pts - x[q]), m = fabs(x[q]);
+            if (d > ert) ert = d;
+            if (m > mx) mx = m;
+        }
+        ert /= mx > 0 ? mx : 1;
+        bad |= !(efwd < 1e-11) || !(ert < 1e-11);
+        printf("%-22s rank %d T=%d %s real  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
+               shape, rank, T, est ? "est " : "meas", efwd, ert, best, best / (double)pts, info.nthreads,
+               (unsigned long long)hsh, bad ? "FAIL" : "ok");
+    }
+    vfft_destroy(pf);
+    vfft_destroy(pb);
+    vfft_free(x); vfft_free(z); vfft_free(r); vfft_free(w);
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
-    int n[MAXR], rank = 0, est = 0, T = 1, ip = 0, reps = 5, i, a, bad = 0, lm = 0;
+    int n[MAXR], rank = 0, est = 0, T = 1, ip = 0, reps = 5, i, a, bad = 0, lm = 0, real = 0;
     const char *store = NULL, *ref = "direct";
     size_t pts = 1, K = 1, q, t;
     double *x, *y, *r, *w, efwd = 0, ert = 0, mref = 0, mx = 0, best = 1e300;
@@ -179,7 +285,7 @@ int main(int argc, char **argv)
     if (argc < 2)
     {
         fprintf(stderr, "usage: nd_probe N1xN2[x...] [--est] [--threads T] [--ip] [--store DIR] [--ref direct|lines] "
-                        "[--reps R] [--batch K] [--lm]\n");
+                        "[--reps R] [--batch K] [--lm] [--real]\n");
         return 2;
     }
     snprintf(shape, sizeof shape, "%s", argv[1]);
@@ -204,6 +310,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--est")) est = 1;
         else if (!strcmp(argv[i], "--ip")) ip = 1;
         else if (!strcmp(argv[i], "--lm")) lm = 1;
+        else if (!strcmp(argv[i], "--real")) real = 1;
         else if (!strcmp(argv[i], "--threads") && i + 1 < argc) T = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--store") && i + 1 < argc) store = argv[++i];
         else if (!strcmp(argv[i], "--ref") && i + 1 < argc) ref = argv[++i];
@@ -219,6 +326,15 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "nd_probe: a measured plan needs --store DIR (a scratch wisdom folder; never the library's own)\n");
         return 2;
+    }
+    if (real)
+    {
+        if (ip || lm || K != 1)
+        {
+            fprintf(stderr, "nd_probe: --real probes one transform out of place (not with --ip, --batch or --lm)\n");
+            return 2;
+        }
+        return probe_real(shape, n, rank, est, T, store, ref, reps);
     }
     for (i = 0; i < rank; i++)
         pts *= (size_t)n[i];
