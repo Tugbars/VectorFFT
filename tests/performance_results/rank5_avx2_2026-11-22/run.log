@@ -15,3 +15,186 @@
 2026-11-22 02:47:30 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
 2026-11-22 02:48:12   benched 21/21 (53x8x8x8x8), 40 s elapsed
 2026-11-22 02:48:13 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_fftw_est.md
+2026-11-22 04:31:13 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-22 04:31:13 run: 21 cells, contract 5D out of place, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 04:31:13 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 04:32:29   benched 21/21 (53x8x8x8x8), 74 s elapsed
+2026-11-22 04:32:30 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_est.md
+2026-11-22 04:37:59 run: 21 cells, contract 5D out of place, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 04:37:59 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 04:39:57   benched 21/21 (53x8x8x8x8), 116 s elapsed
+2026-11-22 04:39:59 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_est.md
+2026-11-22 04:47:58 run: 21 cells, contract 5D out of place, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 04:47:58 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 04:50:56   benched 21/21 (53x8x8x8x8), 175 s elapsed
+2026-11-22 04:50:58 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_lm_est.md
+2026-11-22 05:07:38 run: 21 cells, contract 5D out of place, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 05:07:38 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 05:14:40   benched 21/21 (53x8x8x8x8), 419 s elapsed
+2026-11-22 05:14:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_lm_est.md
+2026-11-22 05:27:38 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 05:27:38 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 05:28:22   benched 21/21 (53x8x8x8x8), 43 s elapsed
+2026-11-22 05:28:24 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_mt8_est.md
+2026-11-22 05:31:15 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 05:31:15 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 05:32:13   benched 21/21 (53x8x8x8x8), 57 s elapsed
+2026-11-22 05:32:15 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_mt8_est.md
+2026-11-22 05:36:00 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 05:36:00 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 05:37:22   benched 21/21 (53x8x8x8x8), 80 s elapsed
+2026-11-22 05:37:24 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_lm_mt8_est.md
+2026-11-22 05:44:05 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 05:44:05 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 05:46:51   benched 21/21 (53x8x8x8x8), 164 s elapsed
+2026-11-22 05:46:53 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_lm_mt8_est.md
+2026-11-22 06:20:12 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 06:20:12 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 06:20:49   benched 21/21 (53x8x8x8x8), 35 s elapsed
+2026-11-22 06:20:51 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_mt8_est.md
+2026-11-22 06:23:26 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 06:23:26 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 06:24:03   benched 21/21 (53x8x8x8x8), 35 s elapsed
+2026-11-22 06:24:04 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_mt4_est.md
+2026-11-22 06:26:41 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 06:26:41 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 06:27:26   benched 21/21 (53x8x8x8x8), 43 s elapsed
+2026-11-22 06:27:28 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_mt8_est.md
+2026-11-22 06:30:22 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 06:30:22 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 06:31:20   benched 21/21 (53x8x8x8x8), 57 s elapsed
+2026-11-22 06:31:22 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_mt8_est.md
+2026-11-22 06:56:53 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 06:56:53 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 06:57:29   benched 21/21 (53x8x8x8x8), 35 s elapsed
+2026-11-22 06:57:31 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_mt8_est.md
+2026-11-22 07:00:06 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 07:00:06 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 07:00:42   benched 21/21 (53x8x8x8x8), 35 s elapsed
+2026-11-22 07:00:44 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_mt4_est.md
+2026-11-22 07:03:20 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 07:03:20 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 07:04:05   benched 21/21 (53x8x8x8x8), 43 s elapsed
+2026-11-22 07:04:07 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_mt8_est.md
+2026-11-22 07:06:58 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 07:06:58 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 07:07:56   benched 21/21 (53x8x8x8x8), 57 s elapsed
+2026-11-22 07:07:58 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k8_mt8_est.md
+2026-11-22 08:55:05 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 08:55:05 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 08:55:51   benched 21/21 (53x8x8x8x8), 44 s elapsed
+2026-11-22 08:55:52 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_k4_mt8_est.md
+2026-11-22 08:58:48 run: 21 cells, contract 5D out of place, the estimate's plans, bin build/gauntlet
+2026-11-22 08:58:48 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 08:59:44   benched 21/21 (53x8x8x8x8), 54 s elapsed
+2026-11-22 08:59:46 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_est.md
+2026-11-22 09:03:58 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 09:03:58 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:04:37   benched 21/21 (53x8x8x8x8), 37 s elapsed
+2026-11-22 09:04:39 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_mt8_est.md
+2026-11-22 09:07:33 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 09:07:33 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:08:13   benched 21/21 (53x8x8x8x8), 39 s elapsed
+2026-11-22 09:08:15 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_mt4_est.md
+2026-11-22 09:11:45 run: 21 cells, contract 5D out of place, the estimate's plans, bin build/gauntlet
+2026-11-22 09:11:45 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:12:40   benched 21/21 (53x8x8x8x8), 53 s elapsed
+2026-11-22 09:12:42 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_est.md
+2026-11-22 09:16:58 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 09:16:58 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:17:37   benched 21/21 (53x8x8x8x8), 37 s elapsed
+2026-11-22 09:17:39 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_mt8_est.md
+2026-11-22 09:20:37 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 09:20:37 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:21:17   benched 21/21 (53x8x8x8x8), 38 s elapsed
+2026-11-22 09:21:19 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_mt4_est.md
+2026-11-22 09:51:53 run: 21 cells, contract 5D out of place, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 09:51:53 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 09:53:03   benched 21/21 (53x8x8x8x8), 69 s elapsed
+2026-11-22 09:53:05 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k4_est.md
+2026-11-22 09:58:55 run: 21 cells, contract 5D out of place, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 09:58:55 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:00:46   benched 21/21 (53x8x8x8x8), 109 s elapsed
+2026-11-22 10:00:49 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k4_lm_est.md
+2026-11-22 10:06:11 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:06:11 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:06:55   benched 21/21 (53x8x8x8x8), 42 s elapsed
+2026-11-22 10:06:56 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k4_mt8_est.md
+2026-11-22 10:09:55 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:09:55 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:10:49   benched 21/21 (53x8x8x8x8), 52 s elapsed
+2026-11-22 10:10:51 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k4_lm_mt8_est.md
+2026-11-22 10:14:21 run: 21 cells, contract 5D out of place, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:14:21 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:15:31   benched 21/21 (53x8x8x8x8), 68 s elapsed
+2026-11-22 10:15:33 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k4_est.md
+2026-11-22 10:21:00 run: 21 cells, contract 5D out of place, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:21:00 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:22:39   benched 21/21 (53x8x8x8x8), 97 s elapsed
+2026-11-22 10:22:42 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k4_lm_est.md
+2026-11-22 10:27:38 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:27:38 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:28:22   benched 21/21 (53x8x8x8x8), 43 s elapsed
+2026-11-22 10:28:24 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k4_mt8_est.md
+2026-11-22 10:31:17 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 10:31:17 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 10:32:08   benched 21/21 (53x8x8x8x8), 49 s elapsed
+2026-11-22 10:32:10 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k4_lm_mt8_est.md
+2026-11-22 10:34:21 run: 21 cells, contract 5D out of place, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 10:34:21 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:04:36 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 11:04:36 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:05:16   benched 21/21 (53x8x8x8x8), 38 s elapsed
+2026-11-22 11:05:18 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_mt8_est.md
+2026-11-22 11:08:19 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 11:08:19 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:09:02   benched 21/21 (53x8x8x8x8), 41 s elapsed
+2026-11-22 11:09:04 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_mt4_est.md
+2026-11-22 11:12:08 run: 21 cells, contract 5D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 11:12:08 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:12:49   benched 21/21 (53x8x8x8x8), 39 s elapsed
+2026-11-22 11:12:50 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_mt8_est.md
+2026-11-22 11:15:54 run: 21 cells, contract 5D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 11:15:54 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:16:37   benched 21/21 (53x8x8x8x8), 41 s elapsed
+2026-11-22 11:16:39 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_mt4_est.md
+2026-11-22 11:19:44 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 11:19:44 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:20:31   benched 21/21 (53x8x8x8x8), 46 s elapsed
+2026-11-22 11:20:33 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k4_mt8_est.md
+2026-11-22 11:23:22 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 4, the estimate's plans, bin build/gauntlet
+2026-11-22 11:23:22 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:24:10   benched 21/21 (53x8x8x8x8), 46 s elapsed
+2026-11-22 11:24:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k4_mt8_est.md
+2026-11-22 11:28:13 run: 21 cells, contract 5D out of place, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 11:28:13 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:29:59   benched 21/21 (53x8x8x8x8), 105 s elapsed
+2026-11-22 11:30:01 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k8_est.md
+2026-11-22 11:40:55 run: 21 cells, contract 5D out of place, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 11:40:55 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:44:57   benched 21/21 (53x8x8x8x8), 240 s elapsed
+2026-11-22 11:45:00 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k8_lm_est.md
+2026-11-22 11:55:28 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 11:55:28 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 11:56:20   benched 21/21 (53x8x8x8x8), 50 s elapsed
+2026-11-22 11:56:21 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k8_mt8_est.md
+2026-11-22 12:00:02 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 12:00:02 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 12:01:17   benched 21/21 (53x8x8x8x8), 73 s elapsed
+2026-11-22 12:01:19 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_r2c_k8_lm_mt8_est.md
+2026-11-22 12:06:18 run: 21 cells, contract 5D out of place, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 12:06:18 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 12:08:05   benched 21/21 (53x8x8x8x8), 104 s elapsed
+2026-11-22 12:08:07 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k8_est.md
+2026-11-22 12:17:34 run: 21 cells, contract 5D out of place, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 12:17:34 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 12:20:41   benched 21/21 (53x8x8x8x8), 184 s elapsed
+2026-11-22 12:20:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k8_lm_est.md
+2026-11-22 12:29:07 run: 21 cells, contract 5D out of place, T=8, a contiguous batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 12:29:07 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 12:29:58   benched 21/21 (53x8x8x8x8), 49 s elapsed
+2026-11-22 12:30:00 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k8_mt8_est.md
+2026-11-22 12:33:27 run: 21 cells, contract 5D out of place, T=8, a lane-major batch of 8, the estimate's plans, bin build/gauntlet
+2026-11-22 12:33:27 bench: 21 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 12:34:34   benched 21/21 (53x8x8x8x8), 65 s elapsed
+2026-11-22 12:34:37 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank5_avx2_2026-11-22\report_5d_c2r_k8_lm_mt8_est.md

@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,contig_ns,mkl_mirror_ns,mkl_home_ns,ratio_mirror,ratio_home,ratio_contig,xerr,contig_xerr,route,engaged,engaged_pq,engaged_plane,engaged_grp
+16x16x16x16,4,z:lm4dc2r,lm4dr-oop,50125,75388,370587,192625,7.393,3.843,2.555,6.661e-16,6.661e-16,lm,191,0,544,0
+16x16x16x16,4,z:lm4dc2r,lm4dr-oop,48688,82887,426238,251100,8.755,5.157,3.029,6.661e-16,6.661e-16,lm,368,0,908,0
+16x16x16x16,4,z:lm4dc2r,lm4dr-oop,51188,70613,370450,190063,7.237,3.713,2.692,6.661e-16,6.661e-16,lm,280,0,728,0
+16x16x16x16,4,z:lm4dc2r,lm4dr-oop,47200,65525,427950,249475,9.067,5.285,3.807,6.661e-16,6.661e-16,lm,360,0,880,0

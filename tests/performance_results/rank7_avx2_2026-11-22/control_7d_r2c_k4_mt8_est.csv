@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,engaged,flip
+4x4x4x4x4x4x4,4,z:tc7dr2c,tc7dr2c-oop,24353,725613,94.187,29.795,0.000e+00,-,400,0
+4x4x4x4x4x4x4,4,z:tc7dr2c,tc7dr2c-oop,23017,704693,99.656,30.617,0.000e+00,-,472,1
+4x4x4x4x4x4x4,4,z:tc7dr2c,tc7dr2c-oop,23790,718453,96.417,30.200,0.000e+00,-,458,0
+4x4x4x4x4x4x4,4,z:tc7dr2c,tc7dr2c-oop,22383,712703,102.476,31.841,0.000e+00,-,507,1

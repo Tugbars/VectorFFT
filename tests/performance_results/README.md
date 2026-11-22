@@ -274,7 +274,10 @@ one-thread csv files of the `_9800x3d` folders.
 > [`rank3_cubes_fftw_avx2_2026-11-22`](rank3_cubes_fftw_avx2_2026-11-22/)  
 > **Cells:** the timing cells of [`tests/rank_n/`](../rank_n/README.md), 88 shapes of rank 4 to 7; seven 3D cubes
 > against FFTW in the last folder  
+> **Files:** `_r2c` and `_c2r` the real transforms, `_k4` and `_k8` batches of 4 and 8, `_lm` lane-major (else
+> contiguous), `_mt4` and `_mt8` the threads, `_fftw` against FFTW  
 > **Page:** [`docs/performance/rank4_7_FP64_14900KF.md`](../../docs/performance/rank4_7_FP64_14900KF.md)
 
-Complex transforms of rank 4 to 7 with estimate plans, against MKL at 1, 4 and 8 threads and against FFTW at one
-thread. These runs are not part of the regression test; their tables are on the page above.
+Complex and real transforms of rank 4 to 7 with estimate plans: one transform against MKL at 1, 4 and 8 threads,
+batches of 4 and 8 transforms (contiguous and lane-major) against MKL at 1 and 8 threads, and complex transforms
+against FFTW at one thread. These runs are not part of the regression test; their tables are on the page above.

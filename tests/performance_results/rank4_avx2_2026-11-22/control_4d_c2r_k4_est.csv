@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+16x16x16x16,4,z:tc4dc2r,tc4dc2r-oop,251463,758638,41.699,3.017,6.661e-16,-,0
+16x16x16x16,4,z:tc4dc2r,tc4dc2r-oop,278687,766712,37.626,2.751,6.661e-16,-,1
+16x16x16x16,4,z:tc4dc2r,tc4dc2r-oop,248100,758963,42.264,3.059,6.661e-16,-,0
+16x16x16x16,4,z:tc4dc2r,tc4dc2r-oop,246788,757287,42.489,3.069,6.661e-16,-,1

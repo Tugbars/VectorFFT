@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+8x8x8x8x8,4,z:tc5d,tc5d-oop,188287,695040,52.210,3.691,3.409e-16,-,0
+8x8x8x8x8,4,z:tc5d,tc5d-oop,175213,691473,56.105,3.946,3.409e-16,-,1
+8x8x8x8x8,4,z:tc5d,tc5d-oop,177253,694133,55.460,3.916,3.409e-16,-,0
+8x8x8x8x8,4,z:tc5d,tc5d-oop,173773,691773,56.570,3.981,3.409e-16,-,1

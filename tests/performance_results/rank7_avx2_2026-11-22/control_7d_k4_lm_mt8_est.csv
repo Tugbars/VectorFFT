@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr,route,engaged
+4x4x4x4x4x4x4,4,z:lm7d,lm7d-oop,41260,131140,465453,316127,11.281,7.662,2.411,3.775e-16,3.775e-16,lm,529
+4x4x4x4x4x4x4,4,z:lm7d,lm7d-oop,40470,132387,457833,331757,11.313,8.198,2.506,3.775e-16,3.775e-16,lm,414
+4x4x4x4x4x4x4,4,z:lm7d,lm7d-oop,48803,166320,450447,326440,9.230,6.689,1.963,3.775e-16,3.775e-16,lm,471
+4x4x4x4x4x4x4,4,z:lm7d,lm7d-oop,40687,133243,455193,319013,11.188,7.841,2.394,3.775e-16,3.775e-16,lm,414

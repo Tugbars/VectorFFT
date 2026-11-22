@@ -1,0 +1,5 @@
+N,K,plan,path,vfft_ns,contig_ns,mkl_mirror_ns,mkl_home_ns,ratio_mirror,ratio_home,ratio_contig,xerr,contig_xerr,route
+8x8x8x8x8,4,z:lm5dc2r,lm5dr-oop,159287,126413,1269260,1007833,7.968,6.327,7.973,7.772e-16,7.772e-16,lm
+8x8x8x8x8,4,z:lm5dc2r,lm5dr-oop,154460,121867,1264467,1006987,8.186,6.519,8.263,7.772e-16,7.772e-16,lm
+8x8x8x8x8,4,z:lm5dc2r,lm5dr-oop,154920,128567,1270007,1008133,8.198,6.507,7.841,7.772e-16,7.772e-16,lm
+8x8x8x8x8,4,z:lm5dc2r,lm5dr-oop,158793,128460,1265860,1006933,7.972,6.341,7.838,7.772e-16,7.772e-16,lm
