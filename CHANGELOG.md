@@ -3,6 +3,16 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
+## Unreleased
+
+### New
+
+- Complex transforms (C2C) of rank 4 to 7: `rank` in `vfft_config_t` goes up to 7 and `n`
+  holds seven extents. Interleaved layout, natural order, out of place or in place, on one
+  thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`.
+- Batches of complex transforms of rank 4 to 7 (`howmany` above 1): contiguous transforms by
+  default, or lane-major with `VFFT_BATCH_LANE_MAJOR`.
+
 ## 0.8.1 beta (2026-11-19)
 
 ### Faster
