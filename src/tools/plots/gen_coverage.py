@@ -8,9 +8,9 @@ request vfft_create() serves, a dash one it refuses by contract; a letter beside
 transform names a condition written under the tree. Ranks that serve the same requests share one
 branch. The data table (LEAVES, NOTES) is written in the same form as the guide's figure
 (how-to-use/source/figures/ch03_coverage.py), so a change is made once in each. Every glyph was
-checked with vfft_create() on small sizes on 2026-11-14.
+checked with vfft_create() on small sizes on 2026-11-14, the rows of rank 4 to 7 on 2026-11-22.
 
-The README shows the earlier figure, vectorfft-coverage.svg, which this script no longer writes.
+The README shows vectorfft-coverage-0.7.svg; the earlier figure, vectorfft-coverage.svg, is no longer written.
 
     python3 gen_coverage.py           # docs version (wordmark header) -> vectorfft-coverage-0.7.svg beside this script
     python3 gen_coverage.py --site    # site version (Fig. 1 caption, no wordmark) -> site-coverage-0.7.svg
@@ -39,6 +39,9 @@ LEAVES = [
     ("interleaved", "1D, 2D, 3D", ["c2c"], True, [S, S, S, S, S, S], {}, None),
     ("interleaved", "1D, 2D, 3D", ["r2c"], True, [S, S, R, S, S, S], {4: "a"}, None),
     ("interleaved", "1D, 2D, 3D", ["c2r"], True, [S, S, R, S, S, S], {4: "a"}, None),
+    ("interleaved", "4D to 7D", ["c2c"], True, [S, S, R, S, S, S], {}, None),
+    ("interleaved", "4D to 7D", ["r2c"], True, [R, S, R, S, S, S], {4: "a"}, None),
+    ("interleaved", "4D to 7D", ["c2r"], True, [R, S, R, S, S, S], {4: "a"}, None),
     ("split", "1D", ["c2c"], True, [S, S, R, S, S, S], {}, "b"),
     ("split", "2D, 3D", ["c2c"], True, [S, S, R, R, R, S], {}, "b"),
     ("real-to-real", "1D", ["DCT-I, DST-I,", "DST-II, DST-III"], False, [S, S, S, R, R, S], {2: "c"}, None),
