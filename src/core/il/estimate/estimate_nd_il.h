@@ -2017,6 +2017,10 @@ typedef struct est_planrn_s
                                 * threads on each block in turn: the batch plan of the n[0] blocks */
     est_plan3d_t *c3t;         /* bpq = 0, rank 4: the batch's plan of one block, the 3D plan at T */
     struct est_planrn_s *cnt;  /* bpq = 0, rank 5 to 7: the plan one rank down at T */
+    struct est_planrn_s *cng;  /* bpq = 0, rank 5 to 7, where the queue's groups policy admits the batch of the n[0]
+                                * blocks (est__rn_block_groups): the plan one rank down at T / n[0] threads. The queue
+                                * builds those copies wherever the policy admits them, each replaying the block's row
+                                * at that thread count (fft2d_create_il.h); groups are never the way written */
 } est_planrn_t;
 
 /* the recipe's children, freed (the plan itself is the caller's) */
@@ -2036,10 +2040,38 @@ static inline void est_free_rn(est_planrn_t *p)
         free(p->cnt);
         p->cnt = NULL;
     }
+    if (p->cng)
+    {
+        est_free_rn(p->cng);
+        free(p->cng);
+        p->cng = NULL;
+    }
     free(p->c3);
     p->c3 = NULL;
     free(p->c3t);
     p->c3t = NULL;
+}
+/* whether the queue builds groups copies for the block batch of a rank 5 to 7 plan at T threads: the batch of the
+ * n[0] blocks, each the plan one rank down, as the door asks for it (fftnd_il.h _ilnd_build_batch), put to the
+ * queue's own policy. A rank-4 plan's blocks are 3D: a complex batch of rank 3 has no groups */
+static inline int est__rn_block_groups(const est_planrn_t *p, int T)
+{
+    vfft_cfg_t bc;
+    int i;
+    if (p->rank < 5 || T < 2)
+        return 0;
+    memset(&bc, 0, sizeof bc);
+    bc.transform = VFFT_C2C;
+    bc.placement = VFFT_OUTOFPLACE;
+    bc.dims = p->rank - 1;
+    for (i = 1; i < p->rank; i++)
+        bc.n[i - 1] = p->n[i];
+    bc.howmany = (size_t)p->n[0];
+    bc.batch_geom = VFFT_BATCH_CONTIGUOUS;
+    bc.order = VFI_ORDER_NATURAL;
+    bc.layout = VFI_LAYOUT_IL;
+    bc.nthreads = T;
+    return vfft_policy_pq_groups_ok(&bc, bc.howmany, T);
 }
 /* the complex behind one index of axis 0 */
 static inline long long est__rn_block(const est_planrn_t *p)
@@ -2145,6 +2177,12 @@ static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p)
         free(p->cnt);
         p->cnt = NULL;
     }
+    if (p->cng)
+    {
+        est_free_rn(p->cng);
+        free(p->cng);
+        p->cng = NULL;
+    }
     p->bpq = 0;
     if (T < 2)
         return;
@@ -2190,6 +2228,16 @@ static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p)
             }
             else
                 est_mt_rn(m, T, p->cnt);
+        }
+        if (p->cnt && est__rn_block_groups(p, T) && (p->cng = (est_planrn_t *)calloc(1, sizeof *p->cng)))
+        {   /* the queue's groups copies of one block: the plan one rank down at T / n[0] threads */
+            if (est_plan_rn(m, p->rank - 1, p->n + 1, p->cng, w2, sizeof w2))
+            {
+                free(p->cng);
+                p->cng = NULL;
+            }
+            else
+                est_mt_rn(m, T / p->n[0], p->cng);
         }
     }
 }
@@ -2244,6 +2292,8 @@ static inline int est_put_rows_rn(vw2_store_t *st, const est_planrn_t *p, char *
             bad = est_refuse(why, whylen, "%s: no recipe of one block at %d threads", sh, p->T);
         else
             bad = p->rank == 4 ? est_put_rows_3d(&C->vw2, p->c3t, why, whylen) : est_put_rows_rn(&C->vw2, p->cnt, why, whylen);
+        if (!bad && !p->bpq && p->cng)   /* the groups copies' row, at their thread count */
+            bad = est_put_rows_rn(&C->vw2, p->cng, why, whylen);
         if (!bad)
         {
             vw2__pq_key(&bk, VW2_T_C2C, p->rank - 1, p->n[1], p->n[2], p->n[3], (size_t)p->n[0], VW2_ORD_NAT, VW2_PL_OOP,
