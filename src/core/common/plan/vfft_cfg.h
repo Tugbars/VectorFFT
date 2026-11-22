@@ -54,8 +54,8 @@ typedef struct
     vfft_transform_t transform;
     int placement;     /* VFFT_INPLACE / VFFT_OUTOFPLACE */
     int rigor;         /* vfft_rigor_t */
-    int dims;          /* 1..4; 0 is 1D */
-    int n[4];
+    int dims;          /* 1..7; 0 is 1D */
+    int n[7];
     size_t howmany;
     int owned_buffers; /* the plan chooses its pitch or lane stride (VFFT_FLAG_OWN_PITCH) */
     int nthreads;      /* 0 = the pool's setting */

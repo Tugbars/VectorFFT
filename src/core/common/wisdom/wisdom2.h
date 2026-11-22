@@ -188,11 +188,11 @@ enum {
 
 /* ------------------------------------------------------------------ key */
 
-#define VW2_MAX_DIMS 4
+#define VW2_MAX_DIMS 7   /* ranks 1 to 7 (4 before 2026-11-22: the rank-N interleaved c2c tier, il/rank3/fftnd_il.h) */
 
 typedef struct {
     uint8_t t;                    /* vw2_transform_t                          */
-    uint8_t rank;                 /* 1..4 = dims of n                         */
+    uint8_t rank;                 /* 1..7 = dims of n                         */
     int32_t n[VW2_MAX_DIMS];      /* ordered extents (anisotropic law)        */
     int64_t q;                    /* requested quantity; -1 = '*' (migrated)  */
     int8_t  ord;                  /* vw2_ord_t; -1 = '*'                      */
@@ -462,7 +462,7 @@ static inline int vw2__t_parse(const char *s)
 }
 
 /* n= parse: "1024" / "64x64" / ... Rejects a dangling 'x', non-digit tails,
- * zero/negative extents, overflow past INT32_MAX, and rank > 4. */
+ * zero/negative extents, overflow past INT32_MAX, and rank > VW2_MAX_DIMS. */
 static inline int vw2__n_parse(const char *s, vw2_key_t *k)
 {
     int rank = 0;

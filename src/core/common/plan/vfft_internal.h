@@ -104,6 +104,7 @@ struct vfft_plan_s
     int N2; /* 2D second dim (0 = 1D)    */
     int N3; /* 3D third dim  (0 = 1D/2D) */
     int N4; /* 4D fourth dim (0 = rank<4)  — §6a62 */
+    int N5, N6, N7; /* ranks 5 to 7: the extents after the fourth (0 = below that rank), 2026-11-22 */
     size_t K;
     int nthreads;
     vfft_real *alias_scr;      /* an OUT-OF-PLACE interleaved real plan called with one buffer (dre == sre,

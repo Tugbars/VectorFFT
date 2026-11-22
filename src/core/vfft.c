@@ -1188,9 +1188,9 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
                    (int)cfg->rigor);
         return NULL;
     }
-    if (cfg->dims < 0 || cfg->dims > 4) /* §6a62: rank-4 exposed; 0 == 1D */
+    if (cfg->dims < 0 || cfg->dims > 7) /* ranks 1 to 7; 0 == 1D */
     {
-        _vfft_warn("vfft_create: dims=%d out of range (1..4; 0 is accepted as 1D)", cfg->dims);
+        _vfft_warn("vfft_create: dims=%d out of range (1..7; 0 is accepted as 1D)", cfg->dims);
         return NULL;
     }
     {
@@ -1245,7 +1245,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
      * legally and at full speed (il_coverage_plan.md Phase A). Callers must never assume WHICH
      * permutation scrambled output carries; that has been the contract since §2.6. */
     if ((cfg->order == VFI_ORDER_NATURAL || cfg->order == VFI_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 4) &&
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 7) &&
         /* 2D REAL grew a caller-visible n1 order axis with the native
          * IL tier (its multi-stage serving is ord=scr on n1): NATURAL
          * there = the M4-lite leaf redirection / the blu route, both

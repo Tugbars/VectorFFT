@@ -153,9 +153,9 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
         _vfft_warn("vfft_create: VFFT_FLAG_EXHAUSTIVE is not served (a create plans PATIENT, or by formulas with VFFT_FLAG_ESTIMATE; drop the flag)");
         return 0;
     }
-    if (p->rank < 0 || p->rank > 4)
+    if (p->rank < 0 || p->rank > 7)
     {
-        _vfft_warn("vfft_create: rank %d out of range (0 or 1 is 1D; 2, 3, 4)", p->rank);
+        _vfft_warn("vfft_create: rank %d out of range (0 or 1 is 1D; 2 to 7)", p->rank);
         return 0;
     }
     if (p->nthreads < 0)
@@ -215,15 +215,16 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
                        "VFFT_DST2 and VFFT_DST3 only, not VFFT_%s", _vfft_tname(p->transform));
             return 0;
         }
-        if (p->rank > 3)
-        {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, not rank %d (drop the flag to plan it by "
-                       "measuring)", p->rank);
+        if (p->rank > 3 && (p->transform != VFFT_C2C || p->howmany > 1))
+        {   /* rank 4 to 7: one VFFT_C2C transform (il/estimate/c2c_estimate_nd_il.h, est_plan_rn) */
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, and one VFFT_C2C transform at ranks 4 to 7, "
+                       "not rank %d VFFT_%s with howmany = %zu", p->rank, _vfft_tname(p->transform),
+                       p->howmany ? p->howmany : (size_t)1);
             return 0;
         }
         if (p->rank > 1 && p->order == VFFT_ORDER_SCRAMBLED)
         {
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and 3 in natural order only, not "
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans rank 2 and above in natural order only, not "
                        "VFFT_ORDER_SCRAMBLED (drop the flag to plan it by measuring)");
             return 0;
         }
@@ -451,7 +452,17 @@ static void _vfft_api_sizes(const struct vfft_plan_s *h, size_t *in, size_t *out
     size_t lead = (size_t)h->N, last = (size_t)h->N, pts, half, a, b;
     int ovf = 0;
     /* the extents: the last axis and the product of the ones before it */
-    if (h->N4 > 0)      { lead = _vfft_api_mul(_vfft_api_mul((size_t)h->N, (size_t)h->N2, &ovf), (size_t)h->N3, &ovf); last = (size_t)h->N4; }
+    if (h->N4 > 0)
+    {   /* rank 4 to 7: N .. N7, the first zero ends them */
+        const int ext[7] = { h->N, h->N2, h->N3, h->N4, h->N5, h->N6, h->N7 };
+        int r = 4, i;
+        while (r < 7 && ext[r] > 0)
+            r++;
+        lead = 1;
+        for (i = 0; i < r - 1; i++)
+            lead = _vfft_api_mul(lead, (size_t)ext[i], &ovf);
+        last = (size_t)ext[r - 1];
+    }
     else if (h->N3 > 0) { lead = _vfft_api_mul((size_t)h->N, (size_t)h->N2, &ovf); last = (size_t)h->N3; }
     else if (h->N2 > 0) { lead = (size_t)h->N; last = (size_t)h->N2; }
     else                { lead = 1; last = (size_t)h->N; }

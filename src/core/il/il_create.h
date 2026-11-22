@@ -53,21 +53,27 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
                                  int N,
                                  size_t K)
 {
-    /* THE ROW GUARD (2026-10-12): a rank-2/3 request whose last axis is a
-     * length the 1D doors refuse for want of an engine refuses here, at
+    /* THE ROW GUARD (2026-10-12): a request of rank 2 or more whose last axis
+     * is a length the 1D doors refuse for want of an engine refuses here, at
      * once and in the request's own name, before any axis races. */
-    if (cfg->dims == 2 || cfg->dims == 3)
+    if (cfg->dims >= 2)
     {
         const int Nr = cfg->n[cfg->dims - 1];
         const char *why = cfg->transform == VFFT_C2C ? vfft_policy_c2c_row_refused(Nr)
                         : _il_real_row_refused(Nr);
         if (why)
         {
-            char shape[48];
-            if (cfg->dims == 3)
-                snprintf(shape, sizeof shape, "%dx%dx%d", cfg->n[0], cfg->n[1], cfg->n[2]);
-            else
-                snprintf(shape, sizeof shape, "%dx%d", cfg->n[0], cfg->n[1]);
+            char shape[96];
+            size_t off = 0;
+            int i;
+            shape[0] = 0;
+            for (i = 0; i < cfg->dims && off < sizeof shape; i++)
+            {
+                const int r = snprintf(shape + off, sizeof shape - off, "%s%d", i ? "x" : "", cfg->n[i]);
+                if (r < 0)
+                    break;
+                off += (size_t)r;
+            }
             _vfft_warn("vfft_create: %dD INTERLEAVED %s %s (K=%zu): its rows at the last axis N=%d "
                        "have no 1D %sengine: %s; unsupported",
                        cfg->dims, _vfft_tname(cfg->transform), shape, K, Nr,
@@ -82,7 +88,7 @@ static vfft_plan _vfft_il_create(const vfft_cfg_t *cfg,
         return _vfft_create_pq_il(cfg, W, K);     /* the VOLUME QUEUE (plane_queue.h one rank up, 2026-10-18): K contiguous
                                                    * volumes, real or c2c, through the single-volume plan; the in-place real
                                                    * batch was admitted at the front door by the same law */
-    if (cfg->dims == 3 || cfg->dims == 4)
+    if (cfg->dims >= 3)   /* rank 3 to 7 (the front door bounds the rank) */
         return _vfft_create_rank34_il(cfg, W, K);
     if (cfg->dims == 2)
     {

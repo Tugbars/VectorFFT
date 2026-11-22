@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /**
  * fftnd_il.h — the rank-N INTERLEAVED c2c tier (design of record:
- * docs/roadmap/fftnd_il_design.md). Rank 3; rank 4 would compose the same
- * way.
+ * docs/roadmap/fftnd_il_design.md). Ranks 3 to 7 (rank 4 and above since
+ * 2026-11-22: the paragraph RANK 4 TO 7 below).
  *
  * NOT the split fftnd.h: different layout, different axis model, shares
  * nothing with it but the directory. Interleaved has no lane axis, so the
@@ -119,9 +119,23 @@
  * order: DEFAULT/SCRAMBLED = each column axis digit-reversed by its chain,
  * rows natural; NATURAL = natural.
  *
- * Contracts: C2C, rank 3, howmany == 1, either placement (one plan, one
- * wisdom row per order cell: every pass is alias-tolerant), every order.
- * Real and rank 4 are refused loudly, never bridged.
+ * RANK 4 TO 7 (2026-11-22): the same tier one rank up, as often as needed.
+ * Everything above reads with "plane" = the block of N2 x ... x Nd complex
+ * behind one index of axis 0 (d->plane counts it): axis 0 is the same column
+ * pass over that block as its lanes, and the per-plane structure is arm 1
+ * alone -- the child is THIS TIER'S OWN PLAN ONE RANK DOWN (rank d - 1, on
+ * one thread, in role on its private store under plane_), down to the
+ * rank-3 plan with its two structures. The banded walk, the natural class
+ * (the cycle walk with one block of buffer, or the strips), the threaded
+ * partitions, the plane team and every race are the code above, unchanged:
+ * none of it reads the rank. The flat structure (arm 2: an axis-1 pass and
+ * a row pass) exists at rank 3 only. Natural order only above rank 3. The
+ * row is the cell's own, keyed at its rank with every extent.
+ *
+ * Contracts: C2C, rank 3 to 7, howmany == 1, either placement (one plan, one
+ * wisdom row per order cell: every pass is alias-tolerant); every order at
+ * rank 3, natural order above it. Real above rank 3 is refused loudly, never
+ * bridged.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after il2d_tier.h (the column build
  * and execute, _tc_clone_equiv's declaration), k1_commit.h (support/race.h)
@@ -170,8 +184,8 @@ static int _ilnd_child_equiv(const struct vfft_plan_s *a, const struct vfft_plan
 }
 
 typedef struct vfft_ilnd_s {
-    int rank;
-    int N[4];
+    int rank;                     /* 3 to 7 */
+    int N[7];
     size_t plane;                 /* complex per axis-0 row: N[1] * ... * N[rank-1] */
     int arm;                      /* the SERVING structure: 1 = the child per plane, 2 = flat */
     vfft_ilcol_t ax0;             /* axis 0: N[0] rows over `plane` complex (wl/cut = the banded walk) */
@@ -210,6 +224,69 @@ typedef struct vfft_ilnd_s {
     double **sscr;                /* nsscr strip scratches of N[0] * nsw complexes, one per worker (tid = slot) */
     int nsscr;
 } vfft_ilnd_t;
+
+/* a shape for the messages: "N1xN2x...xNr" */
+static const char *_ilnd_shape(const int *N, int rank, char *b, size_t n)
+{
+    size_t off = 0;
+    int i;
+    if (n)
+        b[0] = 0;
+    for (i = 0; i < rank && off < n; i++)
+    {
+        const int r = snprintf(b + off, n - off, "%s%d", i ? "x" : "", N[i]);
+        if (r < 0)
+            break;
+        off += (size_t)r;
+    }
+    return b;
+}
+/* the child's shape on its configuration: every extent after the first (rank 3: the 2D plan at N2 x N3; above it
+ * this tier's own plan one rank down) */
+static void _ilnd_child_shape(const vfft_ilnd_t *d, vfft_cfg_t *cc)
+{
+    int i;
+    cc->dims = d->rank - 1;
+    for (i = 1; i < d->rank; i++)
+        cc->n[i - 1] = d->N[i];
+}
+/* two column passes of the tier serve the same bits: the chain and its kernels, the band, the leaf and the N-arm
+ * (the 2D child's law, _ilnd_child_equiv, on a pass of this tier) */
+static int _ilnd_col_equiv(const vfft_ilcol_t *x, const vfft_ilcol_t *y)
+{
+    int s;
+    if (x->nst != y->nst || x->wl != y->wl || x->cut != y->cut || x->tfuse != y->tfuse || x->staged != y->staged ||
+        x->nat != y->nat || x->natarm != y->natarm || x->blu != y->blu)
+        return 0;
+    for (s = 0; s < x->nst; s++)
+        if (x->R[s] != y->R[s] || x->L[s] != y->L[s] || x->f[s] != y->f[s] || x->b[s] != y->b[s])
+            return 0;
+    return 1;
+}
+/* a child clone of rank 3 or more (this tier's own plan) is equivalent to its primary iff every verdict that decides
+ * output bits matches, level by level: the shape, the structure, the natural form and its strip width, axis 0, and the
+ * structure's own plans -- the 2D child (_ilnd_child_equiv) or the child one rank down (this test); the flat
+ * structure's axis 1 and row plan. The clones' law of the rank-3 tier, one rank up. */
+static int _ilnd_plan_equiv(const struct vfft_plan_s *a, const struct vfft_plan_s *b)
+{
+    const vfft_ilnd_t *x = a ? a->ilnd : NULL, *y = b ? b->ilnd : NULL;
+    int i;
+    if (!x || !y || x->rank != y->rank || x->arm != y->arm || x->nat != y->nat || x->nf != y->nf ||
+        (x->nf == 2 && x->nsw != y->nsw))
+        return 0;
+    for (i = 0; i < x->rank; i++)
+        if (x->N[i] != y->N[i])
+            return 0;
+    if (!_ilnd_col_equiv(&x->ax0, &y->ax0))
+        return 0;
+    if (x->arm == 1)
+    {
+        if (!x->child || !y->child)
+            return 0;
+        return x->rank == 3 ? _ilnd_child_equiv(x->child, y->child) : _ilnd_plan_equiv(x->child, y->child);
+    }
+    return _ilnd_col_equiv(&x->ax1, &y->ax1) && x->row && y->row && _tc_clone_equiv(x->row, y->row);
+}
 
 /* ── the per-plane structure (tid 0 = the primary, t > 0 = its clone),
  * src -> dst (src == dst = in place; the child and the row plan are
@@ -869,9 +946,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T, int 
         cc.transform = VFFT_C2C;
         cc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE;
         cc.rigor = cfg->rigor;
-        cc.dims = 2;
-        cc.n[0] = d->N[1];
-        cc.n[1] = d->N[2];
+        _ilnd_child_shape(d, &cc);
         cc.howmany = 1;
         cc.order = cfg->order;
         cc.layout = VFI_LAYOUT_IL;
@@ -887,12 +962,13 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T, int 
         {
             struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
             d->childw[t] = c;
-            if (!c || !_ilnd_child_equiv(d->child, c) || c->nthreads > 1)
+            if (!c || !(d->rank == 3 ? _ilnd_child_equiv(d->child, c) : _ilnd_plan_equiv(d->child, c)) || c->nthreads > 1)
             {
-                _vfft_warn("ilnd MT: 2D child clone %d %s at %dx%d — the child structure "
+                char sh[96];
+                _vfft_warn("ilnd MT: child clone %d %s at %s — the child structure "
                            "cannot thread for this plan",
                            t, c ? "route-mismatched" : "failed to create",
-                           d->N[1], d->N[2]);
+                           _ilnd_shape(d->N + 1, d->rank - 1, sh, sizeof sh));
                 d->wn1 = t + 1;
                 _ilnd_free_clones(d, 1);
                 return 0;
@@ -1178,9 +1254,7 @@ static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft
     cc.transform = VFFT_C2C;
     cc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE; /* natural: the plane pass moves planes */
     cc.rigor = cfg->rigor;
-    cc.dims = 2;
-    cc.n[0] = d->N[1];
-    cc.n[1] = d->N[2];
+    _ilnd_child_shape(d, &cc);   /* rank 3: the 2D plan at N2 x N3; above it this tier's plan one rank down */
     cc.howmany = 1;
     cc.order = cfg->order;
     cc.layout = VFI_LAYOUT_IL;
@@ -1389,7 +1463,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     vfft_aligned_free(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d rounds=%d", d->N[0], d->N[1], d->N[2],
+        char shq[96];
+        fprintf(stderr, "[ilnd] %s%s: MT race T=%d reps=%d rounds=%d", _ilnd_shape(d->N, d->rank, shq, sizeof shq),
                 d->nat ? " nat" : "", d->mt_t, reps, rounds);
         for (a = 0; a < na; a++)
             fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
@@ -1400,13 +1475,14 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, const int nf0, const int
     }
 }
 
-/* ── the create: rank-3 interleaved c2c, either placement, every order ── */
+/* ── the create: rank 3 to 7 interleaved c2c, either placement; every order at rank 3, natural above ── */
 /* every NULL of the tier names its reason (vfft.h: create "returns NULL after
  * printing the reason"); the out-of-memory exits say what failed to allocate */
 static vfft_plan _ilnd_oom(vfft_ilnd_t *d, const vfft_cfg_t *cfg, const char *what)
 {
-    _vfft_warn("vfft_create: 3D INTERLEAVED C2C %dx%dx%d: out of memory (%s)",
-               cfg->n[0], cfg->n[1], cfg->n[2], what);
+    char sh[96];
+    _vfft_warn("vfft_create: %dD INTERLEAVED C2C %s: out of memory (%s)",
+               cfg->dims, _ilnd_shape(cfg->n, cfg->dims, sh, sizeof sh), what);
     if (d) vfft_ilnd_destroy(d);
     return NULL;
 }
@@ -1414,8 +1490,10 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                                        struct vfft_wisdom_s *W,
                                        size_t K)
 {
+    const int rank = cfg->dims;
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
     const int nat = (vfft_policy_ord_rankn(cfg) == VW2_ORD_NAT);
+    char shp[96];   /* the cell's shape for the messages: N1xN2x...xNrank */
     vfft_ilnd_t *d;
     struct vfft_plan_s *h;
     vw2_ilcol_key_t key0;
@@ -1438,28 +1516,51 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
      * is in place by construction), and the create race already times in
      * place on scratch. Output bitwise the out-of-place output (the probe
      * checks it). */
-    if (cfg->transform != VFFT_C2C || cfg->dims != 3 || K != 1)
+    if (rank < 3 || rank > 7)
     {
-        _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C one volume per plan, either placement, "
-                   "every order (a batch of howmany >= 2 as contiguous volumes, VFFT_BATCH_DEFAULT or "
-                   "VFFT_BATCH_CONTIGUOUS, runs through the volume queue over this plan; lane-major "
-                   "when named through its own door), every dim >= 2 (got %s, howmany=%zu, %dx%dx%d); "
-                   "real has its own tier, rank 4 is the tier's next phase",
-                   _vfft_tname(cfg->transform), K, N1, N2, N3);
+        _vfft_warn("vfft_create: the rank-N INTERLEAVED c2c tier serves ranks 3 to 7 (got rank %d)", rank);
         return NULL;
     }
-    if (N1 < 2 || N2 < 2 || N3 < 2)
+    _ilnd_shape(cfg->n, rank, shp, sizeof shp);
+    if (cfg->transform != VFFT_C2C || K != 1)
     {
-        _vfft_warn("vfft_create: 3D INTERLEAVED c2c needs every dim >= 2 (got %dx%dx%d)",
-                   N1, N2, N3);
+        _vfft_warn("vfft_create: %dD INTERLEAVED serves C2C one transform per plan, either placement, "
+                   "every order at rank 3 and natural order above it (at rank 3 a batch of howmany >= 2 as "
+                   "contiguous volumes, VFFT_BATCH_DEFAULT or VFFT_BATCH_CONTIGUOUS, runs through the volume "
+                   "queue over this plan; lane-major when named through its own door), every dim >= 2 "
+                   "(got %s, howmany=%zu, %s); real has its own tier at rank 3",
+                   rank, _vfft_tname(cfg->transform), K, shp);
+        return NULL;
+    }
+    {
+        int i;
+        for (i = 0; i < rank; i++)
+            if (cfg->n[i] < 2)
+            {
+                _vfft_warn("vfft_create: %dD INTERLEAVED c2c needs every dim >= 2 (got %s)", rank, shp);
+                return NULL;
+            }
+    }
+    if (rank > 3 && !nat)
+    {   /* above rank 3 the tier is natural order only (the scrambled class is not built there) */
+        _vfft_warn("vfft_create: %dD INTERLEAVED c2c %s serves natural order only (VFFT_ORDER_NATURAL, the "
+                   "default); VFFT_ORDER_SCRAMBLED is served up to rank 3", rank, shp);
         return NULL;
     }
     d = (vfft_ilnd_t *)calloc(1, sizeof *d);
     if (!d)
         return _ilnd_oom(NULL, cfg, "the tier descriptor");
-    d->rank = 3;
-    d->N[0] = N1; d->N[1] = N2; d->N[2] = N3;
-    d->plane = (size_t)N2 * (size_t)N3;
+    d->rank = rank;
+    {   /* the extents, and the block behind one index of axis 0 (the front door checked the product fits) */
+        int i;
+        d->plane = 1;
+        for (i = 0; i < rank; i++)
+        {
+            d->N[i] = cfg->n[i];
+            if (i > 0)
+                d->plane *= (size_t)cfg->n[i];
+        }
+    }
     d->mt_t = nthr;
     d->nat = nat;
     d->ip = (cfg->placement == VFFT_INPLACE);
@@ -1476,11 +1577,16 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
      * class orders planes in its plane pass, never in the column pass. */
     memset(&key0, 0, sizeof key0);   /* every field the key grew since (ip, lm, q): a key off the stack banked
                                       * the cell as lay=lm q=<garbage> place=ip and never found it again (2026-10-19) */
-    key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
+    key0.rank = rank; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
+    {   /* rank 4 to 7: the extents after the third */
+        int i;
+        for (i = 3; i < rank; i++)
+            key0.nx[i - 3] = cfg->n[i];
+    }
     key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
     key0.nthreads = nthr;   /* the plan's own row (v1.3) */
     if (!_il2d_col_build(W, cfg, &key0, N1, d->plane,
-                         vfft_policy_rankn_axis_nat(3, 0, key0.ord), &d->ax0,
+                         vfft_policy_rankn_axis_nat(rank, 0, key0.ord), &d->ax0,
                          d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu, NULL))
     {
         free(d);
@@ -1489,7 +1595,12 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     if (nat && !_ilnd_nat_build(d))
         return _ilnd_oom(d, cfg, "the natural-order permutation tables");
     /* the STRUCTURE candidates: env pin (never banks) > banked s= > both */
-    if (pin && (atoi(pin) == 1 || atoi(pin) == 2))
+    if (rank > 3)
+    {   /* above rank 3 the structure is the child alone: this tier's plan one rank down (no race, no verdict) */
+        sarm[nsarm++] = 1;
+        s_src = 4;
+    }
+    else if (pin && (atoi(pin) == 1 || atoi(pin) == 2))
     {
         sarm[nsarm++] = atoi(pin);
         s_src = 1;
@@ -1509,16 +1620,16 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     {
         const int w = atoi(wpin);
         if (w > 0 && _ilnd_wl_cut(&d->ax0, w) < 0)
-            _vfft_warn("VFFT_ILND_WL=%d illegal at %dx%dx%d (needs wl | N1 and a stage "
-                       "with L_s | wl) — unbanded", w, N1, N2, N3);
+            _vfft_warn("VFFT_ILND_WL=%d illegal at %s (needs wl | N1 and a stage "
+                       "with L_s | wl) — unbanded", w, shp);
         wls[nwl++] = (w > 0 && _ilnd_wl_cut(&d->ax0, w) >= 0) ? w : 0;
         wl_src = 1;
     }
     else if (usable_w && !cfg->recalibrate && bwl >= 0)
     {
         if (bwl > 0 && _ilnd_wl_cut(&d->ax0, bwl) < 0)
-            _vfft_warn("banked wl=%d does not fit the axis-0 chain at %dx%dx%d — unbanded",
-                       bwl, N1, N2, N3);
+            _vfft_warn("banked wl=%d does not fit the axis-0 chain at %s — unbanded",
+                       bwl, shp);
         wls[nwl++] = (bwl > 0 && _ilnd_wl_cut(&d->ax0, bwl) >= 0) ? bwl : 0;
         wl_src = 2;
     }
@@ -1544,9 +1655,10 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
         if (want1) ok1 = _ilnd_build_child(d, W, cfg, &key0);
         if (!ok1 && !ok2)
         {
-            _vfft_warn("vfft_create: 3D INTERLEAVED c2c %dx%dx%d%s — no structure arm could "
-                       "be built (%s)", N1, N2, N3, nat ? " NATURAL" : "",
+            _vfft_warn("vfft_create: %dD INTERLEAVED c2c %s%s — no structure arm could "
+                       "be built (%s)", rank, shp, nat ? " NATURAL" : "",
                        s_src == 1 ? "env pin" : s_src == 2 ? "banked verdict"
+                       : rank > 3 ? "the plan one rank down did not build"
                                   : "no 2D IL plan at the plane and no axis-1 chain");
             vfft_ilnd_destroy(d);
             return NULL;
@@ -1713,7 +1825,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
         vfft_aligned_free(z);
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[ilnd] %dx%dx%d%s: race", N1, N2, N3, nat ? " nat" : "");
+            fprintf(stderr, "[ilnd] %s%s: race", shp, nat ? " nat" : "");
             for (a = 0; a < na; a++)
                 fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
             fprintf(stderr, " -> %s %s\n", arm == 1 ? "child" : "flat",
@@ -1783,7 +1895,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
             const int bs = vw2_ilnd_mts_lookup(&W->vw2, &key0);
             const int bf = nat ? vw2_ilnd_int_lookup(&W->vw2, &key0, "cmtf") : 0;
             d->mt = (bcmt >= 0 && bcmt <= 2) ? bcmt : 0;
-            mts = (bs == 1 || bs == 2) ? bs : arm;
+            mts = rank > 3 ? 1 : (bs == 1 || bs == 2) ? bs : arm;   /* above rank 3: the child alone */
             mtf = (bf == 1 || bf == 2) ? bf : nf;
             if (mtf == 2 && d->nsw <= 0)
                 d->nsw = vw2_ilnd_int_lookup(&W->vw2, &key0, "nsw");
@@ -1795,7 +1907,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                 if (!okb || !_ilnd_build_clones(d, cfg, nthr, mts))
                 {
                     _vfft_warn("ilnd: the banked threaded structure (cmts=%d) cannot be served at "
-                               "%dx%dx%d T=%d — serial", mts, N1, N2, N3, nthr);
+                               "%s T=%d — serial", mts, shp, nthr);
                     d->mt = 0;
                     mts = arm;
                 }
@@ -1814,7 +1926,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                                  _ilnd_strips_ensure(d, nthr, maxsw > d->nsw ? maxsw : d->nsw);
             if (_ilnd_build_child(d, W, cfg, &key0))
                 c1 = _ilnd_build_clones(d, cfg, nthr, 1);
-            if (_ilnd_build_flat(d, W, cfg, &key0))
+            if (rank == 3 && _ilnd_build_flat(d, W, cfg, &key0))   /* the flat structure: rank 3 only */
                 c2 = _ilnd_build_clones(d, cfg, nthr, 2);
             if (c1 || c2)
                 _ilnd_mt_race(d, arm, nf, strip_ok, hw, &mt_v, &arm_v, &nf_v, &ptw_v);
@@ -1850,8 +1962,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
         }
         if (d->mt == 1 && (d->ax0.wl <= 0 || d->ax0.blu))
         {
-            _vfft_warn("ilnd: the band MT arm needs a banded axis 0 at %dx%dx%d — serial",
-                       N1, N2, N3);
+            _vfft_warn("ilnd: the band MT arm needs a banded axis 0 at %s — serial", shp);
             d->mt = 0;
             mts = arm;
         }
@@ -1863,7 +1974,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
         if (d->ptw > 0 && nat && mtf == 1 && !_ilnd_nat_bind_team(d, d->ptw))
         {
             _vfft_warn("ilnd: the plane team's cycle binding (%d workers) could not be built at "
-                       "%dx%dx%d T=%d — serial", d->ptw, N1, N2, N3, nthr);
+                       "%s T=%d — serial", d->ptw, shp, nthr);
             d->mt = 0;
             d->ptw = 0;
             mts = arm;
@@ -1887,8 +1998,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
             d->nsw = sw > 0 ? sw : sws[0];
         if (!_ilnd_strips_ensure(d, d->mt > 0 ? nthr : 1, d->nsw))
         {
-            _vfft_warn("ilnd: the strip form's scratches could not be allocated at %dx%dx%d — cycle form",
-                       N1, N2, N3);
+            _vfft_warn("ilnd: the strip form's scratches could not be allocated at %s — cycle form", shp);
             d->nf = 1;
         }
     }
@@ -1904,9 +2014,9 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     if (getenv("VFFT_IL2D_LOG"))
     {
         static const char *SRC[] = { "?", "env", "wisdom", "race", "only-buildable" };
-        fprintf(stderr, "[ilnd] %dx%dx%d%s: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
+        fprintf(stderr, "[ilnd] %s%s: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
                         " | T=%d mt=%s/%s pt=%d src=%s clones=%d%s\n",
-                N1, N2, N3, nat ? " nat" : "", arm == 1 ? "child" : "flat", SRC[s_src],
+                shp, nat ? " nat" : "", arm == 1 ? "child" : "flat", SRC[s_src],
                 d->ax0.wl, d->ax0.cut, SRC[wl_src], nthr,
                 d->mt == 0 ? "serial" : d->mt == 1 ? "band" : "plane",
                 d->arm == 1 ? "child" : "flat", d->ptw,
@@ -1924,6 +2034,13 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
     h->N = N1;
     h->N2 = N2;
     h->N3 = N3;
+    if (rank > 3)
+    {   /* rank 4 to 7: the extents after the third (the size laws of vfft_api.h read them) */
+        h->N4 = cfg->n[3];
+        h->N5 = rank > 4 ? cfg->n[4] : 0;
+        h->N6 = rank > 5 ? cfg->n[5] : 0;
+        h->N7 = rank > 6 ? cfg->n[6] : 0;
+    }
     h->K = 1;
     h->nthreads = nthr;
     h->ilnd = d;
@@ -1943,27 +2060,25 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
 }
 
 
-/* ── the INTERLEAVED rank-3/4 create tier (the front door's layout fork,
- * il/il_create.h, sends every interleaved rank-3/4 request
- * here): rank-3 c2c is the native tier above; real rank >= 3 and rank 4 are
- * refused loudly. Layout separation phase 6: the interleaved peel of the
- * pre-separation _vfft_create_rank34, verbatim. */
+/* ── the INTERLEAVED rank-3+ create tier (the front door's layout fork,
+ * il/il_create.h, sends every interleaved request of rank 3 to 7
+ * here): c2c at rank 3 to 7 is the native tier above, R2C and C2R at rank 3
+ * the real tier; real above rank 3 is refused loudly. */
 static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, size_t K); /* fftnd_real_il.h, included after this header */
 static vfft_plan _vfft_create_rank34_il(const vfft_cfg_t *cfg,
                                         struct vfft_wisdom_s *W,
                                         size_t K)
 {
-    /* 3D/4D INTERLEAVED: rank-3 c2c is the native IL tier (fftnd_il.h),
-     * rank-3 R2C and C2R the real tier (fftnd_real_il.h, 2026-10-07); rank 4
-     * is refused loudly. No fallback: never the split ND engine behind a
-     * repack — refuse, never bridge. */
-    if (cfg->transform == VFFT_C2C && cfg->dims == 3)
-        return _vfft_create_fftnd_il(cfg, W, K);
+    /* rank 3 to 7 INTERLEAVED: c2c is the native IL tier (fftnd_il.h),
+     * rank-3 R2C and C2R the real tier (fftnd_real_il.h, 2026-10-07); a real
+     * transform above rank 3 is refused loudly. No fallback: refuse, never
+     * bridge. */
+    if (cfg->transform == VFFT_C2C && cfg->dims >= 3 && cfg->dims <= 7)
+        return _vfft_create_fftnd_il(cfg, W, K);   /* rank 4 to 7: the same tier one rank up (2026-11-22) */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims == 3)
         return _vfft_create_fftnd_real_il(cfg, W, K);
-    _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
-               "(the rank-3+ interleaved tier is a planned feature); use "
-               "VFFT_LAYOUT_SPLIT",
+    _vfft_warn("vfft_create: %dD %s is not served: VFFT_R2C and VFFT_C2R are served at ranks 1 to 3 "
+               "(VFFT_C2C at ranks 1 to 7)",
                cfg->dims, _vfft_tname(cfg->transform));
     return NULL;
 }

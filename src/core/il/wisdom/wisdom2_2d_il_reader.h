@@ -32,7 +32,7 @@
  * the axis as a suffix (chain1= wl1= ...) on the SAME row, so one cell is
  * one row. axis 0 creates the row, a later axis updates fields on it. */
 typedef struct {
-    int rank;          /* 2 or 3 */
+    int rank;          /* 2 or 3; 4 to 7 = the rank-N c2c tier's row (il/rank3/fftnd_il.h): n0..n2 and nx */
     int n0;            /* the cell's dims (n2 = 0 at rank 2); n1 and n2 are size_t, since a lane-major */
     size_t n1, n2;     /* batch's row carries its lane count K in one of them (lm below) */
     int ord;           /* VW2_ORD_SCR / VW2_ORD_NAT */
@@ -54,6 +54,7 @@ typedef struct {
     size_t q;          /* the LANE-MAJOR 3D BATCH's K (il/rank3/lm_batch3d_il.h): rank 3, n0..n2 the
                         * extents, the lanes rendered as q = K; ranks 1 and 2 carry K in n1 / n2. The
                         * lane count K is size_t end to end: the row's q is 64 bits (wisdom2.h) */
+    int nx[4];         /* rank 4 to 7: the extents after n2 (n[3] .. n[rank - 1]), 0 below rank 4 */
 } vw2_ilcol_key_t;
 
 static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
@@ -72,6 +73,12 @@ static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
      * row's 64-bit q below and its n slot is cleared */
     vw2__2d_key(k, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, (int)ck->n1,
                 (int)ck->n2, ck->ord, VW2_LAY_IL, ck->nthreads);
+    if (ck->rank > 3)
+    {   /* rank 4 to 7: the extents after the third */
+        int i;
+        for (i = 3; i < ck->rank && i < VW2_MAX_DIMS; i++)
+            k->n[i] = ck->nx[i - 3];
+    }
     if (ck->lm)
     {   /* the lane-major batches on their own layout axis: rank 1 = the 1D cell at q = K (n1 = K),
          * rank 2 = the 2D cell at q = K (n2 = K), rank 3 = the 3D cell at q = K (q) */

@@ -59,7 +59,8 @@ extern "C"
    *   The imaginary parts of bin 0 and, at an even N, bin N/2 are outside the
    *   contract.
    * At rank 2 and above the data is row-major, the last axis contiguous, and
-   * the real transforms halve the last axis (N_last/2 + 1 bins).
+   * the real transforms halve the last axis (N_last/2 + 1 bins). VFFT_C2C is
+   * served at ranks 1 to 7; VFFT_R2C and VFFT_C2R at ranks 1 to 3.
    *
    * Real-to-real, 1D only, N reals in and out, unnormalized. SERVED, each at
    * any N from its shortest length up, one transform per plan (howmany = 1),
@@ -136,8 +137,8 @@ extern "C"
    * default, or lane-major when named (C2C; R2C and C2R at N1, N2 >= 2 and an
    * even N3 >= 4): element (i, j, k) of transform t at
    * z[2 ((i N2 N3 + j N3 + k) K + t)], real data x[(i N2 N3 + j N3 + k) K + t],
-   * bins z[2 ((i N2 H + j H + f) K + t)] with H = N3/2 + 1. A batch of rank 4 is
-   * not served.
+   * bins z[2 ((i N2 H + j H + f) K + t)] with H = N3/2 + 1. A batch of rank 4 to 7
+   * is not served.
    */
   typedef enum
   {
@@ -176,7 +177,7 @@ extern "C"
                                             no wisdom is read or written, and wisdom_dir is
                                             not opened. INTERLEAVED, any nthreads, either
                                             placement. VFFT_C2C: 1D in any order, rank 2
-                                            and 3 in natural order. VFFT_R2C and VFFT_C2R:
+                                            to 7 in natural order. VFFT_R2C and VFFT_C2R:
                                             rank 1, 2 or 3 in natural order (at rank 2 and
                                             3 not with VFFT_FLAG_OWN_PITCH). One transform
                                             or a batch of them (howmany > 1), contiguous or
@@ -202,8 +203,9 @@ extern "C"
   typedef struct
   {
     vfft_transform_t transform;
-    int rank;                   /**< 0 or 1 = 1D; 2, 3 or 4 */
-    int n[4];                   /**< the extents; the last axis is contiguous */
+    int rank;                   /**< 0 or 1 = 1D; 2 to 7 (VFFT_C2C: every rank; the real
+                                     transforms: ranks 1 to 3) */
+    int n[7];                   /**< the extents; the last axis is contiguous */
     size_t howmany;             /**< the batch count K; 0 or 1 = one transform */
     vfft_layout_t layout;
     vfft_placement_t placement;
