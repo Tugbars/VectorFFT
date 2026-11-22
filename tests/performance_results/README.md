@@ -279,5 +279,5 @@ one-thread csv files of the `_9800x3d` folders.
 > **Page:** [`docs/performance/rank4_7_FP64_14900KF.md`](../../docs/performance/rank4_7_FP64_14900KF.md)
 
 Complex and real transforms of rank 4 to 7 with estimate plans: one transform against MKL at 1, 4 and 8 threads,
-batches of 4 and 8 transforms (contiguous and lane-major) against MKL at 1 and 8 threads, and complex transforms
-against FFTW at one thread. These runs are not part of the regression test; their tables are on the page above.
+batches of 4 and 8 transforms (contiguous and lane-major) against MKL at 1 and 8 threads, and one transform against
+FFTW at one thread. These runs are not part of the regression test; their tables are on the page above.
