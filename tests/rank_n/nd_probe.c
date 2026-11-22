@@ -11,7 +11,8 @@
  *     larger shapes;
  *   - fwd: the largest difference from the reference over the reference's largest magnitude;
  *   - rt:  the largest difference of backward(forward(x)) / (N1 ... Nr) from x over the largest |x|.
- * It prints one line, and the best time of the forward execute (--reps, default 5).
+ * It prints one line, with the best time of the forward execute (--reps, default 5) and sum=, a hash of the forward
+ * output's bits (two builds that print the same sum ran the same arithmetic: the same plan).
  *
  * usage: nd_probe N1xN2[x...] [--est] [--threads T] [--ip] [--store DIR] [--ref direct|lines] [--reps R] [--batch K]
  *   --est        plan with VFFT_FLAG_ESTIMATE (else by measuring, on the store --store names: REQUIRED then, so a
@@ -287,9 +288,15 @@ int main(int argc, char **argv)
         if (t0 < best) best = t0;
     }
     bad |= !(efwd < 1e-11) || !(ert < 1e-11);
-    printf("%-22s rank %d T=%d %s %s K=%zu  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  %s\n", shape, rank, T,
-           est ? "est " : "meas", ip ? "ip " : "oop", K, efwd, ert, best, best / (double)(pts * K), info.nthreads,
-           bad ? "FAIL" : "ok");
+    {   /* FNV-1a over the forward output's bytes (y holds the last timed forward) */
+        const unsigned char *b = (const unsigned char *)y;
+        uint64_t hsh = 1469598103934665603ull;
+        for (q = 0; q < sizeof(double) * 2 * pts * K; q++)
+            hsh = (hsh ^ b[q]) * 1099511628211ull;
+        printf("%-22s rank %d T=%d %s %s K=%zu  fwd %.2e  rt %.2e  %10.0f ns  %6.2f ns/pt  threads=%d  sum=%016llx  %s\n",
+               shape, rank, T, est ? "est " : "meas", ip ? "ip " : "oop", K, efwd, ert, best, best / (double)(pts * K),
+               info.nthreads, (unsigned long long)hsh, bad ? "FAIL" : "ok");
+    }
     vfft_destroy(p);
     vfft_free(x); vfft_free(y); vfft_free(r); vfft_free(w);
     return bad ? 1 : 0;

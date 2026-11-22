@@ -1271,31 +1271,40 @@ static inline int est_wl_3d(const est_col_t *c)
 /* the door's strip widths at this axis 0, read off its own pool (_ilnd_sw_pool, fftnd_il.h:826-836):
  * the powers of two from 8 to 1024 whose strip scratch, 16 N1 w bytes, fits the L2 (the host's) and
  * no wider than the plane; none on a one-stage or Bluestein axis 0, which has nothing to permute */
-static inline int est__sw_pool(const est_col_t *c, int N2, int N3, int *out, int max)
-{
+static inline int est__sw_pool_p(const est_col_t *c, long long plane, int *out, int max)
+{   /* plane: the complex behind one index of axis 0 (N2 N3 at rank 3; the block above it) */
     vfft_ilnd_t d;
     memset(&d, 0, sizeof d);
     d.N[0] = c->N;
-    d.plane = (size_t)N2 * (size_t)N3;
+    d.plane = (size_t)plane;
     d.ax0.blu = c->blu > 0 ? c->blu : 0;
     d.ax0.nst = c->nst;
     return _ilnd_sw_pool(&d, out, max);
+}
+static inline int est__sw_pool(const est_col_t *c, int N2, int N3, int *out, int max)
+{
+    return est__sw_pool_p(c, (long long)N2 * N3, out, max);
 }
 /* the 3D natural form (sketch §9): the strips, nf = 2, when the volume passes the L3 (16 N1 N2 N3
  * bytes; no L3 reported counts as passed, as the 1D estimate reads it) and axis 0's column is short,
  * 16 N1 <= L1d / EST_ND_NF_L1_DIV -- at the widest width of the door's pool whose strip scratch fits
  * L2 / EST_ND_NSW_L2_DIV; else the cycle walk, nf = 1, also where no width of the pool fits. Returns nf,
  * the width into *nsw (0 with the cycle walk). */
+static inline int est_nf_p(const est_machine_t *m, const est_col_t *c, long long plane, int *nsw);
 static inline int est_nf_3d(const est_machine_t *m, const est_col_t *c, int N2, int N3, int *nsw)
 {
-    const long long plane = (long long)N2 * N3;
+    return est_nf_p(m, c, (long long)N2 * N3, nsw);
+}
+/* est_nf_3d on the complex behind one index of axis 0 (the plane at rank 3, the block above it) */
+static inline int est_nf_p(const est_machine_t *m, const est_col_t *c, long long plane, int *nsw)
+{
     int sp[8], n, i;
     *nsw = 0;
     if (m->l3 > 0 && plane <= (long long)m->l3 / (16LL * c->N))   /* 16 N1 N2 N3 <= L3, without the product */
         return 1;
     if (16LL * c->N > (long long)m->l1d / EST_ND_NF_L1_DIV)
         return 1;
-    n = est__sw_pool(c, N2, N3, sp, 8);
+    n = est__sw_pool_p(c, plane, sp, 8);
     for (i = 0; i < n; i++)
         if (16LL * c->N * sp[i] <= (long long)m->l2 / EST_ND_NSW_L2_DIV && sp[i] > *nsw)
             *nsw = sp[i];
@@ -1740,12 +1749,13 @@ static inline int est_plan_3d(const est_machine_t *m, int N1, int N2, int N3, es
  * columns than workers est__pick's radix-8 regime, on the cycle walk the pool's chain ending in
  * EST_ND_MT3_CYCLE_LAST with the stages before it the most balanced, ascending; the band beside the one-thread
  * cycle walk taken again for either. T < 2 leaves p one-thread. */
+/* est__mt_rankn: est_mt_3d's rule on one axis 0 (the rank-4 to 7 plan's too, est_mt_rn): N1 its length, cols the
+ * complex behind one index of it, pow2 = every extent a power of two, nf the one-thread natural form, col the
+ * axis-0 pass (its chain may be replaced), *cmt *cmtf *mtnsw the verdict, preset serial by the caller. T >= 2. */
+static inline void est__mt_rankn(const est_machine_t *m, int T, int N1, long long cols, int pow2, int nf, est_col_t *col,
+                                 int *cmt, int *cmtf, int *mtnsw);
 static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
 {
-    const long long cube = 16LL * p->N1 * p->N2 * p->N3, cols = (long long)p->N2 * p->N3;
-    const int pow2 = est_is_pow2(p->N1) && est_is_pow2(p->N2) && est_is_pow2(p->N3);
-    long long w = T;
-    int sp[8], n, i;
     p->T = T > 1 ? T : 1;
     p->cmt = 0;
     p->cmts = p->s;
@@ -1753,40 +1763,50 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
     p->mtnsw = 0;
     if (T < 2)
         return;
-    if (p->N1 < w)
-        w = p->N1;
+    est__mt_rankn(m, T, p->N1, (long long)p->N2 * p->N3,
+                  est_is_pow2(p->N1) && est_is_pow2(p->N2) && est_is_pow2(p->N3), p->nf, &p->col, &p->cmt, &p->cmtf,
+                  &p->mtnsw);
+}
+static inline void est__mt_rankn(const est_machine_t *m, int T, int N1, long long cols, int pow2, int nf, est_col_t *col,
+                                 int *cmt, int *cmtf, int *mtnsw)
+{
+    const long long cube = 16LL * N1 * cols;
+    long long w = T;
+    int sp[8], n, i;
+    if (N1 < w)
+        w = N1;
     if (cols < w)
         w = cols;
     if (cube * w <= (long long)EST_ND_MT3_SERIAL_KB * 1024 * T)
         return;
-    p->cmt = 2;
-    n = est__sw_pool(&p->col, p->N2, p->N3, sp, 8);
-    p->cmtf = n > 0 ? 2 : 1;
+    *cmt = 2;
+    n = est__sw_pool_p(col, cols, sp, 8);
+    *cmtf = n > 0 ? 2 : 1;
     for (i = 0; i < n; i++)
-        if (16LL * p->N1 * sp[i] <= (long long)m->l2 / EST_ND_MT3_NSW_L2_DIV && sp[i] > p->mtnsw)
-            p->mtnsw = sp[i];
-    if (n > 0 && !p->mtnsw)
-        p->mtnsw = sp[0];
-    if (p->cmtf == 2 && pow2 && cols > T)
+        if (16LL * N1 * sp[i] <= (long long)m->l2 / EST_ND_MT3_NSW_L2_DIV && sp[i] > *mtnsw)
+            *mtnsw = sp[i];
+    if (n > 0 && !*mtnsw)
+        *mtnsw = sp[0];
+    if (*cmtf == 2 && pow2 && cols > T)
     {   /* the strips' chain (EST_ND_MT3_*): the radix-8 regime, as the 2D strips take it */
         est_pool_t P;
         int R[8], k;
-        est__pool(p->N1, &P);
-        if ((k = est__pick(&P, NULL, 0, p->N1, m, p->col.w, 0, /*wide=*/1, /*single=*/0, R)) >= 2)
+        est__pool(N1, &P);
+        if ((k = est__pick(&P, NULL, 0, N1, m, col->w, 0, /*wide=*/1, /*single=*/0, R)) >= 2)
         {
-            memcpy(p->col.R, R, sizeof(int) * (size_t)k);
-            p->col.nst = k;
-            est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
-            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(&p->col);
+            memcpy(col->R, R, sizeof(int) * (size_t)k);
+            col->nst = k;
+            est__col_forms(col->R, col->nst, col->forms, sizeof col->forms);
+            col->wl = nf == 2 ? 0 : est_wl_3d(col);
         }
     }
-    else if (p->cmtf == 1 && pow2 && p->col.nst >= 2)
+    else if (*cmtf == 1 && pow2 && col->nst >= 2)
     {   /* the cycle walk's chain (EST_ND_MT3_*): the pool's chain ending in EST_ND_MT3_CYCLE_LAST, the stages
          * before it the least sum of (log2 R)^2, then the fewest out of ascending order, then the pool's order */
         est_pool_t P;
         int best = -1, bi = 0;
         double bs = 0.0;
-        est__pool(p->N1, &P);
+        est__pool(N1, &P);
         for (i = 0; i < P.n; i++)
         {
             const int k = P.len[i];
@@ -1805,10 +1825,10 @@ static inline void est_mt_3d(const est_machine_t *m, int T, est_plan3d_t *p)
         }
         if (best >= 0)
         {
-            memcpy(p->col.R, P.c[best], sizeof(int) * (size_t)P.len[best]);
-            p->col.nst = P.len[best];
-            est__col_forms(p->col.R, p->col.nst, p->col.forms, sizeof p->col.forms);
-            p->col.wl = p->nf == 2 ? 0 : est_wl_3d(&p->col);
+            memcpy(col->R, P.c[best], sizeof(int) * (size_t)P.len[best]);
+            col->nst = P.len[best];
+            est__col_forms(col->R, col->nst, col->forms, sizeof col->forms);
+            col->wl = nf == 2 ? 0 : est_wl_3d(col);
         }
     }
 }
@@ -1968,6 +1988,189 @@ static inline int est_put_rows_3d(vw2_store_t *st, const est_plan3d_t *p, char *
         return est_refuse(why, whylen, "the plane child %dx%d could not be put on the %dx%dx%d row", p->N2, p->N3,
                           p->N1, p->N2, p->N3);
     if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
+        return -1;
+    return 0;
+}
+
+/* ── rank 4 to 7 (2026-11-22): the rank-N tier one rank up (il/rank3/fftnd_il.h, RANK 4 TO 7) ─────────────── */
+
+/* The rank-4 to 7 plan's row: the 3D row's formulas with the block behind one index of axis 0 in the plane's place
+ * (n[1] x ... x n[rank-1] complex), and the structure the child alone: the plan one rank down, on one thread. No
+ * formula of its own: axis 0 is est_col_plan_r as the 3D first axis takes it, the natural form est_nf_p, the band
+ * est_wl_3d, the threaded verdict est__mt_rankn. */
+typedef struct est_planrn_s
+{
+    int rank;                  /* 4 to 7 */
+    int n[7];                  /* the extents */
+    est_col_t col;             /* axis 0 at w = the block; with the strips its band is 0 and [wl] [tf] are not written */
+    int nf;                    /* [nf] 1 = the cycle walk, 2 = the strips */
+    int nsw;                   /* [nsw] the strip width in columns (nf = 2); 0 = not written */
+    est_recipe_t tpcp;         /* [tpc_] n[0], in place, natural: col.tpc == 1 */
+    int T;                     /* the threads (est_mt_rn): 0 or 1 = one thread; T > 1 = the row's key nthreads=T */
+    int cmt;                   /* [cmt] T > 1: 0 serial, 2 the plane arm ([cmts] is 1: the child) */
+    int cmtf;                  /* [cmtf] T > 1: the natural form at T */
+    int mtnsw;                 /* [nsw] cmt = 2 with the strips: their width at T, over the one-thread nsw */
+    est_plan3d_t *c3;          /* [plane_] rank 4: the 3D plan at n[1] x n[2] x n[3], one thread */
+    struct est_planrn_s *cn;   /* [plane_] rank 5 to 7: the plan one rank down, one thread */
+} est_planrn_t;
+
+/* the recipe's children, freed (the plan itself is the caller's) */
+static inline void est_free_rn(est_planrn_t *p)
+{
+    if (!p)
+        return;
+    if (p->cn)
+    {
+        est_free_rn(p->cn);
+        free(p->cn);
+        p->cn = NULL;
+    }
+    free(p->c3);
+    p->c3 = NULL;
+}
+/* the complex behind one index of axis 0 */
+static inline long long est__rn_block(const est_planrn_t *p)
+{
+    long long b = 1;
+    int i;
+    for (i = 1; i < p->rank; i++)
+        b *= p->n[i];
+    return b;
+}
+static inline const char *est__rn_shape(const int *n, int rank, char *b, size_t cap)
+{
+    size_t off = 0;
+    int i;
+    if (cap)
+        b[0] = 0;
+    for (i = 0; i < rank && off < cap; i++)
+    {
+        const int r = snprintf(b + off, cap - off, "%s%d", i ? "x" : "", n[i]);
+        if (r < 0)
+            break;
+        off += (size_t)r;
+    }
+    return b;
+}
+static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p);
+/* est_plan_rn: the c2c plan at rank 4 to 7, natural, one thread: the block child one rank down (the 3D plan at rank
+ * 4, est_plan_3d; this plan below it), axis 0 on the scrambled pass over the blocks, the natural form, the band with
+ * the cycle walk. Returns 0 with *out filled (its children allocated: est_free_rn), or -1 with the reason. Pure. */
+static inline int est_plan_rn(const est_machine_t *m, int rank, const int *n, est_planrn_t *out, char *why, size_t whylen)
+{
+    char dummy[1], sh[96];
+    long long block;
+    int i;
+    if (!why || !whylen) { why = dummy; whylen = sizeof dummy; }
+    why[0] = 0;
+    if (!out)
+        return est_refuse(why, whylen, "no plan");
+    memset(out, 0, sizeof *out);
+    if (est__machine_ok(m, why, whylen))
+        return -1;
+    if (rank < 4 || rank > 7)
+        return est_refuse(why, whylen, "rank %d: the rank-N recipe plans ranks 4 to 7", rank);
+    est__rn_shape(n, rank, sh, sizeof sh);
+    for (i = 0; i < rank; i++)
+        if (n[i] < 2)
+            return est_refuse(why, whylen, "%s: estimate plans every axis of at least 2 points", sh);
+    out->rank = rank;
+    memcpy(out->n, n, sizeof(int) * (size_t)rank);
+    block = est__rn_block(out);
+    if (rank == 4)
+    {
+        if (!(out->c3 = (est_plan3d_t *)calloc(1, sizeof *out->c3)))
+            return est_refuse(why, whylen, "out of memory");
+        if (est_plan_3d(m, n[1], n[2], n[3], out->c3, why, whylen))
+        {
+            est_free_rn(out);
+            return -1;
+        }
+        est_mt_3d(m, 1, out->c3);
+    }
+    else
+    {
+        if (!(out->cn = (est_planrn_t *)calloc(1, sizeof *out->cn)))
+            return est_refuse(why, whylen, "out of memory");
+        if (est_plan_rn(m, rank - 1, n + 1, out->cn, why, whylen))
+        {
+            est_free_rn(out);
+            return -1;
+        }
+        est_mt_rn(m, 1, out->cn);
+    }
+    /* axis 0 over the whole array, as the 3D first axis (WIDE) */
+    if (est_col_plan_r(m, n[0], block, 0, EST_ND_R_WIDE_ON, &out->col, why, whylen) ||
+        (out->col.tpc == 1 && est__child_1d(m, n[0], VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen)))
+    {
+        est_free_rn(out);
+        return -1;
+    }
+    out->nf = est_nf_p(m, &out->col, block, &out->nsw);
+    out->col.wl = out->nf == 2 ? 0 : est_wl_3d(&out->col);   /* the strips serve axis 0 unbanded */
+    out->T = 1;
+    out->cmtf = out->nf;
+    return 0;
+}
+/* est_mt_rn: the one-thread plan p (est_plan_rn) threaded at T, by est_mt_3d's rule (est__mt_rankn) on the block.
+ * T < 2 leaves p one-thread. */
+static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p)
+{
+    int pow2 = 1, i;
+    for (i = 0; i < p->rank; i++)
+        pow2 &= est_is_pow2(p->n[i]);
+    p->T = T > 1 ? T : 1;
+    p->cmt = 0;
+    p->cmtf = p->nf;
+    p->mtnsw = 0;
+    if (T < 2)
+        return;
+    est__mt_rankn(m, T, p->n[0], est__rn_block(p), pow2, p->nf, &p->col, &p->cmt, &p->cmtf, &p->mtnsw);
+}
+/* the rank-4 to 7 row's key, as its door keys it (fftnd_il.h: key0): natural, axis 0, c2c, one thread; the writers
+ * key a threaded plan's row at its T */
+static inline void est__colkey_rn(vw2_ilcol_key_t *ck, int rank, const int *n)
+{
+    int i;
+    est__colkey(ck, rank, n[0], n[1], n[2]);
+    for (i = 3; i < rank; i++)
+        ck->nx[i - 3] = n[i];
+}
+/* est_put_rows_rn: the rank-4 to 7 row into st, as est_put_rows_3d writes the 3D row with s = 1: the axis-0 column
+ * tokens, s nf and nsw, at T > 1 the threaded verdict, the block child as a whole row of its own rank with its own
+ * children under plane_, then tpc_. Returns 0, or -1 with the reason. */
+static inline int est_put_rows_rn(vw2_store_t *st, const est_planrn_t *p, char *why, size_t whylen)
+{
+    vw2_ilcol_key_t ck;
+    vw2_key_t key;
+    struct vfft_wisdom_s *C;
+    char sh[96];
+    int ok;
+    est__rn_shape(p->n, p->rank, sh, sizeof sh);
+    est__colkey_rn(&ck, p->rank, p->n);
+    ck.nthreads = p->T > 1 ? p->T : 1;
+    if (est__put_col(st, &ck, &p->col, -1, p->nf != 2) || vw2_ilcol_tok_seti(st, &ck, "s", 1) != VW2_OK ||
+        vw2_ilcol_tok_seti(st, &ck, "nf", p->nf) != VW2_OK ||
+        (p->nf == 2 && vw2_ilcol_tok_seti(st, &ck, "nsw", p->nsw) != VW2_OK))
+        return est_refuse(why, whylen, "the %s row was refused by the store's writers", sh);
+    if (p->T > 1 &&
+        (vw2_ilcol_tok_seti(st, &ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, &ck, "cmts", 1) != VW2_OK ||
+         vw2_ilcol_tok_seti(st, &ck, "cmtf", p->cmtf) != VW2_OK ||
+         (p->cmt == 2 && p->cmtf == 2 && vw2_ilcol_tok_seti(st, &ck, "nsw", p->mtnsw) != VW2_OK)))
+        return est_refuse(why, whylen, "the %s row's threaded verdict was refused by the store's writers", sh);
+    vw2__ilcol_key(&ck, &key);
+    if (!(C = vfft_child_store_new()))
+        return est_refuse(why, whylen, "out of memory");
+    if (p->rank == 4 ? est_put_rows_3d(&C->vw2, p->c3, why, whylen) : est_put_rows_rn(&C->vw2, p->cn, why, whylen))
+    {
+        vfft_child_store_free(C);
+        return -1;
+    }
+    ok = vfft_child_row_update(st, &key, "plane_", C);
+    vfft_child_store_free(C);
+    if (!ok)
+        return est_refuse(why, whylen, "the block child could not be put on the %s row", sh);
+    if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->n[0], VFFT_PLACEMENT_IN, why, whylen))
         return -1;
     return 0;
 }

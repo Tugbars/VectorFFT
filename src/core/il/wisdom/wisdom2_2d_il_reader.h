@@ -258,6 +258,12 @@ static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *c
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, (int)ck->n1, (int)ck->n2, ck->ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL, ck->nthreads);   /* the extents (vw2__ilcol_key) */
+    if (ck->rank > 3)
+    {   /* rank 4 to 7: the extents after the third */
+        int i;
+        for (i = 3; i < ck->rank && i < VW2_MAX_DIMS; i++)
+            r->key.n[i] = ck->nx[i - 3];
+    }
     if (ck->lm)
     {   /* the lane-major batches' rows (vw2__ilcol_key): rank 1 at q = K (n1), rank 2 at q = K (n2), rank 3 at q = K (q) */
         if (ck->rank == 3) r->key.q = (int64_t)ck->q;

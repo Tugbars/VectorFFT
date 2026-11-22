@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
-/* c2c_estimate_nd_il.h — the ESTIMATE create at rank 2 and 3 (VFFT_FLAG_ESTIMATE): a 2D or 3D
+/* c2c_estimate_nd_il.h — the ESTIMATE create at rank 2 to 7 (VFFT_FLAG_ESTIMATE): a 2D or 3D
  * interleaved c2c plan built from the formulas' recipe (il/estimate/estimate_nd_il.h) through the
- * doors' own replay, with nothing measured (docs/design/estimate_2d3d_sketch.md §11).
+ * doors' own replay, with nothing measured (docs/design/estimate_2d3d_sketch.md §11); and, since
+ * 2026-11-22, one transform of rank 4 to 7 the same way (est_plan_rn, est_build_rn): the 3D recipe's
+ * formulas with the block behind one index of axis 0 in the plane's place, the block child the recipe
+ * one rank down.
  *
  * The 1D build's steps one rank up (c2c_estimate_il.h), on its pieces:
  *   1. THE PRE-FLIGHT. What the door would refuse, or race behind, checked before the door sees the
@@ -271,6 +274,67 @@ static inline int est__preflight_3d(const est_plan3d_t *p, char *why, size_t why
     return 0;
 }
 
+/* The rank-4 to 7 row as its door replays it (fftnd_il.h, RANK 4 TO 7): est__preflight_3d's tests with the block in
+ * the plane's place and the structure the child alone -- axis 0, the natural form (the strips at a width of the door's
+ * strip pool, serving axis 0 unbanded), at T > 1 the threaded verdict (serial, or the plane arm with a form), the
+ * block child one rank down on one thread (the 3D row at rank 4), the turned pass's child. Returns 0, or -1 with
+ * the reason. */
+static inline int est__preflight_rn(const est_planrn_t *p, char *why, size_t whylen)
+{
+    char w2[400], sh[96];
+    const long long block = est__rn_block(p);
+    int sp[8], n, i, in = 0, inmt = 0;
+    est__rn_shape(p->n, p->rank, sh, sizeof sh);
+    if (p->rank < 4 || p->rank > 7 || vfft_policy_c2c_row_refused(p->n[p->rank - 1]))
+        return est_refuse(why, whylen, "%s is not a cell the rank-N door serves", sh);
+    for (i = 0; i < p->rank; i++)
+        if (p->n[i] < 2)
+            return est_refuse(why, whylen, "%s is not a cell the rank-N door serves", sh);
+    if ((p->nf != 1 && p->nf != 2) || (p->nf == 1 && p->nsw) || (p->nf == 2 && p->col.wl))
+        return est_refuse(why, whylen, "%s: nf=%d nsw=%d wl=%d", sh, p->nf, p->nsw, p->col.wl);
+    n = est__sw_pool_p(&p->col, block, sp, 8);
+    for (i = 0; i < n; i++)
+    {
+        in |= sp[i] == p->nsw;
+        inmt |= sp[i] == p->mtnsw;
+    }
+    if (p->nf == 2 && !in)   /* the width one of the door's strip pool at this axis 0 */
+        return est_refuse(why, whylen, "%s: the strip width %d is not in the door's strip pool", sh, p->nsw);
+    if (p->T > 1)
+    {
+        if ((p->cmt != 0 && p->cmt != 2) || (p->cmtf != 1 && p->cmtf != 2) ||
+            (!p->cmt && (p->cmtf != p->nf || p->mtnsw)) || (p->cmt && (p->cmtf == 2 ? !inmt : p->mtnsw != 0)))
+            return est_refuse(why, whylen, "%s T=%d: cmt=%d cmtf=%d nsw=%d is no threaded verdict the door serves here", sh,
+                              p->T, p->cmt, p->cmtf, p->mtnsw);
+    }
+    else if (p->cmt || p->mtnsw)
+        return est_refuse(why, whylen, "%s: a threaded verdict on a one-thread plan", sh);
+    if (est__preflight_col(&p->col, w2, sizeof w2))
+        return est_refuse(why, whylen, "%s axis 0: %s", sh, w2);
+    if (p->col.nat || p->col.w != block || p->col.N != p->n[0])
+        return est_refuse(why, whylen, "%s: axis 0 is not the scrambled pass over the blocks", sh);
+    if (p->rank == 4)
+    {
+        const est_plan3d_t *c = p->c3;
+        if (!c || p->cn || c->N1 != p->n[1] || c->N2 != p->n[2] || c->N3 != p->n[3] || c->T > 1)
+            return est_refuse(why, whylen, "%s: the block child is not the 3D plan at %dx%dx%d on one thread", sh, p->n[1],
+                              p->n[2], p->n[3]);
+        if (est__preflight_3d(c, w2, sizeof w2))
+            return est_refuse(why, whylen, "%s, the block child: %s", sh, w2);
+    }
+    else
+    {
+        const est_planrn_t *c = p->cn;
+        if (!c || p->c3 || c->rank != p->rank - 1 || memcmp(c->n, p->n + 1, sizeof(int) * (size_t)c->rank) || c->T > 1)
+            return est_refuse(why, whylen, "%s: the block child is not the plan one rank down on one thread", sh);
+        if (est__preflight_rn(c, w2, sizeof w2))
+            return est_refuse(why, whylen, "%s, the block child: %s", sh, w2);
+    }
+    if (p->col.tpc == 1 && est__preflight_child(&p->tpcp, p->n[0], VFFT_PLACEMENT_IN, "the turned prime pass", why, whylen))
+        return -1;
+    return 0;
+}
+
 /* ── the plan the door built ────────────────────────────────────────────── */
 
 /* the checks below return 0 when the handle is the recipe's plan, -1 with the reason */
@@ -377,6 +441,33 @@ static inline int est__check_3d(const struct vfft_plan_s *h, const est_plan3d_t 
     return 0;
 }
 
+/* the rank-4 to 7 plan against its recipe (est__check_3d with the structure the child alone): the thread count, the
+ * threaded verdict and its team (the full one), the natural form, axis 0, the block child one rank down, the turned
+ * pass's plan */
+static inline int est__check_rn(const struct vfft_plan_s *h, const est_planrn_t *p, char *why, size_t whylen)
+{
+    const vfft_ilnd_t *d = h ? h->ilnd : NULL;
+    const int T = p->T > 1 ? p->T : 1, mt = T > 1 ? p->cmt : 0, nf = mt ? p->cmtf : p->nf,
+              nsw = nf != 2 ? 0 : mt ? p->mtnsw : p->nsw;
+    char sh[96];
+    est__rn_shape(p->n, p->rank, sh, sizeof sh);
+    if (!d || d->rank != p->rank || memcmp(d->N, p->n, sizeof(int) * (size_t)p->rank))
+        return est_refuse(why, whylen, "the door built no rank-%d plan at %s", p->rank, sh);
+    if ((T > 1 && h->nthreads != T) || d->arm != 1 || d->mt != mt || d->ptw != 0 || !d->child || d->row || d->nf != nf ||
+        (nf == 2 && d->nsw != nsw))
+        return est_refuse(why, whylen, "%s: the door serves T=%d structure %d, mt %d team %d, form %d width %d; the recipe "
+                          "T=%d the child, mt %d, the full team, %d width %d", sh, h->nthreads, d->arm, d->mt, d->ptw, d->nf,
+                          d->nsw, T, mt, nf, nsw);
+    if (est__check_col(&d->ax0, &p->col, why, whylen))
+        return -1;
+    if (p->rank == 4 ? est__check_3d(d->child, p->c3, why, whylen) : est__check_rn(d->child, p->cn, why, whylen))
+        return -1;
+    if (p->col.tpc == 1 &&
+        est__check_child(d->ax0.tpcplan, &p->tpcp, p->n[0], VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))
+        return -1;
+    return 0;
+}
+
 /* ── the build ──────────────────────────────────────────────────────────── */
 
 /* est_build_nd: the recipe of a 2D (p2) or 3D (p3; the other NULL) request -> a plan built with
@@ -473,7 +564,64 @@ out:
     return h;
 }
 
-/* THE FRONT DOOR'S ESTIMATE CREATE at rank 2 and 3 (_vfft_create_estimate): the recipe and the build.
+/* est_build_rn: the recipe p of a rank-4 to 7 request -> a plan built with nothing measured, or NULL with the reason
+ * in why and the outcome in rep (may be NULL); est_build_nd's steps (the pre-flight, the rows into a store held in
+ * memory, the door's replay, the plan checked against the recipe). cfg is the request as the front door translated
+ * it: interleaved c2c, the recipe's rank and shape, natural, one transform, at the recipe's thread count; its store
+ * and save flag are not used. Holds the create lock from the pre-flight to the end. The caller owns the plan. */
+static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const vfft_cfg_t *cfg, est_build_report_t *rep,
+                                               char *why, size_t whylen)
+{
+    est_build_report_t lrep;
+    struct vfft_wisdom_s *S = NULL;
+    struct vfft_plan_s *h = NULL;
+    est__meter_t m0;
+    if (!rep)
+        rep = &lrep;
+    memset(rep, 0, sizeof *rep);
+    rep->status = EST_REFUSED;
+    if (why && whylen)
+        why[0] = 0;
+    if (!p || !cfg || cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != p->rank ||
+        cfg->howmany != 1 || cfg->order == VFI_ORDER_SCRAMBLED ||
+        memcmp(cfg->n, p->n, sizeof(int) * (size_t)(p ? p->rank : 0)) ||
+        (cfg->nthreads > 1 ? cfg->nthreads : 1) != (p->T > 1 ? p->T : 1))
+    {
+        est_refuse(why, whylen, "estimate builds one interleaved c2c transform of rank 4 to 7 in natural order, at the "
+                   "recipe's shape and thread count");
+        return NULL;
+    }
+    vfft_env_init();          /* the pre-flight's tables in the create's FP mode */
+    _vfft_create_lock();      /* recursive: the pre-flight touches the create's process statics */
+    _vfft_create_depth++;     /* the whole build inside a create: a clock read enters a scope */
+    est__meter_read(&m0);
+    if (est__preflight_rn(p, why, whylen))
+        goto out;
+    if (!(S = vfft_child_store_new()))
+    {
+        est_refuse(why, whylen, "out of memory");
+        goto out;
+    }
+    if (est_put_rows_rn(&S->vw2, p, why, whylen))
+        goto out;
+    h = est__replay(S, cfg, &m0, rep, why, whylen);
+    if (h && est__check_rn(h, p, why, whylen))
+    {
+        rep->status = EST_NOPLAN;
+        vfft_destroy((vfft_plan)h);
+        h = NULL;
+    }
+    else if (h)
+        rep->status = EST_BUILT;
+out:
+    vfft_child_store_free(S);
+    if (--_vfft_create_depth == 0)
+        _vfft_scope_create_done();   /* leave a scope a clock read entered */
+    _vfft_create_unlock();
+    return h;
+}
+
+/* THE FRONT DOOR'S ESTIMATE CREATE at rank 2 to 7 (_vfft_create_estimate): the recipe and the build.
  * NULL with the reason on the error record (vfft_error). */
 static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg_t *cfg)
 {
@@ -522,8 +670,22 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         free(p);
         free(q);
     }
+    else if (cfg->dims >= 4 && cfg->dims <= 7 && cfg->howmany == 1)
+    {   /* rank 4 to 7: the rank-N tier one rank up (est_plan_rn), one transform */
+        est_planrn_t *p = (est_planrn_t *)malloc(sizeof *p);
+        if (!p)
+            snprintf(why, sizeof why, "out of memory");
+        else if (!est_plan_rn(m, cfg->dims, cfg->n, p, why, sizeof why))
+        {
+            est_mt_rn(m, cfg->nthreads, p);
+            h = est_build_rn(p, cfg, NULL, why, sizeof why);
+            est_free_rn(p);
+        }
+        free(p);
+    }
     else
-        snprintf(why, sizeof why, "rank %d: estimate plans ranks 1 to 3", cfg->dims);
+        snprintf(why, sizeof why, "rank %d with howmany = %zu: estimate plans ranks 1 to 3, and one transform at ranks "
+                 "4 to 7", cfg->dims, cfg->howmany);
     if (!h)
         _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE: %s", why);
     return (vfft_plan)h;
