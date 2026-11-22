@@ -15,6 +15,13 @@ version can change how a function behaves, so compile your program again with ea
 - Real transforms (R2C, C2R) of rank 4 to 7: one transform per plan, out of place, on one
   thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`.
 
+### Fixed
+
+- 1D complex transforms in scrambled order (`VFFT_ORDER_SCRAMBLED`) on two or more threads
+  returned a wrong result at lengths of the form 2^k times an odd number, such as 10,000,
+  50,000 or 100,000. AVX2 builds of 0.8.1 were affected; natural order, one thread, powers
+  of two and AVX-512 builds were not.
+
 ## 0.8.1 beta (2026-11-19)
 
 ### Faster
