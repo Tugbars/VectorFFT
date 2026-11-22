@@ -40,11 +40,13 @@ WISDOM_FILES = ("wisdom2_oop.txt", "wisdom2_prime.txt", "wisdom2_scr.txt", "wisd
 EXE = ".exe" if os.name == "nt" else ""
 CONTROL_N = 4096
 CONTROL_3D = (64, 64, 64)   # the 3D contract's control cell (2026-09-24)
+CONTROL_ND = {4: (16, 16, 16, 16), 5: (8, 8, 8, 8, 8), 6: (8, 8, 8, 8, 8, 8), 7: (4, 4, 4, 4, 4, 4, 4)}   # ranks 4 to 7 (2026-11-22)
 CONTROL_2D = (64, 64)
 
 
 def is2d(c):
-    """a SHAPE: a 2D (N1, N2) or a 3D (N1, N2, N3) cell (the name predates the 3D contract of 2026-09-24)"""
+    """a SHAPE: a 2D (N1, N2), a 3D (N1, N2, N3) or a rank-4 to 7 cell (the name predates the 3D contract of
+    2026-09-24; ranks 4 to 7 since 2026-11-22)"""
     return isinstance(c, tuple)
 
 
@@ -53,7 +55,7 @@ def ndim(c):
 
 
 def ckey(c):
-    """the cell's name everywhere it is written: N, N1xN2, or N1xN2xN3"""
+    """the cell's name everywhere it is written: N, N1xN2, N1xN2xN3, ... up to seven extents"""
     return "x".join(str(v) for v in c) if is2d(c) else str(c)
 
 
@@ -115,7 +117,7 @@ def parse_cells(spec):
         tok = tok.strip()
         if not tok:
             return
-        if "x" in tok:                      # a 2D shape N1xN2 or a 3D shape N1xN2xN3
+        if "x" in tok:                      # a shape: N1xN2, N1xN2xN3, ... up to seven extents
             cells.add(tuple(int(v) for v in tok.split("x")))
         elif ".." in tok:
             a, b = tok.split("..")
@@ -135,7 +137,7 @@ def parse_cells(spec):
         else:
             add(part)
     if len(set(ndim(c) for c in cells)) > 1:
-        raise SystemExit("a run is one contract: 1D lengths, 2D shapes and 3D shapes cannot mix")
+        raise SystemExit("a run is one contract: 1D lengths and shapes of different ranks cannot mix")
     return sorted(cells)
 
 
@@ -471,6 +473,10 @@ def bench_cell(run, n, csv_path):
         lm, nd = run.batch == "lane-major", ndim(n)
         flag = [("--lmc2c" if lm else "--tcc2c") if nd == 1 else ("--lm%dd" if lm else "--tc%dd") % nd] + (["--mt"] if run.threads > 1 else [])
         nstr, kstr = ckey(n), str(run.k)
+    elif is2d(n) and len(n) >= 4:
+        # the rank-4 to 7 c2c cell (2026-11-22): the shape N1x...xNr in the N slot (bench --ndnat), the 3D cell's protocol
+        flag = ["--ndnat"] + (["--mt"] if run.threads > 1 else []) + (["--ilip"] if run.ip else [])
+        nstr, kstr = ckey(n), "1"
     elif is2d(n) and len(n) == 3 and run.real:
         # the 3D REAL cell (2026-10-07): the shape N1xN2xN3 in the N slot (bench --3dreal; the rank-3 real tier, one thread)
         flag = ["--3dreal", "--realfwd" if run.real == "r2c" else "--realbwd"] + (["--mt"] if run.threads > 1 else []) + (["--realown"] if run.ip == 2 else ["--realip"] if run.ip else [])   # --mt: the threaded cell at $VFFT_MT, MKL at the same T; --realip / --realown: in place, door 1 / door 2 (2026-10-08)
@@ -519,7 +525,7 @@ def control_cell(run):
     tmp = os.path.join(run.dir, ".ctl.tmp.csv")
     if os.path.isfile(tmp):
         os.remove(tmp)
-    bench_cell(run, CONTROL_3D if run.dims == 3 else CONTROL_2D if run.dims == 2 else CONTROL_N, tmp)
+    bench_cell(run, CONTROL_ND[run.dims] if run.dims >= 4 else CONTROL_3D if run.dims == 3 else CONTROL_2D if run.dims == 2 else CONTROL_N, tmp)
     if os.path.isfile(tmp):
         lines = io.open(tmp, encoding="utf-8", errors="ignore").read().splitlines(True)
         if lines:
@@ -534,7 +540,7 @@ def stage_bench(run, cells):
     if os.path.isfile(run.cal_log):
         for line in io.open(run.cal_log, encoding="utf-8", errors="ignore"):
             f = line.split()
-            if len(f) >= 2 and re.match(r"^\d+(x\d+){0,2}$", f[0]) and f[1] == "banked":
+            if len(f) >= 2 and re.match(r"^\d+(x\d+){0,6}$", f[0]) and f[1] == "banked":
                 banked.add(f[0])
     from gauntlet_report import bench_row   # a lane-major batch cell's row (the shape in N) in the gauntlet's columns
     have = {}
@@ -542,7 +548,7 @@ def stage_bench(run, cells):
         for r in csv.DictReader(open(run.csv, encoding="utf-8", errors="ignore")):
             try:
                 r = bench_row(r)
-                k = "x".join(str(int(r[c])) for c in ("N1", "N2", "N3") if c in r) if "N1" in r else str(int(r["N"]))
+                k = "x".join(str(int(r[c])) for c in ("N1", "N2", "N3", "N4", "N5", "N6", "N7") if c in r) if "N1" in r else str(int(r["N"]))
                 have[k] = have.get(k, 0) + 1
             except (KeyError, ValueError):
                 pass
@@ -746,6 +752,10 @@ def main():
         raise SystemExit("--k: the batch count of the 1D real cell, or of a c2c batch with --batch")
     if run.batch and (run.real or run.ip or run.cmp != "mkl" or run.k < 2):
         raise SystemExit("--batch: a c2c batch of --k K >= 2 transforms, out of place, against MKL")
+    if dims >= 4 and (run.real or run.batch or run.k > 1 or run.cmp == "kfr"):
+        raise SystemExit("rank 4 to 7: the c2c cell (one transform), against MKL or --cmp fftw; no --real, no --batch")
+    if dims >= 4 and not run.est and args.verb in ("run", "calibrate", "bench", "verify"):
+        raise SystemExit("rank 4 to 7: the estimate's plans only (--est); the calibrate and verify probes have no cell above rank 3")
     if run.batch and not run.est and args.verb != "cells":
         raise SystemExit("--batch: the estimate's plans only for now (--est); the calibrate probe creates no c2c batch, so a batch's planner verdict cannot be banked")
     if run.est and (args.verb in ("calibrate", "verify", "merge") or args.calibrate or args.merge):
@@ -763,7 +773,7 @@ def main():
         return 0
 
     run.prepare(cells if args.verb in ("run", "calibrate") else None)
-    run.note("%s: %d cells, contract %s%s%s%s%s, bin %s" % (args.verb, len(cells), "2D " if run.dims == 2 else "", "in place" if run.ip else "out of place",
+    run.note("%s: %d cells, contract %s%s%s%s%s, bin %s" % (args.verb, len(cells), "2D " if run.dims == 2 else "%dD " % run.dims if run.dims >= 4 else "", "in place" if run.ip else "out of place",
                                                          ", T=%d" % run.threads if run.threads > 1 else "",
                                                          ", a %s batch of %d" % (run.batch, run.k) if run.batch else "",
                                                          ", the estimate's plans" if run.est else "", run.bin))

@@ -29,6 +29,7 @@
  *   1D real   --realfwd / --realbwd (r2c / c2r); --zr2c the earlier real form
  *   1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (DST-II / DST-III / DCT-I / DST-I; --realip in place; --mt
  *             threaded; MKL's arm is its staggered sine, cosine or sine transform, in place)
+ *   rank 4-7  --ndnat the c2c cell of rank 4 to 7, the shape N1x...xNr in the N slot (--ilip in place, --mt threaded)
  *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells (--ilip in place); --2drealnat / --3dreal the
  *             real cells; --realip / --realown the real cell in place; --2dil, --3dil, --2dreal
  *             the earlier forms
@@ -273,6 +274,8 @@ static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's thre
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
 static int g_k3nat = 0;              /* --3dilnat (2026-09-24): the 3D interleaved gauntlet cell, the shape N1xN2xN3 in the N slot */
+static int g_nd_rank = 0, g_nd_n[7]; /* --ndnat (2026-11-22): the rank-4 to 7 c2c cell, the shape N1x...xNr in the N slot: the 3D
+                                      * cell's protocol (run_k2z_cell) at the rank and extents held here; 0 = the 2D / 3D cell */
 static int g_k2nat = 0;              /* --2dilnat (2026-09-23): the 2D interleaved gauntlet
                                       * cell -- the K=1 natural cell's protocol on a
                                       * dims=2 plan, N1 x N2, OOP, natural, one thread;
@@ -2344,15 +2347,30 @@ static void run_dst_cell(int N, FILE *out, int cool_ms, int flip)
  * -- the 1D gauntlet's columns with (N1, N2) in place of (N, K), so the
  * row-replace key (first four fields + flip) and the driver's readers hold.
  * ═════════════════════════════════════════════════ */
+/* the cell's rank and extents: the 2D cell (N3 = 0), the 3D cell, or under --ndnat the rank-4 to 7 cell's own
+ * (g_nd_rank, g_nd_n; N1..N3 are then its first three extents) */
+static int k2z_dims(int N1, int N2, int N3, int *n)
+{
+    if (g_nd_rank > 3)
+    {
+        memcpy(n, g_nd_n, sizeof(int) * (size_t)g_nd_rank);
+        return g_nd_rank;
+    }
+    n[0] = N1;
+    n[1] = N2;
+    n[2] = N3;
+    return N3 > 0 ? 3 : 2;
+}
 #ifdef VFFT_HAS_MKL
 static double k2z_time_mkl(int N1, int N2, int N3, const double *z0, size_t total)
-{   /* N3 = 0: the 2D cell; N3 > 0: the 3D cell (2026-09-24) */
+{   /* N3 = 0: the 2D cell; N3 > 0: the 3D cell (2026-09-24); --ndnat: rank 4 to 7 (k2z_dims) */
     DFTI_DESCRIPTOR_HANDLE d = NULL;
-    MKL_LONG dims[3];
-    dims[0] = N1;
-    dims[1] = N2;
-    dims[2] = N3;
-    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, N3 > 0 ? 3 : 2, dims) != DFTI_NO_ERROR)
+    MKL_LONG dims[7];
+    int nn[7], di;
+    const int ndm = k2z_dims(N1, N2, N3, nn);
+    for (di = 0; di < ndm; di++)
+        dims[di] = nn[di];
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, ndm, dims) != DFTI_NO_ERROR)
         return 0;
     DftiSetValue(d, DFTI_PLACEMENT, g_ilip ? DFTI_INPLACE : DFTI_NOT_INPLACE);   /* --ilip: one buffer */
     if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
@@ -2489,14 +2507,12 @@ static double k2z_kfr_xerr(int N1, int N2, int N3, const double *z0, const doubl
  * under the P-core mask main set. */
 static double k2z_time_fftw(int N1, int N2, int N3, const double *z0, size_t total)
 {
-    int n[3];
-    n[0] = N1;
-    n[1] = N2;
-    n[2] = N3;
+    int n[7];
+    const int ndf = k2z_dims(N1, N2, N3, n);   /* --ndnat: rank 4 to 7 */
     if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
         return 0;
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
-    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)(g_ilip ? zi : zo),
+    fftwx_plan p = g_fx_arm.plan_dft(ndf, n, (fftwx_complex *)zi, (fftwx_complex *)(g_ilip ? zi : zo),
                                      FFTWX_FORWARD, FFTWX_MEASURE);   /* --ilip: in place, in == out */
     if (!p) { free_d(zi); free_d(zo); return 0; }
     fftw_wis_export();
@@ -2546,14 +2562,12 @@ static double k2z_time_fftw(int N1, int N2, int N3, const double *z0, size_t tot
  * planes, the input copied after: MEASURE scribbles) */
 static double k2z_fftw_xerr(int N1, int N2, int N3, const double *z0, const double *S, size_t total)
 {
-    int n[3];
-    n[0] = N1;
-    n[1] = N2;
-    n[2] = N3;
+    int n[7];
+    const int ndf = k2z_dims(N1, N2, N3, n);   /* --ndnat: rank 4 to 7 */
     if (!fftw_arm_threads(g_k1noop_mt ? g_mt : 1))
         return -1;
     double *zi = alloc_d(2 * total), *zf = alloc_d(2 * total);
-    fftwx_plan p = g_fx_arm.plan_dft(N3 > 0 ? 3 : 2, n, (fftwx_complex *)zi, (fftwx_complex *)zf,
+    fftwx_plan p = g_fx_arm.plan_dft(ndf, n, (fftwx_complex *)zi, (fftwx_complex *)zf,
                                      FFTWX_FORWARD, FFTWX_MEASURE);
     if (!p) { free_d(zi); free_d(zf); return -1; }
     fftw_wis_export();
@@ -2594,15 +2608,26 @@ static double k2z_time_cmp(int N1, int N2, int N3, const double *z0, size_t tota
 
 static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int flip)
 {   /* N3 = 0: the 2D cell (N2 rides the K argument); N3 > 0: the 3D cell,
-     * the same protocol on a dims=3 plan against MKL DFTI 3D (2026-09-24) */
-    const int nd = N3 > 0 ? 3 : 2;
-    const char *plan_s = nd == 3 ? "z:il3d" : "z:il2d", *path = g_ilip ? "nat-ip" : "nat-oop";
-    char shape[48];
-    if (nd == 3)
-        snprintf(shape, sizeof shape, "%dx%dx%d", N1, N2, N3);
-    else
-        snprintf(shape, sizeof shape, "%dx%d", N1, N2);
-    if (N1 < 2 || N2 < 2 || (nd == 3 && N3 < 2))
+     * the same protocol on a dims=3 plan against MKL DFTI 3D (2026-09-24);
+     * --ndnat (2026-11-22): the rank-4 to 7 cell, its rank and extents from k2z_dims */
+    static const char *const PLAN_S[8] = { "", "", "z:il2d", "z:il3d", "z:il4d", "z:il5d", "z:il6d", "z:il7d" };
+    int nn[7], ai, small = 0;
+    const int nd = k2z_dims(N1, N2, N3, nn);
+    const char *plan_s = PLAN_S[nd], *path = g_ilip ? "nat-ip" : "nat-oop";
+    char shape[96];
+    {
+        size_t off = 0;
+        shape[0] = 0;
+        for (ai = 0; ai < nd && off < sizeof shape; ai++)
+        {
+            const int w = snprintf(shape + off, sizeof shape - off, "%s%d", ai ? "x" : "", nn[ai]);
+            if (w < 0)
+                break;
+            off += (size_t)w;
+            small |= nn[ai] < 2;
+        }
+    }
+    if (small)
     {
         printf("%s: a %dD cell needs every axis >= 2\n", shape, nd);
         return;
@@ -2624,9 +2649,8 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     cfg.transform = VFFT_C2C;
     cfg.placement = g_ilip ? VFFT_PLACEMENT_IN : VFFT_PLACEMENT_OUT;   /* --ilip (2026-11-12) */
     cfg.rank = nd;
-    cfg.n[0] = N1;
-    cfg.n[1] = N2;
-    cfg.n[2] = nd == 3 ? N3 : 0;
+    for (ai = 0; ai < nd; ai++)
+        cfg.n[ai] = nn[ai];
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_NATURAL;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
@@ -2640,10 +2664,17 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         printf("%s %-8s   vfft_create FAILED\n", shape, plan_s);
         return;
     }
-    size_t total = (size_t)N1 * (size_t)N2 * (size_t)(nd == 3 ? N3 : 1);
+    size_t total = 1;
+    unsigned seed = (unsigned)(42 + 131 * N1 + N2 + 7919 * N3);   /* the 2D / 3D cell's seed, unchanged */
+    for (ai = 0; ai < nd; ai++)
+    {
+        total *= (size_t)nn[ai];
+        if (ai > 2)
+            seed = seed * 31u + (unsigned)nn[ai];
+    }
     g_cell_engaged = -1;
     double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total), *rt = alloc_d(2 * total);
-    srand(42 + 131 * N1 + N2 + 7919 * N3);
+    srand(seed);
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
     /* roundtrip gate through the API (--ilip: the forward on S laid from z0, the backward on rt laid from S) */
@@ -2688,10 +2719,9 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     {   /* the correctness column is the CROSS-ENGINE elementwise compare:
          * both engines natural, same input, same spectrum (as --k1nat) */
         DFTI_DESCRIPTOR_HANDLE d = NULL;
-        MKL_LONG dims[3];
-        dims[0] = N1;
-        dims[1] = N2;
-        dims[2] = N3;
+        MKL_LONG dims[7];
+        for (ai = 0; ai < nd; ai++)
+            dims[ai] = nn[ai];
         if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, nd, dims) == DFTI_NO_ERROR)
         {
             DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
@@ -2717,7 +2747,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     /* the engagement proof (mt_results_need_engagement_proof): the tier's MT
      * counter over the timed executes; a threaded plan whose counter did not
      * move ran SERIAL, and its row must say so */
-#define K2Z_ENG() ((nd == 3) ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes())
+#define K2Z_ENG() ((nd >= 3) ? vfft_ilnd_mt_passes() : vfft_il2d_col_mt_passes())   /* rank 3 to 7: the rank-N tier's counter */
     /* the A/B runs in every build, as the K=1 cell's does: the FFTW arm binds
      * at runtime, and k2z_time_cmp returns 0 when no comparator is active
      * (ns only, ratio 0, as a no-MKL build reported before) */
@@ -2756,7 +2786,10 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
         char row[320], eng[24] = "";
         if (T > 1)
             snprintf(eng, sizeof eng, "%ld,", g_cell_engaged);   /* the column sits BEFORE flip: flip stays the row key's last field */
-        if (nd == 3)
+        if (nd > 3)   /* --ndnat: the shape in N, K = 1 (the 1D gauntlet's columns: the row key is N,K,plan,path + flip) */
+            snprintf(row, sizeof row, "%s,1,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
+                     shape, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
+        else if (nd == 3)
             snprintf(row, sizeof row, "%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
                      N1, N2, N3, plan_s, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
         else
@@ -5983,6 +6016,7 @@ int main(int argc, char **argv)
         "  1D real   --realfwd / --realbwd; --zr2c\n"
         "  1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (--realip in place; --mt threaded)\n"
         "  2D / 3D   --2dilnat / --3dilnat (--ilip in place); --2drealnat / --3dreal (--realip / --realown in place); --2dil / --3dil / --2dreal\n"
+        "  rank 4-7  --ndnat (the c2c cell of rank 4 to 7: the shape N1x...xNr in the N slot; --ilip in place, --mt threaded)\n"
         "  batches   --lmc2c / --lmr2c / --lmc2r; --lm2d / --lm3d; --lm2dr2c / --lm2dc2r / --lm3dr2c / --lm3dc2r; --ilmt;\n"
         "            --tcc2c / --tc2d / --tc3d (the contiguous c2c batches; --mt threaded)\n"
         "  --est     beside any mode but --f32: our plans by VFFT_FLAG_ESTIMATE instead of the planner's\n"
@@ -6011,6 +6045,11 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--3dilnat") == 0)
         {
             g_k3nat = 1; /* the 3D interleaved GAUNTLET cell (2026-09-24): N1xN2xN3 in the N argument */
+        }
+        else if (strcmp(argv[1], "--ndnat") == 0)
+        {
+            g_k3nat = 1; /* the rank-4 to 7 cell (2026-11-22): the 3D cell's flags and protocol, the shape */
+            g_nd_rank = -1; /* N1x...xNr in the N argument (parsed at the dispatch: 4 to 7 extents) */
         }
         else if (strcmp(argv[1], "--2dilnat") == 0)
         {
@@ -6212,7 +6251,7 @@ int main(int argc, char **argv)
     }
 #endif
 #ifdef VFFT_HAS_KFR
-    if (g_cmp_kfr && (mt || il2d || il3d || real2d || g_k2real || g_k3real || g_real_ip || g_dst))
+    if (g_cmp_kfr && (mt || il2d || il3d || real2d || g_k2real || g_k3real || g_real_ip || g_dst || g_nd_rank))   /* --ndnat: no KFR arm */
     {   /* the 1D c2c cell and, since 2026-10-10, the 1D real cells (--realfwd / --realbwd; run_real_cell admits an even N, K = 1) and the 2D/3D c2c cells (--2dilnat / --3dilnat) */
         fprintf(stderr, "--cmp kfr: the KFR arm is the 1D c2c cell, the 2D/3D c2c cells (--2dilnat / --3dilnat) and the 1D real cells (--realfwd / --realbwd), one thread\n");
         return 2;
@@ -6559,7 +6598,9 @@ int main(int argc, char **argv)
     }
     if (out && csv_pos == 0)
     {
-        if (g_k3nat)
+        if (g_k3nat && g_nd_rank)   /* --ndnat: the shape in N */
+            fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
+        else if (g_k3nat)
             fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
         else if (g_k3real)
             fprintf(out, "N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,%sflip\n", g_k1noop_mt ? "engaged," : "");
@@ -6616,7 +6657,28 @@ int main(int argc, char **argv)
     {   /* --3dilnat: the 3D interleaved gauntlet cell, the shape N1xN2xN3 in
          * the N argument; nothing else runs in this process (2026-09-24) */
         int n1 = 0, n2 = 0, n3 = 0;
-        if (argc < 5 || sscanf(argv[4], "%dx%dx%d", &n1, &n2, &n3) != 3)
+        if (g_nd_rank)
+        {   /* --ndnat: 4 to 7 extents */
+            const char *s = argc >= 5 ? argv[4] : "";
+            int r = 0;
+            while (*s && r < 7)
+            {
+                char *e;
+                g_nd_n[r++] = (int)strtol(s, &e, 10);
+                s = e;
+                if (*s != 'x')
+                    break;
+                s++;
+            }
+            if (*s || r < 4)
+            {
+                printf("--ndnat needs a shape of 4 to 7 extents, N1x...xNr, in the N argument\n");
+                return 2;
+            }
+            g_nd_rank = r;
+            n1 = g_nd_n[0]; n2 = g_nd_n[1]; n3 = g_nd_n[2];
+        }
+        else if (argc < 5 || sscanf(argv[4], "%dx%dx%d", &n1, &n2, &n3) != 3)
         {
             printf("--3dilnat needs the shape N1xN2xN3 in the N argument\n");
             return 2;

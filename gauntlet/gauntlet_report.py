@@ -65,8 +65,8 @@ def bench_row(r):
     cross-engine error as xerr and no GFLOPS; they read here as N1 / N2 / N3, mkl_ns / ratio_vs_mkl, rt_err (the
     column the gauntlet's 2D and 3D cells fill with the same compare) and vfft_gflops (5 P log2 P K / ns)"""
     n = r.get("N") or ""
-    if "N1" not in r and "x" in n:
-        for c, v in zip(("N1", "N2", "N3"), n.split("x")):
+    if "N1" not in r and "x" in n:   # the shape in N: a lane-major batch cell (rank 2 or 3), the rank-4 to 7 c2c cell
+        for c, v in zip(("N1", "N2", "N3", "N4", "N5", "N6", "N7"), n.split("x")):
             r[c] = v
     if "mkl_ns" not in r and "mkl_mirror_ns" in r:
         r["mkl_ns"], r["ratio_vs_mkl"] = r["mkl_mirror_ns"], r["ratio_mirror"]
@@ -118,7 +118,7 @@ def read_calibrate_2d(path):
         return out
     for line in io.open(path, encoding="utf-8", errors="ignore"):
         f = line.split()
-        if len(f) >= 3 and re.match(r"^\d+(x\d+){1,2}$", f[0]):
+        if len(f) >= 3 and re.match(r"^\d+(x\d+){1,6}$", f[0]):
             ms = int(f[2].rstrip("ms")) if f[2].endswith("ms") else 0
             out[tuple(int(x) for x in f[0].split("x"))] = (f[1], ms, f[3] if len(f) > 3 else "?", f[4] if len(f) > 4 else "-")
     return out
@@ -134,15 +134,16 @@ def colclass(n1):
 
 
 def build_2d(run_dir, sfx="_2d"):
-    """the 2D (and, since 2026-09-24, the 3D) contract's report: per-shape table, by route, by column class, by size"""
-    nd = 3 if sfx.startswith("_3d") else 2
+    """the 2D (and, since 2026-09-24, the 3D; since 2026-11-22, the rank-4 to 7) contract's report: per-shape table,
+    by route, by column class, by size"""
+    nd = int(sfx[1]) if re.match(r"^_[2-7]d", sfx) else 2
     rows = collections.defaultdict(list)
     p = os.path.join(run_dir, "gauntlet%s.csv" % sfx)
     if os.path.isfile(p):
         for r in csv.DictReader(open(p, encoding="utf-8", errors="ignore")):
             try:
                 r = bench_row(r)
-                rows[tuple(int(r[c]) for c in ("N1", "N2", "N3") if c in r)].append(r)
+                rows[tuple(int(r[c]) for c in ("N1", "N2", "N3", "N4", "N5", "N6", "N7") if c in r)].append(r)
             except (KeyError, ValueError):
                 pass
     cal = read_calibrate_2d(os.path.join(run_dir, "calibrate%s.log" % sfx))
@@ -173,7 +174,8 @@ def build_2d(run_dir, sfx="_2d"):
         place, kk, sfx.replace("_%dd" % nd, ""), len(keys), len(cells),
         (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else "MKL cosine transform (in place)" if "_dct1" in sfx else "MKL sine transform (in place)" if "_dst1" in sfx else "MKL staggered sine transform (in place)" if "_dst" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
     if ctl:
-        W("control cell %s: %d readings, %.3f..%.3f\n" % ("64x64x64" if nd == 3 else "64x64", len(ctl), min(ctl), max(ctl)))
+        W("control cell %s: %d readings, %.3f..%.3f\n" % ({2: "64x64", 3: "64x64x64", 4: "16x16x16x16", 5: "8x8x8x8x8", 6: "8x8x8x8x8x8",
+                                                         7: "4x4x4x4x4x4x4"}[nd], len(ctl), min(ctl), max(ctl)))
     if any("engaged" in r for rs in rows.values() for r in rs):
         # the threaded contract (2026-09-24): a plan whose MT counter never moved ran serial
         serial = sorted("x".join(str(v) for v in k) for k, rs in rows.items()
@@ -182,7 +184,8 @@ def build_2d(run_dir, sfx="_2d"):
             len(serial), (": " + ", ".join(serial[:40]) + (" ..." if len(serial) > 40 else "")) if serial else ""))
     W("\n## every shape\n")
     W("```")
-    W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % ("shape", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
+    sw = max([11] + [len("x".join(str(v) for v in k)) for k in keys])   # the shape column: 11, wider for a long shape
+    W(" %*s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % (sw, "shape", "N1 factors", "route", "served", "ours ns", "cmp ns", "x", "GFLOPS", "rt err"))
     for k in keys:
         c = cells.get(k)
         st = cal.get(k, ("-", 0, "-", "-"))
@@ -190,11 +193,11 @@ def build_2d(run_dir, sfx="_2d"):
         route = c["route"] if c and c["route"] not in ("-", "") else st[3]   # the bench's route, else the calibrate log's (the 3D plan names no route)
         name = "x".join(str(v) for v in k)
         if c:
-            W(" %11s  %-12s %-6s %-9s %10d %10s %7s %8.1f %8.1e" % (
-                name, facstr(k[0])[:12], route, served, c["best"], ("%d" % c["mkl"]) if has_cmp else "-",
+            W(" %*s  %-12s %-6s %-9s %10d %10s %7s %8.1f %8.1e" % (
+                sw, name, facstr(k[0])[:12], route, served, c["best"], ("%d" % c["mkl"]) if has_cmp else "-",
                 ("%.2f" % c["lo"]) if has_cmp else "-", c["gflops"], c["rt"]))
         else:
-            W(" %11s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % (name, facstr(k[0])[:12], route, served, "-", "-", "-", "-", "not benched"))
+            W(" %*s  %-12s %-6s %-9s %10s %10s %7s %8s %8s" % (sw, name, facstr(k[0])[:12], route, served, "-", "-", "-", "-", "not benched"))
     W("```\n")
     if not has_cmp or not cells:
         W("\n(no comparator: the ratio tables need MKL; see the ns and GFLOPS columns)\n")
@@ -234,7 +237,7 @@ def build_2d(run_dir, sfx="_2d"):
 
 
 def build(run_dir, sfx="", isa=""):
-    if sfx.startswith("_2d") or sfx.startswith("_3d"):
+    if re.match(r"^_[2-7]d", sfx):   # the shapes' report: rank 2 to 7
         return build_2d(run_dir, sfx)
     rows = read_csv(os.path.join(run_dir, "gauntlet%s.csv" % sfx))
     cal = read_calibrate(os.path.join(run_dir, "calibrate%s.log" % sfx))
