@@ -1,0 +1,17 @@
+2026-11-22 02:36:58 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-22 02:36:58 run: 17 cells, contract 6D out of place, the estimate's plans, bin build/gauntlet
+2026-11-22 02:36:58 bench: 17 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 02:38:11   benched 17/17 (53x4x4x4x4x4), 70 s elapsed
+2026-11-22 02:38:12 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank6_avx2_2026-11-22\report_6d_est.md
+2026-11-22 02:40:51 run: 17 cells, contract 6D out of place, T=4, the estimate's plans, bin build/gauntlet
+2026-11-22 02:40:51 bench: 17 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 02:41:37   benched 17/17 (53x4x4x4x4x4), 44 s elapsed
+2026-11-22 02:41:39 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank6_avx2_2026-11-22\report_6d_mt4_est.md
+2026-11-22 02:44:07 run: 17 cells, contract 6D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-22 02:44:07 bench: 17 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 02:44:52   benched 17/17 (53x4x4x4x4x4), 44 s elapsed
+2026-11-22 02:44:54 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank6_avx2_2026-11-22\report_6d_mt8_est.md
+2026-11-22 02:48:13 run: 17 cells, contract 6D out of place, the estimate's plans, bin build/gauntlet
+2026-11-22 02:48:13 bench: 17 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 02:49:19   benched 17/17 (53x4x4x4x4x4), 64 s elapsed
+2026-11-22 02:49:21 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank6_avx2_2026-11-22\report_6d_fftw_est.md

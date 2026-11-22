@@ -1,0 +1,5 @@
+2026-11-22 03:11:52 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-22 03:11:52 run: 7 cells, contract out of place, the estimate's plans, bin build/gauntlet
+2026-11-22 03:11:52 bench: 7 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-22 03:12:05   benched 7/7 (32x32x32), 11 s elapsed
+2026-11-22 03:12:06 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\rank3_cubes_fftw_avx2_2026-11-22\report_3d_fftw_est.md

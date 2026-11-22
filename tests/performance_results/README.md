@@ -266,3 +266,15 @@ one-thread csv files of the `_9800x3d` folders.
 ![VectorFFT's speedup over FFTW at one thread on the 9800X3D, every 3D volume of the test](../../src/tools/plots/vectorfft-avx512-9800x3d-3d.svg)
 
 **Figure 5.** 3D: the test's 85 volumes.
+
+## Rank 4 to 7 on the 14900KF
+
+> **Records:** [`rank4_avx2_2026-11-22`](rank4_avx2_2026-11-22/), [`rank5_avx2_2026-11-22`](rank5_avx2_2026-11-22/),
+> [`rank6_avx2_2026-11-22`](rank6_avx2_2026-11-22/), [`rank7_avx2_2026-11-22`](rank7_avx2_2026-11-22/),
+> [`rank3_cubes_fftw_avx2_2026-11-22`](rank3_cubes_fftw_avx2_2026-11-22/)  
+> **Cells:** the timing cells of [`tests/rank_n/`](../rank_n/README.md), 88 shapes of rank 4 to 7; seven 3D cubes
+> against FFTW in the last folder  
+> **Page:** [`docs/performance/rank4_7_FP64_14900KF.md`](../../docs/performance/rank4_7_FP64_14900KF.md)
+
+Complex transforms of rank 4 to 7 with estimate plans, against MKL at 1, 4 and 8 threads and against FFTW at one
+thread. These runs are not part of the regression test; their tables are on the page above.
