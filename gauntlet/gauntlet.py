@@ -471,7 +471,8 @@ def bench_cell(run, n, csv_path):
         # the c2c batch (2026-11-20): K transforms, the length or the shape in the N slot, K in the K slot; the
         # bench's contiguous cell (--tcc2c / --tc2d / --tc3d) or its lane-major cell (--lmc2c / --lm2d / --lm3d)
         lm, nd = run.batch == "lane-major", ndim(n)
-        flag = [("--lmc2c" if lm else "--tcc2c") if nd == 1 else ("--lm%dd" if lm else "--tc%dd") % nd] + (["--mt"] if run.threads > 1 else [])
+        flag = [("--lmc2c" if lm else "--tcc2c") if nd == 1 else ("--lmnd" if lm else "--tcnd") if nd >= 4 else
+                ("--lm%dd" if lm else "--tc%dd") % nd] + (["--mt"] if run.threads > 1 else [])   # rank 4 to 7: --tcnd / --lmnd (2026-11-22)
         nstr, kstr = ckey(n), str(run.k)
     elif is2d(n) and len(n) >= 4:
         # the rank-4 to 7 c2c cell (2026-11-22): the shape N1x...xNr in the N slot (bench --ndnat), the 3D cell's protocol
@@ -752,8 +753,8 @@ def main():
         raise SystemExit("--k: the batch count of the 1D real cell, or of a c2c batch with --batch")
     if run.batch and (run.real or run.ip or run.cmp != "mkl" or run.k < 2):
         raise SystemExit("--batch: a c2c batch of --k K >= 2 transforms, out of place, against MKL")
-    if dims >= 4 and (run.real or run.batch or run.k > 1 or run.cmp == "kfr"):
-        raise SystemExit("rank 4 to 7: the c2c cell (one transform), against MKL or --cmp fftw; no --real, no --batch")
+    if dims >= 4 and (run.real or run.cmp == "kfr"):
+        raise SystemExit("rank 4 to 7: the c2c cell, one transform (against MKL or --cmp fftw) or a batch (--batch, against MKL); no --real")
     if dims >= 4 and not run.est and args.verb in ("run", "calibrate", "bench", "verify"):
         raise SystemExit("rank 4 to 7: the estimate's plans only (--est); the calibrate and verify probes have no cell above rank 3")
     if run.batch and not run.est and args.verb != "cells":

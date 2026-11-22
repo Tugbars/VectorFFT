@@ -60,3 +60,13 @@ python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> 
 
 Add `--threads T` for a threaded run and `--cmp fftw` for FFTW in MKL's place. The bench's cell is `--ndnat`
 (`gauntlet/bench_1d_vs_mkl.c`): the 3D cell's protocol at the shape's rank.
+
+A batch of K transforms against MKL's batch on the same layout, on one thread or with `--threads T`:
+
+```
+python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> --bin-dir build/gauntlet --est --batch contiguous --k 4
+python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --name <run> --bin-dir build/gauntlet --est --batch lane-major --k 4
+```
+
+The bench's cells are `--tcnd` and `--lmnd`, the 3D batch cells' protocol. A cell whose K transforms hold more than
+2^24 points is not timed.

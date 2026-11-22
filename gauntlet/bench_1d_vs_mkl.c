@@ -29,7 +29,8 @@
  *   1D real   --realfwd / --realbwd (r2c / c2r); --zr2c the earlier real form
  *   1D r2r    --dst2 / --dst3 / --dct1 / --dst1 (DST-II / DST-III / DCT-I / DST-I; --realip in place; --mt
  *             threaded; MKL's arm is its staggered sine, cosine or sine transform, in place)
- *   rank 4-7  --ndnat the c2c cell of rank 4 to 7, the shape N1x...xNr in the N slot (--ilip in place, --mt threaded)
+ *   rank 4-7  --ndnat the c2c cell of rank 4 to 7, the shape N1x...xNr in the N slot (--ilip in place, --mt threaded);
+ *             --tcnd / --lmnd its contiguous and lane-major batch cells (K in the K slot; --mt threaded)
  *   2D / 3D   --2dilnat / --3dilnat the gauntlet's 2D and 3D c2c cells (--ilip in place); --2drealnat / --3dreal the
  *             real cells; --realip / --realown the real cell in place; --2dil, --3dil, --2dreal
  *             the earlier forms
@@ -3179,17 +3180,23 @@ static size_t lm2d_volume(int nd, const int *n)
     return P;
 }
 static void lm2d_shape(char *buf, size_t sz, int nd, const int *n)
-{
-    if (nd > 2)
-        snprintf(buf, sz, "%dx%dx%d", n[0], n[1], n[2]);
-    else
-        snprintf(buf, sz, "%dx%d", n[0], n[1]);
+{   /* N1xN2, N1xN2xN3, ... up to rank 7 (--tcnd / --lmnd) */
+    size_t off = 0;
+    if (sz)
+        buf[0] = 0;
+    for (int i = 0; i < nd && off < sz; i++)
+    {
+        const int w = snprintf(buf + off, sz - off, "%s%d", i ? "x" : "", n[i]);
+        if (w < 0)
+            break;
+        off += (size_t)w;
+    }
 }
 #ifdef VFFT_HAS_MKL
 static DFTI_DESCRIPTOR_HANDLE lm2d_mkl_desc(int nd, const int *n, int K, int home)
 {
     DFTI_DESCRIPTOR_HANDLE d = NULL;
-    MKL_LONG len[3], st[4], P = 1;
+    MKL_LONG len[7], st[8], P = 1;   /* rank 2 to 7 */
     for (int i = 0; i < nd; i++)
     {
         len[i] = (MKL_LONG)n[i];
@@ -3310,7 +3317,7 @@ static void run_lm2d_cell(int nd, const int *n, int K, FILE *out, int cool_ms, i
     double *z0, *S, *z0h;
     double rel = -1.0, lrel = -1.0;
     double vns = 0, mns = 0, hns = 0, lns = 0, rmir, rhom, rloop;
-    char shape[32], path[16], plan[16];
+    char shape[96], path[16], plan[16];
     if (T == 1)
         bench_pin_one_thread();   /* the one-thread protocol + the sibling guard */
     W = k1z_bundle();
@@ -3483,17 +3490,24 @@ static void run_tcb_cell(int nd, const int *n, int K, FILE *out, int cool_ms, in
 {
     const int T = g_k1noop_mt ? g_mt : 1;
     const size_t P = lm2d_volume(nd, n), total = P * (size_t)K;
-    const char *plan = nd == 3 ? "z:tc3d" : nd == 2 ? "z:tc2d" : "z:tc";
-    const char *path = nd == 3 ? "tc3d-oop" : nd == 2 ? "tc2d-oop" : "tc-oop";
-    char shape[32];
+    char plan[16], path[16];   /* z:tc / tc-oop at rank 1, z:tc<r>d / tc<r>d-oop above */
+    char shape[96];
     const char *W;
     vfft_config_t cfg;
     vfft_plan h;
     double *z0, *S, *rt, rel, vns = 0, mns = 0, ratio, vgf;
     if (nd > 1)
+    {
         lm2d_shape(shape, sizeof shape, nd, n);
+        snprintf(plan, sizeof plan, "z:tc%dd", nd);
+        snprintf(path, sizeof path, "tc%dd-oop", nd);
+    }
     else
+    {
         snprintf(shape, sizeof shape, "%d", n[0]);
+        snprintf(plan, sizeof plan, "z:tc");
+        snprintf(path, sizeof path, "tc-oop");
+    }
     for (int i = 0; i < nd; i++)
         if (n[i] < 2)
         {
@@ -3613,7 +3627,10 @@ static void run_tcb_cell(int nd, const int *n, int K, FILE *out, int cool_ms, in
         char row[320], eng[24] = "";
         if (T > 1)
             snprintf(eng, sizeof eng, "%ld,", g_cell_engaged);   /* before flip: flip stays the row key's last field */
-        if (nd == 3)
+        if (nd > 3)   /* --tcnd: the shape in N (the row key is N,K,plan,path + flip) */
+            snprintf(row, sizeof row, "%s,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
+                     shape, K, plan, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
+        else if (nd == 3)
             snprintf(row, sizeof row, "%d,%d,%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e,%s,%s%d\n",
                      n[0], n[1], n[2], K, plan, path, vns, mns, vgf, ratio, rel, vfft_plan_route(h), eng, flip);
         else if (nd == 2)
@@ -6129,6 +6146,10 @@ int main(int argc, char **argv)
             g_tcb = 2;    /* the contiguous 2D c2c batch cell, the shape N1xN2 in the N argument */
         else if (strcmp(argv[1], "--tc3d") == 0)
             g_tcb = 3;    /* the contiguous 3D c2c batch cell, the shape N1xN2xN3 */
+        else if (strcmp(argv[1], "--tcnd") == 0)
+            g_tcb = 4;    /* the contiguous c2c batch cell of rank 4 to 7 (2026-11-22), the shape N1x...xNr: its rank */
+        else if (strcmp(argv[1], "--lmnd") == 0)
+            g_lm2d = 4;   /* the lane-major c2c batch cell of rank 4 to 7 (2026-11-22), the shape N1x...xNr: its rank */
         else if (strcmp(argv[1], "--est") == 0)
             g_est = 1;    /* every mode's plans by the estimate (g_est, above) */
         else if (strcmp(argv[1], "--lm2dr2c") == 0)
@@ -6923,13 +6944,14 @@ int main(int argc, char **argv)
     }
     if (g_tcb)
     {   /* the contiguous c2c batch cell: N (rank 1) or the shape N1xN2 / N1xN2xN3 in the N argument, K in the K argument */
-        const int nd = g_tcb;
-        int n[3] = { 0, 0, 0 };
-        const int got = argc >= 5 ? sscanf(argv[4], "%dx%dx%d", &n[0], &n[1], &n[2]) : 0;
-        if (got != nd || target_K < 2)
+        int n[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        const int got = argc >= 5 ? sscanf(argv[4], "%dx%dx%dx%dx%dx%dx%d", &n[0], &n[1], &n[2], &n[3], &n[4], &n[5], &n[6]) : 0;
+        const int nd = g_tcb >= 4 ? got : g_tcb;   /* --tcnd: the rank is the shape's, 4 to 7 */
+        if (got != nd || (g_tcb >= 4 && got < 4) || target_K < 2)
         {
-            printf("--%s needs %s in the N argument and K >= 2\n", nd == 3 ? "tc3d" : nd == 2 ? "tc2d" : "tcc2c",
-                   nd == 3 ? "the shape N1xN2xN3" : nd == 2 ? "the shape N1xN2" : "N");
+            printf("--%s needs %s in the N argument and K >= 2\n",
+                   g_tcb >= 4 ? "tcnd" : nd == 3 ? "tc3d" : nd == 2 ? "tc2d" : "tcc2c",
+                   g_tcb >= 4 ? "a shape of 4 to 7 extents N1x...xNr" : nd == 3 ? "the shape N1xN2xN3" : nd == 2 ? "the shape N1xN2" : "N");
             if (out)
                 fclose(out);
             return 2;
@@ -6947,11 +6969,15 @@ int main(int argc, char **argv)
     }
     if (g_lm2d)
     {   /* the lane-major 2D / 3D c2c batch cell: the shape N1xN2 (N1xN2xN3) in the N argument, K in the K argument */
-        const int nd = g_lm2d;
-        int n[3] = { 0, 0, 0 };
-        if (argc < 5 || sscanf(argv[4], "%dx%dx%d", &n[0], &n[1], &n[2]) != nd || target_K < 2)
+        int n[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        const int got = argc >= 5 ? sscanf(argv[4], "%dx%dx%dx%dx%dx%dx%d", &n[0], &n[1], &n[2], &n[3], &n[4], &n[5], &n[6]) : 0;
+        const int nd = g_lm2d >= 4 ? got : g_lm2d;   /* --lmnd: the rank is the shape's, 4 to 7 */
+        if (got != nd || (g_lm2d >= 4 && got < 4) || target_K < 2)
         {
-            printf("--lm%dd needs the shape %s in the N argument and K >= 2\n", nd, nd == 3 ? "N1xN2xN3" : "N1xN2");
+            if (g_lm2d >= 4)
+                printf("--lmnd needs a shape of 4 to 7 extents N1x...xNr in the N argument and K >= 2\n");
+            else
+                printf("--lm%dd needs the shape %s in the N argument and K >= 2\n", nd, nd == 3 ? "N1xN2xN3" : "N1xN2");
             return 2;
         }
         printf("=== dag vs MKL — %dD C2C LANE-MAJOR batch, OOP natural (%s; pace=%dms) ===\n"
