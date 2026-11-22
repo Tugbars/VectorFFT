@@ -406,7 +406,8 @@ static void refusals(void)
     CHECK(p == NULL, "R: a lane-major r2c batch in place at an odd N is served (no real column engine)");
     if (p) vfft_destroy(p);
     {   /* ranks 2 and 3 are served (step 6; the real 3D batch 2026-10-19); a real batch at an odd last extent, a real
-         * 3D batch at N3 = 2, N1 = 1 or N2 = 1, and rank 4 are refused with their reason (a non-empty vfft_error) */
+         * 3D batch at N3 = 2, N1 = 1 or N2 = 1, and a real batch at rank 4 are refused with their reason (a non-empty
+         * vfft_error); a c2c batch at rank 4 is served (2026-11-22) */
         const int n3[3] = { 4, 4, 4 }, n4[4] = { 8, 8, 8, 8 }, n2odd[2] = { 64, 15 };
         const int n3odd[3] = { 16, 16, 15 }, n3two[3] = { 16, 16, 2 }, n3one[3] = { 1, 16, 16 }, n3one2[3] = { 16, 1, 16 };
         p = mk(VFFT_R2C, 2, n2odd, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
@@ -433,7 +434,11 @@ static void refusals(void)
         CHECK(p != NULL, "R: a rank-3 lane-major r2c batch at 4x4x4 x 2 is refused: %s", vfft_error());
         if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the rank-3 real batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
         p = mk(VFFT_C2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
-        CHECK(p == NULL, "R: a rank-4 lane-major request is served");
+        CHECK(p != NULL, "R: a rank-4 lane-major c2c batch at 8x8x8x8 x 4 is refused: %s", vfft_error());
+        if (p) { CHECK(strcmp(vfft_plan_route(p), "lm") == 0, "R: the rank-4 batch did not take the lane-major door (route %s)", vfft_plan_route(p)); vfft_destroy(p); }
+        p = mk(VFFT_R2C, 4, n4, 4, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);
+        CHECK(p == NULL, "R: a rank-4 lane-major r2c batch is served");
+        CHECK(vfft_error()[0] != 0, "R: the rank-4 real batch refusal gives no reason");
         if (p) vfft_destroy(p);
     }
     p = mk(VFFT_C2C, 1, n1, 1, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1);

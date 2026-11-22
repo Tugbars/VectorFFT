@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
         { "3D c2c OOP SPLIT 16^3",                1, VFFT_C2C, OOP, SP, NAT, 3, 16, 16, 16, 0, 1, 0 },    /* zturn-ts at rank 3 (2026-11-05) */
         { "3D c2c OOP SPLIT 16^3 SCRAMBLED",      0, VFFT_C2C, OOP, SP, SCR, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3 howmany=2 SCR",  0, VFFT_C2C, OOP, SP, SCR, 3, 16, 16, 16, 0, 2, 0 },
-        { "4D c2c OOP IL 8^4",                    0, VFFT_C2C, OOP, IL, NAT, 4, 8, 8, 8, 8, 1, 0 },
+        { "4D c2c OOP IL 8^4",                    1, VFFT_C2C, OOP, IL, NAT, 4, 8, 8, 8, 8, 1, 0 },    /* rank 4 to 7 (2026-11-22) */
         { "4D c2c OOP SPLIT 8^4",                 0, VFFT_C2C, OOP, SP, NAT, 4, 8, 8, 8, 8, 1, 0 },
         { "4D c2c OOP SPLIT 8^4 SCRAMBLED",       0, VFFT_C2C, OOP, SP, SCR, 4, 8, 8, 8, 8, 1, 0 },
         /* ── real-to-real: 1D; layout, order and batch geometry are ignored ── */

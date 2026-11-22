@@ -894,11 +894,11 @@ static void refusals(void)
     p = mk(VFFT_R2C, 3, n3, 2, VFFT_BATCH_DEFAULT, 1, VFFT_ORDER_NATURAL, 1, VFFT_FLAG_OWN_PITCH);
     CHECK(p == NULL, "R: VFFT_FLAG_OWN_PITCH on a rank-3 r2c batch is served (door 2 is one volume)");
     if (p) vfft_destroy(p); else CHECK(strstr(vfft_error(), "drop the flag") != NULL, "R: the OWN_PITCH refusal does not say to drop the flag: %s", vfft_error());
-    p = mk(VFFT_C2C, 4, n4, 2, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1, 0);
-    CHECK(p == NULL, "R: a rank-4 batch is served");
+    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_DEFAULT, 0, VFFT_ORDER_NATURAL, 1, 0);   /* a real batch above rank 3 (a c2c one is served since 2026-11-22) */
+    CHECK(p == NULL, "R: a rank-4 r2c batch is served");
     if (p) vfft_destroy(p);
-    p = mk(VFFT_C2C, 4, n4, 2, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1, 0);
-    CHECK(p == NULL, "R: a rank-4 lane-major batch is served");
+    p = mk(VFFT_R2C, 4, n4, 2, VFFT_BATCH_LANE_MAJOR, 0, VFFT_ORDER_NATURAL, 1, 0);
+    CHECK(p == NULL, "R: a rank-4 lane-major r2c batch is served");
     if (p) vfft_destroy(p);
     p = mk(VFFT_R2C, 3, n3, 1, VFFT_BATCH_CONTIGUOUS, 0, VFFT_ORDER_NATURAL, 1, 0);
     CHECK(p != NULL, "R: K=1 with the CONTIGUOUS flag refused (it is the ordinary plan): %s", vfft_error());
