@@ -604,21 +604,51 @@ out:
     return h;
 }
 
+/* the recipe g, threaded at G, runs as one group of the queue's groups arm, as the door decides it (fftnd_il.h
+ * _ilnd_group_ok): the plane arm at G with the plane team's block phase, on a plain axis-0 chain (no Bluestein,
+ * no turned prime pass, no Rader stage) */
+static inline int est__rn_group_ok(const est_planrn_t *g, int G)
+{
+    return g && G >= 2 && (g->T > 1 ? g->T : 1) == G && g->cmt == 2 && g->bpq != 0 && g->col.blu <= 0 &&
+           g->col.tpc != 1 && g->col.rd_n == 0;
+}
+/* THE GROUPS WAY (2026-11-22): K transforms at once, each on G = T / K threads, where the queue admits the arm
+ * (K <= T / 2), the plan at G can run as a group (est__rn_group_ok) and one transform holds at most
+ * EST_RN_GROUPS_L2 times the L2. Every thread works all the time and each transform is threaded over fewer cores
+ * than in turn.
+ * MEASURED (2026-11-22, i9-14900KF, the library's own race of the three ways at a measuring create, 35 shapes of
+ * rank 4 to 7, K = 2 and 4 at 8 threads: 57 cases with a groups arm). Up to 8 MiB a transform the groups are the
+ * fastest way in 42 of 46 cases, 1.03 to 2.08 times the better of the other two (16^4 x 4: in turn 73.7 us, whole
+ * transforms per thread 108, groups 53.1; 25^4 x 4: 875, 1295, 691); the four others 1.00 (40x30x20x10 x 2), 0.94
+ * (35x15x9x5 x 2), 0.87 (16x16x16x53 x 4) and 0.63 (2x64x64x64 x 2, whose plan at 4 threads wants the block batch:
+ * est__rn_group_ok now refuses it). From 12 MiB the powers of two lose (32^4 0.94 and 0.98, 128x128x8x8 0.86 and
+ * 0.92, 8^7 0.97 and 0.85) and the others still gain (15^5 1.05 and 1.09, 10^6 1.12 and 1.16): left to the other
+ * two ways. At 4 threads (K = 2, 14 cases, 11 up to 8 MiB) the gain is small: geometric mean 1.02, 0.83 (8^5) to
+ * 1.17 (16^4). One machine; other thread counts and machines are untested. */
+#define EST_RN_GROUPS_L2 4
+static inline int est__rn_groups(const est_machine_t *m, size_t bytes, size_t K, int T)
+{
+    return m->l2 > 0 && T >= 4 && K >= 2 && K <= (size_t)T / 2 && bytes <= (size_t)EST_RN_GROUPS_L2 * (size_t)m->l2;
+}
 /* est_build_rn: the recipe p of a rank-4 to 7 request -> a plan built with nothing measured, or NULL with the reason
  * in why and the outcome in rep (may be NULL); est_build_nd's steps (the pre-flight, the rows into a store held in
  * memory, the door's replay, the plan checked against the recipe). cfg is the request as the front door translated
  * it: interleaved c2c, the recipe's rank and shape, natural, at the recipe's thread count, one transform or a
  * contiguous batch of them; its store and save flag are not used. A batch on T threads also takes the one-thread
- * recipe its queue's copies replay (q) and the way (pq: est_batch_whole), both on the rows as the queue reads them,
- * as est_build_nd writes them. Holds the create lock from the pre-flight to the end. The caller owns the plan. */
-static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_planrn_t *q, int pq, const vfft_cfg_t *cfg,
-                                               est_build_report_t *rep, char *why, size_t whylen)
+ * recipe its queue's copies replay (q) and the way (pq: 0 all threads on each transform in turn, 1 whole transforms
+ * per thread, 2 the groups), both on the rows as the queue reads them, as est_build_nd writes them; and, where the
+ * policy admits the queue's GROUPS arm (vfft_policy_pq_groups_ok: K <= T / 2), the recipe at G = T / K threads (g):
+ * the door builds that arm's K copies whatever the way, each replaying the cell's row at G, and with pq = 2 it runs
+ * them, K transforms at once, each on G threads. Holds the create lock from the pre-flight to the end. The caller
+ * owns the plan. */
+static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_planrn_t *q, const est_planrn_t *g, int pq,
+                                               const vfft_cfg_t *cfg, est_build_report_t *rep, char *why, size_t whylen)
 {
     est_build_report_t lrep;
     struct vfft_wisdom_s *S = NULL;
     struct vfft_plan_s *h = NULL;
     const struct vfft_plan_s *h1;
-    int T, batch, whole;
+    int T, batch, whole, G;
     est__meter_t m0;
     if (!rep)
         rep = &lrep;
@@ -634,10 +664,14 @@ static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_
     T = cfg->nthreads > 1 ? cfg->nthreads : 1;
     batch = cfg->howmany > 1 && T > 1;   /* the queue's copies, on the one-thread plan */
     whole = batch ? pq : 0;
+    G = (batch && g) ? T / (int)cfg->howmany : 0;
     if (cfg->transform != VFFT_C2C || cfg->layout != VFI_LAYOUT_IL || cfg->dims != p->rank || !est__batch_ok(cfg) ||
         cfg->order == VFI_ORDER_SCRAMBLED || memcmp(cfg->n, p->n, sizeof(int) * (size_t)p->rank) ||
-        T != (p->T > 1 ? p->T : 1) ||
-        (batch && (!q || q->T > 1 || q->rank != p->rank || memcmp(q->n, p->n, sizeof(int) * (size_t)p->rank))))
+        T != (p->T > 1 ? p->T : 1) || whole < 0 || whole > 2 ||
+        (batch && (!q || q->T > 1 || q->rank != p->rank || memcmp(q->n, p->n, sizeof(int) * (size_t)p->rank))) ||
+        (g && (!batch || !vfft_policy_pq_groups_ok(cfg, cfg->howmany, T) || g->rank != p->rank ||
+               memcmp(g->n, p->n, sizeof(int) * (size_t)p->rank) || (g->T > 1 ? g->T : 1) != G)) ||
+        (!g && batch && vfft_policy_pq_groups_ok(cfg, cfg->howmany, T)) || (whole == 2 && !est__rn_group_ok(g, G)))
     {
         est_refuse(why, whylen, "estimate builds one interleaved c2c transform of rank 4 to 7 in natural order, at the "
                    "recipe's shape and thread count, or a contiguous batch of them (on more than one thread with its "
@@ -648,7 +682,8 @@ static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_
     _vfft_create_lock();      /* recursive: the pre-flight touches the create's process statics */
     _vfft_create_depth++;     /* the whole build inside a create: a clock read enters a scope */
     est__meter_read(&m0);
-    if (est__preflight_rn(p, why, whylen) || (batch && est__preflight_rn(q, why, whylen)))
+    if (est__preflight_rn(p, why, whylen) || (batch && est__preflight_rn(q, why, whylen)) ||
+        (g && est__preflight_rn(g, why, whylen)))
         goto out;
     if (!(S = vfft_child_store_new()))
     {
@@ -663,6 +698,8 @@ static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_
         int i;
         if (est_put_rows_rn(&S->vw2, q, why, whylen))
             goto out;
+        if (g && est_put_rows_rn(&S->vw2, g, why, whylen))   /* the groups arm's copies: the cell's row at G threads */
+            goto out;
         vw2__pq_key(&key, VW2_T_C2C, p->rank, cfg->n[0], cfg->n[1], cfg->n[2], cfg->howmany, vfft_policy_ord_rankn(cfg),
                     cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP, _vw2_lay_of(cfg), T);
         for (i = 3; i < p->rank; i++)   /* the extents after the third (plane_queue.h, _pq_row_key) */
@@ -674,8 +711,28 @@ static inline struct vfft_plan_s *est_build_rn(const est_planrn_t *p, const est_
         }
     }
     h = est__replay(S, cfg, &m0, rep, why, whylen);
-    if (h && (est__batch_one(h, cfg, whole, &h1, why, whylen) || est__check_rn(h1, p, why, whylen) ||
-              (whole && est__check_rn(h->pq_w[0], q, why, whylen))))
+    if (h && whole == 2)
+    {   /* the groups: the queue with its K copies at G threads, each the recipe at G; the plan of one transform at T */
+        if (!h->pq_inner || h->pq_n != cfg->howmany || h->pq_mt != 2 || h->pq_gn != (int)cfg->howmany || h->pq_G != G ||
+            !h->pq_g || !h->pq_g[0])
+        {
+            est_refuse(why, whylen, "the door did not serve the batch of %zu on %d threads in groups of %d threads",
+                       cfg->howmany, T, G);
+            rep->status = EST_NOPLAN;
+            vfft_destroy((vfft_plan)h);
+            h = NULL;
+        }
+        else if (est__check_rn(h->pq_inner, p, why, whylen) || est__check_rn(h->pq_g[0], g, why, whylen))
+        {
+            rep->status = EST_NOPLAN;
+            vfft_destroy((vfft_plan)h);
+            h = NULL;
+        }
+        else
+            rep->status = EST_BUILT;
+    }
+    else if (h && (est__batch_one(h, cfg, whole, &h1, why, whylen) || est__check_rn(h1, p, why, whylen) ||
+                   (whole && est__check_rn(h->pq_w[0], q, why, whylen))))
     {   /* with whole transforms per thread the first copy is the one-thread recipe's plan too */
         rep->status = EST_NOPLAN;
         vfft_destroy((vfft_plan)h);
@@ -742,8 +799,12 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
     }
     else if (cfg->dims >= 4 && cfg->dims <= 7)
     {   /* rank 4 to 7: the rank-N tier one rank up (est_plan_rn), one transform or a contiguous batch */
+        const int Tn = cfg->nthreads > 1 ? cfg->nthreads : 1;
+        const int groups = batch && vfft_policy_pq_groups_ok(cfg, cfg->howmany, Tn);   /* the door builds the arm's copies */
+        const int Gn = groups ? Tn / (int)cfg->howmany : 0;
         est_planrn_t *p = (est_planrn_t *)malloc(sizeof *p), *q = batch ? (est_planrn_t *)malloc(sizeof *q) : NULL;
-        if (!p || (batch && !q))
+        est_planrn_t *g = groups ? (est_planrn_t *)malloc(sizeof *g) : NULL;
+        if (!p || (batch && !q) || (groups && !g))
             snprintf(why, sizeof why, "out of memory");
         else if (!est_plan_rn(m, cfg->dims, cfg->n, p, why, sizeof why))
         {
@@ -757,19 +818,32 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
                 if (okq)
                     est_mt_rn(m, 1, q);
             }
+            if (okq && g)
+            {   /* the groups arm's recipe: the same plan at G threads */
+                okq = !est_plan_rn(m, cfg->dims, cfg->n, g, why, sizeof why);
+                if (okq)
+                    est_mt_rn(m, Gn, g);
+                else if (q)
+                    est_free_rn(q);
+            }
             if (okq)
             {
                 est_mt_rn(m, cfg->nthreads, p);
                 if (q)
                     pq = est_batch_whole(m, bytes, cfg->howmany, cfg->nthreads);
-                h = est_build_rn(p, q, pq, cfg, NULL, why, sizeof why);
+                if (g && est__rn_group_ok(g, Gn) && est__rn_groups(m, bytes, cfg->howmany, Tn))
+                    pq = 2;
+                h = est_build_rn(p, q, g, pq, cfg, NULL, why, sizeof why);
                 if (q)
                     est_free_rn(q);
+                if (g)
+                    est_free_rn(g);
             }
             est_free_rn(p);
         }
         free(p);
         free(q);
+        free(g);
     }
     else
         snprintf(why, sizeof why, "rank %d: estimate plans ranks 1 to 7", cfg->dims);

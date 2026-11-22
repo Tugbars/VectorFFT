@@ -1011,6 +1011,20 @@ static inline int vfft_policy_ilndr_batch_ok(const vfft_cfg_t *cfg, size_t howma
  * decides, never this law. -- */
 static inline int vfft_policy_pq_groups_ok(const vfft_cfg_t *cfg, size_t howmany, int nthreads)
 {
+    if (cfg && cfg->transform == VFFT_C2C)
+    {   /* COMPLEX, rank 4 to 7 (2026-11-22): a contiguous batch of K <= T / 2 transforms, any extents; whether the
+         * plan at G threads can run as a group is the tier's (fftnd_il.h _ilnd_group_ok). Rank 2 and 3 complex
+         * batches have no groups arm. */
+        int i;
+        if (cfg->dims < 4 || cfg->dims > 7 || cfg->layout != VFI_LAYOUT_IL || nthreads < 4 || howmany < 2 ||
+            howmany > (size_t)nthreads / 2 ||
+            !(cfg->batch_geom == VFFT_BATCH_DEFAULT || cfg->batch_geom == VFFT_BATCH_CONTIGUOUS))
+            return 0;
+        for (i = 0; i < cfg->dims; i++)
+            if (cfg->n[i] < 2)
+                return 0;
+        return 1;
+    }
     return vfft_policy_ilndr_batch_ok(cfg, howmany) && nthreads >= 4 && howmany >= 2 &&
            howmany <= (size_t)nthreads / 2 &&
            (cfg->n[0] & (cfg->n[0] - 1)) == 0 && (cfg->n[1] & (cfg->n[1] - 1)) == 0 &&

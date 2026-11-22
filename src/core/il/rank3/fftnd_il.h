@@ -841,6 +841,95 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     return 1;
 }
 
+/* ═══ THE COOPERATIVE EXECUTE (the queue's GROUPS arm, rank2/plane_queue.h; rank 4 to 7, 2026-11-22): the
+ * threaded natural walk above run by G members that are ALREADY pool threads -- one group of the K the queue
+ * dispatches in one pool run -- so no member may ask the pool for anything. The same phases as
+ * _ilnd_execute_mt at T = G over the same partition (_ilnd_mt_tramp's bodies over the same [lo, hi), so the
+ * output is bitwise the threaded walk's and the serial walk's), each fork-join replaced by every member's wait
+ * on the group's barrier; a member beyond a phase's team holds nothing and waits. The block phase is the plane
+ * team's (a member's own clone of the child): the block batch plan dispatches the pool and is not used here.
+ * Whether the plan can run this way is decided ONCE at the batch's create (_ilnd_group_ok): inside the run no
+ * member can fall back alone. The real tier's twin: fftnd_real_il.h _ilndr_execute_group. ═══════════════════ */
+static void _ilnd_group_sync(_vfft_grp_barrier_t *bar, int *sense)
+{
+    _thread_pool_barrier_wait(&bar->b, *sense);
+    *sense = 1 - *sense;
+#if defined(_MSC_VER)
+    _ReadWriteBarrier();
+#else
+    __asm__ __volatile__("" ::: "memory");   /* the phase's loads stay behind the wait (x86 orders the rest) */
+#endif
+}
+/* this member's share of one phase: the units split as _ilnd_mt_phase splits them over the phase's team Tt */
+static void _ilnd_group_phase(const vfft_ilnd_t *d, const double *src, double *dst, vfft_dir_t dir, int mode,
+                              size_t units, int Tt, int member)
+{
+    _ilnd_mt_arg a;
+    if (member >= Tt)
+        return;
+    a.d = d; a.src = src; a.dst = dst; a.dir = dir; a.mode = mode; a.tid = member; a.nt = Tt;
+    a.lo = units * (size_t)member / (size_t)Tt;
+    a.hi = units * (size_t)(member + 1) / (size_t)Tt;
+    _ilnd_mt_tramp(&a);
+}
+/* whether the plan (created at G threads) can run as one group of G members: the natural walk of rank 4 to 7
+ * with the plane arm at G, its clones and its form's scratches for G members, on a plain axis-0 chain. Not
+ * served: a Bluestein axis 0 and the turned prime pass (their windows and their 1D plan's clones go by pool
+ * slot), a Rader stage (il_rader_stage.h indexes its scratch by the POOL slot: two members of one group would
+ * share it), the plane team's own half width in the cycle form (its binding is for that team alone), and a plan
+ * whose block phase is the block batch (it dispatches the pool; on the plane team that plan is the slower one:
+ * 2x64x64x64 x 2 on 8 threads, in turn 436 us, groups of 4 threads 696). A serial verdict at G is the queue's
+ * case, not a group. */
+static int _ilnd_group_ok(const vfft_ilnd_t *d, int G)
+{
+    if (!d || G < 2 || d->rank < 4 || !d->nat || d->arm != 1 || d->mt != 2 || d->mt_t != G || d->wn1 < G - 1 ||
+        d->plane < 2)
+        return 0;
+    if (d->ax0.blu || d->ax0.tpc || d->ax0.rd0 || d->bq)
+        return 0;
+    if (d->nf == 2)
+        return d->nsscr >= G;
+    return d->cycw != NULL && d->nbufw >= G - 1 && d->ptw == 0;
+}
+static void _ilnd_execute_group(const vfft_ilnd_t *d, vfft_dir_t dir, const double *src, double *dst, int member,
+                                int G, _vfft_grp_barrier_t *bar)
+{
+    const int rev = (dir == VFFT_BACKWARD);
+    const size_t N0 = (size_t)d->N[0], rn = d->plane;
+    const int Ts = rn < (size_t)G ? (int)rn : G, Tp = _ilnd_plane_team(d, G);
+    int sense = 0;
+    if (d->nf == 2)
+    {   /* the strip form: the strips, then the blocks in place (backward: the blocks, then the strips) */
+        if (!rev)
+        {
+            _ilnd_group_phase(d, src, dst, dir, 5, rn, Ts, member);
+            _ilnd_group_sync(bar, &sense);
+            _ilnd_group_phase(d, dst, dst, dir, 2, N0, Tp, member);
+        }
+        else
+        {
+            _ilnd_group_phase(d, src, dst, dir, src != dst ? 6 : 2, N0, Tp, member);
+            _ilnd_group_sync(bar, &sense);
+            _ilnd_group_phase(d, dst, dst, dir, 5, rn, Ts, member);
+        }
+        return;
+    }
+    /* the cycle form: the plane arm's column ranges over axis 0, then every member's cycles (backward: the
+     * blocks to their scrambled places or the cycles in place, then axis 0) */
+    if (!rev)
+    {
+        _ilnd_group_phase(d, src, dst, dir, 1, rn, Ts, member);
+        _ilnd_group_sync(bar, &sense);
+        _ilnd_group_phase(d, dst, dst, dir, 3, N0, Tp, member);
+    }
+    else
+    {
+        _ilnd_group_phase(d, src, dst, dir, src != dst ? 4 : 3, N0, Tp, member);
+        _ilnd_group_sync(bar, &sense);
+        _ilnd_group_phase(d, dst, dst, dir, 1, rn, Ts, member);
+    }
+}
+
 static void vfft_ilnd_execute(const vfft_ilnd_t *d, vfft_dir_t dir,
                               const double *src, double *dst)
 {

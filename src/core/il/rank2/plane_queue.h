@@ -96,12 +96,16 @@ typedef struct
     double *dst;
     int member, G;
     _vfft_grp_barrier_t *bar;
+    vfft_dir_t dir;           /* a complex group's direction (a real plan has one of its own) */
 } _pq_grp_arg;
 
 static void _pq_grp_tramp(void *v)
 {
     _pq_grp_arg *a = (_pq_grp_arg *)v;
-    _ilndr_execute_group(a->plan->ilndr, a->src, a->dst, a->member, a->G, a->bar);
+    if (a->plan->ilnd)   /* a complex transform of rank 4 to 7 (rank3/fftnd_il.h, 2026-11-22) */
+        _ilnd_execute_group(a->plan->ilnd, a->dir, a->src, a->dst, a->member, a->G, a->bar);
+    else
+        _ilndr_execute_group(a->plan->ilndr, a->src, a->dst, a->member, a->G, a->bar);
 }
 
 /* the shared plane counter: 64 bits, as the plane count (pq_n, size_t) is -- a batch may hold more than
@@ -167,6 +171,7 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
                 a[s].member = s % G;
                 a[s].G = G;
                 a[s].bar = &h->pq_bar[g];
+                a[s].dir = dir;
             }
             thread_pool_run(Tg, _pq_grp_tramp, a, sizeof a[0]);
             _vfft_pq_grp_count++; /* engagement, vfft_pq_grp_passes() */

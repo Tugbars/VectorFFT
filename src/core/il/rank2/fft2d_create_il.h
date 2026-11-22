@@ -263,7 +263,7 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
              * same probe: the first within 1e-10 of the primary, the rest bitwise the first. A
              * declined plan, a clone that did not build, or a failed probe = no set: the arm
              * is absent from the race. */
-            if (h->pq_wn > 0 && rank3 && vfft_policy_pq_groups_ok(cfg, K, h->nthreads))
+            if (h->pq_wn > 0 && rankq >= 3 && vfft_policy_pq_groups_ok(cfg, K, h->nthreads))   /* real at rank 3; complex at rank 4 to 7 */
             {
                 const int G = h->nthreads / (int)K;
                 int okg = 1, declined = 0, ng = 0;
@@ -285,7 +285,8 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                             okg = 0;
                             break;
                         }
-                        if (!_ilndr_group_ok(h->pq_g[t]->ilndr, G))
+                        if (!(cfg->transform == VFFT_C2C ? _ilnd_group_ok(h->pq_g[t]->ilnd, G)
+                                                         : _ilndr_group_ok(h->pq_g[t]->ilndr, G)))
                         {
                             okg = 0;
                             declined = 1;
