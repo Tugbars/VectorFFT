@@ -8,7 +8,7 @@ tries to fill the gaps they leave. Like FFTW, it has a planner that measures can
 the winner as wisdom; like MKL, it also has an estimate (`VFFT_FLAG_ESTIMATE`) that plans without measuring, made to
 compete with the planner's plans. Its kernels are emitted the way FFTW's are, by a DAG FFT compiler, its own, for each
 instruction set. And like MKL, it is designed for high batch counts and for scaling across threads. It serves complex
-(c2c), real (r2c, c2r) and real-to-real (DCT, DST, DHT) transforms in 1D, 2D and 3D, in place or out of place, in
+(c2c) and real (r2c, c2r) transforms in 1D to 7D and real-to-real (DCT, DST, DHT) transforms, in place or out of place, in
 interleaved and split layouts, at lengths from 2 to 16M points (2^24) for complex transforms and to 32M (2^25) for
 real ones. A single-precision (FP32) part serves power-of-two lengths, to show that these strengths are not limited
 to double precision. As of 2026, on the latest AMD and Intel CPU microarchitectures, the estimate's plans beat or come
@@ -132,14 +132,14 @@ the tree is a native engine, a dash a refusal by contract.
   wisdom; nothing is converted between them. The split layout serves c2c; the
   real and real-to-real transforms run interleaved.
 - **Both placements**, in place and out of place, for every transform in the
-  tree.
+  tree up to 3D; at 4D to 7D c2c in both, r2c and c2r out of place.
 - **Order is a contract of interleaved c2c**: natural by default, scrambled on
-  request, each served by its own writers. Split c2c and the real and
+  request up to 3D, each served by its own writers. Split c2c and the real and
   real-to-real transforms are natural by construction.
-- **Any length, 1D to 3D, batches, threads** in the interleaved layout; the split
-  layout serves the lengths its footnote lists.
+- **Any length, 1D to 7D, batches, threads** in the interleaved layout; the split
+  layout serves 1D to 3D at the lengths its footnote lists.
 - **Two ways to plan**, measuring by default or `VFFT_FLAG_ESTIMATE`. The
-  estimate plans interleaved c2c, r2c and c2r in 1D to 3D (c2c at 2D and 3D in
+  estimate plans interleaved c2c, r2c and c2r in 1D to 7D (c2c at 2D and above in
   natural order), their batches and threads, and the four real-to-real
   transforms; a split plan is always measured.
 
