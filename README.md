@@ -2,16 +2,17 @@
 
 
 
-**VectorFFT** is a double-precision FFT library in C for x86 with AVX2 and
-AVX-512, built for workloads that run many transforms of modest length. It serves
-complex (c2c), real (r2c, c2r) and real-to-real (DCT, DST, DHT) transforms in 1D,
-2D and 3D, in place or out of place, in both complex layouts, interleaved and
-split, batched and threaded. Its kernels are emitted by its own DAG FFT compiler
-for each instruction set; the split layout has its AVX-512 kernels today, the
-interleaved layout's follow from the same compiler. You never pick an algorithm:
-a call names a contract, the planner races the engines that serve it on your
-machine, and the winner is kept as wisdom, so the first create measures and
-every later one replays.
+**VectorFFT** is a double-precision FFT library in C for x86 with AVX2 and AVX-512, offered to the community as an
+open-source alternative to FFTW, KFR and Intel MKL. It brings the strengths of those libraries into one library and
+tries to fill the gaps they leave. Like FFTW, it has a planner that measures candidate plans on your machine and keeps
+the winner as wisdom; like MKL, it also has an estimate (`VFFT_FLAG_ESTIMATE`) that plans without measuring, made to
+compete with the planner's plans. Its kernels are emitted the way FFTW's are, by a DAG FFT compiler, its own, for each
+instruction set. And like MKL, it is designed for high batch counts and for scaling across threads. It serves complex
+(c2c), real (r2c, c2r) and real-to-real (DCT, DST, DHT) transforms in 1D, 2D and 3D, in place or out of place, in
+interleaved and split layouts, at lengths from 2 to 16M points (2^24) for complex transforms and to 32M (2^25) for
+real ones. A single-precision (FP32) part serves power-of-two lengths, to show that these strengths are not limited
+to double precision. As of 2026, on the latest AMD and Intel CPU microarchitectures, the estimate's plans beat or come
+very close to plans found by long races.
 
 ---
 
