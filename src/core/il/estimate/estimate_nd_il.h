@@ -2012,6 +2012,11 @@ typedef struct est_planrn_s
     int mtnsw;                 /* [nsw] cmt = 2 with the strips: their width at T, over the one-thread nsw */
     est_plan3d_t *c3;          /* [plane_] rank 4: the 3D plan at n[1] x n[2] x n[3], one thread */
     struct est_planrn_s *cn;   /* [plane_] rank 5 to 7: the plan one rank down, one thread */
+    /* cmt = 2: THE BLOCK PHASE AT T, the contiguous batch of the n[0] blocks (fftnd_il.h _ilnd_build_batch); its
+     * rows sit in the child's store, under plane_ */
+    est_plan3d_t *c3t;         /* rank 4: the batch's plan of one block, the 3D plan at T */
+    struct est_planrn_s *cnt;  /* rank 5 to 7: the plan one rank down at T */
+    int bpq;                   /* [pq] the batch's way: 1 whole blocks per thread, 0 all threads on each block in turn */
 } est_planrn_t;
 
 /* the recipe's children, freed (the plan itself is the caller's) */
@@ -2025,8 +2030,16 @@ static inline void est_free_rn(est_planrn_t *p)
         free(p->cn);
         p->cn = NULL;
     }
+    if (p->cnt)
+    {
+        est_free_rn(p->cnt);
+        free(p->cnt);
+        p->cnt = NULL;
+    }
     free(p->c3);
     p->c3 = NULL;
+    free(p->c3t);
+    p->c3t = NULL;
 }
 /* the complex behind one index of axis 0 */
 static inline long long est__rn_block(const est_planrn_t *p)
@@ -2053,6 +2066,7 @@ static inline const char *est__rn_shape(const int *n, int rank, char *b, size_t 
     return b;
 }
 static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p);
+static inline int est__real_nd_batch_whole(const est_machine_t *m, size_t bytes, size_t K, int T);   /* real_estimate_nd_il.h */
 /* est_plan_rn: the c2c plan at rank 4 to 7, natural, one thread: the block child one rank down (the 3D plan at rank
  * 4, est_plan_3d; this plan below it), axis 0 on the scrambled pass over the blocks, the natural form, the band with
  * the cycle walk. Returns 0 with *out filled (its children allocated: est_free_rn), or -1 with the reason. Pure. */
@@ -2123,9 +2137,54 @@ static inline void est_mt_rn(const est_machine_t *m, int T, est_planrn_t *p)
     p->cmt = 0;
     p->cmtf = p->nf;
     p->mtnsw = 0;
+    free(p->c3t);   /* a plan threaded before: its block batch goes */
+    p->c3t = NULL;
+    if (p->cnt)
+    {
+        est_free_rn(p->cnt);
+        free(p->cnt);
+        p->cnt = NULL;
+    }
+    p->bpq = 0;
     if (T < 2)
         return;
     est__mt_rankn(m, T, p->n[0], est__rn_block(p), pow2, p->nf, &p->col, &p->cmt, &p->cmtf, &p->mtnsw);
+    if (p->cmt > 0)
+    {   /* THE BLOCK PHASE AT T (fftnd_il.h _ilnd_build_batch): the contiguous batch of the n[0] blocks. No rule of
+         * its own: its plan of one block is the child threaded by the child's own rule (est_mt_3d at rank 4, this
+         * function below it), its way a batch rule's at one block's bytes. A recipe that could not be made stays
+         * NULL and the pre-flight refuses the plan.
+         * WHICH BATCH RULE (2026-11-22): the real batches' (est__real_nd_batch_whole, real_estimate_nd_il.h: whole
+         * blocks per thread iff the block's speedup on T threads, by its size against the L2, is below
+         * K / ceil(K / T)), not the complex batches' (est_batch_whole). Both ways timed at 8 threads on the 21
+         * cells of rank 4 to 7 where the complex rule says 'all threads on each block in turn' (the old plane team
+         * against this plan, same process pair, best of three runs each): that way is the faster on 10 of them --
+         * a first axis of 2 to 4 (2x64x64x64 2.8 times, 2x128x128x64 2.4, 3x48x48x48 1.8, 4x64x64x64 1.5) and
+         * blocks of 4 MiB and more in number (16^6 1.6, 64^4 1.1) -- and the slower on 11 (5x30x30x30 0.66,
+         * 4x4x4x4x8x8x8 0.74, 15^5 0.76, 6^7 0.77, 6x12x24x96 0.80). The real batches' rule names the faster way
+         * on 17 of the 21; its four misses are ties of its two sides (8x64x64x64 0.83, 8^7 0.87, 4x32x32x32 0.89,
+         * 4x4x4x4x8x8x8 0.74). */
+        char w2[240];
+        if (p->rank == 4)
+        {
+            if (p->c3 && (p->c3t = (est_plan3d_t *)malloc(sizeof *p->c3t)))
+            {
+                *p->c3t = *p->c3;
+                est_mt_3d(m, T, p->c3t);
+            }
+        }
+        else if ((p->cnt = (est_planrn_t *)calloc(1, sizeof *p->cnt)))
+        {
+            if (est_plan_rn(m, p->rank - 1, p->n + 1, p->cnt, w2, sizeof w2))
+            {   /* est_plan_rn released what it had made */
+                free(p->cnt);
+                p->cnt = NULL;
+            }
+            else
+                est_mt_rn(m, T, p->cnt);
+        }
+        p->bpq = est__real_nd_batch_whole(m, 16 * (size_t)est__rn_block(p), (size_t)p->n[0], T);
+    }
 }
 /* the rank-4 to 7 row's key, as its door keys it (fftnd_il.h: key0): natural, axis 0, c2c, one thread; the writers
  * key a threaded plan's row at its T */
@@ -2165,6 +2224,31 @@ static inline int est_put_rows_rn(vw2_store_t *st, const est_planrn_t *p, char *
     {
         vfft_child_store_free(C);
         return -1;
+    }
+    if (p->T > 1 && p->cmt > 0)
+    {   /* the block phase's batch (fftnd_il.h _ilnd_build_batch), in the child's store beside the child: its plan
+         * of one block at T, and the way on the batch's own row as the queue reads it (the child's shape, q = n[0],
+         * out of place as the child, nthreads = T; plane_queue.h _pq_row_key) */
+        vw2_key_t bk;
+        int i, bad;
+        if (p->rank == 4 ? !p->c3t : !p->cnt)
+            bad = est_refuse(why, whylen, "%s: no recipe of one block at %d threads", sh, p->T);
+        else
+            bad = p->rank == 4 ? est_put_rows_3d(&C->vw2, p->c3t, why, whylen) : est_put_rows_rn(&C->vw2, p->cnt, why, whylen);
+        if (!bad)
+        {
+            vw2__pq_key(&bk, VW2_T_C2C, p->rank - 1, p->n[1], p->n[2], p->n[3], (size_t)p->n[0], VW2_ORD_NAT, VW2_PL_OOP,
+                        VW2_LAY_IL, p->T);
+            for (i = 3; i < p->rank - 1; i++)   /* the child's extents after its third */
+                bk.n[i] = p->n[i + 1];
+            if (vw2_pq_bank(&C->vw2, &bk, p->bpq, 0.0) != VW2_OK)
+                bad = est_refuse(why, whylen, "%s: the block batch's row (pq) was refused at %d threads", sh, p->T);
+        }
+        if (bad)
+        {
+            vfft_child_store_free(C);
+            return -1;
+        }
     }
     ok = vfft_child_row_update(st, &key, "plane_", C);
     vfft_child_store_free(C);

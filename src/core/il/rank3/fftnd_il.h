@@ -200,6 +200,10 @@ typedef struct vfft_ilnd_s {
     int mt_t;                     /* the plan's thread snapshot (create's nthreads) */
     int wn1, wn2;                 /* clones built per structure (= T-1) or 0: that structure cannot thread */
     struct vfft_plan_s **childw;  /* arm 1 clones */
+    struct vfft_plan_s *bq;       /* rank 4 to 7, threaded: THE BLOCK PHASE AS ONE PLAN, the contiguous batch of the
+                                   * N[0] blocks (the queue over the child plan, rank2/plane_queue.h) at the plan's T,
+                                   * in role on the child's store; its own verdict says how the blocks share the
+                                   * threads. NULL below rank 4, on one thread, under a serial verdict */
     struct vfft_plan_s **roww;    /* arm 2 row clones */
     vfft_ilcol_t *ax1w;           /* arm 2 axis-1 descriptors: shared tables, own scratch */
     int ip;                       /* the plan's placement (1 = in place): the races run the
@@ -608,6 +612,54 @@ static int _ilnd_half_team(const vfft_ilnd_t *d, int T)
     return (Tp >= 4 && d->N[0] < 2 * Tp) ? Tp / 2 : 0;
 }
 
+/* ── rank 4 to 7, threaded: THE BLOCK PHASE AS ONE PLAN (2026-11-22). The N[0] blocks behind axis 0 are N[0]
+ * contiguous transforms of the child's shape, so the phase is the contiguous batch of them: the queue over the
+ * child plan (rank2/plane_queue.h), created here through the front door, in role on the child's store, at the
+ * plan's T. The queue's own verdict (pq=, on the batch's row in that store: raced by a measuring create, the
+ * batch rule's under the estimate) says how the blocks share the threads: whole blocks per worker, as the plane
+ * team deals them, or all the threads on each block in turn. The second is what a first axis shorter than the
+ * team and a block past a core's L2 need: 2x64x64x64 on 8 threads ran its two blocks on two workers in 542 us,
+ * and runs each on the eight in turn in 164; 8x64x64x64 its eight 4 MiB blocks, one a worker, in 1.1 ms against
+ * 0.66 in turn. Rank 3 keeps the plane team: its planes are the 2D child's, with no threads of their own. */
+static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir, const double *sre, double *dre);   /* rank2/plane_queue.h */
+static int _ilnd_build_batch(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T)
+{
+    vfft_cfg_t bc;
+    if (d->bq)
+        return 1;
+    if (d->rank <= 3 || T < 2 || !d->child || !d->childS || d->N[0] < 2)
+        return 0;
+    memset(&bc, 0, sizeof bc);
+    bc.transform = VFFT_C2C;
+    bc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE;   /* the child's */
+    bc.rigor = cfg->rigor;
+    _ilnd_child_shape(d, &bc);
+    bc.howmany = (size_t)d->N[0];
+    bc.batch_geom = VFFT_BATCH_CONTIGUOUS;
+    bc.order = cfg->order;
+    bc.layout = VFI_LAYOUT_IL;
+    bc.nthreads = T;
+    bc.wisdom = (vfft_wisdom *)d->childS;   /* the child's own store: the batch's row and its plan at T beside the child's */
+    bc.wisdom_write = 0;
+    bc.recalibrate = cfg->recalibrate;
+    d->bq = (struct vfft_plan_s *)_vfft_create_cfg(&bc);
+    if (d->bq && !d->bq->pq_inner)
+    {   /* not the queue: not this phase's plan */
+        vfft_destroy((vfft_plan)d->bq);
+        d->bq = NULL;
+    }
+    return d->bq != NULL;
+}
+/* the N[0] blocks through the structure, block i of src to block i of dst (src == dst: in place): the batch
+ * plan where the plan has one, else disjoint block ranges over the plane team */
+static void _ilnd_blocks_mt(const vfft_ilnd_t *d, vfft_dir_t dir, const double *src, double *dst, int Tp)
+{
+    if (d->bq)
+        _pq_execute(d->bq, dir, src, dst);
+    else
+        _ilnd_mt_phase(d, src, dst, dir, src != dst ? 6 : 2, (size_t)d->N[0], Tp);
+}
+
 /* the axis-0 partition of one direction: the band arm (prefix digit-split,
  * bands) or the plane arm's strips, src -> dst. Returns 0 = cannot engage. */
 static int _ilnd_mt_axis0(const vfft_ilnd_t *d, vfft_dir_t dir, const double *src, double *dst,
@@ -692,11 +744,11 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             _ilnd_mt_phase(d, src, dst, dir, 5, rn, Ts);
             if (prof)
                 t1 = vfft_now_ns();
-            _ilnd_mt_phase(d, dst, dst, dir, 2, N0, Tp);
+            _ilnd_blocks_mt(d, dir, dst, dst, Tp);
         }
         else
         {
-            _ilnd_mt_phase(d, src, dst, dir, src != dst ? 6 : 2, N0, Tp);
+            _ilnd_blocks_mt(d, dir, src, dst, Tp);
             if (prof)
                 t1 = vfft_now_ns();
             _ilnd_mt_phase(d, dst, dst, dir, 5, rn, Ts);
@@ -717,11 +769,16 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
                 return 0;
             if (prof)
                 t1 = vfft_now_ns();
-            _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
+            if (d->bq && d->ncyc == d->N[0])   /* axis 0 permuted nothing: every block in place, the batch plan */
+                _pq_execute(d->bq, dir, dst, dst);
+            else
+                _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
         }
         else
         {
-            if (src != dst)
+            if (d->bq && d->ncyc == d->N[0])   /* no permutation: block i of src to block i of dst, the batch plan */
+                _pq_execute(d->bq, dir, src, dst);
+            else if (src != dst)
                 _ilnd_mt_phase(d, src, dst, dir, 4, N0, Tp);
             else
                 _ilnd_mt_phase(d, dst, dst, dir, 3, N0, Tp);
@@ -780,6 +837,11 @@ static void vfft_ilnd_execute(const vfft_ilnd_t *d, vfft_dir_t dir,
 static void _ilnd_free_clones(vfft_ilnd_t *d, int arm)
 {
     int t;
+    if (arm == 1 && d->bq)
+    {   /* the block phase's batch plan goes with the child's clones */
+        vfft_destroy((vfft_plan)d->bq);
+        d->bq = NULL;
+    }
     if (arm == 1 && d->childw)
     {
         for (t = 0; t < d->wn1; t++)
@@ -1886,6 +1948,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
             if (d->mt < 0 || d->mt > 2) d->mt = 0;
             if (d->mt > 0 && !_ilnd_build_clones(d, cfg, nthr, arm))
                 d->mt = 0;
+            if (d->mt > 0 && arm == 1)
+                (void)_ilnd_build_batch(d, cfg, nthr);   /* rank 4 to 7: the block phase's batch plan */
             if (d->mt == 2 && ptpin)   /* the plane team pin: a probe's, never banks */
                 d->ptw = atoi(ptpin);
             mt_src = 1;
@@ -1911,6 +1975,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                     d->mt = 0;
                     mts = arm;
                 }
+                else if (mts == 1)
+                    (void)_ilnd_build_batch(d, cfg, nthr);   /* rank 4 to 7: the block phase's batch plan */
             }
             if (d->mt == 2)   /* 0 = absent = the full team */
                 d->ptw = vw2_ilnd_ptw_lookup(&W->vw2, &key0);
@@ -1926,6 +1992,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_cfg_t *cfg,
                                  _ilnd_strips_ensure(d, nthr, maxsw > d->nsw ? maxsw : d->nsw);
             if (_ilnd_build_child(d, W, cfg, &key0))
                 c1 = _ilnd_build_clones(d, cfg, nthr, 1);
+            if (c1)
+                (void)_ilnd_build_batch(d, cfg, nthr);   /* rank 4 to 7: the threaded arms time the block phase through it */
             if (rank == 3 && _ilnd_build_flat(d, W, cfg, &key0))   /* the flat structure: rank 3 only */
                 c2 = _ilnd_build_clones(d, cfg, nthr, 2);
             if (c1 || c2)
