@@ -253,6 +253,10 @@ struct vfft_plan_s
     struct vfft_plan_s **lm_roww;  /* its clones for the threaded row blocks, lm_roww_n of them */
     int lm_roww_n;
     struct vfft_wisdom_s *lm_rowS;
+    struct vfft_plan_s *lm_rowq;   /* R2C / C2R of rank 4 to 7 on threads (il/rank3/fftnd_realn_il.h): the block
+                                    * phase's batch plan -- the N1 blocks as a contiguous batch one rank down,
+                                    * the threads on the blocks in turn -- in role on lm_rowS; NULL = the blocks
+                                    * over the clones */
     int lm_G;                      /* the 2D real batch's row group, in blocks (policy; 1 = one block a group; 0 = a
                                     * block at a time through the row child's door: a Rader, Bluestein or turned chain) */
     vfft_real *lm_gscr;            /* its dense scratches, one a worker: N2 / 2 rows of lm_G K complexes each, */

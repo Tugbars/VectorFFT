@@ -399,8 +399,10 @@ void vfft_destroy(vfft_plan h)
         if (h->lm)
         {   /* the lane-major batch: its column pass, and the real batch's packed plane, permutation and twiddles */
             if (h->lm_row)
-            {   /* the 2D batch's row child, its clones and its store */
+            {   /* the 2D batch's row child, its clones and its store; the real rank 4 to 7 block batch */
                 _lm2d_clones_drop(h);
+                if (h->lm_rowq)
+                    vfft_destroy((vfft_plan)h->lm_rowq);
                 vfft_destroy((vfft_plan)h->lm_row);
                 vfft_child_store_free(h->lm_rowS);
             }

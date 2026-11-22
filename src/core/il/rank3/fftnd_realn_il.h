@@ -18,6 +18,12 @@
  * walker, race and dense scratch, unchanged; the blocks run through the real batch's block walker
  * (_lm2dr_rows, one block a call through the child's door). Threaded: the column pass through its raced forms,
  * the blocks over the workers on clones of the child, one threaded verdict (cmt=) raced on the whole execute.
+ * THE BLOCK PHASE AT T (the complex tier's block batch, fftnd_il.h _ilnd_build_batch): the N1 blocks are also a
+ * contiguous batch of N1 real transforms one rank down -- block i's reals at x + i N2 .. Nr, its spectrum at
+ * z + i 2 N2 .. N(r-1) H -- and where that batch's way puts the threads on the blocks in turn (few blocks, each
+ * past the cache: a first extent of 2 to 4 over big blocks, where the clones would leave threads idle) its plan
+ * runs the block phase (lm_rowq, in role on the child's store beside the child); where its way is whole blocks
+ * per worker the clones serve.
  * The row: t=r2c n=N1x..xNr q=1 on the lay=lm axis (the batch's row at one transform: at K = 1 the two batch
  * geometries are the same addressing), direction-shared, the first axis's column tokens on it.
  *
@@ -40,13 +46,56 @@ static void _ilrn_blocks(const struct vfft_plan_s *h, size_t *rb, size_t *cb)
     *rb = lead * (size_t)e[r - 1];
     *cb = 2 * lead * ((size_t)e[r - 1] / 2 + 1);
 }
-/* the executors (the door binds them: a direction each) */
+/* THE BLOCK PHASE AT T: the contiguous batch of the N1 blocks, the real transform one rank down at howmany = N1
+ * on T threads -- the request rc of the block child with the batch's count, geometry and threads -- planned in
+ * role on the child's store (the batch's row and its plan of one block at T beside the child's rows). Kept where
+ * its way is not whole blocks per worker (the queue's verdict, raced or replayed: all threads on each block in
+ * turn, or groups); a banked way of whole blocks per worker builds nothing: the clones serve. NULL when not
+ * built or not kept. */
+static struct vfft_plan_s *_ilrn_build_batch(struct vfft_plan_s *h, const vfft_cfg_t *cfg, const vfft_cfg_t *rc, int T)
+{
+    vfft_cfg_t bc;
+    struct vfft_plan_s *q;
+    if (T < 2 || h->N < 2 || !h->lm_rowS)
+        return NULL;
+    bc = *rc;
+    bc.howmany = (size_t)h->N;
+    bc.batch_geom = VFFT_BATCH_CONTIGUOUS;
+    bc.nthreads = T;
+    bc.wisdom_write = 0;
+    bc.recalibrate = cfg->recalibrate;
+    if (!cfg->recalibrate)
+    {   /* the batch's row (plane_queue.h _pq_row_key): whole blocks per worker banked -> nothing to build */
+        vw2_key_t k;
+        int i;
+        vw2__pq_key(&k, rc->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C, rc->dims, rc->n[0], rc->n[1], rc->n[2],
+                    (size_t)h->N, vfft_policy_ord_rankn(&bc), VW2_PL_OOP, VW2_LAY_IL, T);
+        for (i = 3; i < rc->dims; i++)
+            k.n[i] = rc->n[i];
+        if (vw2_pq_lookup(&h->lm_rowS->vw2, &k) == 1)
+            return NULL;
+    }
+    q = (struct vfft_plan_s *)_vfft_create_cfg(&bc);
+    if (q && (!q->pq_inner || q->pq_mt == 1))
+    {   /* not the queue, or its way is whole blocks per worker */
+        vfft_destroy((vfft_plan)q);
+        q = NULL;
+    }
+    return q;
+}
+/* the executors (the door binds them: a direction each). The blocks: through the block phase's batch plan where
+ * the plan carries one (its geometry is the blocks': one after another on both sides), else the block walker */
 static int _ilrn_exec_r2c(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *xin, vfft_real *zout)
 {
     size_t rb, cb;
     (void)dir;
-    _ilrn_blocks(h, &rb, &cb);
-    _lm2dr_rows(h, xin, zout, rb, cb, VFFT_FORWARD);
+    if (h->lm_rowq)
+        _vfft_exec6((vfft_plan)h->lm_rowq, VFFT_FORWARD, (vfft_real *)xin, NULL, zout, NULL);
+    else
+    {
+        _ilrn_blocks(h, &rb, &cb);
+        _lm2dr_rows(h, xin, zout, rb, cb, VFFT_FORWARD);
+    }
     _lm_cols(h, zout, zout, 0);   /* the first axis over the spectrum, in place */
     return 0;
 }
@@ -54,9 +103,14 @@ static int _ilrn_exec_c2r(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real
 {
     size_t rb, cb;
     (void)dir;
-    _ilrn_blocks(h, &rb, &cb);
     _lm_cols(h, zin, h->lm_W, 1);   /* the caller's spectrum survives: the backward column pass moves it into the scratch */
-    _lm2dr_rows(h, h->lm_W, xout, cb, rb, VFFT_BACKWARD);
+    if (h->lm_rowq)
+        _vfft_exec6((vfft_plan)h->lm_rowq, VFFT_BACKWARD, h->lm_W, NULL, xout, NULL);
+    else
+    {
+        _ilrn_blocks(h, &rb, &cb);
+        _lm2dr_rows(h, h->lm_W, xout, cb, rb, VFFT_BACKWARD);
+    }
     return 0;
 }
 
@@ -190,6 +244,8 @@ static vfft_plan _vfft_create_realn_il(const vfft_cfg_t *cfg, struct vfft_wisdom
         }
     }
     if (T > 1)
+        h->lm_rowq = _ilrn_build_batch(h, cfg, &rc, T);   /* the block phase's batch plan, where it serves */
+    if (T > 1 && !h->lm_rowq)
     {   /* the clones before the race: its threaded arms run the blocks over them */
         rc.recalibrate = 0;   /* a clone replays what the primary banked */
         (void)_lm2d_clones_build(h, &rc, T);
