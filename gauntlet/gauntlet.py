@@ -467,7 +467,15 @@ def stage_calibrate(run, cells, recal):
 
 def bench_cell(run, n, csv_path):
     bench = run.exe("bench_1d_vs_mkl")
-    if run.batch:
+    if run.batch and run.real:
+        # the REAL batch of rank 4 to 7 (2026-11-22). Contiguous: the bench's --tcndr2c / --tcndc2r, every shape, the
+        # contiguous c2c batch cell's columns. Lane-major: --lmndr2c / --lmndc2r, an even last extent only (an odd one
+        # has no lane-major real batch: the create fails and the cell has no row), four arms on the same data: ours
+        # lane-major and MKL on that layout (vfft_ns, mkl_mirror_ns, ratio_mirror: the run's verdict), ours contiguous
+        # and MKL contiguous (contig_ns, mkl_home_ns, ratio_contig)
+        flag = [("--lmnd" if run.batch == "lane-major" else "--tcnd") + run.real] + (["--mt"] if run.threads > 1 else [])
+        nstr, kstr = ckey(n), str(run.k)
+    elif run.batch:
         # the c2c batch (2026-11-20): K transforms, the length or the shape in the N slot, K in the K slot; the
         # bench's contiguous cell (--tcc2c / --tc2d / --tc3d) or its lane-major cell (--lmc2c / --lm2d / --lm3d)
         lm, nd = run.batch == "lane-major", ndim(n)
@@ -755,11 +763,12 @@ def main():
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
     if run.k > 1 and not run.batch and (not run.real or dims != 1):
         raise SystemExit("--k: the batch count of the 1D real cell, or of a c2c batch with --batch")
-    if run.batch and (run.real or run.ip or run.cmp != "mkl" or run.k < 2):
-        raise SystemExit("--batch: a c2c batch of --k K >= 2 transforms, out of place, against MKL")
-    if dims >= 4 and (run.real not in (None, "", "r2c", "c2r") or (run.real and (run.ip or run.batch)) or run.cmp == "kfr"):
+    if run.batch and ((run.real and (dims < 4 or run.real not in ("r2c", "c2r"))) or run.ip or run.cmp != "mkl" or run.k < 2):
+        raise SystemExit("--batch: a c2c batch of --k K >= 2 transforms, out of place, against MKL; with --real r2c | c2r the real "
+                         "batch of rank 4 to 7 (lane-major: an even last extent only)")
+    if dims >= 4 and (run.real not in (None, "", "r2c", "c2r") or (run.real and run.ip) or run.cmp == "kfr"):
         raise SystemExit("rank 4 to 7: the c2c cell, one transform (against MKL or --cmp fftw) or a batch (--batch, against MKL); "
-                         "--real r2c | c2r, one transform out of place")
+                         "--real r2c | c2r, one transform out of place or a batch (--batch, against MKL)")
     if dims >= 4 and not run.est and args.verb in ("run", "calibrate", "bench", "verify"):
         raise SystemExit("rank 4 to 7: the estimate's plans only (--est); the calibrate and verify probes have no cell above rank 3")
     if run.batch and not run.est and args.verb != "cells":
