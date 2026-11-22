@@ -729,6 +729,7 @@ out:
 #include "il/estimate/real_estimate_nd_il.h"
 /* the lane-major real batch at rank 1, on the lane-major file's pieces */
 #include "il/estimate/real_estimate_lm_il.h"
+#include "il/estimate/real_estimate_rn_il.h"
 
 /* ── the environment guard ──────────────────────────────────────────────── */
 
@@ -836,6 +837,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
     m.l3 = vfft_cpu_l3_bytes();
     m.cores = vfft_topology()->ncores;
     m.l1d_ways = (int)vfft_cpu_l1d_ways();
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->dims >= 4)
+        return _vfft_create_estimate_realn(&m, cfg);   /* rank 4 to 7: one transform (real_estimate_rn_il.h) */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) && cfg->howmany > 1 &&
         (cfg->dims < 2 ? cfg->batch_geom != VFFT_BATCH_CONTIGUOUS : cfg->batch_geom == VFFT_BATCH_LANE_MAJOR))
         return _vfft_create_estimate_lmr(&m, cfg);   /* a real batch is lane-major by DEFAULT at rank 1, when named above */

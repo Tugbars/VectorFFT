@@ -215,11 +215,12 @@ static int _vfft_api_translate(const vfft_config_t *p, vfft_cfg_t *c)
                        "VFFT_DST2 and VFFT_DST3 only, not VFFT_%s", _vfft_tname(p->transform));
             return 0;
         }
-        if (p->rank > 3 && p->transform != VFFT_C2C)
+        if (p->rank > 3 && p->transform != VFFT_C2C && p->transform != VFFT_R2C && p->transform != VFFT_C2R)
         {   /* rank 4 to 7: VFFT_C2C, one transform or a batch in either geometry (il/estimate/c2c_estimate_nd_il.h
-             * est_plan_rn, c2c_estimate_lm_il.h est_plan_lm_n) */
-            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, and VFFT_C2C at ranks 4 to 7, not rank %d "
-                       "VFFT_%s", p->rank, _vfft_tname(p->transform));
+             * est_plan_rn, c2c_estimate_lm_il.h est_plan_lm_n), and one VFFT_R2C or VFFT_C2R transform
+             * (real_estimate_rn_il.h) */
+            _vfft_warn("vfft_create: VFFT_FLAG_ESTIMATE plans ranks 1 to 3, and VFFT_C2C, VFFT_R2C and VFFT_C2R at "
+                       "ranks 4 to 7, not rank %d VFFT_%s", p->rank, _vfft_tname(p->transform));
             return 0;
         }
         if (p->rank > 1 && p->order == VFFT_ORDER_SCRAMBLED)

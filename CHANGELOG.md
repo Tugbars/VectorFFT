@@ -12,6 +12,8 @@ version can change how a function behaves, so compile your program again with ea
   thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`.
 - Batches of complex transforms of rank 4 to 7 (`howmany` above 1): contiguous transforms by
   default, or lane-major with `VFFT_BATCH_LANE_MAJOR`.
+- Real transforms (R2C, C2R) of rank 4 to 7: one transform per plan, out of place, on one
+  thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`.
 
 ## 0.8.1 beta (2026-11-19)
 

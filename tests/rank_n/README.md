@@ -1,10 +1,12 @@
 # Rank 4 to 7: the tests
 
-Checks and timing cells for complex transforms of rank 4 to 7 (`VFFT_C2C`, interleaved, natural order), one
-transform or a batch. The transforms themselves are the rank-N tier,
+Checks and timing cells for transforms of rank 4 to 7: complex (`VFFT_C2C`, interleaved, natural order), one
+transform or a batch, and real (`VFFT_R2C`, `VFFT_C2R`), one transform out of place. The complex transforms are
+the rank-N tier,
 [`src/core/il/rank3/fftnd_il.h`](../../src/core/il/rank3/fftnd_il.h); a contiguous batch is the queue over its plan
 ([`plane_queue.h`](../../src/core/il/rank2/plane_queue.h)), a lane-major batch its own door
-([`lm_batch3d_il.h`](../../src/core/il/rank3/lm_batch3d_il.h)).
+([`lm_batch3d_il.h`](../../src/core/il/rank3/lm_batch3d_il.h)); the real transforms are
+[`fftnd_realn_il.h`](../../src/core/il/rank3/fftnd_realn_il.h).
 
 ## What is here
 
@@ -30,6 +32,9 @@ python tests/rank_n/nd_sweep.py
   them also in place and at 4 and 8 threads.
 - **The batches.** A shape of up to 300,000 points also runs as a batch at 1 and 8 threads: three contiguous
   transforms, or four lane-major ones. Every transform of the batch is checked against the reference.
+- **The real transforms.** Every shape also runs through the R2C plan, its bins checked against the reference's
+  half spectrum, and then through the C2R plan, checked against the input; on one thread, and at 8 threads from
+  256 points.
 - **The shapes.** Powers of two, composites, odd extents, a prime above 47 on each axis in turn, extents of 2 and
   3, and arrays up to 16.7 million points.
 - **Measured plans.** `--store DIR` also plans a part of the list by measuring, batches among them, in the scratch

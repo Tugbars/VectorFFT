@@ -116,6 +116,45 @@ static inline long long est__lmr_lanes(const est_planlmr_t *p)
                           : (long long)p->N2 * (long long)(p->N3 / 2 + 1) * (long long)p->K;
 }
 
+/* est__lmr_first_axis: the first axis of a real batch of rank 2 or 3, and of one real transform of rank 4 to 7
+ * (real_estimate_rn_il.h), at N1 over the spectrum's lanes, natural: the C2C rank-2 and rank-3 batch's pass (no
+ * unbanded pick), its column at one thread and the C2C threaded test after the turned pass is cleared. p is the
+ * pass's recipe, a rank-1 lane-major recipe at those lanes; T the threads (1 or more); top = 0 on a block child.
+ * Returns 0, or -1 with the reason. */
+static inline int est__lmr_first_axis(const est_machine_t *m, int N1, long long lanes, int T, int top, est_planlm_t *p,
+                                      char *why, size_t whylen)
+{
+    if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, T > 1 ? EST_LM_MT : 0, p, why, whylen))
+        return -1;
+    p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
+    p->T = T;
+    if (T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2)
+        est__lm_threaded(m, p, lanes);
+    /* the column builder on a real key races the real pool's forms (R2C's adds the half-store twins at the leaf,
+     * il2d_tier.h): the token spelled from it, the first form of every stage, which C2R's pool holds too */
+    est__col_forms_real(p->col.R, p->col.nst, 0, p->col.forms, sizeof p->col.forms);
+    /* THE FIRST AXIS'S SERIAL TILE (2026-11-03, stage 4; docs/roadmap/real_estimate_plan.md section 15): on a plain
+     * chain of two stages or more whose plane, 16 N1 lanes bytes, passes the L1d, the widest of the door's widths
+     * up to EST_LMR_TILE_MAX lanes, below the lanes, whose strip of 16 N1 w bytes fits the L2: the first axis runs
+     * over the spectrum's whole width, every stage a pass over the plane, and a tile of lanes keeps a strip in the
+     * cache from stage to stage. 66 cells at one thread (29 shapes over the four layers, K 4 - 128, both
+     * directions), each tile timed with the tile the only change: the walk 1.100 against the planner, the rule
+     * 0.986 (1.003 against the best tile). One stage is one pass with or without a tile: every tile there ran
+     * slower (14 cells of 14, the best width 1.26 times the walk; 3x84 x 48 in place 1.32 among the unseen cells);
+     * in the L1d the walk won too (8x8 x 16, 16x16 x 8: a tile 1.5 times slower). The batch's own first axis
+     * only: on the 3D batch's block child (the 2D pass over one plane's lanes) a tile of 8 or 16 lanes ran slower
+     * at one thread (8: 6 cells faster, 12 slower, 1.145 against the walk; 16: 1.054) */
+    if (top && p->col.nst > 1 && !p->col.rd_n && p->col.blu <= 0 && 16LL * N1 * lanes > (long long)m->l1d)
+    {
+        int lad[6], n = _il2d_sw_ladder(N1, (size_t)lanes, 1, lad, 6), i;
+        for (i = 0; i < n; i++)
+            if (lad[i] > p->sw && lad[i] <= EST_LMR_TILE_MAX && (long long)lad[i] < lanes &&
+                16LL * N1 * lad[i] <= (long long)m->l2 &&
+                vfft_policy_lm_tile_ok(lad[i], (size_t)lanes, p->col.nat && p->col.nst > 1))
+                p->sw = lad[i];
+    }
+    return 0;
+}
 /* est__plan_lmrn: the lane-major real batch's recipe at rank 1, 2 or 3 (the header's list; at rank 1 the two rules
  * above); top = 0 for a block child. Returns 0 with *out filled (its child allocated: est_free_lmr), or -1 with the
  * reason. Pure. */
@@ -141,35 +180,8 @@ static inline int est__plan_lmrn(const est_machine_t *m, int rank, int N1, int N
     if (rank >= 2)
     {   /* the first axis over the spectrum's lanes, natural: the C2C rank-2 and rank-3 batch's (no unbanded pick), its
          * column at one thread and the C2C threaded test after the turned pass is cleared */
-        if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, out->T > 1 ? EST_LM_MT : 0, p, why, whylen))
+        if (est__lmr_first_axis(m, N1, lanes, out->T, top, p, why, whylen))
             return -1;
-        p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
-        p->T = out->T;
-        if (out->T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2)
-            est__lm_threaded(m, p, lanes);
-        /* the column builder on a real key races the real pool's forms (R2C's adds the half-store twins at the leaf,
-         * il2d_tier.h): the token spelled from it, the first form of every stage, which C2R's pool holds too */
-        est__col_forms_real(p->col.R, p->col.nst, 0, p->col.forms, sizeof p->col.forms);
-        /* THE FIRST AXIS'S SERIAL TILE (2026-11-03, stage 4; docs/roadmap/real_estimate_plan.md section 15): on a plain
-         * chain of two stages or more whose plane, 16 N1 lanes bytes, passes the L1d, the widest of the door's widths
-         * up to EST_LMR_TILE_MAX lanes, below the lanes, whose strip of 16 N1 w bytes fits the L2: the first axis runs
-         * over the spectrum's whole width, every stage a pass over the plane, and a tile of lanes keeps a strip in the
-         * cache from stage to stage. 66 cells at one thread (29 shapes over the four layers, K 4 - 128, both
-         * directions), each tile timed with the tile the only change: the walk 1.100 against the planner, the rule
-         * 0.986 (1.003 against the best tile). One stage is one pass with or without a tile: every tile there ran
-         * slower (14 cells of 14, the best width 1.26 times the walk; 3x84 x 48 in place 1.32 among the unseen cells);
-         * in the L1d the walk won too (8x8 x 16, 16x16 x 8: a tile 1.5 times slower). The batch's own first axis
-         * only: on the 3D batch's block child (the 2D pass over one plane's lanes) a tile of 8 or 16 lanes ran slower
-         * at one thread (8: 6 cells faster, 12 slower, 1.145 against the walk; 16: 1.054) */
-        if (top && p->col.nst > 1 && !p->col.rd_n && p->col.blu <= 0 && 16LL * N1 * lanes > (long long)m->l1d)
-        {
-            int lad[6], n = _il2d_sw_ladder(N1, (size_t)lanes, 1, lad, 6), i;
-            for (i = 0; i < n; i++)
-                if (lad[i] > p->sw && lad[i] <= EST_LMR_TILE_MAX && (long long)lad[i] < lanes &&
-                    16LL * N1 * lad[i] <= (long long)m->l2 &&
-                    vfft_policy_lm_tile_ok(lad[i], (size_t)lanes, p->col.nat && p->col.nst > 1))
-                    p->sw = lad[i];
-        }
         if (!(out->child = (est_planlmr_t *)calloc(1, sizeof *out->child)))
             return est_refuse(why, whylen, "out of memory");
         if (est__plan_lmrn(m, rank - 1, N2, rank == 3 ? N3 : 0, 0, K, 1, 0, 0, out->child, why, whylen))

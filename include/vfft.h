@@ -60,7 +60,8 @@ extern "C"
    *   contract.
    * At rank 2 and above the data is row-major, the last axis contiguous, and
    * the real transforms halve the last axis (N_last/2 + 1 bins). VFFT_C2C is
-   * served at ranks 1 to 7; VFFT_R2C and VFFT_C2R at ranks 1 to 3.
+   * served at ranks 1 to 7; VFFT_R2C and VFFT_C2R at ranks 1 to 7 too, at ranks
+   * 4 to 7 one transform per plan, out of place.
    *
    * Real-to-real, 1D only, N reals in and out, unnormalized. SERVED, each at
    * any N from its shortest length up, one transform per plan (howmany = 1),
@@ -180,10 +181,11 @@ extern "C"
                                             not opened. INTERLEAVED, any nthreads, either
                                             placement. VFFT_C2C: 1D in any order, rank 2
                                             to 7 in natural order. VFFT_R2C and VFFT_C2R:
-                                            rank 1, 2 or 3 in natural order (at rank 2 and
+                                            rank 1 to 7 in natural order (at rank 2 and
                                             3 not with VFFT_FLAG_OWN_PITCH). One transform
                                             or a batch of them (howmany > 1), contiguous or
-                                            lane-major. VFFT_DCT1, VFFT_DST1, VFFT_DST2 and
+                                            lane-major (the real transforms of rank 4 to 7:
+                                            one transform). VFFT_DCT1, VFFT_DST1, VFFT_DST2 and
                                             VFFT_DST3: the real transforms inside them
                                             planned this way.
                                             vfft_create() refuses the flag on any

@@ -1,8 +1,11 @@
-"""nd_sweep.py -- the correctness sweep of the rank-4 to 7 complex transforms: nd_probe over a fixed list of shapes.
+"""nd_sweep.py -- the correctness sweep of the rank-4 to 7 transforms, complex and real: nd_probe over a fixed list
+of shapes.
 
 Every shape runs with estimate plans (VFFT_FLAG_ESTIMATE, nothing measured, no wisdom) out of place on one thread,
 and a part of them in place and at 4 and 8 threads. A shape of up to BATCH_MAX points also runs as a batch: three
 contiguous transforms, or four lane-major ones (VFFT_BATCH_LANE_MAJOR), at 1 and 8 threads, a part of them in place.
+Every shape also runs as a real transform (the R2C plan against the reference's half spectrum, then the C2R plan on
+the round trip) on one thread, and at 8 threads from 256 points.
 A shape of up to DIRECT_MAX points is checked against the direct DFT along every axis, a larger one against the
 library's 1D plans line by line. The list is fixed: it comes from arithmetic alone, the same on every machine.
 
@@ -89,9 +92,15 @@ def main():
             runs.append((sh, ["--est", "--threads", "8"] + geo))
             if i % 3 == 1:
                 runs.append((sh, ["--est", "--threads", "8", "--ip"] + geo))
+        runs.append((sh, ["--est", "--real"]))
+        if points(sh) >= 256:
+            runs.append((sh, ["--est", "--real", "--threads", "8"]))
         if a.store and points(sh) <= 70000 and i % 4 == 0:
             runs.append((sh, ["--store", a.store]))
             runs.append((sh, ["--store", a.store, "--threads", "8"]))
+        if a.store and points(sh) <= 70000 and i % 4 == 2:
+            runs.append((sh, ["--store", a.store, "--real"]))
+            runs.append((sh, ["--store", a.store, "--real", "--threads", "8"]))
         if a.store and points(sh) <= 20000 and i % 8 == 1:
             runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "3"]))
             runs.append((sh, ["--store", a.store, "--threads", "8", "--batch", "4", "--lm"]))
