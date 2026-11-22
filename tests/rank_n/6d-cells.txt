@@ -1,0 +1,21 @@
+# 6d-cells.txt -- 17 shapes of rank 6, the timing cells of the rank-4 to 7 complex transforms
+# Written by make_cells.py from arithmetic alone; every platform times the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/rank_n/6d-cells.txt --est
+# shape                        # class          points
+4x4x4x4x4x4                    # power of two   4096
+8x8x8x8x8x8                    # power of two   262144
+16x16x16x16x16x16              # power of two   16777216
+2x4x2x4x2x4                    # power of two   512
+4x4x4x8x8x8                    # power of two   32768
+8x8x8x4x4x4                    # power of two   32768
+16x4x4x4x4x16                  # power of two   65536
+6x6x6x6x6x6                    # 2^a x odd      46656
+10x10x10x10x10x10              # 2^a x odd      1000000
+12x10x8x6x4x2                  # 2^a x odd      46080
+2x4x6x8x10x12                  # 2^a x odd      46080
+3x3x3x3x3x3                    # odd            729
+5x5x5x5x5x5                    # odd            15625
+9x9x9x9x9x9                    # odd            531441
+3x5x7x7x5x3                    # odd            11025
+53x4x4x4x4x4                   # prime > 47     54272
+4x4x4x4x4x53                   # prime > 47     54272

@@ -1,0 +1,25 @@
+# 5d-cells.txt -- 21 shapes of rank 5, the timing cells of the rank-4 to 7 complex transforms
+# Written by make_cells.py from arithmetic alone; every platform times the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/rank_n/5d-cells.txt --est
+# shape                        # class          points
+4x4x4x4x4                      # power of two   1024
+8x8x8x8x8                      # power of two   32768
+16x16x16x16x16                 # power of two   1048576
+32x16x16x16x16                 # power of two   2097152
+2x4x8x16x32                    # power of two   32768
+32x16x8x4x2                    # power of two   32768
+16x16x16x8x8                   # power of two   262144
+4x4x4x4x256                    # power of two   65536
+6x6x6x6x6                      # 2^a x odd      7776
+12x12x12x12x12                 # 2^a x odd      248832
+10x10x10x10x10                 # 2^a x odd      100000
+20x16x12x8x4                   # 2^a x odd      122880
+24x12x6x12x24                  # 2^a x odd      497664
+5x5x5x5x5                      # odd            3125
+9x9x9x9x9                      # odd            59049
+15x9x7x5x3                     # odd            14175
+3x5x7x9x11                     # odd            10395
+15x15x15x15x15                 # odd            759375
+53x8x8x8x8                     # prime > 47     217088
+8x8x53x8x8                     # prime > 47     217088
+8x8x8x8x53                     # prime > 47     217088

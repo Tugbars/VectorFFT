@@ -1,0 +1,40 @@
+# 4d-cells.txt -- 36 shapes of rank 4, the timing cells of the rank-4 to 7 complex transforms
+# Written by make_cells.py from arithmetic alone; every platform times the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/rank_n/4d-cells.txt --est
+# shape                        # class          points
+4x4x4x4                        # power of two   256
+8x8x8x8                        # power of two   4096
+16x16x16x16                    # power of two   65536
+32x32x32x32                    # power of two   1048576
+64x64x64x64                    # power of two   16777216
+16x16x16x32                    # power of two   131072
+32x32x32x64                    # power of two   2097152
+64x16x16x16                    # power of two   262144
+16x16x16x64                    # power of two   262144
+256x8x8x8                      # power of two   131072
+8x8x8x256                      # power of two   131072
+2x64x64x64                     # power of two   524288
+4x32x32x32                     # power of two   131072
+64x64x64x4                     # power of two   1048576
+128x128x8x8                    # power of two   1048576
+8x8x128x128                    # power of two   1048576
+12x12x12x12                    # 2^a x odd      20736
+24x24x24x24                    # 2^a x odd      331776
+48x48x48x48                    # 2^a x odd      5308416
+20x20x20x20                    # 2^a x odd      160000
+10x12x14x16                    # 2^a x odd      26880
+40x30x20x10                    # 2^a x odd      240000
+96x24x12x6                     # 2^a x odd      165888
+6x12x24x96                     # 2^a x odd      165888
+9x9x9x9                        # odd            6561
+15x15x15x15                    # odd            50625
+25x25x25x25                    # odd            390625
+27x9x9x9                       # odd            19683
+5x7x9x11                       # odd            3465
+35x15x9x5                      # odd            23625
+45x45x15x15                    # odd            455625
+53x16x16x16                    # prime > 47     217088
+16x53x16x16                    # prime > 47     217088
+16x16x16x53                    # prime > 47     217088
+101x8x8x8                      # prime > 47     51712
+127x12x12x12                   # prime > 47     219456

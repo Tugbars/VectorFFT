@@ -1,0 +1,18 @@
+# 7d-cells.txt -- 14 shapes of rank 7, the timing cells of the rank-4 to 7 complex transforms
+# Written by make_cells.py from arithmetic alone; every platform times the same cells.
+# The gauntlet reads it: python gauntlet/gauntlet.py run --cells @tests/rank_n/7d-cells.txt --est
+# shape                        # class          points
+2x2x2x2x2x2x2                  # power of two   128
+4x4x4x4x4x4x4                  # power of two   16384
+8x8x8x8x8x8x8                  # power of two   2097152
+4x4x4x4x8x8x8                  # power of two   131072
+8x8x8x8x8x8x4                  # power of two   1048576
+2x4x8x2x4x8x2                  # power of two   8192
+6x6x6x6x6x6x6                  # 2^a x odd      279936
+2x3x4x5x6x7x8                  # 2^a x odd      40320
+10x8x6x4x6x8x10                # 2^a x odd      921600
+3x3x3x3x3x3x3                  # odd            2187
+5x5x5x5x5x5x5                  # odd            78125
+3x5x7x3x5x7x3                  # odd            33075
+53x2x2x2x2x2x2                 # prime > 47     3392
+2x2x2x2x2x2x53                 # prime > 47     3392
