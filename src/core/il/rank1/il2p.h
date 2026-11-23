@@ -711,7 +711,7 @@ typedef struct {
 static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
 {
     if (!p) return;
-    vfft_aligned_free(p->mid);
+    vfft_apart_free(p->mid);
     vfft_aligned_free(p->tw);
     vfft_aligned_free(p->twb);
     free(p);
@@ -1253,7 +1253,9 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     size_t npair = ((size_t)R2 + 1u) / 2u;
     size_t ntw = npair * (size_t)(R1 - 1) * 8u;
 #endif
-    p->mid = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
+    /* mid: every transform writes it whole and reads it back, and a threaded 2D plan runs one copy of this plan on
+     * each worker -- apart from the next copy's (common/support/zalloc.h, vfft_apart_alloc: the measurements) */
+    p->mid = (vfft_real *)vfft_apart_alloc((size_t)N * 2u * sizeof(vfft_real));
     p->tw  = (vfft_real *)vfft_aligned_alloc(ntw * sizeof(vfft_real));
     p->twb = (vfft_real *)vfft_aligned_alloc(ntw * sizeof(vfft_real));
     if (!p->mid || !p->tw || !p->twb) { vfft_il2p_destroy(p); return 0; }
@@ -1500,8 +1502,8 @@ typedef struct {
 static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
 {
     if (!p) return;
-    vfft_aligned_free(p->mid1);
-    vfft_aligned_free(p->mid2);
+    vfft_apart_free(p->mid1);
+    vfft_apart_free(p->mid2);
     vfft_aligned_free(p->twB);
     vfft_aligned_free(p->twA);
     vfft_aligned_free(p->twAc);
@@ -1638,8 +1640,9 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     p->leaf_f = lf; p->n1_b = nb;
     p->tA_f = af; p->tB_f = bf;
     p->tA_b = ab; p->tBg_b = btg;
-    p->mid1 = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
-    p->mid2 = (vfft_real *)vfft_aligned_alloc((size_t)N * 2u * sizeof(vfft_real));
+    /* mid1, mid2: as the two-pass plan's mid, apart from another worker's copy (zalloc.h, vfft_apart_alloc) */
+    p->mid1 = (vfft_real *)vfft_apart_alloc((size_t)N * 2u * sizeof(vfft_real));
+    p->mid2 = (vfft_real *)vfft_apart_alloc((size_t)N * 2u * sizeof(vfft_real));
     /* stage B: A blocks of R2 columns share ONE block's table (its angle
      * depends on the local column only: modulus B*R2, k = local);
      * stage A: B blocks of R2 columns, k global (modulus N). */

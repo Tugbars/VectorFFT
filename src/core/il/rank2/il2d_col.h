@@ -62,8 +62,9 @@ typedef struct {
                                * walk's form is staged (dominant) unless its row names nls= (the
                                * estimate's LEAF rule, estimate_nd_il.h); the threaded arms race both,
                                * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
-    vfft_real *natstage;         /* the leaf's STAGING, T x R_last x rn complexes, 64-B
-                               * aligned (il2d_natural_leaf_design.md);
+    vfft_real *natstage;         /* the leaf's STAGING: T slots of R_last x rn complexes, one a
+                               * worker (_il2d_stage_alloc / _il2d_stage_slot below;
+                               * il2d_natural_leaf_design.md);
                                * NULL = the leaf stores at its natural stride */
     vfft_real **natsscr;         /* the threaded strips' DENSE per-worker scratch:
                                * nnatsscr blocks of N rows of _il2d_scr_cap(natswcap) complexes;
@@ -100,5 +101,28 @@ typedef struct {
      * replays sw= or races it). Read once, by the lane-major race (il/rank1/lm_batch_il.h, _lm_race). */
     int lmsw;
 } vfft_ilcol_t;
+
+/* THE LEAF'S STAGING, ONE SLOT A WORKER: the leaf writes a block's R_last rows of rn complexes into its worker's slot
+ * and the rows run there, so every worker walks its slot again and again beside its neighbours'. The slots are the
+ * allocator's (common/support/zalloc.h, vfft_apart_slots_alloc: each on cache lines of its own, 8 KiB after the one
+ * before ends -- the measurements are there). A slot's address follows from the chain's last radix and the lane
+ * count alone: every walker of a chain finds the same slot, and a block built for the largest last radix serves a
+ * chain with a smaller one. */
+static inline size_t _il2d_stage_slot_bytes(int Rl, size_t rn)
+{
+    return 2 * (size_t)Rl * rn * sizeof(vfft_real);
+}
+static inline vfft_real *_il2d_stage_alloc(int T, int Rl, size_t rn)   /* T slots (one when T < 1); NULL = out of memory */
+{
+    return (vfft_real *)vfft_apart_slots_alloc((size_t)(T > 0 ? T : 1), _il2d_stage_slot_bytes(Rl, rn));
+}
+static inline vfft_real *_il2d_stage_slot(vfft_real *stage, int tid, int Rl, size_t rn)   /* worker tid's (the caller: 0) */
+{
+    return (vfft_real *)vfft_apart_slot(stage, (size_t)(tid > 0 ? tid : 0), _il2d_stage_slot_bytes(Rl, rn));
+}
+static inline void _il2d_stage_free(vfft_real *stage)
+{
+    vfft_apart_free(stage);
+}
 
 #endif /* VFFT_TRANSFORMS_FFT2D_IL2D_COL_H */

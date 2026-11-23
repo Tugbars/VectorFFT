@@ -96,26 +96,47 @@ static inline void vfft_aligned_free(void *p)
 #endif
 }
 
-/* A BLOCK ONE THREAD WRITES WHILE OTHER THREADS WRITE THEIRS (2026-11-23): a small work buffer that belongs to one
- * worker's plan and is walked again and again -- the flat DIT's staging plane on a row plan and its clones.
+/* A BUFFER ONE THREAD WRITES WHILE OTHER THREADS WRITE THEIRS (2026-11-23): a small work buffer one worker walks
+ * again and again while its neighbours walk theirs -- a row plan's and its clones' (the flat DIT's staging plane,
+ * the two-pass plan's mid, the three-stage plan's mid1 and mid2) and the natural leaf's staging slots.
  *
- *   vfft_apart_alloc(bytes)    64-byte aligned like vfft_aligned_alloc, with VFFT_APART_BYTES of memory nothing uses
- *                              before it and after it. NULL means failure.
- *   vfft_apart_free(p)         releases it (ONLY this function does); NULL is a no-op.
+ *   vfft_apart_alloc(bytes)            64-byte aligned like vfft_aligned_alloc, with VFFT_APART_BYTES of memory
+ *                                      nothing uses before it and after it. NULL means failure.
+ *   vfft_apart_free(p)                 releases it (ONLY this function does); NULL is a no-op.
+ *   vfft_apart_slots_alloc(n, bytes)   n buffers of `bytes` in one such block, one a worker: each starts on a cache
+ *                                      line, 2 * VFFT_APART_BYTES after the one before ends. NULL means failure;
+ *                                      release with vfft_apart_free.
+ *   vfft_apart_slot(base, t, bytes)    the t-th of them (t from 0).
  *
  * The heap hands out same-size blocks back to back once blocks of that size have been freed, so the buffers of a
- * plan and its clones can sit one after the other, and whether they do turns on what the process allocated before.
- * Eight workers each walking its own 16 KiB buffer then ran slower the closer the buffers were. Measured on the
- * 14900KF (AVX2, 8 threads), the whole 2D transform with a flat row plan (1029- and 1050-point rows on 75x1029,
- * 1029x1029, 150x1050 and 1050x1050), the eight staging buffers carved from one block at a set distance, against the
- * same plans with their buffers far apart (outputs bitwise equal):
+ * plan and its clones can sit one after the other, and whether they do turns on what the process allocated before;
+ * slots cut from one block one after the other sit so always. Eight workers each walking its own buffer then ran
+ * slower the closer the buffers were. Measured on the 14900KF (AVX2, 8 threads), the whole 2D transform, against the
+ * same plan with the buffers far apart (outputs bitwise equal):
  *
- *   distance between two buffers     0      1 KiB     2 KiB     4 KiB     6 KiB     8 KiB     16 KiB
- *   time, relative                1.12-1.23 1.08-1.16 1.05-1.20 0.99-1.06 0.98-1.01 0.99-1.01 0.98-0.99
+ *   the flat DIT's staging plane, 16 KiB (1029- and 1050-point rows on 75x1029, 1029x1029, 150x1050, 1050x1050),
+ *   every buffer on cache lines of its own
+ *     distance between two buffers     0      1 KiB     2 KiB     4 KiB     6 KiB     8 KiB     16 KiB
+ *     time, relative                1.12-1.23 1.08-1.16 1.05-1.20 0.99-1.06 0.98-1.01 0.99-1.01 0.98-0.99
+ *   the two-pass plan's mid, 2 to 8 KiB (128- to 512-point rows, eight planes from 128x128 to 2048x512)
+ *     back to back 1.02-1.11, 4 KiB apart 1.00-1.01
+ *   the three-stage plan's mid1 and mid2, 3 to 16 KiB (200- to 1000-point rows, eight planes)
+ *     back to back 1.00-1.04, 4 KiB apart 1.00-1.01
+ *   the natural leaf's staging slots, T slots of R_last rows of N2 points cut one after the other from one block
+ *   (the threaded tile; a slot of 1680, 672, 10000, 2160 or 6000 bytes ends inside a cache line, so two workers
+ *   also shared that line)
+ *     plane                          875x15  2625x6  1000x125  729x15  525x75  3000x20  1575x12
+ *     a slot, bytes                   1680     672    10000     2160    6000    1600     1344
+ *     one after the other             1.28    1.24     1.15     1.14    1.13    1.11     1.06
+ *     each on a cache line, no more   1.15    1.07     1.07     1.09    1.05    1.09     1.09
+ *     4 KiB apart                     1.00    0.99     1.00     1.02    1.02    1.00     1.01
+ *     (slots of 18 KiB and more, eight planes: 0.98-1.04, inside those runs' spread)
  *
- * No cache line is shared at any of these distances and the cost fades over kilobytes; a neighbour's hardware
- * prefetch running past the end of its buffer is the likely cause, not separated further. Two such blocks side by
- * side are 2 * VFFT_APART_BYTES = 8 KiB apart, where the cost was gone. One thread: no difference at any distance. */
+ * On cache lines of its own a buffer still pays, and the cost fades over kilobytes; a neighbour's hardware prefetch
+ * running past the end of its buffer is the likely cause, not separated further. Two such buffers side by side are
+ * 2 * VFFT_APART_BYTES = 8 KiB apart, where the cost was gone. One thread: no difference at any distance. No cost
+ * at any distance, measured the same way: ZTURN-T's plane (4 KiB of slack of its own), the threaded strips' dense
+ * scratch, the two-pass rows' scratch. */
 #define VFFT_APART_BYTES 4096   /* a multiple of VFFT_ALIGNMENT */
 
 static inline void *vfft_apart_alloc(size_t bytes)
@@ -131,6 +152,28 @@ static inline void vfft_apart_free(void *p)
 {
     if (p)
         vfft_aligned_free((char *)p - VFFT_APART_BYTES);
+}
+
+/* from one slot's first byte to the next slot's: the slot rounded up to whole cache lines, then the distance */
+static inline size_t vfft_apart_stride(size_t bytes)
+{
+    return ((bytes + VFFT_ALIGNMENT - 1) & ~(size_t)(VFFT_ALIGNMENT - 1)) + 2 * (size_t)VFFT_APART_BYTES;
+}
+
+static inline void *vfft_apart_slots_alloc(size_t n, size_t bytes)
+{
+    size_t stride;
+    if (bytes > SIZE_MAX - VFFT_ALIGNMENT - 2 * (size_t)VFFT_APART_BYTES)   /* the rounding and the distance */
+        return NULL;
+    stride = vfft_apart_stride(bytes);
+    if (n && stride > SIZE_MAX / n)
+        return NULL;
+    return vfft_apart_alloc(n * stride);
+}
+
+static inline void *vfft_apart_slot(void *base, size_t t, size_t bytes)
+{
+    return (char *)base + t * vfft_apart_stride(bytes);
 }
 
 #endif /* VFFT_SUPPORT_ZALLOC_H */

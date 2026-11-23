@@ -1112,10 +1112,10 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     h->il2d_col.natstage = NULL;
     h->il2d_col.natst = 1;
     if (il2d_nat && il2d_natscr && il2d_nst >= 1)
-    {   /* the leaf's staging, one block per worker (il2d_natural_leaf_design.md) */
+    {   /* the leaf's staging, one slot per worker (il2d_col.h; il2d_natural_leaf_design.md) */
         const int Rl = il2d_R[il2d_nst - 1];
         const int T = h->nthreads > 0 ? h->nthreads : 1;
-        h->il2d_col.natstage = (vfft_real *)vfft_aligned_alloc((size_t)T * 2 * (size_t)Rl * h->il2d_col.rn * sizeof(vfft_real));
+        h->il2d_col.natstage = _il2d_stage_alloc(T, Rl, h->il2d_col.rn);
     }
     h->il2d_col.blu = il2d_blu;
     h->il2d_col.bluchf = il2d_bluchf;

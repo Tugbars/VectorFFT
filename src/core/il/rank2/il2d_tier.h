@@ -903,7 +903,7 @@ static void _il2d_cmt_body(const void *v, const vfft_real *src, vfft_real *dst)
          * gather is cheap at the plane's odd pitch) */
         const int nst = c->nst, Rl = c->R[nst - 1];
         _il2d_nat_leaf_range(src, dst, a->N1, hp1, Rl, fns[nst - 1], c->natperm, a->lo, a->hi, a->reverse,
-                             a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)Rl * hp1 : NULL);
+                             a->stage ? _il2d_stage_slot(a->stage, a->tid, Rl, hp1) : NULL);
         return;
     }
     if (a->strip == 3)
@@ -913,7 +913,7 @@ static void _il2d_cmt_body(const void *v, const vfft_real *src, vfft_real *dst)
          * in place. _il2d_cols_mt_desc runs the first stage across the plane before (forward) or after (reverse) */
         const int nst = c->nst, R0 = c->R[0], Rl = c->R[nst - 1];
         const size_t D0 = (size_t)a->N1 / (size_t)R0;
-        vfft_real *slot = a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)Rl * hp1 : NULL;
+        vfft_real *slot = a->stage ? _il2d_stage_slot(a->stage, a->tid, Rl, hp1) : NULL;
         size_t t;
         for (t = a->lo; t < a->hi; t++)
         {
@@ -963,7 +963,7 @@ static void _il2d_cmt_body(const void *v, const vfft_real *src, vfft_real *dst)
             else
                 _il2d_col_pass_nat_range(src, dst, a->N1, hp1, k, k + w, c->nst, c->R, c->L, fns, tabs, a->reverse,
                                          c->natperm, c->natscr,
-                                         a->stage ? a->stage + (size_t)a->tid * 2 * (size_t)c->R[c->nst - 1] * hp1 : NULL);
+                                         a->stage ? _il2d_stage_slot(a->stage, a->tid, c->R[c->nst - 1], hp1) : NULL);
         }
         return;
     }
@@ -1535,9 +1535,7 @@ static vfft_real *_il2d_nat_stage_buf(struct vfft_plan_s *h, int tid)
 {   /* worker tid's staging block, wherever the plan carries the buffer (every
      * natural plan: T slots, fft2d_create_il.h) */
     const int Rl = h->il2d_col.R[h->il2d_col.nst - 1];
-    return h->il2d_col.natstage
-               ? h->il2d_col.natstage + (size_t)(tid > 0 ? tid : 0) * 2 * (size_t)Rl * h->il2d_col.rn
-               : NULL;
+    return h->il2d_col.natstage ? _il2d_stage_slot(h->il2d_col.natstage, tid, Rl, h->il2d_col.rn) : NULL;
 }
 /* the FORWARD leaf's staging: the buffer under the staged verdict (nls =
  * natst, raced against the strided leaf at create); NULL = strided */
@@ -3005,10 +3003,10 @@ static int _il2d_race_forms(int N1, size_t N2, const int *Rs, int nst,
         perm = _il2d_nat_perm(Rs, nst, N1);
         nscr = (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real));
         if (!lm)
-            nstage = (vfft_real *)vfft_aligned_alloc(2 * 64 * N2 * (size_t)Tw * sizeof(vfft_real));
+            nstage = _il2d_stage_alloc(Tw, 64, N2);   /* R_last <= 64 */
         if (!perm || !nscr || (!lm && !nstage))
         {   /* no natural pass to time: the scrambled strips stand in */
-            free(perm); vfft_aligned_free(nscr); vfft_aligned_free(nstage);
+            free(perm); vfft_aligned_free(nscr); _il2d_stage_free(nstage);
             perm = NULL; nscr = NULL; nstage = NULL;
         }
     }
@@ -3090,7 +3088,7 @@ static int _il2d_race_forms(int N1, size_t N2, const int *Rs, int nst,
     vfft_aligned_free(zseed);
     free(perm);
     vfft_aligned_free(nscr);
-    vfft_aligned_free(nstage);
+    _il2d_stage_free(nstage);
     for (s = 0; s < nst && off < (int)fsz - 8; s++)
         off += snprintf(forms + off, fsz - off, "%s%s", s ? "." : "", pick[s]);
     return 1;
@@ -3353,7 +3351,7 @@ static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
     vfft_real *zo = !banded ? NULL : lmip ? z : (vfft_real *)vfft_aligned_alloc(zn * sizeof(vfft_real));   /* the serving forms' destination plane */
     vfft_real *zseed = (banded && !lmip) ? NULL : (vfft_real *)vfft_aligned_alloc(zn * sizeof(vfft_real));   /* the arms run in place: the reset's seed */
     vfft_real *nscr = nat ? (vfft_real *)vfft_aligned_alloc(2 * T * sizeof(vfft_real)) : NULL;   /* aligned like every plane the door serves */
-    vfft_real *nstage = (nat && !lm) ? (vfft_real *)vfft_aligned_alloc(2 * 64 * N2 * nslot * sizeof(vfft_real)) : NULL;   /* R_last <= 64 */
+    vfft_real *nstage = (nat && !lm) ? _il2d_stage_alloc((int)nslot, 64, N2) : NULL;   /* R_last <= 64 */
     int *surv = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     int *next = (int *)malloc((size_t)(ncand > 0 ? ncand : 1) * sizeof(int));
     /* the heat's chain count: VFFT_IL2D_HEAT, or what the arm budget holds when
@@ -3375,12 +3373,12 @@ static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
          * cause, nothing raced (a race without the staging would time a form the cell does not serve) */
         const double mb = (2.0 * (double)zn + (nat ? 2.0 * (double)T : 0.0) + ((lm && lm->kind == 1) ? 2.0 * (double)T : 0.0)) *
                               (double)sizeof(vfft_real) / 1048576.0 +
-                          ((nat && !lm) ? 64.0 * (double)N2 * (double)nslot * (double)VFFT_CX_BYTES / 1048576.0 : 0.0);
+                          ((nat && !lm) ? (double)nslot * (double)vfft_apart_stride(_il2d_stage_slot_bytes(64, N2)) / 1048576.0 : 0.0);
         vfft_aligned_free(z);
         if (zo != z) vfft_aligned_free(zo);
         vfft_aligned_free(zseed);
         vfft_aligned_free(nscr);
-        vfft_aligned_free(nstage);
+        _il2d_stage_free(nstage);
         free(surv);
         free(next);
         _vfft_warn("vfft_create: IL column pass %dx%zu: out of memory (measuring its chains needs %.1f MB of planes)",
@@ -3431,7 +3429,7 @@ static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
     if (zo != z) vfft_aligned_free(zo);
     vfft_aligned_free(zseed);
     vfft_aligned_free(nscr);
-    vfft_aligned_free(nstage);
+    _il2d_stage_free(nstage);
     free(surv);
     free(next);
     *best_ns = wns;
@@ -5351,13 +5349,13 @@ static void _il2d_chainst_free(_il2d_chainst_t *s)
     free(s->natperm);
     if (s->own_natscr)
         vfft_aligned_free(s->natscr);
-    vfft_aligned_free(s->natstage);
+    _il2d_stage_free(s->natstage);
     memset(s, 0, sizeof *s);
 }
 /* a candidate chain's state as the column build makes it: the kernels resolved, the stage tables, the per-stage
  * forms raced (the column build's race, at one thread as it runs for a c2c cell), and where the cell is natural and
  * the chain has two stages or more the natural leaf (its permutation, the pre-leaf plane -- the descriptor's, of the
- * same size, or its own -- and the leaf's staging, T x R_last x N2). 0 = the chain does not build. */
+ * same size, or its own -- and the leaf's staging, T slots of R_last x N2). 0 = the chain does not build. */
 static int _il2d_chainst_build(int N1, int N2, const int *R, int nst, int nat_req, int T, const vfft_ilcol_t *prim,
                                _il2d_chainst_t *s)
 {
@@ -5383,7 +5381,7 @@ static int _il2d_chainst_build(int N1, int N2, const int *R, int nst, int nat_re
             s->natscr = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * (size_t)N2 * sizeof(vfft_real));
             s->own_natscr = 1;
         }
-        s->natstage = (vfft_real *)vfft_aligned_alloc((size_t)T * 2 * (size_t)s->R[nst - 1] * (size_t)N2 * sizeof(vfft_real));
+        s->natstage = _il2d_stage_alloc(T, s->R[nst - 1], (size_t)N2);
         if (!s->natperm || !s->natscr || !s->natstage)
         {
             _il2d_chainst_free(s);

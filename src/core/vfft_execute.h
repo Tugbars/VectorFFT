@@ -461,7 +461,7 @@ void vfft_destroy(vfft_plan h)
             vfft_aligned_free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
             free(h->il2d_col.natperm);
             vfft_aligned_free(h->il2d_col.natscr); /* aligned since 2026-09-24 */
-            vfft_aligned_free(h->il2d_col.natstage);
+            _il2d_stage_free(h->il2d_col.natstage);   /* the leaf's staging slots (il2d_col.h) */
             _il2d_nat_sscr_free(&h->il2d_col); /* the strips' dense scratch (2026-09-24) */
             vfft_aligned_free(h->il2d_col.bluchf);
             vfft_aligned_free(h->il2d_col.bluchb);
