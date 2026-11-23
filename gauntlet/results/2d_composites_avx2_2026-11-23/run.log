@@ -1,0 +1,32 @@
+2026-11-23 18:01:00 run: 134 cells, contract 2D out of place, bin build/gauntlet
+2026-11-23 18:01:00 calibrate: 134 cells (0 already done)
+2026-11-23 18:13:35   calibrated 25/134 (18x6), 755 s elapsed
+2026-11-23 18:20:23   calibrated 50/134 (70x10), 1163 s elapsed
+2026-11-23 18:28:23   calibrated 75/134 (270x18), 1643 s elapsed
+2026-11-23 18:37:18   calibrated 100/134 (1050x42), 2178 s elapsed
+2026-11-23 18:45:23   calibrated 125/134 (4374x588), 2663 s elapsed
+2026-11-23 18:48:28   calibrated 134/134 (8750x588), 2848 s elapsed
+2026-11-23 18:48:28 bench: 134 cells (0 already benched, 0 not banked -> not benched)
+2026-11-23 18:49:21   benched 25/134 (18x6), 51 s elapsed
+2026-11-23 18:50:13   benched 50/134 (70x10), 103 s elapsed
+2026-11-23 18:51:08   benched 75/134 (270x18), 158 s elapsed
+2026-11-23 18:52:26   benched 100/134 (1050x42), 236 s elapsed
+2026-11-23 18:53:53   benched 125/134 (4374x588), 323 s elapsed
+2026-11-23 18:54:38   benched 134/134 (8750x588), 368 s elapsed
+2026-11-23 18:54:40 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_composites_avx2_2026-11-23\report_2d.md
+2026-11-23 18:54:40 run: 134 cells, contract 2D out of place, T=8, bin build/gauntlet
+2026-11-23 18:54:40 calibrate: 134 cells (0 already done)
+2026-11-23 19:07:17   calibrated 25/134 (18x6), 757 s elapsed
+2026-11-23 19:14:22   calibrated 50/134 (70x10), 1182 s elapsed
+2026-11-23 19:22:59   calibrated 75/134 (270x18), 1699 s elapsed
+2026-11-23 19:35:08   calibrated 100/134 (1050x42), 2429 s elapsed
+2026-11-23 19:47:16   calibrated 125/134 (4374x588), 3157 s elapsed
+2026-11-23 19:51:47   calibrated 134/134 (8750x588), 3427 s elapsed
+2026-11-23 19:51:47 bench: 134 cells (0 already benched, 0 not banked -> not benched)
+2026-11-23 19:52:43   benched 25/134 (18x6), 53 s elapsed
+2026-11-23 19:53:38   benched 50/134 (70x10), 109 s elapsed
+2026-11-23 19:54:33   benched 75/134 (270x18), 163 s elapsed
+2026-11-23 19:55:33   benched 100/134 (1050x42), 223 s elapsed
+2026-11-23 19:56:33   benched 125/134 (4374x588), 283 s elapsed
+2026-11-23 19:56:58   benched 134/134 (8750x588), 308 s elapsed
+2026-11-23 19:57:00 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_composites_avx2_2026-11-23\report_2d_mt8.md

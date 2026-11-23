@@ -1,0 +1,12 @@
+2026-11-23 20:22:08 run: 17 cells, contract 2D out of place, bin build/gauntlet
+2026-11-23 20:22:08 calibrate: 17 cells (0 already done)
+2026-11-23 20:30:12   calibrated 17/17 (4375x315), 484 s elapsed
+2026-11-23 20:30:12 bench: 17 cells (0 already benched, 0 not banked -> not benched)
+2026-11-23 20:31:08   benched 17/17 (4375x315), 54 s elapsed
+2026-11-23 20:31:10 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_subset_avx2_2026-11-23\report_2d.md
+2026-11-23 20:31:10 run: 17 cells, contract 2D out of place, T=8, bin build/gauntlet
+2026-11-23 20:31:10 calibrate: 17 cells (0 already done)
+2026-11-23 20:40:26   calibrated 17/17 (4375x315), 556 s elapsed
+2026-11-23 20:40:26 bench: 17 cells (0 already benched, 0 not banked -> not benched)
+2026-11-23 20:41:09   benched 17/17 (4375x315), 40 s elapsed
+2026-11-23 20:41:11 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_subset_avx2_2026-11-23\report_2d_mt8.md

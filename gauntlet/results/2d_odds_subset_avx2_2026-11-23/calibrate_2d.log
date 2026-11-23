@@ -1,0 +1,17 @@
+21x135     banked     42663ms raced     2p
+21x315     banked     66683ms raced     2p
+21x525     banked     66546ms raced     chain3
+21x2187    banked     40062ms raced     chain3
+21x4375    banked     31412ms raced     flat
+35x1029    banked     10133ms raced     flat
+75x21      banked     21790ms raced     2p
+75x35      banked      5565ms raced     2p
+75x1029    banked     10086ms raced     flat
+135x1029   banked     10560ms raced     flat
+135x4375   banked     16937ms raced     chain3
+525x525    banked     33551ms raced     chain3
+1029x1029  banked     10287ms raced     flat
+2187x525   banked     35150ms raced     2p
+2187x2187  banked     25055ms raced     chain3
+4375x21    banked     21821ms raced     2p
+4375x315   banked     34748ms raced     2p

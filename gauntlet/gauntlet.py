@@ -9,6 +9,7 @@
     python gauntlet/gauntlet.py cells     --group mixed --max 4000000          (list + duration estimate, nothing runs)
     python gauntlet/gauntlet.py run       --group 2d-small [--max 64]           (2D: every shape N1xN2 up to 64 per axis)
     python gauntlet/gauntlet.py run       --group 2d-odd | 2d-pow2 | 2d-mixed  (2D: odd/prime columns, the pow2 grid, smooth planes)
+    python gauntlet/gauntlet.py run       --group 2d-composites | 2d-odds | 2d-primes | 2d-smooth-primes   (2D: the pow2 grid's octaves, one class on both axes)
     python gauntlet/gauntlet.py run       --group 3d-pow2                      (3D: the pow2 grid, every 2^a x 2^b x 2^c up to 2^22 points)
     python gauntlet/gauntlet.py run       --cells 47x64,23x256 | @shapes.txt    (2D shapes; never mixed with 1D lengths)
     python gauntlet/gauntlet.py run       --group pow2 --est                   (the estimate's plans: no calibrate, every cell benched, files _est)
@@ -111,6 +112,55 @@ def smooth(limit, primes):
     return sorted(x for x in out if x >= 2)
 
 
+# ── the 2D class grids (2026-11-23): the pow2 grid's octaves with one class of side on both axes ──
+GRID_CLASSES = ("2d-composites", "2d-odds", "2d-primes", "2d-smooth-primes")
+CHAIN_MAX_PRIME = 47   # VFFT_POLICY_CHAIN_MAX_PRIME (policy_il.h): the largest prime a chain radix carries; "smooth" = no prime factor above it
+
+
+def smooth_to(n, b):
+    return all(p <= b for p in fac(n))
+
+
+def odd_part(n):
+    while n % 2 == 0:
+        n //= 2
+    return n
+
+
+def in_class(cls, n):
+    """the side classes of the 2D class grids"""
+    if cls == "composites":       # even, not a power of two, smooth
+        return n % 2 == 0 and n & (n - 1) != 0 and smooth_to(n, CHAIN_MAX_PRIME)
+    if cls == "odds":             # odd, composite, smooth
+        return n % 2 == 1 and n > 1 and not isprime(n) and smooth_to(n, CHAIN_MAX_PRIME)
+    if cls == "primes":           # an odd prime p whose p - 1 has a prime factor above 47
+        return n > 2 and isprime(n) and not smooth_to(n - 1, CHAIN_MAX_PRIME)
+    if cls == "smooth-primes":    # an odd prime p whose p - 1 is smooth
+        return n > 2 and isprime(n) and smooth_to(n - 1, CHAIN_MAX_PRIME)
+    raise ValueError(cls)
+
+
+def class_sides(cls, maxn=None):
+    """{k: side}: one side of the class in each octave [2^k, 2^(k+1)), k = 1..13 (no member: no side). A composite
+    or odd side is the first member at or above 2^k whose prime factors are at most 7 and whose odd part no lower
+    octave took (doubling a side never repeats it), else the first member whose odd part is new; a prime side is
+    the first member at or above 2^k. --max: no side above it."""
+    out, used = {}, set()
+    for k in range(1, 14):
+        lo, hi = 1 << k, (1 << (k + 1)) - 1
+        if maxn:
+            hi = min(hi, maxn)
+        tests = ([lambda n: smooth_to(n, 7) and odd_part(n) not in used, lambda n: odd_part(n) not in used]
+                 if cls in ("composites", "odds") else [lambda n: True])
+        for test in tests:
+            n = next((n for n in range(lo, hi + 1) if in_class(cls, n) and test(n)), None)
+            if n:
+                out[k] = n
+                used.add(odd_part(n))
+                break
+    return out
+
+
 def parse_cells(spec):
     cells = set()
 
@@ -174,6 +224,9 @@ def group_cells(group, maxn, primes):
         m = maxn or 512
         sm = [n for n in smooth(m, primes or (2, 3, 5)) if n >= 4 and n & (n - 1)]
         return sorted(set([(a, a) for a in sm] + [(a, 64) for a in sm] + [(64, a) for a in sm]))
+    if group in GRID_CLASSES:               # the class grids (2026-11-23): one side of the class per octave on both axes, the
+        sides = class_sides(group[3:], maxn)  # octaves a + b <= 22 as the pow2 grid (planes to about 4M points)
+        return sorted((sides[a], sides[b]) for a in sides for b in sides if a + b <= 22)
     # ── 3D groups (2026-09-24): shapes (N1, N2, N3), N1 = the first axis (the 2D column pass over N2*N3 lanes) ──
     if group == "3d-pow2":                  # the pow2 GRID in three dims: every 2^a x 2^b x 2^c, 2..--max per axis (default 8192), volumes up to 2^22 points
         m = maxn or 8192
@@ -184,7 +237,7 @@ def group_cells(group, maxn, primes):
         cells = [(1 << a, 1 << b, 1 << c) for a in range(2, 14) for b in range(2, 14) for c in range(2, 14)
                  if (1 << a) <= m and (1 << b) <= m and (1 << c) <= m and a + b + c <= 20]
         return cells + [(27, 9, 15), (36, 20, 28), (32, 32, 27), (64, 64, 15), (16, 64, 63)]
-    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed | 3d-pow2 | 3d-real)" % group)
+    raise SystemExit("unknown group %r (pow2 | primes | mixed | all | 2d-small | 2d-odd | 2d-pow2 | 2d-mixed | %s | 3d-pow2 | 3d-real)" % (group, " | ".join(GRID_CLASSES)))
 
 
 def estimate_seconds(cells, threads, calibrate):
@@ -717,8 +770,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("verb", choices=["run", "calibrate", "bench", "report", "merge", "cells", "verify", "gflops"])
     ap.add_argument("--cells", help="4096 | 2..4096 | 1000,1024,4096 | @file")
-    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed", "3d-pow2", "3d-real"])
-    ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-pow2 8192 per axis, 2d-mixed 512)")
+    ap.add_argument("--group", choices=["pow2", "primes", "mixed", "all", "2d-small", "2d-odd", "2d-pow2", "2d-mixed"] + list(GRID_CLASSES) + ["3d-pow2", "3d-real"])
+    ap.add_argument("--max", type=int, help="ceiling for a group (pow2 2^23, primes 16384, mixed 4000000, 2d-small 64 per axis, 2d-pow2 8192 per axis, 2d-mixed 512, the class grids 2d-composites .. 2d-smooth-primes: no side above it, default none)")
     ap.add_argument("--primes", help="the prime set of the mixed group, e.g. 2,3,5,7 (default 2,3,5)")
     ap.add_argument("--threads", default="1")
     ap.add_argument("--inplace", action="store_true")

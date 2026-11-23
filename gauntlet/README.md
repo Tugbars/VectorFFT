@@ -105,6 +105,7 @@ python gauntlet/gauntlet.py run --group 2d-odd                # the odd/prime co
 python gauntlet/gauntlet.py run --group 2d-pow2 [--max 8192] # the pow2 grid: every 2^a x 2^b up to 8192 per axis, planes to 4M points (159 cells)
 python gauntlet/gauntlet.py run --group 3d-pow2 [--max 8192] # the 3D pow2 grid: every 2^a x 2^b x 2^c up to 8192 per axis, volumes to 4M points (1288 cells); the 3D contract (2026-09-24) mirrors the 2D one: --3d on the probes, --3dilnat on the bench, gauntlet_3d.csv / report_3d.md, the wisdom2_3d.txt shard
 python gauntlet/gauntlet.py run --group 2d-mixed [--max 512]  # 2^a 3^b 5^c lengths as squares and against 64
+python gauntlet/gauntlet.py run --group 2d-composites | 2d-odds | 2d-primes | 2d-smooth-primes   # the class grids: the pow2 grid's octaves (a + b <= 22) with one side of the class per octave on both axes -- composites: even, not a power of two; odds: odd composites (both: every prime factor at most 47, the side the first from 2^k with factors at most 7 and an odd part no lower octave took); primes: p - 1 with a prime factor above 47; smooth primes: p - 1 with none (both: the first from 2^k)
 python gauntlet/gauntlet.py run --cells 47x64,23x256          # any shapes
 ```
 

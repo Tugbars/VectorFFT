@@ -1,0 +1,9 @@
+9x9        banked      9268ms raced     mono
+9x21       banked     15149ms raced     2p
+9x35       banked     10531ms raced     2p
+9x75       banked     31954ms raced     2p
+9x135      banked     42796ms raced     2p
+9x315      banked     66472ms raced     chain3
+9x525      banked     66532ms raced     chain3
+9x1029     banked     19537ms raced     flat
+9x2187     ERROR      39051ms refused   chain

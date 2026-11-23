@@ -1,0 +1,17 @@
+2026-11-23 17:25:21 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-23 17:25:21 run: 111 cells, contract 2D out of place, the estimate's plans, bin build/gauntlet
+2026-11-23 17:25:21 bench: 111 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-23 17:26:01   benched 25/111 (35x35), 39 s elapsed
+2026-11-23 17:26:42   benched 50/111 (135x315), 79 s elapsed
+2026-11-23 17:27:35   benched 75/111 (525x2187), 132 s elapsed
+2026-11-23 17:29:08   benched 100/111 (4375x75), 226 s elapsed
+2026-11-23 17:30:04   benched 111/111 (8505x525), 281 s elapsed
+2026-11-23 17:30:06 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_est_avx2_2026-11-23\report_2d_est.md
+2026-11-23 17:30:06 run: 111 cells, contract 2D out of place, T=8, the estimate's plans, bin build/gauntlet
+2026-11-23 17:30:06 bench: 111 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-23 17:30:47   benched 25/111 (35x35), 40 s elapsed
+2026-11-23 17:31:31   benched 50/111 (135x315), 83 s elapsed
+2026-11-23 17:32:15   benched 75/111 (525x2187), 128 s elapsed
+2026-11-23 17:33:08   benched 100/111 (4375x75), 180 s elapsed
+2026-11-23 17:33:33   benched 111/111 (8505x525), 206 s elapsed
+2026-11-23 17:33:35 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_est_avx2_2026-11-23\report_2d_mt8_est.md
