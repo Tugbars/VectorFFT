@@ -1,0 +1,11 @@
+21x4375    banked     32417ms raced     flat
+135x4375   banked     26112ms raced     chain3
+150x150    banked     22344ms raced     2p
+257x8209   banked     13956ms raced     prime
+263x8219   banked     14531ms raced     prime
+270x8750   banked     87383ms raced     chain3
+521x521    banked      5288ms raced     prime
+525x525    banked     41198ms raced     chain3
+557x4099   banked     16363ms raced     prime
+588x588    banked     26289ms raced     chain3
+588x4374   banked     77058ms raced     chain3

@@ -1446,11 +1446,13 @@ static inline int est__leaf_staged(const est_machine_t *m, const est_plan2d_t *p
         return 0;
     return (long long)Rl * (low < way ? low : way) > est__l1_ways(m) * way;
 }
-/* est_plan_2d_r: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10), under the rules (EST_ND_2D_R_*;
- * 0 = the rules before 2026-11-09). Returns 0 with *out filled, or -1 with the reason. Pure. est_plan_2d: the
- * one-thread 2D request's plan, under EST_ND_2D_RULES. */
-static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned rules, est_plan2d_t *out, char *why,
-                                size_t whylen)
+/* est_plan_2d_rt: the 2D c2c plan at N1 x N2, natural, one thread (sketch §3-§8, §10), under the rules (EST_ND_2D_R_*;
+ * 0 = the rules before 2026-11-09), for a door at T threads: the children the door builds at T (the turn's N1 plan
+ * where the pruning law admits the turn at T, policy_il.h vfft_policy_il2d_turn_races). Returns 0 with *out filled,
+ * or -1 with the reason. Pure. est_plan_2d_r: the same for a door at one thread; est_plan_2d: the one-thread 2D
+ * request's plan, under EST_ND_2D_RULES. */
+static inline int est_plan_2d_rt(const est_machine_t *m, int N1, int N2, unsigned rules, int T, est_plan2d_t *out,
+                                 char *why, size_t whylen)
 {
     const char *rowno;
     int mono, n1ccs;
@@ -1475,7 +1477,7 @@ static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned
         est__col_single_under_prime_rows(&out->col);
     mono = vfft_k1_mono_ilc_fn(N1, 0) && vfft_k1_mono_ilc_fn(N1, 1);
     n1ccs = vfft_il_rowt_fn(N2, 0) && vfft_il_rowt_fn(N2, 1);   /* the turn's kernel: the turned twin, else n1ccs */
-    out->has_turn = out->col.blu <= 0 && n1ccs;
+    out->has_turn = out->col.blu <= 0 && n1ccs && vfft_policy_il2d_turn_races(N1, N2, T);   /* the door's admission */
     out->has_csk = out->col.blu <= 0 && mono;
     if (est__child_1d(m, N2, VFFT_PLACEMENT_IN, &out->rp, "the row plan", why, whylen))
         return -1;
@@ -1507,6 +1509,11 @@ static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned
     if ((rules & EST_ND_2D_R_LEAF) && out->col.nat && out->col.blu <= 0 && out->col.nst > 1 && !out->csk && !out->turn)
         out->nls = est__leaf_staged(m, out);   /* LEAF: the walks that run the natural leaf */
     return 0;
+}
+static inline int est_plan_2d_r(const est_machine_t *m, int N1, int N2, unsigned rules, est_plan2d_t *out, char *why,
+                                size_t whylen)
+{
+    return est_plan_2d_rt(m, N1, N2, rules, 1, out, why, whylen);
 }
 static inline int est_plan_2d(const est_machine_t *m, int N1, int N2, est_plan2d_t *out, char *why, size_t whylen)
 {
@@ -1675,7 +1682,7 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
 static inline void est_mt_2d_serial_1t(const est_machine_t *m, int T, est_plan2d_t *p)
 {
     est_plan2d_t r;
-    if (T < 2 || p->cmt || est_plan_2d_r(m, p->N1, p->N2, EST_ND_2D_RULES, &r, NULL, 0))
+    if (T < 2 || p->cmt || est_plan_2d_rt(m, p->N1, p->N2, EST_ND_2D_RULES, T, &r, NULL, 0))   /* served at T */
         return;
     est_mt_2d(m, T, &r);
     if (!r.cmt)

@@ -571,8 +571,17 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
              * whose N2 has the n1ccs pair and whose N1 has an in-place K=1
              * plan (the door creates that cell here: replayed or raced and
              * banked like any 1D cell). The axis race decides (one arm);
-             * banked turn=1; VFFT_IL2D_ROWOOP=4 pins it. */
-            if (il2d_row && !il2d_blu && il2d_rowt_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
+             * banked turn=1; VFFT_IL2D_ROWOOP=4 pins it. Where the pruning law
+             * takes the turn away (policy_il.h vfft_policy_il2d_turn_races: an odd
+             * column; a composite one at one thread above the L1d) neither the
+             * N1 plan nor the arm is built, and a row banked turn=1 re-races. */
+            if (il2d_row && !il2d_blu && il2d_rowt_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord) &&
+                !vfft_policy_il2d_turn_races(N1, N2, il2d_T))
+            {
+                if (vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "turn", 0) == 1)
+                    il2d_bro = -1;
+            }
+            else if (il2d_row && !il2d_blu && il2d_rowt_f && vfft_policy_rankn_axis_nat(2, 0, il2d_ord))
             {
                 vfft_cfg_t tc;
                 memset(&tc, 0, sizeof tc);

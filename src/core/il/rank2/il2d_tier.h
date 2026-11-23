@@ -3188,7 +3188,7 @@ static int _il2d_race_heat(int N1, size_t N2, int (*cand)[8], const int *lens, c
              * as well as in its serial forms; the lane-major race then decides the form on the winner */
             tarm = cb[nc].lmh && T > 1 && _il2d_col_tile_serves(&cb[nc].lmh->il2d_col);
         }
-        else if (banded)
+        else if (banded == 1)   /* banded = 2: the serving forms without widths (the pruning law, policy_il.h) */
             nwl = _il2d_race_widths(N1, N2, lens[ci], cb[nc].Ls, wlc, 14);
         if ((lm && !cb[nc].lmh) || na + (lm ? 0 : 1) + nwl + tarm > VFFT_RACE_MAX_ARMS)
         {   /* no plan carries it, or the heat is full: this chain waits for the next (the caller sizes heats so this
@@ -3363,7 +3363,7 @@ static int _il2d_race_chains(int N1, size_t N2, int ncand, int (*cand)[8],
     int lad[6];
     const int lmn = lm ? 1 + _il2d_sw_ladder(N1, N2, 1, lad, 6) + (Tw > 1) : 1;   /* + the tile arm at T > 1 */
     const int heat = lm ? (VFFT_RACE_MAX_ARMS / lmn < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / lmn : VFFT_IL2D_HEAT)
-                   : banded ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
+                   : banded == 1 ? (VFFT_RACE_MAX_ARMS / 15 < VFFT_IL2D_HEAT ? VFFT_RACE_MAX_ARMS / 15 : VFFT_IL2D_HEAT) : VFFT_IL2D_HEAT;
     int ns = ncand, win = -1, wwl = 0, i, rounds = 0, heats = 0;
     double wns = 1e300;
     size_t q;
@@ -4194,8 +4194,12 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                 _il2d_lmform_t lmf;
                 if (key->lm)
                     _il2d_lmform_of(key, cfg, &lmf);
+                /* banded = 2: the serving forms without the band widths -- the pruning law (policy_il.h) on a 2D c2c
+                 * column, composite or odd, at one thread within the L2 */
+                const int bnd = (key->rank == 2 && !key->real && !key->lm && key->axis == 0 &&
+                                 !vfft_policy_il2d_bands_race(N, (long long)rn, key->nthreads)) ? 2 : 1;
                 int win = _il2d_race_chains(N, rn, ncand, cand,
-                                            lens, &bns, nat_req, /*banded=*/1, &bwl,
+                                            lens, &bns, nat_req, /*banded=*/bnd, &bwl,
                                             key->lm ? key->nthreads : (key->rank == 2 && key->real) ? key->nthreads : 1,   /* the serving forms: the width is re-raced on the full execute (the axis race); the rank-2 real cell at T > 1 in its serial walks and every threaded form its door serves at T; a lane-major cell at T > 1 its tile too */
                                             key->lm ? &lmf : NULL);   /* a lane-major batch: its door's serial forms in its placement and at T > 1 the tile, the winner's lane tile kept (the threaded form is decided after, _lm_race) */
                 if (win == VFFT_IL2D_RACE_OOM)
@@ -4994,6 +4998,8 @@ static int _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 wlc[nwl++] = w;
         }
     }
+    if (!vfft_policy_il2d_bands_race(N1, N2, h->nthreads))
+        nwl = 1;   /* the pruning law (policy_il.h): a composite or odd column at one thread within the L2 races no band */
     {   /* VFFT_IL2D_WL=w pins the band width for a PROBE (0 = unbanded):
          * the race keeps that one candidate; a width the ladder does not
          * hold is ignored. Beside VFFT_IL2D_CHAIN, on a scratch store. */
@@ -5099,7 +5105,9 @@ static int _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                                     for (nv = 0; nv < ((h->il2d_col.nat && h->il2d_col.natstage) ? 2 : 1); nv++)
                                     {
                                         const int lst = nv ? 0 : 1, g0 = 3 + 9 * nv;
-                                        _IL2D_AXF(1, 0, 0, lst, g0);
+                                        if (!h->il2d_col.nat || vfft_policy_il2d_blocks_race(N1, N2, h->nthreads))
+                                            _IL2D_AXF(1, 0, 0, lst, g0);   /* the block; pruned on a natural plane
+                                                                            * where the law says (policy_il.h) */
                                         if (h->il2d_col.nat)
                                             _IL2D_AXF(1, 1, 0, lst, g0 + 1);
                                         if (h->il2d_col.nat && h->il2d_col.R[0] >= 2)
@@ -5176,9 +5184,13 @@ static int _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
              * T (the threading race's own first question); the champions and the serial walks' champion then
              * meet in one final on the full execute (min of 5) -- the route and the threaded form one verdict,
              * banked together (cmt, mtarm, msw, nls beside the axis tokens). */
-            int gw[32], ng = 0, g;
+            int gw[32], ng = 0, g, pass;
             double gns[32];
-            for (g = cand ? 1 : 0; g < 21 && ng < 32; g++)
+            /* the pruning law (policy_il.h): a composite or odd column above the L1d races no serial walk at T;
+             * where no threaded form engages, the second pass races the serial walks alone (the plane cannot thread) */
+            const int serial_ok = cand || vfft_policy_il2d_serial_races(N1, N2, h->nthreads);
+            for (pass = 0; pass < 2 && !(pass && (serial_ok || ng)); pass++)
+            for (g = pass ? 0 : (cand || !serial_ok) ? 1 : 0; g < (pass ? 1 : 21) && ng < 32; g++)
             {
                 int n = 0, w2, gr;
                 double t2 = 1e300;
@@ -5786,7 +5798,12 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
         char names[VFFT_RACE_MAX_ARMS][20];
         double ns[VFFT_RACE_MAX_ARMS];
-        int lad[6], nl, a, na = 0, best = 1, k, nv;
+        /* the pruning laws (policy_il.h): no serial arm on a composite or odd column above the L1d (MT engaged above:
+         * the plane threads), no natural block arm where the blocks law prunes it */
+        const int serial_ok = vfft_policy_il2d_serial_races(N1, N2, h->nthreads);
+        const int blocks_ok = !h->il2d_col.nat || vfft_policy_il2d_blocks_race(N1, N2, h->nthreads);
+        const int a0 = serial_ok ? 1 : 0;   /* the first threaded arm */
+        int lad[6], nl, a, na = 0, best = a0, k, nv;
         vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 2, NULL, NULL, 0 }; /* min-of-3, A then B, two untimed passes per arm first (a cold threaded arm reads 58 us for a 37-us plan) */ /* THREADED arms: never paused (VFFT_RACE_PACE_MS) */
         _il2d_ip_reset_t mrs = { z, zseed, 2 * PN };
         if (zseed)
@@ -5796,7 +5813,10 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         }
         (void)p;
         for (a = 0; a < VFFT_RACE_MAX_ARMS; a++) { rc[a] = rc0; rc[a].sw = 0; rc[a].lst = 1; rc[a].zo = zo; ns[a] = 1e300; }
-        arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;
+        if (serial_ok)
+        {
+            arms[na].name = "serial"; arms[na].run = _il2d_arm_exec_st; arms[na].ctx = &rc[na]; na++;
+        }
         if (h->il2d_turn || h->il2d_csk)
         {   /* the turn and the skewed pass have ONE threaded walk each */
             arms[na].name = "threaded"; arms[na].run = _il2d_arm_exec_mt; arms[na].ctx = &rc[na]; na++;
@@ -5812,8 +5832,11 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         {
             const int nst = nv ? 0 : 1;
             const char *tag = (h->il2d_col.nat && !nst) ? "/str" : "";
-            snprintf(names[na], sizeof names[na], "%s%s", h->il2d_col.nat ? "block" : "bands", tag);
-            rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt; arms[na].ctx = &rc[na]; na++;
+            if (blocks_ok)
+            {
+                snprintf(names[na], sizeof names[na], "%s%s", h->il2d_col.nat ? "block" : "bands", tag);
+                rc[na].lst = nst; arms[na].name = names[na]; arms[na].run = _il2d_arm_exec_mt; arms[na].ctx = &rc[na]; na++;
+            }
             if (h->il2d_col.nat)
             {
                 snprintf(names[na], sizeof names[na], "strips%s", tag);
@@ -5833,12 +5856,12 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         }
         /* the samples: ~1 ms of a THREADED arm (the serial one runs T times longer), one untimed execute before
          * each (_il2d_race_reps_ns: a single-execute sample times the partition's transient) */
-        proto.reps = _il2d_race_reps_ns(arms[na > 1 ? 1 : 0].run, arms[na > 1 ? 1 : 0].ctx, zseed ? (double)PN : 0.0,
+        proto.reps = _il2d_race_reps_ns(arms[na > a0 ? a0 : 0].run, arms[na > a0 ? a0 : 0].ctx, zseed ? (double)PN : 0.0,
                                         VFFT_IL2D_MT_SAMPLE_NS);
         proto.warm_each = 1;
         vfft_race_run(&proto, arms, na, ns);
-        st = ns[0];
-        for (a = 2; a < na; a++) if (ns[a] < ns[best]) best = a;
+        st = serial_ok ? ns[0] : 1e300;   /* no serial arm: the threaded champion is the verdict */
+        for (a = a0 + 1; a < na; a++) if (ns[a] < ns[best]) best = a;
         mt = ns[best];
         h->il2d_col.natarm = (arms[best].run == _il2d_arm_exec_mt) ? 0
                            : (arms[best].run == _il2d_arm_exec_mt_tile) ? 2 : 1;

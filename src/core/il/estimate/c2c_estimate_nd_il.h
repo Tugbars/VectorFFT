@@ -171,7 +171,8 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
         return est_refuse(why, whylen, "%dx%d: %s", p->N1, p->N2, w2);
     if (p->col.w != p->N2 || !p->col.nat || p->col.N != p->N1)
         return est_refuse(why, whylen, "%dx%d: the column pass is not the 2D plan's natural pass", p->N1, p->N2);
-    if (p->has_turn != (p->col.blu <= 0 && n1ccs) || p->has_csk != (p->col.blu <= 0 && mono))
+    if (p->has_turn != (p->col.blu <= 0 && n1ccs && vfft_policy_il2d_turn_races(p->N1, p->N2, p->T > 1 ? p->T : 1)) ||
+        p->has_csk != (p->col.blu <= 0 && mono))
         return est_refuse(why, whylen, "%dx%d: the children the recipe carries are not the ones the door builds", p->N1,
                           p->N2);
     if (est__preflight_child(&p->rp, p->N2, VFFT_PLACEMENT_IN, "the row plan", why, whylen) ||
@@ -774,13 +775,13 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p), *q = batch ? (est_plan2d_t *)malloc(sizeof *q) : NULL;
         if (!p || (batch && !q))
             snprintf(why, sizeof why, "out of memory");
-        else if (!est_plan_2d_r(m, cfg->n[0], cfg->n[1], cfg->nthreads > 1 ? 0u : EST_ND_2D_RULES, p, why, sizeof why))
+        else if (!est_plan_2d_rt(m, cfg->n[0], cfg->n[1], cfg->nthreads > 1 ? 0u : EST_ND_2D_RULES,
+                                 cfg->nthreads > 1 ? cfg->nthreads : 1, p, why, sizeof why) &&
+                 (!q || !est_plan_2d_rt(m, cfg->n[0], cfg->n[1], cfg->nthreads > 1 ? 0u : EST_ND_2D_RULES, 1, q, why,
+                                        sizeof why)))   /* the queue's copies: the plan for the one-thread door's children */
         {
             if (q)
-            {
-                *q = *p;
                 est_mt_2d(m, 1, q);
-            }
             est_mt_2d(m, cfg->nthreads, p);
             est_mt_2d_serial_1t(m, cfg->nthreads, p);   /* serial at T: the one-thread request's plan */
             if (q)

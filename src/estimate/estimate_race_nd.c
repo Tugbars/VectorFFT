@@ -128,7 +128,7 @@ static int est_tokens(const est_machine_t *m, const int *n, int rank, int T, cha
     if (rank == 2)
     {
         est_plan2d_t *p = (est_plan2d_t *)malloc(sizeof *p);
-        if (!p || est_plan_2d_r(m, n[0], n[1], T > 1 ? 0u : EST_ND_2D_RULES, p, why, whylen)) { free(p); return -1; }
+        if (!p || est_plan_2d_rt(m, n[0], n[1], T > 1 ? 0u : EST_ND_2D_RULES, T > 1 ? T : 1, p, why, whylen)) { free(p); return -1; }
         est_mt_2d(m, T, p);
         est_mt_2d_serial_1t(m, T, p);
         chain_s(c0, sizeof c0, p->col.R, p->col.nst);

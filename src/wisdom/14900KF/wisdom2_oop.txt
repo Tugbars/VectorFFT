@@ -12275,3 +12275,13 @@
 @cell t=c2c n=2058 q=1 ord=nat place=ip role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=147.14 il_chain=14.21.7 il_kv=5 | ran=1 ns=3205.7 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
 @cell t=c2c n=2058 q=1 ord=nat place=ip dir=bwd role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=147.14 il_kv=0 il_chain=14.21.7 | ran=1 ns=3776.6 metric=bwd1 units=ns src=race bld=0.8.1-e690b119
 @cell t=c2c n=42 q=2058 ord=nat place=oop lay=lm isa=avx2 | chain=3.14 sw=0 | ran=1 ns=73550.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=4374 q=1 ord=nat place=ip role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=162.27 il_chain=27.27.6 il_kv=1285 | ran=1 ns=8732.9 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=4374 q=1 ord=nat place=ip dir=bwd role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=162.27 il_kv=1280 il_chain=27.27.6 | ran=1 ns=10878.1 metric=bwd1 units=ns src=race bld=0.8.1-e690b119
+@cell t=c2c n=150 q=4374 ord=nat place=oop lay=lm isa=avx2 | chain=15.10 sw=0 | ran=1 ns=795100.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=18 q=4374 ord=nat place=oop lay=lm isa=avx2 | chain=9.2 sw=0 | ran=1 ns=65900.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=70 q=1050 ord=nat place=oop lay=lm isa=avx2 | chain=7.10 sw=0 | ran=1 ns=62966.7 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=8750 q=1 ord=nat place=ip role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=625.14 il_chain=14.25.25 il_kv=85 | ran=1 ns=16485.1 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=8750 q=1 ord=nat place=ip dir=bwd role=comp lay=il isa=avx2 | eng=k1 il_route=chain3 il_pair=625.14 il_kv=0 il_chain=14.25.25 | ran=1 ns=25294.5 metric=bwd1 units=ns src=race bld=0.8.1-e690b119
+@cell t=c2c n=42 q=8750 ord=nat place=oop lay=lm isa=avx2 | chain=3.14 sw=0 | ran=1 ns=339700.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=150 q=1050 ord=nat place=oop lay=lm isa=avx2 | chain=15.10 sw=0 | ran=1 ns=163900.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119
+@cell t=c2c n=270 q=1050 ord=nat place=oop lay=lm isa=avx2 | chain=9.3.10 sw=0 | ran=1 ns=326800.0 metric=fwd1 units=ns src=race date=2026-11-23 bld=0.8.1-e690b119

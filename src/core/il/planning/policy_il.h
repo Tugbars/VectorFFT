@@ -334,6 +334,60 @@ static inline int vfft_policy_il2d_blu_races(int rader_stage)
 {
     return rader_stage;
 }
+
+/* -- THE 2D C2C PRUNING LAWS FOR COMPOSITE AND ODD COLUMNS (owner, 2026-11-23: "eliminate them please, prune them") --
+ * The machineries below never, or almost never, win where the door races them on such a column, and racing them
+ * costs planning time. Evidence: every banked 2D c2c verdict of the 14900KF store (src/wisdom/14900KF/wisdom2_2d.txt,
+ * natural order, 2026-11-23: 139 composite-column and 72 odd-column verdicts at one thread, 459 and 159 at T > 1), each
+ * machinery's wins counted against the planes where the door admits it (a row names only its winner; the admitted
+ * set is the door's own admission, fft2d_create_il.h). A plane's level is its input and output, 32 bytes a point,
+ * against the CPU's L1d, L2 and L3 (the tiles of docs/architecture/machinery/tiling_2d.html). A column is COMPOSITE
+ * (even) or ODD when N1 is no power of two and every prime factor is a chain radix (no prime cell); the powers of two,
+ * the prime-factor columns, the real tier, the 3D tier's own passes and the lane-major batches are not under these
+ * laws.
+ *   - THE TURN on an odd column won 0 of 34 planes at every level (one thread 0 of 12, T > 1 0 of 22); on a composite
+ *     column at one thread above the L1d 0 of 12 (within it 4 of 12; at T > 1 9 of 34: still raced there);
+ *   - THE BANDED WALK on a composite or odd column at one thread within the L2 won 0 of 71 (past the L2 65 of 75);
+ *   - THE SERIAL VERDICT at T > 1 on a composite or odd column above the L1d won 2 of 489 (the L3 0 of 190); where no
+ *     threaded form engages at T the serial walks still race (the plane cannot thread);
+ *   - THE THREADED BLOCKS at T > 1 won 0 of 44 composite columns past the L3 and 0 of 60 odd columns above the L2
+ *     within the L3 (13 of 489 elsewhere above the L1d: still raced there).
+ * A pruned machinery is neither built nor timed: the turn's N1 plan is not created, and its 1D race in role goes with
+ * it. A banked verdict that names a pruned route re-races; it is never served by another route. */
+static inline int vfft_policy_il2d_colclass(int N1)   /* 1 composite, 2 odd, 0 neither (a power of two, a prime cell) */
+{
+    if (N1 < 2 || (N1 & (N1 - 1)) == 0 || vfft_policy_prime_cell(N1))
+        return 0;
+    return (N1 & 1) ? 2 : 1;
+}
+static inline int vfft_policy_il2d_level(int N1, long long lanes)   /* 1 L1d, 2 L2, 3 L3, 4 past it: input and output */
+{
+    const long long b = 32LL * (long long)N1 * lanes;
+    const long long l1 = vfft_cpu_l1d_bytes(), l2 = vfft_cpu_l2_bytes(), l3 = vfft_cpu_l3_bytes();
+    if (b <= l1)
+        return 1;
+    if (b <= l2)
+        return 2;
+    return (l3 <= 0 || b <= l3) ? 3 : 4;   /* an L3 the CPU does not report: nothing is past it */
+}
+static inline int vfft_policy_il2d_turn_races(int N1, long long N2, int T)
+{
+    const int c = vfft_policy_il2d_colclass(N1);
+    return !(c == 2 || (c == 1 && T <= 1 && vfft_policy_il2d_level(N1, N2) > 1));
+}
+static inline int vfft_policy_il2d_bands_race(int N1, long long N2, int T)
+{
+    return !(T <= 1 && vfft_policy_il2d_colclass(N1) && vfft_policy_il2d_level(N1, N2) <= 2);
+}
+static inline int vfft_policy_il2d_serial_races(int N1, long long N2, int T)
+{
+    return !(T > 1 && vfft_policy_il2d_colclass(N1) && vfft_policy_il2d_level(N1, N2) > 1);
+}
+static inline int vfft_policy_il2d_blocks_race(int N1, long long N2, int T)
+{
+    const int c = vfft_policy_il2d_colclass(N1), L = vfft_policy_il2d_level(N1, N2);
+    return !(T > 1 && ((c == 1 && L == 4) || (c == 2 && L == 3)));
+}
 static inline int vfft_policy_lm_tile_ok(int w, size_t K, int nat)   /* K: the lanes, size_t (w a ladder width) */
 {
     return w < 0 || (size_t)w < K || nat;
