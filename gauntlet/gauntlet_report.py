@@ -170,9 +170,9 @@ def build_2d(run_dir, sfx="_2d"):
     mk = re.search(r"_k(\d+)", sfx)   # --batch (2026-11-20): a c2c batch of K transforms, _lm when lane-major
     kk = ("K=%s %s" % (mk.group(1), "lane-major" if "_lm" in sfx else "contiguous")) if mk else "K=1"
     W("run: `%s`  contract: %dD %s interleaved, natural, %s, %s%s  cells: %d listed, %d benched, comparator: %s\n" % (
-        os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "DST-II" if "_dst2" in sfx else "DST-III" if "_dst3" in sfx else "DCT-I" if "_dct1" in sfx else "DST-I" if "_dst1" in sfx else "c2c",   # the real runs (2026-10-07), the real-to-real runs (2026-11-14)
+        os.path.basename(os.path.abspath(run_dir)), nd, "r2c" if "_r2c" in sfx else "c2r" if "_c2r" in sfx else "DST-II" if "_dst2" in sfx else "DST-III" if "_dst3" in sfx else "DCT-I" if "_dct1" in sfx else "DST-I" if "_dst1" in sfx else "DCT-II" if "_dct2" in sfx else "DCT-III" if "_dct3" in sfx else "DCT-IV" if "_dct4" in sfx else "DST-IV" if "_dst4" in sfx else "c2c",   # the real runs (2026-10-07), the real-to-real runs (2026-11-14)
         place, kk, sfx.replace("_%dd" % nd, ""), len(keys), len(cells),
-        (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else "MKL cosine transform (in place)" if "_dct1" in sfx else "MKL sine transform (in place)" if "_dst1" in sfx else "MKL staggered sine transform (in place)" if "_dst" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
+        (("FFTW %dD (%s, MEASURE)" % (nd, place)) if "_fftw" in sfx else "MKL cosine transform (in place)" if "_dct1" in sfx else "MKL sine transform (in place)" if "_dst1" in sfx else "MKL staggered cosine transform (in place)" if ("_dct2" in sfx or "_dct3" in sfx) else "MKL staggered2 cosine transform (in place)" if "_dct4" in sfx else "MKL staggered2 sine transform (in place)" if "_dst4" in sfx else "MKL staggered sine transform (in place)" if "_dst" in sfx else ("MKL DFTI %dD (%s)" % (nd, place))) if has_cmp else "none (absolute numbers)"))
     if ctl:
         W("control cell %s: %d readings, %.3f..%.3f\n" % ({2: "64x64", 3: "64x64x64", 4: "16x16x16x16", 5: "8x8x8x8x8", 6: "8x8x8x8x8x8",
                                                          7: "4x4x4x4x4x4x4"}[nd], len(ctl), min(ctl), max(ctl)))

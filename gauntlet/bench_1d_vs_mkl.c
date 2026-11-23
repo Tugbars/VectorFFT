@@ -2095,14 +2095,16 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
 }
 
 /* ═════════════════════════════════════════════════
- * --dst2 / --dst3 / --dct1 / --dst1 : the real-to-real gauntlet cell
- * (2026-11-14): 1D DST-II, DST-III, DCT-I or DST-I (VFFT_DST2 / VFFT_DST3 /
- * VFFT_DCT1 / VFFT_DST1: N reals in and out, unnormalized), K = 1, the front
+ * --dst2 / --dst3 / --dct1 / --dst1 / --dct2 / --dct3 / --dct4 / --dst4 : the
+ * real-to-real gauntlet cell (2026-11-14; the last four 2026-11-23): 1D DST-II,
+ * DST-III, DCT-I, DST-I, DCT-II, DCT-III, DCT-IV or DST-IV (VFFT_DST2 ..
+ * VFFT_DST4: N reals in and out, unnormalized), K = 1, the front
  * door on the store, natural, out of place (--realip: in place), one thread
  * (--mt: the plan's threads, the comparator at the same count). The real
  * cell's protocol and timing shape. The comparator's transform of the same
  * input is the reference, elementwise:
- *   FFTW (--cmp fftw)  plan_r2r_1d, RODFT10 / RODFT01 / REDFT00 / RODFT00,
+ *   FFTW (--cmp fftw)  plan_r2r_1d, RODFT10 / RODFT01 / REDFT00 / RODFT00 /
+ *                      REDFT10 / REDFT01 / REDFT11 / RODFT11,
  *                      FFTW_MEASURE: the same definitions and scales as ours;
  *   MKL                its Trigonometric Transform interface, IN PLACE only,
  *                      on its own array (dst_mk_open: which transform, where
@@ -2110,12 +2112,26 @@ long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded
  *                      against the definitions at even and odd N). MKL's timed
  *                      arm is in place in every contract: it has no other form.
  * GFLOPS = 2.5 N log2 N per transform, the real cell's convention. Row = the
- * K=1 cell's columns; plan "z:dst2" / "z:dst3" / "z:dct1" / "z:dst1", path
+ * K=1 cell's columns; plan "z:dst2" / "z:dst3" / "z:dct1" / "z:dst1" /
+ * "z:dct2" / "z:dct3" / "z:dct4" / "z:dst4", path
  * "nat-oop" / "nat-ip". Nothing else runs in the process. */
-static int g_dst = 0;   /* 2 = DST-II, 3 = DST-III, 1 = DST-I, 4 = DCT-I */
-static const char *dst_plan_s(int kind) { return kind == 2 ? "z:dst2" : kind == 3 ? "z:dst3" : kind == 1 ? "z:dst1" : "z:dct1"; }
-static vfft_transform_t dst_xform(int kind) { return kind == 2 ? VFFT_DST2 : kind == 3 ? VFFT_DST3 : kind == 1 ? VFFT_DST1 : VFFT_DCT1; }
-static int dst_fftw_kind(int kind) { return kind == 2 ? FFTWX_RODFT10 : kind == 3 ? FFTWX_RODFT01 : kind == 1 ? FFTWX_RODFT00 : FFTWX_REDFT00; }
+static int g_dst = 0;   /* 1 = DST-I, 2 = DST-II, 3 = DST-III, 4 = DCT-I, 5 = DCT-II, 6 = DCT-III, 7 = DCT-IV, 8 = DST-IV */
+static const char *dst_plan_s(int kind)
+{
+    static const char *const s[9] = { "", "z:dst1", "z:dst2", "z:dst3", "z:dct1", "z:dct2", "z:dct3", "z:dct4", "z:dst4" };
+    return s[kind];
+}
+static vfft_transform_t dst_xform(int kind)
+{
+    static const vfft_transform_t t[9] = { VFFT_C2C, VFFT_DST1, VFFT_DST2, VFFT_DST3, VFFT_DCT1, VFFT_DCT2, VFFT_DCT3, VFFT_DCT4, VFFT_DST4 };
+    return t[kind];
+}
+static int dst_fftw_kind(int kind)
+{
+    static const int f[9] = { 0, FFTWX_RODFT00, FFTWX_RODFT10, FFTWX_RODFT01, FFTWX_REDFT00, FFTWX_REDFT10, FFTWX_REDFT01, FFTWX_REDFT11,
+                              FFTWX_RODFT11 };
+    return f[kind];
+}
 
 #ifdef VFFT_HAS_MKL
 typedef struct { DFTI_DESCRIPTOR_HANDLE h; MKL_INT n, ipar[128]; double *dpar, *f, scale; int off, fwd; } dst_mk_t;
@@ -2131,7 +2147,11 @@ static void dst_mk_body(void *v)
  *   DST-II   the staggered sine transform at n = N, backward: half our DST-II; the data in f[1..N]
  *   DST-III  the same transform, forward: our DST-III over N
  *   DST-I    the sine transform at n = N + 1, backward: half our DST-I; the data in f[1..N], f[0] = f[n] = 0
- *   DCT-I    the cosine transform at n = N - 1, backward: half our DCT-I; the data in f[0..N-1] */
+ *   DCT-I    the cosine transform at n = N - 1, backward: half our DCT-I; the data in f[0..N-1]
+ *   DCT-II   the staggered cosine transform at n = N, backward: half our DCT-II; the data in f[0..N-1], f[n] = 0
+ *   DCT-III  the same transform, forward: our DCT-III over N
+ *   DCT-IV   the staggered2 cosine transform at n = N, backward: half our DCT-IV; the data in f[0..N-1]
+ *   DST-IV   the staggered2 sine transform at n = N, backward: half our DST-IV; the data in f[0..N-1] */
 static int dst_mk_open(dst_mk_t *c, int N, int kind)
 {
     MKL_INT tt = MKL_STAGGERED_SINE_TRANSFORM, ir = 0;
@@ -2142,6 +2162,10 @@ static int dst_mk_open(dst_mk_t *c, int N, int kind)
     if (kind == 3) { c->fwd = 1; c->scale = (double)N; }
     else if (kind == 1) { tt = MKL_SINE_TRANSFORM; c->n = N + 1; }
     else if (kind == 4) { tt = MKL_COSINE_TRANSFORM; c->n = N - 1; c->off = 0; }
+    else if (kind == 5) { tt = MKL_STAGGERED_COSINE_TRANSFORM; c->off = 0; }
+    else if (kind == 6) { tt = MKL_STAGGERED_COSINE_TRANSFORM; c->off = 0; c->fwd = 1; c->scale = (double)N; }
+    else if (kind == 7) { tt = MKL_STAGGERED2_COSINE_TRANSFORM; c->off = 0; }
+    else if (kind == 8) { tt = MKL_STAGGERED2_SINE_TRANSFORM; c->off = 0; }
     c->dpar = alloc_d(5 * (size_t)c->n / 2 + 2);
     c->f = alloc_d((size_t)c->n + 1);
     memset(c->f, 0, ((size_t)c->n + 1) * sizeof(double));
@@ -6403,6 +6427,14 @@ int main(int argc, char **argv)
             g_dst = 1;    /* ... DST-I */
         else if (strcmp(argv[1], "--dct1") == 0)
             g_dst = 4;    /* ... DCT-I */
+        else if (strcmp(argv[1], "--dct2") == 0)
+            g_dst = 5;    /* ... DCT-II (2026-11-23) */
+        else if (strcmp(argv[1], "--dct3") == 0)
+            g_dst = 6;    /* ... DCT-III */
+        else if (strcmp(argv[1], "--dct4") == 0)
+            g_dst = 7;    /* ... DCT-IV */
+        else if (strcmp(argv[1], "--dst4") == 0)
+            g_dst = 8;    /* ... DST-IV */
         else if (strcmp(argv[1], "--2drealnat") == 0)
         {
             g_k2real = 1; /* the 2D real gauntlet cell: N1 in the N slot, N2 in the K slot */

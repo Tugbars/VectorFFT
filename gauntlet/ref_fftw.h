@@ -91,9 +91,13 @@ typedef fftwx_plan (*fftwx_plan_guru_split_dft_f)(int, const fftwx_iodim *, int,
                                                   double *, double *, double *, double *, unsigned);
 typedef fftwx_plan (*fftwx_plan_r2r_1d_f)(int, double *, double *, int, unsigned);   /* the real-to-real cell (2026-11-14): the kind is FFTW's r2r enum */
 #define FFTWX_REDFT00 3   /* DCT-I (fftw3.h: fftw_r2r_kind) */
+#define FFTWX_REDFT01 4   /* DCT-III */
+#define FFTWX_REDFT10 5   /* DCT-II */
+#define FFTWX_REDFT11 6   /* DCT-IV */
 #define FFTWX_RODFT00 7   /* DST-I */
 #define FFTWX_RODFT01 8   /* DST-III */
 #define FFTWX_RODFT10 9   /* DST-II */
+#define FFTWX_RODFT11 10  /* DST-IV */
 typedef fftwx_plan (*fftwx_plan_dft_r2c_1d_f)(int, double *, fftwx_complex *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_c2r_1d_f)(int, fftwx_complex *, double *, unsigned);
 typedef fftwx_plan (*fftwx_plan_dft_r2c_2d_f)(int, int, double *, fftwx_complex *, unsigned);

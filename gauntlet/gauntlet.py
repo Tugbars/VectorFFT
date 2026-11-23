@@ -42,6 +42,7 @@ CONTROL_N = 4096
 CONTROL_3D = (64, 64, 64)   # the 3D contract's control cell (2026-09-24)
 CONTROL_ND = {4: (16, 16, 16, 16), 5: (8, 8, 8, 8, 8), 6: (8, 8, 8, 8, 8, 8), 7: (4, 4, 4, 4, 4, 4, 4)}   # ranks 4 to 7 (2026-11-22)
 CONTROL_2D = (64, 64)
+R2R = ("dst2", "dst3", "dct1", "dst1", "dct2", "dct3", "dct4", "dst4")   # --real: the 1D real-to-real cells (2026-11-14; the last four 2026-11-23), reals in and out
 
 
 def is2d(c):
@@ -218,8 +219,9 @@ class Run:
         self.ip = 2 if getattr(args, "owned", False) else (1 if args.inplace else 0)   # 2 = door 2 (2026-10-08): the plan's own plane at its pitch
         self.cmp = getattr(args, "cmp", "mkl") or "mkl"   # the comparator: mkl (the default), kfr (2026-09-25) or fftw (2026-09-29), each its own csv
         self.real = getattr(args, "real", None)           # the real contract (2026-09-29): "r2c" / "c2r", else the c2c cell;
-                                                          # "dst2" / "dst3" / "dct1" / "dst1" (2026-11-14): the 1D real-to-real cell, reals in and out
-        self.dst = self.real in ("dst2", "dst3", "dct1", "dst1")
+                                                          # "dst2" / "dst3" / "dct1" / "dst1" (2026-11-14), "dct2" / "dct3" / "dct4" / "dst4"
+                                                          # (2026-11-23): the 1D real-to-real cell, reals in and out
+        self.dst = self.real in R2R
         self.k = int(getattr(args, "k", 1) or 1)          # the 1D real cell's batch count (transform-contiguous rows)
         self.est = bool(getattr(args, "est", False))      # --est (2026-11-20): the estimate's plans (VFFT_FLAG_ESTIMATE), not the planner's
         self.batch = getattr(args, "batch", None)         # --batch (2026-11-20): "contiguous" / "lane-major", a c2c batch of K transforms
@@ -365,9 +367,9 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1, isa=""):
     if real and is2d(n):
         # the direction-shared t=r2c row: wisdom2_2d.txt for a plane, wisdom2_3d.txt for a cube (the rank-3 real tier, 2026-10-07)
         pats = (("wisdom2_%dd.txt" % len(n), r"@cell t=r2c n=%s q=1 ord=\w+ place=%s [^|\n]*\| ([^\n]*)" % (ckey(n), pl)),)
-    elif real in ("dst2", "dst3", "dct1", "dst1"):
+    elif real in R2R:
         # the real-to-real cell (2026-11-14): its own row in the real shard, the real FFT inside under dst_
-        # (dct_ on the DCT-I row); one row, stamped place=oop, serves both placements
+        # (dct_ on a cosine transform's row); one row, stamped place=oop, serves both placements
         pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=oop[^|\n]*\| ([^\n]*)" % (real, n)),)
     elif real:
         pats = (("wisdom2_real.txt", r"@cell t=%s n=%d q=1 [^|\n]*place=%s[^|\n]*\| ([^\n]*)" % (real, n, pl)),
@@ -394,8 +396,8 @@ def cell_rows(store, n, ip, threads=1, real=None, k=1, isa=""):
 
 def route_of(rows):
     for k, v in rows.items():                 # the real-to-real cells: the engine of the real FFT inside (its row under dst_ / dct_)
-        if "t=dst2" in k or "t=dst3" in k or "t=dst1" in k or "t=dct1" in k:
-            pre = "dct" if "t=dct1" in k else "dst"
+        if any("t=" + r in k for r in R2R):
+            pre = "dct" if "t=dct" in k else "dst"
             m = re.search(pre + r"_1_eng=(\w+)", v)
             return pre + ":" + (m.group(1) if m else "?")
     for k, v in rows.items():                 # the real cells: the engine (zrp pair / zr2c route) or the odd-N bridge verdict
@@ -507,7 +509,7 @@ def bench_cell(run, n, csv_path):
         flag = ["--2dilnat"] + (["--mt"] if run.threads > 1 else []) + (["--ilip"] if run.ip else [])   # --ilip: in place (2026-11-12)
         nstr, kstr = str(n[0]), str(n[1])
     elif run.dst:
-        # the 1D real-to-real cell (2026-11-14): bench --dst2 / --dst3 / --dct1 / --dst1; --realip in place; --mt the threaded cell at $VFFT_MT
+        # the 1D real-to-real cell (2026-11-14): bench --dst2 / --dst3 / --dct1 / --dst1 / --dct2 / --dct3 / --dct4 / --dst4; --realip in place; --mt the threaded cell at $VFFT_MT
         flag = ["--" + run.real] + (["--mt"] if run.threads > 1 else []) + (["--realip"] if run.ip else [])
         nstr, kstr = str(n), "1"
     elif run.real:
@@ -722,7 +724,7 @@ def main():
     ap.add_argument("--inplace", action="store_true")
     ap.add_argument("--owned", action="store_true", help="door 2 (2026-10-08): the plan's own plane at the pitch it chooses (owned_buffers = 1), in place; the 2D r2c contract; its own csv suffix _ipo")
     ap.add_argument("--cmp", choices=["mkl", "kfr", "fftw"], default="mkl", help="the comparator: mkl (default), kfr (a bench built with build.py --kfr; 1D, 2D and 3D c2c, and 1D r2c / c2r at an even N, one thread) or fftw (bound at runtime from $VFFT_FFTW_DLL, else the repository's gauntlet/fftw/libfftw3-3.dll on Windows -- FFTW 3.3.10 with AVX-512 and threads -- else vcpkg's fftw3.dll; FFTW_MEASURE, its wisdom in the run's fftw.wis; the 1D/2D/3D c2c cells out of place and the real cells, at one thread or --threads T with an FFTW built with its threads API: --enable-threads --with-combined-threads, CMake ENABLE_THREADS + WITH_COMBINED_THREADS; verify writes FFTW's rows too); its own csv suffix")
-    ap.add_argument("--real", choices=["r2c", "c2r", "dst2", "dst3", "dct1", "dst1"], help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r. dst2 / dst3 (2026-11-14): the 1D DST-II / DST-III cell, N reals in and out, out of place or --inplace, one thread or --threads T, against MKL (its staggered sine transform, in place) or --cmp fftw (RODFT10 / RODFT01); suffix _dst2 / _dst3. dct1 / dst1 (2026-11-14): the 1D DCT-I / DST-I cell, the same contract, against MKL (its cosine / sine transform, in place) or --cmp fftw (REDFT00 / RODFT00); suffix _dct1 / _dst1")
+    ap.add_argument("--real", choices=["r2c", "c2r"] + list(R2R), help="the REAL contract (2026-09-29): r2c or c2r, interleaved CCE, natural, out of place, one thread; 1D cells, 2D shapes or 3D cubes (2026-10-07); its own csv suffix _r2c / _c2r. dst2 / dst3 (2026-11-14): the 1D DST-II / DST-III cell, N reals in and out, out of place or --inplace, one thread or --threads T, against MKL (its staggered sine transform, in place) or --cmp fftw (RODFT10 / RODFT01); suffix _dst2 / _dst3. dct1 / dst1 (2026-11-14): the 1D DCT-I / DST-I cell, the same contract, against MKL (its cosine / sine transform, in place) or --cmp fftw (REDFT00 / RODFT00); suffix _dct1 / _dst1")
     ap.add_argument("--k", type=int, default=1, help="the batch count: the 1D real cell's K transform-contiguous rows (real rows at pitch N, CCE rows at pitch N+2), or the c2c batch's K with --batch; suffix _k<K>")
     ap.add_argument("--batch", choices=["contiguous", "lane-major"], help="a c2c batch of --k K >= 2 transforms (2026-11-20), 1D, 2D or 3D, out of place against MKL's batch on the same layout, one thread unless --threads: contiguous = VFFT_BATCH_CONTIGUOUS (the bench's --tcc2c / --tc2d / --tc3d), lane-major = VFFT_BATCH_LANE_MAJOR (--lmc2c / --lm2d / --lm3d); a cell whose K transforms pass 2^24 points is not benched; suffix _k<K>, lane-major _k<K>_lm; the estimate's plans only for now (--est): the calibrate probe creates no c2c batch")
     ap.add_argument("--name", help="run directory name under gauntlet/results/ (default: group_date)")
@@ -758,7 +760,7 @@ def main():
     if run.ip == 2 and not run.real:
         raise SystemExit("--owned: the plan's own plane at its pitch is the 2D and 3D real contract (--real); the c2c cells in place are --inplace")
     if run.dst and (dims != 1 or run.k > 1 or run.ip == 2 or run.cmp == "kfr"):
-        raise SystemExit("--real dst2 / dst3 / dct1 / dst1: the real-to-real cell is 1D, one transform, out of place or --inplace, against MKL or --cmp fftw")
+        raise SystemExit("--real dst1 .. dst4 / dct1 .. dct4: the real-to-real cell is 1D, one transform, out of place or --inplace, against MKL or --cmp fftw")
     if run.real and not run.dst and run.ip and dims not in (2, 3):
         raise SystemExit("--real --inplace / --owned: the in-place real contracts are the 2D and 3D cells (2026-10-08)")
     if run.k > 1 and not run.batch and (not run.real or dims != 1):

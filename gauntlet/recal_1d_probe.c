@@ -131,16 +131,22 @@ int main(int argc, char **argv)
 #endif
     /* --r2c / --c2r: shifted out here so the shape parser below is unchanged */
     int xform = VFFT_C2C;
-    if (argc > 2 && (!strcmp(argv[2], "--r2c") || !strcmp(argv[2], "--c2r") || !strcmp(argv[2], "--dst2") || !strcmp(argv[2], "--dst3") ||
-                     !strcmp(argv[2], "--dct1") || !strcmp(argv[2], "--dst1")))
+    static const struct { const char *flag, *name; int xf; } RX[10] = {
+        { "--r2c", "r2c ", VFFT_R2C }, { "--c2r", "c2r ", VFFT_C2R }, { "--dst2", "dst2 ", VFFT_DST2 }, { "--dst3", "dst3 ", VFFT_DST3 },
+        { "--dct1", "dct1 ", VFFT_DCT1 }, { "--dst1", "dst1 ", VFFT_DST1 }, { "--dct2", "dct2 ", VFFT_DCT2 }, { "--dct3", "dct3 ", VFFT_DCT3 },
+        { "--dct4", "dct4 ", VFFT_DCT4 }, { "--dst4", "dst4 ", VFFT_DST4 } };
+    int rx = -1;
+    for (int i = 0; argc > 2 && i < 10; i++)
+        if (!strcmp(argv[2], RX[i].flag))
+            rx = i;
+    if (rx >= 0)
     {
-        xform = !strcmp(argv[2], "--r2c") ? VFFT_R2C : !strcmp(argv[2], "--c2r") ? VFFT_C2R : !strcmp(argv[2], "--dst2") ? VFFT_DST2 :
-                !strcmp(argv[2], "--dst3") ? VFFT_DST3 : !strcmp(argv[2], "--dct1") ? VFFT_DCT1 : VFFT_DST1;
+        xform = RX[rx].xf;
         for (int i = 2; i + 1 < argc; i++)
             argv[i] = argv[i + 1];
         argc--;
     }
-    const char *tn = xform == VFFT_R2C ? "r2c " : xform == VFFT_C2R ? "c2r " : xform == VFFT_DST2 ? "dst2 " : xform == VFFT_DST3 ? "dst3 " : xform == VFFT_DCT1 ? "dct1 " : xform == VFFT_DST1 ? "dst1 " : "";
+    const char *tn = rx >= 0 ? RX[rx].name : "";
     const int twod = argc > 2 && !strcmp(argv[2], "--2d");
     const int threed = argc > 2 && !strcmp(argv[2], "--3d");   /* the 3D cell (2026-09-24) */
     const int nd = threed ? 3 : twod ? 2 : 1;

@@ -140,6 +140,20 @@ python gauntlet/gauntlet.py run --real dct1 --cells 65,1025,4097,10000
 python gauntlet/gauntlet.py run --real dst1 --cells 63,1023,4095,10000 --cmp fftw
 ```
 
+**DCT-II, DCT-III, DCT-IV and DST-IV** (since 2026-11-23): `--real dct2` / `dct3` / `dct4` / `dst4`, the
+same cell and contract (`VFFT_DCT2` / `VFFT_DCT3` / `VFFT_DCT4` / `VFFT_DST4`); files carry `_dct2` /
+`_dct3` / `_dct4` / `_dst4`. The calibrate stage banks the cell's own row (`t=dct2`, `t=dct3` and `t=dct4`
+with the real FFT inside under `dct_`, `t=dst4` with it under `dst_`). The comparators: FFTW (`--cmp fftw`:
+`REDFT10` / `REDFT01` / `REDFT11` / `RODFT11`, the same definitions and scales as ours) and MKL's staggered
+cosine transform (its backward half our DCT-II, its forward our DCT-III over N) and staggered2 cosine and
+sine transforms (each backward half of ours), in place only. MKL's staggered2 transforms lose accuracy as
+N grows, so the error column against MKL rises with N at these cells; against FFTW it does not.
+
+```
+python gauntlet/gauntlet.py run --real dct2 --cells 64,1024,4096,10007
+python gauntlet/gauntlet.py run --real dct4 --cells 64,1024,4096,10007 --cmp fftw
+```
+
 ## Building the tools
 
 Either path builds the same binaries from the same sources.
