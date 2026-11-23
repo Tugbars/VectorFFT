@@ -5,6 +5,14 @@
  * every R in {4, 8}, nf >= 2, (N / R[0]) % 4 == 0 (the natural-class cells of
  * ZTURN-T; the registry is derived from the same list).
  *
+ * THE VECTOR WIDTH (VFFT_ZTS_VW: 4 lanes at avx2, 8 at avx512) meets the K = 1
+ * engine alone: its ingest writes each column's R0-run as whole VW-lane
+ * blocks, R0 % VW == 0. At 4 lanes every chain passes ((N / R0) % 4 == 0). At
+ * 8 lanes R0 = 8; the ingest's masked column tail takes any N / R0, N = 16
+ * is 8.2 and a 2^4 * odd length ends in 2 (the radix-2 terminator, 8 lanes
+ * only). The lane-major engine has no lane law: every chain at both widths.
+ * A registry row names the drivers of the families that have the cell.
+ *
  * Two lane choices, one plan type:
  *   lanes = 1  the K=1 engine (fused codelets zts_*): the caller's re[] / im[]
  *              at the EDGES, ZTURN-T's 64-B [re x4][im x4] block plane INSIDE
@@ -64,13 +72,9 @@
 #define vfft_zts_cells  vfft_zts_cells_avx2
 #define VFFT_ZTS_VW 4
 #else
-/* zturn-ts is emitted at avx2 only so far (2026-11-04): no cells at avx512 */
-typedef void (*vfft_zts_fn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t);
-typedef void (*vfft_zts_bfn)(const double *, const double *, double *, double *, double *, const double *, const size_t *, size_t, size_t);
-typedef void (*vfft_ztv_fn)(const double *, const double *, double *, double *, double *, double *, const double *, const size_t *, size_t, size_t, size_t, size_t, size_t, size_t);   /* (…, tile, K, blk, gp, g0, g1): the registry's V driver ABI (blocked edges, 2026-11-05) */
-typedef struct { int n, nf; int chain[7]; vfft_zts_fn s_fwd, s_bwd; vfft_zts_bfn s_fwd_batch, s_bwd_batch; vfft_ztv_fn v_fwd, v_bwd; } vfft_zts_cell_t;
-#define VFFT_ZTS_NCELLS 0
-static const vfft_zts_cell_t vfft_zts_cells[1] = { { 0, 0, { 0 }, 0, 0, 0, 0, 0, 0 } };
+#include "zts_registry_avx512.h"      /* the 8-lane cells and their fused codelets (generated) */
+#define VFFT_ZTS_NCELLS VFFT_ZTS_NCELLS_AVX512
+#define vfft_zts_cells  vfft_zts_cells_avx512
 #define VFFT_ZTS_VW 8
 #endif
 
@@ -99,7 +103,9 @@ static const int VFFT_ZTS_TILE_LADDER[] = { 256, 512, 1024, 2048, 3072 };   /* 3
  * No floor at 2048 as on the interleaved side: the split side is the low-N
  * library. The chain grammar: the ends in {4, 8} (the ingest's turn lattice,
  * the terminator's lane transposes), a mid in {4, 8, 3, 5, 7, 9, 15}, the
- * product N, (N / R0) % VW == 0; the odd part decomposed greedily
+ * product N, R0 % VW == 0 and at 4 lanes (N / R0) % 4 == 0 (at 8 lanes R0 = 8,
+ * any N / R0, and the last radix may be 2: a = 4 is 8 . mids . 2); the odd
+ * part decomposed greedily
  * largest-first (9 is a radix-9 mid, never 3.3; 45 is 15.3), its mids at
  * every interior position, the pow2 slots over ordered {4, 8}: the race's
  * pool (zts_race.h _zts_pool_odd). */
@@ -214,25 +220,30 @@ static inline const vfft_zts_cell_t *vfft_zts_lookup(int N, const int *chain, in
     return NULL;
 }
 
-/* 1 = the registry has at least one fused cell at N */
-static inline int vfft_zts_fused_at(int N)
+/* 1 = the row holds this family's drivers (lanes = 1: the K = 1 engine; else lane-major) */
+static inline int vfft_zts_cell_has(const vfft_zts_cell_t *c, int lanes)
+{
+    return lanes == 1 ? c->s_fwd != NULL : c->v_fwd != NULL;
+}
+/* 1 = the registry has at least one fused cell of this family at N */
+static inline int vfft_zts_fused_at(int N, int lanes)
 {
     int i;
     for (i = 0; i < VFFT_ZTS_NCELLS; i++)
-        if (vfft_zts_cells[i].n == N) return 1;
+        if (vfft_zts_cells[i].n == N && vfft_zts_cell_has(&vfft_zts_cells[i], lanes)) return 1;
     return 0;
 }
 /* 1 = zturn-ts serves N in the S family (K = 1, the contiguous batch, the
  * rows of a plane): a fused cell, or the odd band's staged form */
 static inline int vfft_zts_serves(int N)
 {
-    return vfft_zts_fused_at(N) || vfft_zts_odd_band(N);
+    return vfft_zts_fused_at(N, 1) || vfft_zts_odd_band(N);
 }
 /* 1 = the V family serves N (a lane-major batch, the column axes of a plane
  * or volume): a fused cell, or the lane-major band's staged form */
 static inline int vfft_zts_serves_v(int N)
 {
-    return vfft_zts_fused_at(N) || vfft_zts_v_band(N);
+    return vfft_zts_fused_at(N, 2) || vfft_zts_v_band(N);
 }
 
 static inline void vfft_zts_destroy(vfft_zts_plan_t *p)
@@ -400,15 +411,17 @@ static inline vfft_zts_plan_t *_vfft_zts_create_ex(int N, const int *chain, int 
         {   /* the S family's ends are the lane lattice (the ingest's turn, the
              * terminator's section transposes): 4 or 8; the V family's ends
              * carry no lattice and take every radix of the pool */
-            if (chain[s] != 4 && chain[s] != 8) why = "an end radix not in {4, 8}";
+            if (chain[s] != 4 && chain[s] != 8 && !(VFFT_ZTS_VW == 8 && s == nf - 1 && chain[s] == 2))
+                why = "an end radix not in {4, 8} (8 lanes: the last may be 2)";
         }
         else if (!vfft_zts_mid_ok(chain[s])) why = "a radix not in {4, 8, 3, 5, 7, 9, 15}";
         prod *= chain[s];
     }
     if (!why && prod != (long)N) why = "chain product != N";
-    if (!why && lanes == 1 && (N / chain[0]) % VFFT_ZTS_VW) why = "(N / R0) % VW != 0";
+    if (!why && lanes == 1 && VFFT_ZTS_VW == 4 && (N / chain[0]) % 4) why = "(N / R0) % 4 != 0";   /* 8 lanes: the ingest's column tail takes any N / R0 */
     if (!why && lanes == 1 && chain[0] % VFFT_ZTS_VW) why = "R0 % VW != 0 (the ingest writes whole blocks)";
     cell = why ? NULL : vfft_zts_lookup(N, chain, nf);
+    if (cell && !vfft_zts_cell_has(cell, lanes)) cell = NULL;   /* the row is the other family's alone */
     staged = !why && !cell;
     if (!why && staged && (N & (N - 1)) == 0) why = "no fused driver for this pow2 cell (zts_registry)";
     if (!why && staged && lanes == 1 && !vfft_zts_odd_band(N)) why = "N outside the odd band (2^a * {3,5,7,9,15}-smooth, a >= 4)";

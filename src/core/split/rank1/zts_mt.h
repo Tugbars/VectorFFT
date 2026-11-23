@@ -29,7 +29,9 @@
  * ranges, raced against them).
  *
  * Column ranges are cut at multiples of VW (the S kinds run whole VW-column
- * iterations; every column count is a multiple of VW by the create's laws);
+ * iterations; at 4 lanes every column count is a multiple of VW by the
+ * create's laws, at 8 lanes the ingest's last range takes the columns past
+ * the last whole vector);
  * the V kinds run one column per iteration and cut anywhere. The plane is
  * one and shared: the threads write disjoint spans. Nesting is forbidden by
  * the pool's law: this runs on the caller thread of a plan whose own
@@ -150,7 +152,10 @@ static inline void _zts_sect_s(const vfft_zts_plan_t *p, int T, int bwd, size_t 
         const size_t ni = ncol / VW;
         for (w = 0; w < per; w++)
         {
-            const size_t lo = VW * (ni * (size_t)w / (size_t)per), hi = VW * (ni * (size_t)(w + 1) / (size_t)per);
+            /* the last range ends at ncol: at 8 lanes the columns past the last whole vector are its own
+             * (the ingest's masked column tail); at 4 lanes ncol is whole vectors */
+            const size_t lo = VW * (ni * (size_t)w / (size_t)per);
+            const size_t hi = w + 1 == per ? ncol : VW * (ni * (size_t)(w + 1) / (size_t)per);
             _zts_sect_arg *x = &a[k * per + w];
             memset(x, 0, sizeof *x);
             x->kind = 0; x->p = p; x->bwd = bwd;
@@ -202,7 +207,7 @@ static inline void _zts_sect_s(const vfft_zts_plan_t *p, int T, int bwd, size_t 
                 x->kind = 2; x->p = p; x->bwd = bwd;
                 x->W = (k == 0 ? W : p->mtplane[k - 1]) + 2 * lo;
                 x->ore = ore + k * N + lo; x->oim = oim + k * N + lo;
-                x->tw = tw + p->twoff[p->nf - 1] + (lo / VW) * (size_t)(Rl - 1) * 8;
+                x->tw = tw + p->twoff[p->nf - 1] + (lo / VW) * (size_t)(Rl - 1) * 2 * VW;   /* a record [c x VW][s x VW] per leg and column block */
                 x->Ls = L; x->OLs = L; x->count = hi - lo;
             }
         thread_pool_run(nslots, _zts_sect_tramp, a, sizeof a[0]);

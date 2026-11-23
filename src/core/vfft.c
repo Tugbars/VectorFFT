@@ -1606,14 +1606,6 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->layout == VFI_LAYOUT_IL)
         return _vfft_k1_bind_exec(_vfft_il_create(cfg, W, N, K));
 #ifndef VFFT_FLOAT
-    if (VFFT_ZTS_NCELLS == 0)
-    {   /* THE SPLIT LAYOUT HAS NO ENGINE IN THIS BUILD: zturn-ts, every split route's engine, is emitted at AVX2 only
-         * so far (split/rank1/zts.h), so an AVX-512 build serves no split request at any length -- refused here with
-         * that cause, before any size or order law names another */
-        _vfft_warn("vfft_create: the SPLIT layout is served by the AVX2 library only in this version; this is an "
-                   "AVX-512 build -- use VFFT_LAYOUT_INTERLEAVED");
-        return NULL;
-    }
     return _vfft_split_create(cfg, W, N, K);
 #else
     return NULL;   /* the FP32 front door refused every split request */

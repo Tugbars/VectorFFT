@@ -93,7 +93,7 @@ static inline int vfft_zts_blu_m(int N)
     int M = 16;
     if (N < 2 || 2 * N - 1 > VFFT_ZTS_MAX_N) return 0;
     while (M < 2 * N - 1) M <<= 1;
-    return vfft_zts_fused_at(M) ? M : 0;
+    return vfft_zts_fused_at(M, 1) ? M : 0;
 }
 
 static inline void vfft_zts_blu_destroy(vfft_zts_blu_t *b)

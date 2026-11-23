@@ -72,7 +72,7 @@ def dag_codelet_srcs() -> list[str]:
     them by symbol): the split corpus (zturn-ts's stage kernels), the
     interleaved tree and the fused drivers. Compiled in one invocation."""
     dirs = [
-        DAG_CODELETS,                          # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels (avx2 only so far)
+        DAG_CODELETS,                          # zturn-ts (2026-11-04): the split library's ZTURN-T stage kernels
         # THE INTERLEAVED TREE (2026-09-24, docs/roadmap/il_codelet_reorg.md): one folder per
         # engine, listed explicitly (globs are non-recursive; a dropped folder must be loud)
         DAG / 'codelets' / 'zil'  / DAG_ISA / 'shared',

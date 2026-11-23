@@ -203,7 +203,7 @@ int main(void)
         set(VFFT_HOST_AVX512 "no")
     endif()
 endif()
-file(GLOB _a512_probe "${DAG_CODELETS}/zil/avx512/shared/*.c")   # the interleaved corpus at avx512 (the split corpus is avx2 only)
+file(GLOB _a512_probe "${DAG_CODELETS}/zil/avx512/shared/*.c")   # the interleaved corpus at avx512
 if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
     set(_isa_why "set by VFFT_ISA")
 elseif(VFFT_ISA STREQUAL "auto")
@@ -405,7 +405,7 @@ set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2
 # (real/pair: r2z, t2h, t2m) and the real rows (real/rows: r2zr) are emitted
 # at avx512 since 2026-11-13.
 set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
-set(VFFT_ABSENT_avx512 ztt zil/shared/col/half zil/rows/rowswap)   # ztt: zturn-ts is emitted at avx2 only so far (2026-11-04); rows/rowswap: raced at avx2 only (2026-11-08)
+set(VFFT_ABSENT_avx512 zil/shared/col/half zil/rows/rowswap)   # rows/rowswap: raced at avx2 only (2026-11-08)
 
 set(VFFT_CODELET_SRCS)
 

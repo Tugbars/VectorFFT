@@ -100,8 +100,9 @@ static size_t _zts_chain_bytes(const int *chain, int nf)
 /* the odd band's pool (zts.h vfft_zts_odd_band): the chain GRAMMAR — the
  * odd part of N decomposed greedily largest-first over {15, 9, 7, 5, 3}, its
  * mids at every interior position, the pow2 slots over ordered {4, 8}, the
- * ends in {4, 8}, nf <= 7, (N / R0) % VW == 0 (the port of the interleaved
- * planner's _il_dp_enumerate_ztt_odd) */
+ * ends in {4, 8}, nf <= 7, R0 % VW == 0 and at 4 lanes (N / R0) % 4 == 0; at
+ * 8 lanes the last pow2 slot, the S family's terminator, may be 2 as well
+ * (the port of the interleaved planner's _il_dp_enumerate_ztt_odd) */
 static int _zts_pool_odd(int N, int lanes, _zts_cand_t *out, int max)
 {
     int mids[VFFT_ZTS_MAX_NF], nm = 0, m = N, i, nf, n = 0;
@@ -132,13 +133,24 @@ static int _zts_pool_odd(int N, int lanes, _zts_cand_t *out, int max)
     {
         const int np = nf - nm;                /* power-of-two slots */
         const int hi = ends_odd ? nf - 1 : nf - 2;   /* the last position an odd radix may take */
+        /* the S family at 8 lanes: the last pow2 slot is the chain's terminator, which may be radix 2
+         * as well (zts_stages.h) -- a third value of that slot, the mask's top bit */
+        const int term2 = !ends_odd && VFFT_ZTS_VW == 8;
         long mask;
         if (np < 0 || (np == 0 && pw != 1)) continue;
-        for (mask = 0; mask < (1L << np) && n < max; mask++)
+        for (mask = 0; mask < ((1L << np) << term2) && n < max; mask++)
         {
             int pchain[VFFT_ZTS_MAX_NF], pos[VFFT_ZTS_MAX_NF];
             long prod = 1;
-            for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+            if (term2 && (mask >> np))
+            {   /* the terminator is 2, the low np - 1 bits choose the rest */
+                if ((mask >> (np - 1)) & 1) continue;   /* one spelling per chain */
+                for (i = 0; i < np - 1; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
+                pchain[np - 1] = 2;
+                prod *= 2;
+            }
+            else
+                for (i = 0; i < np; i++) { pchain[i] = ((mask >> i) & 1) ? 8 : 4; prod *= pchain[i]; }
             if (prod != pw) continue;
             if (nm == 0)
             {   /* a pure pow2 chain without a fused driver: nothing to place */
@@ -159,7 +171,7 @@ static int _zts_pool_odd(int N, int lanes, _zts_cand_t *out, int max)
                 int chain[VFFT_ZTS_MAX_NF], pi = 0, mi = 0, q, k;
                 for (i = 0; i < nf; i++)
                     chain[i] = (mi < nm && pos[mi] == i) ? mids[mi++] : pchain[pi++];
-                if ((ends_odd || ((N / chain[0]) % VFFT_ZTS_VW == 0 && chain[0] % VFFT_ZTS_VW == 0)) && n < max)
+                if ((ends_odd || (chain[0] % VFFT_ZTS_VW == 0 && (VFFT_ZTS_VW != 4 || (N / chain[0]) % 4 == 0))) && n < max)
                 {
                     memset(&out[n], 0, sizeof out[n]);
                     for (q = 0; q < nf; q++) out[n].chain[q] = chain[q];
@@ -177,15 +189,15 @@ static int _zts_pool_odd(int N, int lanes, _zts_cand_t *out, int max)
     }
     return n;
 }
-/* the pool at N: the registry's cells, in registry order; a cell without a
- * fused driver draws its pool from the odd band's grammar */
+/* the pool at N: the registry's cells of this family, in registry order; a
+ * cell without a fused driver draws its pool from the odd band's grammar */
 static int _zts_pool(int N, int lanes, _zts_cand_t *out, int max)
 {
     int i, n = 0;
     for (i = 0; i < VFFT_ZTS_NCELLS && n < max; i++)
     {
         const vfft_zts_cell_t *c = &vfft_zts_cells[i];
-        if (c->n != N) continue;
+        if (c->n != N || !vfft_zts_cell_has(c, lanes)) continue;
         memset(&out[n], 0, sizeof out[n]);
         memcpy(out[n].chain, c->chain, sizeof out[n].chain);
         out[n].nf = c->nf;

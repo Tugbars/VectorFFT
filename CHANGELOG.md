@@ -21,6 +21,10 @@ version can change how a function behaves, so compile your program again with ea
   (`VFFT_DST4`): 1D, any length from 1 up, one transform a plan, out of place or in place, on
   one thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`. With them
   every DCT and DST of types I to IV is served.
+- The split layout (`VFFT_LAYOUT_SPLIT`) in AVX-512 builds: complex transforms of rank 1, 2
+  and 3 at the lengths the AVX2 build serves, one transform, contiguous batches and
+  lane-major batches, out of place or in place, on one thread or several. Until now an
+  AVX-512 build refused every split request.
 
 ### Changed: adjust your program
 
