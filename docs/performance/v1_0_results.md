@@ -1755,6 +1755,84 @@ largest elementwise difference over the largest output). Against MKL's output, s
 the difference grows with N: 2e-15 at 64, 2.0e-13 (DST-II) and 1.3e-12 (DST-III) at 4096,
 8.9e-10 and 1.6e-8 at 2^20.
 
+### K=1 INTERLEAVED DCT-II, DCT-III, DCT-IV and DST-IV — against MKL, estimate plans, the gauntlet (2026-11-23)
+
+`VFFT_DCT2`, `VFFT_DCT3`, `VFFT_DCT4` and `VFFT_DST4`: N reals in, N reals out, one transform, out of
+place, planned by `VFFT_FLAG_ESTIMATE` (formulas, nothing measured). The ratio is MKL's time over
+VectorFFT's, so above 1.00 VectorFFT is the faster one; it is the worse of the two order flips. MKL is
+its Trigonometric Transform interface, which exists in place only: the staggered cosine transform for
+DCT-II (its backward) and DCT-III (its forward), the staggered2 cosine and sine transforms for DCT-IV
+and DST-IV; its timed arm is in place. One run of each cell on the i9-14900KF, AVX2: a first reading,
+not the 26-length run of the section above.
+
+The files, under `gauntlet/results/`:
+
+- `dct_first_look_avx2_2026-11-23`: `gauntlet_dct2_est.csv` and `gauntlet_dct3_est.csv`, one thread, 8 lengths (controls at
+  4096: 1.47..1.48 and 1.72..1.73). Its `gauntlet_dct4_est.csv` and `gauntlet_dst4_est.csv` hold DCT-IV and
+  DST-IV with an even length on a real FFT of N, the form before commit a5fb3f60.
+- `dct4_direct_avx2_2026-11-23`: DCT-IV and DST-IV with an even length on a complex FFT of N/2, the form the
+  library has. `gauntlet_dct4_est.csv` and `gauntlet_dst4_est.csv`: one thread, 10 lengths (controls
+  2.21..2.24 and 2.32..2.36). `gauntlet_dct4_mt8_est.csv` and `gauntlet_dst4_mt8_est.csv`: 8 threads, 5 lengths
+  (controls 2.18..2.24 and 2.29..2.36).
+
+One thread:
+
+```
+             ----- DCT-II ----  ---- DCT-III ----  ----- DCT-IV ----  ----- DST-IV ----
+         N     ours ns    MKL     ours ns    MKL     ours ns    MKL     ours ns    MKL
+        64          44   2.10          43   2.25          40   2.96          40   3.06
+      1000         793   1.96        1009   1.55         850   2.25         845   2.36
+      1024         704   1.82         755   1.70         690   2.35         689   2.48
+      4096        3832   1.46        3289   1.72        3157   2.24        3176   2.34
+     10000           -      -           -      -       10859   2.09       10831   2.14
+     10007       60587   2.03       54910   2.21       62564   1.95       64740   1.90
+     65536       78639   1.28       81805   1.26       74669   1.74       74934   1.81
+    100000           -      -           -      -      135297   1.83      135338   1.91
+    100003     1054223   1.74     1089995   1.66     1042462   1.79     1058305   1.78
+   1048576     2767825   1.04     3321612   0.86     3206125   1.04     3218575   1.08
+```
+
+Eight threads:
+
+```
+             ----- DCT-IV ----  ----- DST-IV ----
+         N     ours ns    MKL     ours ns    MKL
+     65536       69085   1.95       68525   2.02
+    100000      110269   2.20      110359   2.36
+    262144      280927   2.51      280227   2.60
+   1048576     1663950   2.04     1679113   2.13
+   4194304     9048463   1.99     8580950   2.40
+```
+
+```
+ transform threads   cells   median   gmean    min    max   <1.0
+ DCT-II          1       8     1.78    1.64   1.04   2.10      0
+ DCT-III         1       8     1.68    1.59   0.86   2.25      1
+ DCT-IV          1      10     2.02    1.96   1.04   2.96      0
+ DST-IV          1      10     2.03    2.02   1.08   3.06      0
+ DCT-IV          8       5     2.04    2.13   1.95   2.51      0
+ DST-IV          8       5     2.36    2.29   2.02   2.60      0
+```
+
+DCT-II, DCT-IV and DST-IV are ahead of MKL at every length, on one thread and on eight. DCT-III is
+ahead at seven of its eight lengths and behind at 2^20, where both orders read 0.86.
+On one thread the margin narrows with size, to 1.04..1.08 at 2^20; on eight threads DCT-IV and DST-IV
+hold 1.95..2.60 from 65536 to 4194304. With the earlier form of an even length, DCT-IV and DST-IV read
+0.73 and 0.74 at 2^20 and 1.23..2.01 at the even lengths below it (the first folder's `_dct4` and
+`_dst4` files).
+
+The `rt_err` column of these files is the largest difference from MKL's output of the same input, over
+the largest output. It is 5e-16 to 4e-14 at 64 and grows with N: at 2^20 on one thread 1.6e-09 (DCT-II),
+9.1e-08 (DCT-III), 5.6e-05 (DCT-IV) and 1.3e-03 (DST-IV), and 1.1e-02 for DST-IV at 4194304 on eight threads.
+That difference is not VectorFFT's: `dct_gate` holds the four transforms to 2.05e-15 against their
+definitions summed in long double, at every N to 300 and at 25 larger lengths to 2^20.
+
+A DCT-II or DCT-III is one reorder pass, one real FFT of length N and one rotation pass
+(il/real/dct.h): the DST's steps without its sign flip and reversal. A DCT-IV or DST-IV is one FFT
+between two passes (il/real/dct4_dst4.h): at an even N a complex FFT of N/2 between two rotations, at
+an odd N a real FFT of N on the input permuted with signs. Each FFT is the cell's own child, on the
+cell's own row (`t=dct2`, `t=dct3`, `t=dct4`, `t=dst4` in wisdom2_real.txt).
+
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
 ```
