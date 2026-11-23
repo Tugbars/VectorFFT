@@ -8,12 +8,14 @@
  * library. Each committed handle becomes one VectorFFT plan, run in place on the data vector f, with
  * MKL's scale applied. Double precision. Served:
  *
- *   MKL_SINE_TRANSFORM            VectorFFT's DST-I of the n - 1 values f[1..n-1]
- *   MKL_COSINE_TRANSFORM          its DCT-I of the n + 1 values f[0..n]
- *   MKL_STAGGERED_SINE_TRANSFORM  its DST-III (forward) and DST-II (backward) of the n values f[1..n]
+ *   MKL_SINE_TRANSFORM               VectorFFT's DST-I of the n - 1 values f[1..n-1]
+ *   MKL_COSINE_TRANSFORM             its DCT-I of the n + 1 values f[0..n]
+ *   MKL_STAGGERED_SINE_TRANSFORM     its DST-III (forward) and DST-II (backward) of the n values f[1..n]
+ *   MKL_STAGGERED_COSINE_TRANSFORM   its DCT-III (forward) and DCT-II (backward) of the n values f[0..n-1]
+ *   MKL_STAGGERED2_COSINE_TRANSFORM  its DCT-IV of the n values f[0..n-1]
+ *   MKL_STAGGERED2_SINE_TRANSFORM    its DST-IV of the n values f[0..n-1]
  *
- * The staggered cosine and staggered2 transforms and the single-precision routines are refused with a
- * status and a printed reason.
+ * The single-precision routines are refused with a status and a printed reason.
  *
  * The names are MKL's and so are the numeric values of the constants. The functions behind the names
  * are vfft_tt_*, so MKL can stay linked beside this interface without a symbol in common.
@@ -40,10 +42,10 @@ extern "C"
 /* ── the transforms ────────────────────────────────────────────────────── */
 #define MKL_SINE_TRANSFORM 0
 #define MKL_COSINE_TRANSFORM 1
-#define MKL_STAGGERED_COSINE_TRANSFORM 2  /* refused: VectorFFT does not serve DCT-II / DCT-III */
+#define MKL_STAGGERED_COSINE_TRANSFORM 2
 #define MKL_STAGGERED_SINE_TRANSFORM 3
-#define MKL_STAGGERED2_COSINE_TRANSFORM 4 /* refused: VectorFFT does not serve DCT-IV */
-#define MKL_STAGGERED2_SINE_TRANSFORM 5   /* refused: VectorFFT does not serve DST-IV */
+#define MKL_STAGGERED2_COSINE_TRANSFORM 4
+#define MKL_STAGGERED2_SINE_TRANSFORM 5
 
 /* ── the functions ─────────────────────────────────────────────────────── */
 void vfft_tt_d_init(MKL_INT *n, MKL_INT *tt_type, MKL_INT ipar[], double dpar[], MKL_INT *stat);

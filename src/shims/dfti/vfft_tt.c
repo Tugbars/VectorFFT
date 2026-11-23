@@ -8,16 +8,20 @@
  * read or written) on the machine's performance cores; forward and backward run it in place on the
  * part of f the transform reads, then apply MKL's scale as their own pass over those values:
  *
- *   MKL's transform    VectorFFT's plan    on         forward        backward
- *   sine (n)           VFFT_DST1 of n - 1  f[1..n-1]  DST-I / n      DST-I / 2
- *   cosine (n)         VFFT_DCT1 of n + 1  f[0..n]    DCT-I / n      DCT-I / 2
- *   staggered sine (n) VFFT_DST3 of n      f[1..n]    DST-III / n    DST-II / 2
+ *   MKL's transform       VectorFFT's plan    on         forward        backward
+ *   sine (n)              VFFT_DST1 of n - 1  f[1..n-1]  DST-I / n      DST-I / 2
+ *   cosine (n)            VFFT_DCT1 of n + 1  f[0..n]    DCT-I / n      DCT-I / 2
+ *   staggered sine (n)    VFFT_DST3 of n      f[1..n]    DST-III / n    DST-II / 2
+ *   staggered cosine (n)  VFFT_DCT3 of n      f[0..n-1]  DCT-III / n    DCT-II / 2
+ *   staggered2 cosine (n) VFFT_DCT4 of n      f[0..n-1]  DCT-IV / n     DCT-IV / 2
+ *   staggered2 sine (n)   VFFT_DST4 of n      f[0..n-1]  DST-IV / n     DST-IV / 2
  *
- * MKL's FFTW compatibility (ipar[10] = 1) skips the scale: FFTW's RODFT00, REDFT00, and for the
- * staggered sine RODFT01 (forward) and RODFT10 (backward) on f[0..n-1]. The values outside the range a
- * transform reads are not written. The statuses and the checks are MKL's: init takes any n and type,
- * commit refuses what it cannot serve, a routine refuses to run after a call that did not end with
- * ipar[6] = 0. Includes vfft.h and nothing from src/core.
+ * MKL's FFTW compatibility (ipar[10] = 1) skips the scale: FFTW's RODFT00, REDFT00, for the staggered
+ * sine RODFT01 (forward) and RODFT10 (backward) on f[0..n-1], for the staggered cosine REDFT01 and
+ * REDFT10, for the staggered2 pair REDFT11 and RODFT11. The values outside the range a transform reads
+ * are not written. The statuses and the checks are MKL's: init takes any n and type, commit refuses
+ * what it cannot serve, a routine refuses to run after a call that did not end with ipar[6] = 0.
+ * Includes vfft.h and nothing from src/core.
  */
 #include <limits.h>
 #include <stdarg.h>
@@ -48,7 +52,7 @@
 struct vt_handle
 {
     int magic;
-    int type;     /* MKL_SINE_TRANSFORM, MKL_COSINE_TRANSFORM or MKL_STAGGERED_SINE_TRANSFORM */
+    int type;     /* MKL's transform type, 0 to 5 */
     MKL_INT n;    /* the transform's n */
     int len;      /* the plan's values */
     vfft_plan plan;
@@ -136,6 +140,15 @@ static int vt_form(MKL_INT type, vfft_transform_t *kind, int *dn)
     case MKL_STAGGERED_SINE_TRANSFORM:
         *kind = VFFT_DST3, *dn = 0;
         return 1;
+    case MKL_STAGGERED_COSINE_TRANSFORM:
+        *kind = VFFT_DCT3, *dn = 0;
+        return 1;
+    case MKL_STAGGERED2_COSINE_TRANSFORM:
+        *kind = VFFT_DCT4, *dn = 0;
+        return 1;
+    case MKL_STAGGERED2_SINE_TRANSFORM:
+        *kind = VFFT_DST4, *dn = 0;
+        return 1;
     default:
         return 0;
     }
@@ -144,7 +157,8 @@ static int vt_form(MKL_INT type, vfft_transform_t *kind, int *dn)
 /* where the plan's values start in f */
 static int vt_off(int type, const MKL_INT *ipar)
 {
-    if (type == MKL_COSINE_TRANSFORM)
+    if (type == MKL_COSINE_TRANSFORM || type == MKL_STAGGERED_COSINE_TRANSFORM ||
+        type == MKL_STAGGERED2_COSINE_TRANSFORM || type == MKL_STAGGERED2_SINE_TRANSFORM)
         return 0;
     if (type == MKL_STAGGERED_SINE_TRANSFORM && ipar[10] == 1)
         return 0; /* the FFTW mode: RODFT01 / RODFT10 of f[0..n-1] */
@@ -183,24 +197,6 @@ void vfft_tt_d_init(MKL_INT *n, MKL_INT *tt_type, MKL_INT ipar[], double dpar[],
 
 /* ── commit ────────────────────────────────────────────────────────────── */
 
-static const char *vt_unserved(MKL_INT type)
-{
-    switch (type)
-    {
-    case MKL_STAGGERED_COSINE_TRANSFORM:
-        return "the staggered cosine transform (MKL_STAGGERED_COSINE_TRANSFORM) is not served: VectorFFT does not "
-               "compute DCT-II / DCT-III";
-    case MKL_STAGGERED2_COSINE_TRANSFORM:
-        return "the staggered2 cosine transform (MKL_STAGGERED2_COSINE_TRANSFORM) is not served: VectorFFT does not "
-               "compute DCT-IV";
-    case MKL_STAGGERED2_SINE_TRANSFORM:
-        return "the staggered2 sine transform (MKL_STAGGERED2_SINE_TRANSFORM) is not served: VectorFFT does not "
-               "compute DST-IV";
-    default:
-        return NULL;
-    }
-}
-
 void vfft_tt_d_commit(double f[], DFTI_DESCRIPTOR_HANDLE *handle, MKL_INT ipar[], double dpar[], MKL_INT *stat)
 {
     const char *who = "d_commit_trig_transform";
@@ -235,8 +231,8 @@ void vfft_tt_d_commit(double f[], DFTI_DESCRIPTOR_HANDLE *handle, MKL_INT ipar[]
         return;
     }
     if (!vt_form(type, &kind, &dn))
-    {
-        vt_say(ipar, 0, "%s: %s", who, vt_unserved(type));
+    {   /* every type of 0 to 5 has a plan: not reached */
+        vt_say(ipar, 0, "%s: the transform type %lld is not served", who, (long long)type);
         vt_done(ipar, stat, VT_EDATA);
         return;
     }
@@ -247,12 +243,15 @@ void vfft_tt_d_commit(double f[], DFTI_DESCRIPTOR_HANDLE *handle, MKL_INT ipar[]
         return;
     }
     /* the values the reference asks to be 0.0: f[0] and f[n] (sine), f[0] (staggered sine, but in
-     * the FFTW mode, where f[0] is data) */
+     * the FFTW mode, where f[0] is data), f[n] (staggered cosine, but in the FFTW mode: MKL 2025.3
+     * warns in the one and not in the other); the staggered2 pair has no such value */
     {
         const int c0 = type == MKL_SINE_TRANSFORM || (type == MKL_STAGGERED_SINE_TRANSFORM && ipar[10] != 1);
-        const int cn = type == MKL_SINE_TRANSFORM;
+        const int cn = type == MKL_SINE_TRANSFORM || (type == MKL_STAGGERED_COSINE_TRANSFORM && ipar[10] != 1);
         const double tol = dpar[0];
-        const char *name = type == MKL_SINE_TRANSFORM ? "the sine transform" : "the staggered sine transform";
+        const char *name = type == MKL_SINE_TRANSFORM ? "the sine transform"
+                           : type == MKL_STAGGERED_COSINE_TRANSFORM ? "the staggered cosine transform"
+                                                                    : "the staggered sine transform";
         if (c0 && !(f[0] >= -tol && f[0] <= tol))
         {
             vt_say(ipar, 1, "%s: |f[0]| = %g is above the tolerance dpar[0] = %g; %s expects 0.0 there", who, f[0],

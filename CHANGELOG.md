@@ -39,6 +39,12 @@ version can change how a function behaves, so compile your program again with ea
   transforms above 131,072 points on a processor whose L2 cache is larger than 2 MiB. One
   transform, one thread and the measuring planner were not affected.
 
+### The DFTI interface
+
+- The Trigonometric Transform routines (`mkl_trig_transforms.h`) serve MKL's staggered
+  cosine, staggered2 cosine and staggered2 sine transforms, so all six of MKL's types are
+  served in double precision.
+
 ## 0.8.1 beta (2026-11-19)
 
 ### Faster

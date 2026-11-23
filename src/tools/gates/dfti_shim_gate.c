@@ -14,11 +14,13 @@
  *      unserved layout 6, a copy, BACKWARD_SCRAMBLED served in natural order, the readbacks;
  *   M  one descriptor computed from eight threads at once (NUMBER_OF_USER_THREADS 8, then 1), every
  *      result bitwise the one-thread result; THREAD_LIMIT 0 reads back vfft_info().cores;
- *   T  the Trigonometric Transforms (mkl_trig_transforms.h): the sine, cosine and staggered sine
+ *   T  the Trigonometric Transforms (mkl_trig_transforms.h): all six -- the sine, cosine, staggered sine,
+ *      staggered cosine, staggered2 cosine and staggered2 sine
  *      transforms at every n from 2 to 40 and at larger ones, both directions, MKL's scales and the
  *      FFTW mode (ipar[10] = 1), judged on every entry of f against the definitions summed in long
  *      double; the round trip; init's defaults; the statuses (n below 2, a type out of range, the
- *      three refused types, ipar[6] not 0, the boundary warning and its tolerance, ipar[7] = 0, ipar[0]
+ *      staggered cosine's boundary value in both modes and the staggered2 pair's lack of one, ipar[6] not 0,
+ *      the boundary warning and its tolerance, ipar[7] = 0, ipar[0]
  *      or ipar[5] changed after the commit, a NULL or foreign handle both ways, single precision); one
  *      handle computed from eight threads at once, every result bitwise the one-thread result.
  * The interface plans every cell with the estimate (VFFT_FLAG_ESTIMATE): nothing races and the store named by
@@ -581,9 +583,11 @@ static void shared(int nut)
 #define TT_PI 3.14159265358979323846264338327950288L
 static const char *tt_name(int t)
 {
-    return t == MKL_SINE_TRANSFORM ? "sine" : t == MKL_COSINE_TRANSFORM ? "cosine" : "staggered sine";
+    static const char *const nm[6] = { "sine", "cosine", "staggered cosine", "staggered sine", "staggered2 cosine",
+                                       "staggered2 sine" };
+    return nm[t];
 }
-/* S[m] = sin(pi m / 2n), m < 4n: every angle the three transforms take */
+/* S[m] = sin(pi m / 2n), m < 4n: every angle the sine, cosine and staggered transforms take */
 static long double *tt_table(int n)
 {
     long double *S = (long double *)malloc((size_t)4 * (size_t)n * sizeof(long double));
@@ -591,6 +595,15 @@ static long double *tt_table(int n)
     for (m = 0; m < 4 * n; m++)
         S[m] = sinl(TT_PI * m / (2.0L * n));
     return S;
+}
+/* Q[m] = sin(pi m / 4n), m < 8n: the angles of the staggered2 pair */
+static long double *tt_table2(int n)
+{
+    long double *Q = (long double *)malloc((size_t)8 * (size_t)n * sizeof(long double));
+    int m;
+    for (m = 0; m < 8 * n; m++)
+        Q[m] = sinl(TT_PI * m / (4.0L * n));
+    return Q;
 }
 /* the transform of g into F (n + 1 entries) by its definition: MKL's (the reference's formulas), or with
  * fftw FFTW's (ipar[10] = 1); the entries outside the transform's range keep g's values */
@@ -600,7 +613,40 @@ static void tt_ref(int t, int fwd, int fftw, int n, const double *g, long double
     int k, i;
     for (k = 0; k <= n; k++)
         F[k] = g[k];
-    if (t == MKL_SINE_TRANSFORM)
+    if (t == MKL_STAGGERED_COSINE_TRANSFORM)
+        for (k = 0; k < n; k++)
+        {   /* forward f(0) / n + 2/n sum_{i=1}^{n-1} f(i) cos((2k+1) i pi / 2n), k = 0 .. n-1; backward
+             * sum_{i=0}^{n-1} f(i) cos((2i+1) k pi / 2n); FFTW's REDFT01 forward (n times MKL's) and REDFT10
+             * backward (twice MKL's). cos(pi q / 2n) = S[q + n] */
+            long double s = 0.0L;
+            if (fwd)
+            {
+                for (i = 1; i < n; i++)
+                    s += g[i] * S[((2LL * k + 1) * i + n) % P];
+                F[k] = fftw ? (long double)g[0] + 2.0L * s : ((long double)g[0] + 2.0L * s) / n;
+            }
+            else
+            {
+                for (i = 0; i < n; i++)
+                    s += g[i] * S[((2LL * i + 1) * k + n) % P];
+                F[k] = fftw ? 2.0L * s : s;
+            }
+        }
+    else if (t == MKL_STAGGERED2_COSINE_TRANSFORM || t == MKL_STAGGERED2_SINE_TRANSFORM)
+    {   /* 2/n sum_{i=0}^{n-1} f(i) cos or sin((2k+1)(2i+1) pi / 4n) forward, the sum backward; FFTW's REDFT11
+         * and RODFT11: twice the sum. cos(pi q / 4n) = Q[q + 2n] */
+        long double *Q = tt_table2(n);
+        const long long P2 = 8LL * n, sh = t == MKL_STAGGERED2_COSINE_TRANSFORM ? 2LL * n : 0;
+        for (k = 0; k < n; k++)
+        {
+            long double s = 0.0L;
+            for (i = 0; i < n; i++)
+                s += g[i] * Q[((2LL * k + 1) * (2LL * i + 1) + sh) % P2];
+            F[k] = fftw ? 2.0L * s : fwd ? 2.0L * s / n : s;
+        }
+        free(Q);
+    }
+    else if (t == MKL_SINE_TRANSFORM)
         for (k = 1; k <= n - 1; k++)
         {   /* 2/n sum_{i=1}^{n-1} f(i) sin(k i pi / n) forward, the sum backward; FFTW's RODFT00: twice the sum */
             long double s = 0.0L;
@@ -651,8 +697,8 @@ static void tt_ref(int t, int fwd, int fftw, int n, const double *g, long double
             F[k] = s;
         }
 }
-static double tt_worst[4];
-static int tt_cells[4];
+static double tt_worst[6];
+static int tt_cells[6];
 static void tt_cell(int t, int n)
 {
     const size_t m = (size_t)n + 1;
@@ -665,10 +711,10 @@ static void tt_cell(int t, int n)
     int fftw, fwd;
     size_t k;
     fill(g, m, 31u * (unsigned)n + (unsigned)t);
-    if (t != MKL_COSINE_TRANSFORM)
+    if (t == MKL_SINE_TRANSFORM || t == MKL_STAGGERED_SINE_TRANSFORM)
         g[0] = 0.0; /* the reference's 0.0 */
-    if (t == MKL_SINE_TRANSFORM)
-        g[n] = 0.0;
+    if (t == MKL_SINE_TRANSFORM || t == MKL_STAGGERED_COSINE_TRANSFORM)
+        g[n] = 0.0; /* the staggered2 pair: f[n] is past the array's n values, here a guard that must stay */
     memcpy(g2, g, m * sizeof(double));
     g2[0] = 0.3; /* the FFTW mode of the staggered sine transform reads f[0] */
     memset(ipar, 0x5a, sizeof ipar);
@@ -762,12 +808,25 @@ static void tt_statuses(void)
     CHECK(tt_commit(8, 7, ipar, dpar, f, &h) == -100 && h == NULL, "T: type 7");
     for (t = 0; t <= 5; t++)
         if (t == MKL_STAGGERED_COSINE_TRANSFORM || t == MKL_STAGGERED2_COSINE_TRANSFORM || t == MKL_STAGGERED2_SINE_TRANSFORM)
-        {
-            nn = 8, tt = t;
-            d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
-            CHECK(st == 0, "T: init of the refused type %d %lld", t, (long long)st);
-            d_commit_trig_transform(f, &h, ipar, dpar, &st);
-            CHECK(st == -100 && h == NULL, "T: the refused type %d at commit %lld", t, (long long)st);
+        {   /* f[n] = 1: the staggered cosine's commit warns (1) with MKL's scales and not in the FFTW mode; the
+             * staggered2 pair has no boundary value (MKL 2025.3) */
+            int fftw;
+            for (fftw = 0; fftw < 2; fftw++)
+            {
+                const MKL_INT want = (t == MKL_STAGGERED_COSINE_TRANSFORM && !fftw) ? 1 : 0;
+                memcpy(fs, f, sizeof f);
+                fs[0] = 0.5;
+                fs[8] = 1.0;
+                nn = 8, tt = t;
+                d_init_trig_transform(&nn, &tt, ipar, dpar, &st);
+                ipar[2] = 0;
+                ipar[10] = fftw;
+                d_commit_trig_transform(fs, &h, ipar, dpar, &st);
+                CHECK(st == want && h != NULL, "T: type %d with f[n] = 1%s at commit %lld", t, fftw ? " (FFTW mode)" : "",
+                      (long long)st);
+                if (h)
+                    free_trig_transform(&h, ipar, &st);
+            }
         }
     /* ipar[6] not 0 at the commit */
     nn = 8, tt = MKL_COSINE_TRANSFORM;
@@ -930,9 +989,11 @@ static void tt_shared(void)
 static void trig(void)
 {
     static const int big[] = {63, 64, 65, 100, 127, 128, 255, 256, 257, 1000, 1024, 1031, 4096, 4099};
-    static const int types[3] = {MKL_SINE_TRANSFORM, MKL_COSINE_TRANSFORM, MKL_STAGGERED_SINE_TRANSFORM};
+    static const int types[6] = {MKL_SINE_TRANSFORM, MKL_COSINE_TRANSFORM, MKL_STAGGERED_SINE_TRANSFORM,
+                                 MKL_STAGGERED_COSINE_TRANSFORM, MKL_STAGGERED2_COSINE_TRANSFORM,
+                                 MKL_STAGGERED2_SINE_TRANSFORM};
     int a, n, b;
-    for (a = 0; a < 3; a++)
+    for (a = 0; a < 6; a++)
     {
         for (n = 2; n <= 40; n++)
             tt_cell(types[a], n);
