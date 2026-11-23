@@ -23,8 +23,9 @@
  * THE REFUSALS: rank 2 and howmany 2 of each kind, and VFFT_DHT (each NULL with its reason).
  * THE STORE after the measured cells: wisdom2_real.txt holds one row per kind, measured length and thread
  * count (place=oop: one row serves both placements) -- t=dct2 and t=dct3 with eng=dct and their real FFT
- * under dct_ (an R2C on the dct2 row, a C2R on the dct3 row), t=dct4 with eng=dct and an R2C under dct_,
- * t=dst4 with eng=dst and an R2C under dst_ -- and no other row: these cells never bank an r2c or a c2r row;
+ * under dct_ (an R2C on the dct2 row, a C2R on the dct3 row), t=dct4 with eng=dct and its FFT under dct_,
+ * t=dst4 with eng=dst and its FFT under dst_ (a C2C at N/2 at an even N, an R2C at N at an odd one; N = 2
+ * has no FFT and no row) -- and no other row: these cells never bank a c2c, an r2c or a c2r row;
  * no other shard is written. THE REPLAY: the measured cells created again enter no race scope, and are
  * checked like the first time.
  * The limit is 2e-13 relative to the largest output.
@@ -262,10 +263,13 @@ int main(int argc, char **argv)
     {   /* THE STORE: the cells' own rows in the real shard, each with its real FFT under its prefix, and nothing
          * else -- no r2c or c2r row, no other shard */
         char path[1024], line[8192];
-        long cnt[NREF] = { 0, 0, 0, 0 }, other = 0, want = 0;
+        long cnt[NREF] = { 0, 0, 0, 0 }, other = 0, want = 0, want4 = 0;
         FILE *f;
         for (size_t i = 0; i < sizeof mlist / sizeof mlist[0]; i++)
+        {
             if (mlist[i] > 1) want += 1 + (TM > 1 && mlist[i] >= 1000);
+            if (mlist[i] > 2) want4 += 1 + (TM > 1 && mlist[i] >= 1000);   /* DCT-IV and DST-IV at N = 2 hold no FFT */
+        }
         snprintf(path, sizeof path, "%s/wisdom2_real.txt", wis);
         f = fopen(path, "r");
         g_cells++;
@@ -275,19 +279,26 @@ int main(int argc, char **argv)
             while (fgets(line, sizeof line, f))
             {
                 const int oop = strstr(line, " place=oop ") != NULL;
+                int n = 0;
                 if (strncmp(line, "@cell ", 6)) continue;
+                (void)sscanf(line, "@cell t=%*s n=%d", &n);
                 if (!strncmp(line, "@cell t=dct2 ", 13) && oop && strstr(line, " eng=dct ") && strstr(line, " dct_k1=t=r2c,")) cnt[R_DCT2]++;
                 else if (!strncmp(line, "@cell t=dct3 ", 13) && oop && strstr(line, " eng=dct ") && strstr(line, " dct_k1=t=c2r,")) cnt[R_DCT3]++;
-                else if (!strncmp(line, "@cell t=dct4 ", 13) && oop && strstr(line, " eng=dct ") && strstr(line, " dct_k1=t=r2c,")) cnt[R_DCT4]++;
-                else if (!strncmp(line, "@cell t=dst4 ", 13) && oop && strstr(line, " eng=dst ") && strstr(line, " dst_k1=t=r2c,")) cnt[R_DST4]++;
+                else if (!strncmp(line, "@cell t=dct4 ", 13) && oop && strstr(line, " eng=dct ") &&
+                         strstr(line, (n & 1) ? " dct_k1=t=r2c," : " dct_k1=t=c2c,")) cnt[R_DCT4]++;
+                else if (!strncmp(line, "@cell t=dst4 ", 13) && oop && strstr(line, " eng=dst ") &&
+                         strstr(line, (n & 1) ? " dst_k1=t=r2c," : " dst_k1=t=c2c,")) cnt[R_DST4]++;
                 else { other++; printf("FAIL store: a row that is not one of these cells': %.120s", line); }
             }
             fclose(f);
             for (int kind = 0; kind < NREF; kind++)
-                if (cnt[kind] != want) { g_bad++; printf("FAIL store: %ld %s rows, want %ld\n", cnt[kind], kname[kind], want); }
+            {
+                const long w = (kind == R_DCT4 || kind == R_DST4) ? want4 : want;
+                if (cnt[kind] != w) { g_bad++; printf("FAIL store: %ld %s rows, want %ld\n", cnt[kind], kname[kind], w); }
+            }
             if (other) g_bad++;
-            printf("store: %ld dct2, %ld dct3, %ld dct4, %ld dst4 rows (want %ld each), %ld others\n", cnt[R_DCT2], cnt[R_DCT3],
-                   cnt[R_DCT4], cnt[R_DST4], want, other);
+            printf("store: %ld dct2, %ld dct3 rows (want %ld each), %ld dct4, %ld dst4 rows (want %ld each), %ld others\n", cnt[R_DCT2],
+                   cnt[R_DCT3], want, cnt[R_DCT4], cnt[R_DST4], want4, other);
         }
         {
             static const char *none[] = { "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt" };

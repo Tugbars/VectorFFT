@@ -270,8 +270,9 @@ static int _vfft_plan_threads(const vfft_cfg_t *cfg)
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
 /* the real-to-real transforms that are served: the interleaved library's, each on a 1D real FFT
- * (il/real/dct1_dst1.h: DCT-I, DST-I; il/real/dct.h: DCT-II, DCT-III; il/real/dst.h: DST-II, DST-III;
- * il/real/dct4_dst4.h: DCT-IV, DST-IV): the enum's VFFT_DCT1 .. VFFT_DST4, every one but VFFT_DHT */
+ * (il/real/dct1_dst1.h: DCT-I, DST-I; il/real/dct.h: DCT-II, DCT-III; il/real/dst.h: DST-II, DST-III), and
+ * DCT-IV and DST-IV on a complex FFT of half the length at an even N, a real FFT at an odd one
+ * (il/real/dct4_dst4.h): the enum's VFFT_DCT1 .. VFFT_DST4, every one but VFFT_DHT */
 #define _VFFT_IS_R2R_SERVED(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DST4)
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -634,7 +635,7 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double
 #include "il/real/dst.h"             /* DST-II / DST-III: one real FFT of length N between two passes (2026-11-14) */
 #include "il/real/dct1_dst1.h"       /* DCT-I / DST-I: one real FFT of the input extended even or odd (2026-11-14) */
 #include "il/real/dct.h"             /* DCT-II / DCT-III: the sine pair's machine without the sign flip and the reversal (2026-11-23) */
-#include "il/real/dct4_dst4.h"       /* DCT-IV / DST-IV: one real FFT of length N between two passes (2026-11-23) */
+#include "il/real/dct4_dst4.h"       /* DCT-IV / DST-IV: a complex FFT of N/2 (even N) or a real FFT of N (odd N) between two passes (2026-11-23) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1599,7 +1600,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
     if (cfg->transform == VFFT_DCT2 || cfg->transform == VFFT_DCT3)
         return _vfft_create_dct_il(cfg, W, 0); /* DCT-II / DCT-III: a real FFT at N in the DCT's role, on the DCT cell's own rows (il/real/dct.h) */
     if (cfg->transform == VFFT_DCT4 || cfg->transform == VFFT_DST4)
-        return _vfft_create_type4_il(cfg, W, 0); /* DCT-IV / DST-IV: a real FFT at N in the transform's role, on the cell's own row (il/real/dct4_dst4.h) */
+        return _vfft_create_type4_il(cfg, W, 0); /* DCT-IV / DST-IV: a complex FFT at N/2 or a real FFT at N as the cell's child, on the cell's own row (il/real/dct4_dst4.h) */
 #endif
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)

@@ -348,9 +348,10 @@ struct vfft_plan_s
      * of the input extended even or odd; the plan holds that R2C plan and two work buffers. type1 != NULL is
      * a VFFT_DCT1 or VFFT_DST1 plan; its executors are bound at create. */
     struct vfft_type1_s *type1;     /* the DCT-I / DST-I plan (owned)      */
-    /* DCT-IV / DST-IV (2026-11-23, il/real/dct4_dst4.h): N reals in and out, one R2C at N between two passes;
-     * the plan holds that R2C plan, the tables of an even N and two work buffers. type4 != NULL is a
-     * VFFT_DCT4 or VFFT_DST4 plan; its executor is bound at create. */
+    /* DCT-IV / DST-IV (2026-11-23, il/real/dct4_dst4.h): N reals in and out, one FFT between two passes -- a
+     * C2C at N/2 at an even N, an R2C at N at an odd one; the plan holds that FFT's plan, the tables of an
+     * even N and two work buffers. type4 != NULL is a VFFT_DCT4 or VFFT_DST4 plan; its executor is bound at
+     * create. */
     struct vfft_type4_s *type4;     /* the DCT-IV / DST-IV plan (owned)    */
     /* the REAL FLAT DIT (2026-09-30, il/real/zrf.h): the odd-N real transform
      * on the c2c flat DIT's stages -- a real leaf (r1c), the c2c stages on the

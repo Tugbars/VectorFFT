@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* dct4_dst4.h -- DCT-IV and DST-IV (VFFT_DCT4, VFFT_DST4): 1D, N reals in and N reals out, any N, one
- * transform, on the interleaved real FFT of the same length.
+ * transform: at an even N on the interleaved complex FFT of half the length, at an odd N on the interleaved
+ * real FFT of the same length.
  *
  * THE DEFINITIONS (include/vfft.h; unnormalized, each its own inverse up to 2N):
  *   DCT-IV   Y[k] = 2 sum_{n=0..N-1} x[n] cos(pi (2k+1)(2n+1) / 4N)
@@ -9,7 +10,7 @@
  * The sine transform is the cosine transform of the input read backwards, with every other output negated:
  * DST-IV(x)[k] = (-1)^k DCT-IV(x reversed)[k]. Both of those ride in the passes below.
  *
- * THE METHOD: one real FFT of length N between two passes. Every step is a permutation, a sign, or a rotation
+ * THE METHOD: one FFT between two passes. Every step is a permutation, a sign, or a rotation
  * by a unit complex number, so the error stays that of the FFT at every length; no step multiplies or divides
  * by a cosine that passes through zero (the route through a same-length DCT-II or DCT-III and a running
  * difference does, and loses digits as N grows).
@@ -18,18 +19,13 @@
  *   U[k] = sum_m z[m] e^(-i pi (4m+1)(4k+1) / 4N),   Y[2k] = 2 Re U[k],   Y[N-1-2k] = -2 Im U[k],
  * and (4m+1)(4k+1) = 16mk + 4m + 4k + 1 makes U a length-M complex DFT between two rotations:
  *   U[k] = e^(-i pi (4k+1) / 4N) Z[k],   Z = DFT_M( z[m] e^(-i pi m / N) ).
- * That complex DFT is taken from the real FFT of the same N reals: with r[2m] + i r[2m+1] = z[m] e^(-i pi m/N)
- * and R = R2C_N(r), the two halves of the spectrum give Z[k] = (R[k] + conj R[M-k]) / 2
- * + i e^(2 pi i k / N) (R[k] - conj R[M-k]) / 2. In reals, with P = R[k], Q = R[M-k],
- * alpha_k = pi (4k+1) / 4N and gamma_k = pi (4k-1) / 4N:
- *   pre      r[2m]   = x[2m] cos(pi m/N) + x[N-1-2m] sin(pi m/N)
- *            r[2m+1] = x[N-1-2m] cos(pi m/N) - x[2m] sin(pi m/N)
- *   R2C at N R[0 .. M]
- *   rotate   A1 = Re P + Re Q, A2 = Im P - Im Q, B1 = Re P - Re Q, B2 = Im P + Im Q
- *            v[k]     =  A1 cos alpha + A2 sin alpha - B1 sin gamma - B2 cos gamma       (= Y[2k])
- *            v[M + k] = -A2 cos alpha + A1 sin alpha - B1 cos gamma + B2 sin gamma       (= Y[N-1-2k])
- *   place    Y[2m] = v[m], Y[2m+1] = v[N-1-m]          (the cosine pair's reorder, il/real/dct.h)
- * DST-IV: the pairs are x[N-1-2m] + i x[2m], and v[M + k] changes sign.
+ * In reals, with alpha_k = pi (4k+1) / 4N:
+ *   pre      t[m] = z[m] e^(-i pi m/N):  Re t[m] = x[2m] cos(pi m/N) + x[N-1-2m] sin(pi m/N)
+ *                                        Im t[m] = x[N-1-2m] cos(pi m/N) - x[2m] sin(pi m/N)
+ *   C2C at M Z[0 .. M-1], forward
+ *   post     Y[2k]     = 2 (cos alpha_k Re Z[k] + sin alpha_k Im Z[k])
+ *            Y[N-1-2k] = 2 (sin alpha_k Re Z[k] - cos alpha_k Im Z[k])
+ * DST-IV: the pairs are x[N-1-2m] + i x[2m], and Y[N-1-2k] changes sign.
  *
  * ODD N. The kernel cos(2 pi a b / 8N), a = 2n+1 and b = 2k+1 both odd, splits by the Chinese remainder
  * theorem, 8 and N being coprime: 1/8N = s/8 + t/N (mod 1) with s = N^-1 mod 8 (= N mod 8) and t = 8^-1 mod N.
@@ -48,23 +44,25 @@
  *            signs from (2k+1) s mod 8
  * DST-IV: the source index reversed, and the odd outputs negated.
  *
- * THE PLAN holds the R2C at N, out of place (a plan of the real door), the tables of an even N and two work
- * buffers allocated at create: W, N + 2 doubles, the half spectrum; V, N doubles, the FFT's input when the
- * output is the input, and at an even N the outputs before they are placed. Either transform takes
- * out == in. A plan of T threads threads inside its real FFT; the passes run on the calling thread. Forward
- * and backward are the same transform.
+ * THE PLAN holds its FFT, out of place -- at an even N a C2C at N/2 (a plan of the complex door, natural order),
+ * at an odd N an R2C at N (a plan of the real door) -- the tables of an even N and two work buffers allocated
+ * at create: V, N doubles, the FFT's input; W, N + 2 doubles, its output. Either transform takes out == in.
+ * A plan of T threads threads inside its FFT; the passes run on the calling thread. Forward and backward are
+ * the same transform.
  *
  * THE WISDOM: the cell has its own row in the real shard --
- *   t=dct4 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct and its real FFT under dct_
- *   t=dst4 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst and its real FFT under dst_
- * (vw2_r2r_key, il/wisdom/wisdom2_real_il.h). The real FFT is a CHILD IN ROLE (il/real/real_child.h): created
+ *   t=dct4 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct and its FFT under dct_
+ *   t=dst4 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst and its FFT under dst_
+ * (vw2_r2r_key, il/wisdom/wisdom2_real_il.h). The FFT is a CHILD IN ROLE (il/wisdom/wisdom2_child.h): created
  * against a private store seeded from the cell's row, it replays the recipe there or races, and what it banked
- * goes back onto the cell's row. Its race runs in the cell's role (il/real/real_role.h): every candidate FFT
- * is timed as one whole transform, the passes with that FFT between them. The cell never reads or writes an
- * r2c or a c2r row. The plan is placement-blind, so one row serves both placements. Under VFFT_FLAG_ESTIMATE
- * the FFT is planned by formulas, nothing is measured and no store is read or written.
+ * goes back onto the cell's row; the cell never reads or writes a c2c, an r2c or a c2r row. The R2C of an odd
+ * N races in the cell's role (il/real/real_child.h, real_role.h): every candidate FFT is timed as one whole
+ * transform, the passes with that FFT between them. The C2C of an even N races in its private store as the
+ * complex door races a component, the way the 2D tier's row plan does. The plan is placement-blind, so one
+ * row serves both placements. Under VFFT_FLAG_ESTIMATE the FFT is planned by formulas, nothing is measured
+ * and no store is read or written.
  *
- * POSITION IN vfft.c: after il/real/dct.h (the placing pass) and before the front door's create. */
+ * POSITION IN vfft.c: after il/real/real_create_il.h (the real door) and before the front door's create. */
 #ifndef VFFT_IL_REAL_DCT4_DST4_H
 #define VFFT_IL_REAL_DCT4_DST4_H
 #ifndef VFFT_FLOAT   /* FP64 only: the FP32 unit serves 1D C2C */
@@ -75,21 +73,20 @@
 
 #include "common/math/tw_exact.h"   /* the rotation tables, each entry rounded once */
 #include "il/real/real_child.h"     /* the real FFT as a child in role of the cell's row */
-#include "il/real/dct.h"            /* _dct_unreorder: the placing pass of an even N */
 
 typedef struct vfft_type4_s
 {
     int N;
     int sine;                    /* 1: DST-IV; 0: DCT-IV */
-    struct vfft_plan_s *r2c;     /* the real FFT at N, out of place (owned); NULL at N = 1 */
+    struct vfft_plan_s *fft;     /* the FFT, out of place (owned): the C2C at N/2 of an even N, the R2C at N of
+                                  * an odd one; NULL at N = 1 and N = 2 */
     struct vfft_wisdom_s *S;     /* its private store: owned, never saved; NULL under VFFT_FLAG_ESTIMATE and
-                                  * at N = 1 */
-    double *W;                   /* N + 2 doubles: the half spectrum */
-    double *V;                   /* N doubles: the FFT's input; at an even N the outputs before they are placed */
-    double *tab;                 /* even N: the six tables below, one allocation, N/2 entries each */
+                                  * where there is no FFT */
+    double *W;                   /* N + 2 doubles: the FFT's output */
+    double *V;                   /* N doubles: the FFT's input */
+    double *tab;                 /* even N: the four tables below, one allocation, N/2 entries each */
     double *pc, *ps;             /* cos, sin(pi m / N) */
-    double *ac, *as;             /* cos, sin(pi (4k+1) / 4N) */
-    double *gc, *gs;             /* cos, sin(pi (4k-1) / 4N) */
+    double *ac, *as;             /* 2 cos, 2 sin(pi (4k+1) / 4N) */
     int s8;                      /* odd N: N^-1 mod 8 */
     double psign;                /* odd N: the sign of the picks of x[N-1-n] at a = 3 mod 8 negated, at a = 7
                                   * mod 8 as it is: -1 at N = 1 mod 4, +1 at N = 3 mod 4 */
@@ -141,63 +138,75 @@ static inline void _t4_pre_even(const double *x, double *r, const double *pc, co
     }
 }
 
-/* the half spectrum R (interleaved, N/2 + 1 bins) into v: v[k] the even outputs Y[2k], v[N/2 + k] the odd
- * ones Y[N-1-2k] (the header's formulas; the sine transform's odd outputs negated). R and v apart. */
-static inline void _t4_rotate_even(const double *R, double *v, const double *ac, const double *as, const double *gc,
-                                   const double *gs, int N, int sine)
+/* the complex spectrum Z (interleaved, N/2 bins) into the N outputs: Y[2k] = c Re Z[k] + s Im Z[k] and
+ * Y[N-1-2k] = s Re Z[k] - c Im Z[k] (the sine transform: negated), c, s = ac[k], as[k], the doubled tables. Bin k
+ * and bin N/2 - 1 - k fill the outputs 2k, 2k + 1 and their mirror, so the two ends are taken together and every
+ * store is a whole vector. Z and y apart. */
+static inline void _t4_post_even(const double *Z, double *y, const double *ac, const double *as, int N, int sine)
 {
     const int M = N / 2;
-    int k = 0;
+    int k = 0, m;
 #if defined(__AVX512F__)
     {
         const __m512i RE = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14), IM = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
-        const __m512i RER = _mm512_setr_epi64(14, 12, 10, 8, 6, 4, 2, 0), IMR = _mm512_setr_epi64(15, 13, 11, 9, 7, 5, 3, 1);
-        const __m512d SG = _mm512_set1_pd(sine ? 0.0 : -0.0);
-        for (; k + 8 <= M; k += 8)
+        const __m512i REV = _mm512_setr_epi64(7, 6, 5, 4, 3, 2, 1, 0);
+        const __m512i LO = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11), HI = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+        const __m512d SG = _mm512_set1_pd(sine ? -0.0 : 0.0);
+        for (; 2 * k + 16 <= M; k += 8)
         {
-            const __m512d z0 = _mm512_loadu_pd(R + 2 * k), z1 = _mm512_loadu_pd(R + 2 * k + 8);
-            const __m512d w0 = _mm512_loadu_pd(R + 2 * (M - k - 7)), w1 = _mm512_loadu_pd(R + 2 * (M - k - 7) + 8);
-            const __m512d pr = _mm512_permutex2var_pd(z0, RE, z1), pi = _mm512_permutex2var_pd(z0, IM, z1);
-            const __m512d qr = _mm512_permutex2var_pd(w0, RER, w1), qi = _mm512_permutex2var_pd(w0, IMR, w1);   /* R[M-k-i] */
-            const __m512d a1 = _mm512_add_pd(pr, qr), a2 = _mm512_sub_pd(pi, qi), b1 = _mm512_sub_pd(pr, qr), b2 = _mm512_add_pd(pi, qi);
+            const int j = M - 8 - k;   /* the mirror block's first bin */
+            const __m512d a0 = _mm512_loadu_pd(Z + 2 * k), a1 = _mm512_loadu_pd(Z + 2 * k + 8);
+            const __m512d b0 = _mm512_loadu_pd(Z + 2 * j), b1 = _mm512_loadu_pd(Z + 2 * j + 8);
+            const __m512d ar = _mm512_permutex2var_pd(a0, RE, a1), ai = _mm512_permutex2var_pd(a0, IM, a1);
+            const __m512d br = _mm512_permutex2var_pd(b0, RE, b1), bi = _mm512_permutex2var_pd(b0, IM, b1);
             const __m512d ca = _mm512_loadu_pd(ac + k), sa = _mm512_loadu_pd(as + k);
-            const __m512d cg = _mm512_loadu_pd(gc + k), sg = _mm512_loadu_pd(gs + k);
-            const __m512d re = _mm512_sub_pd(_mm512_fmadd_pd(a1, ca, _mm512_mul_pd(a2, sa)), _mm512_fmadd_pd(b1, sg, _mm512_mul_pd(b2, cg)));
-            const __m512d im = _mm512_add_pd(_mm512_fmsub_pd(a2, ca, _mm512_mul_pd(a1, sa)), _mm512_fmsub_pd(b1, cg, _mm512_mul_pd(b2, sg)));
-            _mm512_storeu_pd(v + k, re);
-            _mm512_storeu_pd(v + M + k, _mm512_xor_pd(im, SG));
+            const __m512d cb = _mm512_loadu_pd(ac + j), sb = _mm512_loadu_pd(as + j);
+            const __m512d ea = _mm512_fmadd_pd(ca, ar, _mm512_mul_pd(sa, ai));                       /* Y[2 (k + i)] */
+            const __m512d eb = _mm512_fmadd_pd(cb, br, _mm512_mul_pd(sb, bi));                       /* Y[2 (j + i)] */
+            const __m512d oa = _mm512_xor_pd(_mm512_fmsub_pd(sa, ar, _mm512_mul_pd(ca, ai)), SG);    /* Y[2 (j + 7 - i) + 1] */
+            const __m512d ob = _mm512_xor_pd(_mm512_fmsub_pd(sb, br, _mm512_mul_pd(cb, bi)), SG);    /* Y[2 (k + 7 - i) + 1] */
+            const __m512d oar = _mm512_permutexvar_pd(REV, oa), obr = _mm512_permutexvar_pd(REV, ob);
+            _mm512_storeu_pd(y + 2 * k, _mm512_permutex2var_pd(ea, LO, obr));
+            _mm512_storeu_pd(y + 2 * k + 8, _mm512_permutex2var_pd(ea, HI, obr));
+            _mm512_storeu_pd(y + 2 * j, _mm512_permutex2var_pd(eb, LO, oar));
+            _mm512_storeu_pd(y + 2 * j + 8, _mm512_permutex2var_pd(eb, HI, oar));
         }
     }
 #endif
 #if defined(__AVX2__)
     {
-        const __m256d SG = _mm256_set1_pd(sine ? 0.0 : -0.0);
-        for (; k + 4 <= M; k += 4)
+        const __m256d SG = _mm256_set1_pd(sine ? -0.0 : 0.0);
+        for (; 2 * k + 8 <= M; k += 4)
         {
-            const __m256d z0 = _mm256_loadu_pd(R + 2 * k), z1 = _mm256_loadu_pd(R + 2 * k + 4);
-            const __m256d w0 = _mm256_loadu_pd(R + 2 * (M - k - 3)), w1 = _mm256_loadu_pd(R + 2 * (M - k - 3) + 4);
-            const __m256d pr = _mm256_permute4x64_pd(_mm256_unpacklo_pd(z0, z1), 0xD8);
-            const __m256d pi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(z0, z1), 0xD8);
-            const __m256d qr = _mm256_permute4x64_pd(_mm256_unpacklo_pd(w0, w1), 0x27);   /* R[M-k-i], i = 0 .. 3 */
-            const __m256d qi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(w0, w1), 0x27);
-            const __m256d a1 = _mm256_add_pd(pr, qr), a2 = _mm256_sub_pd(pi, qi), b1 = _mm256_sub_pd(pr, qr), b2 = _mm256_add_pd(pi, qi);
+            const int j = M - 4 - k;   /* the mirror block's first bin */
+            const __m256d a0 = _mm256_loadu_pd(Z + 2 * k), a1 = _mm256_loadu_pd(Z + 2 * k + 4);
+            const __m256d b0 = _mm256_loadu_pd(Z + 2 * j), b1 = _mm256_loadu_pd(Z + 2 * j + 4);
+            const __m256d ar = _mm256_permute4x64_pd(_mm256_unpacklo_pd(a0, a1), 0xD8);
+            const __m256d ai = _mm256_permute4x64_pd(_mm256_unpackhi_pd(a0, a1), 0xD8);
+            const __m256d br = _mm256_permute4x64_pd(_mm256_unpacklo_pd(b0, b1), 0xD8);
+            const __m256d bi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(b0, b1), 0xD8);
             const __m256d ca = _mm256_loadu_pd(ac + k), sa = _mm256_loadu_pd(as + k);
-            const __m256d cg = _mm256_loadu_pd(gc + k), sg = _mm256_loadu_pd(gs + k);
-            const __m256d re = _mm256_sub_pd(_mm256_fmadd_pd(a1, ca, _mm256_mul_pd(a2, sa)), _mm256_fmadd_pd(b1, sg, _mm256_mul_pd(b2, cg)));
-            const __m256d im = _mm256_add_pd(_mm256_fmsub_pd(a2, ca, _mm256_mul_pd(a1, sa)), _mm256_fmsub_pd(b1, cg, _mm256_mul_pd(b2, sg)));
-            _mm256_storeu_pd(v + k, re);
-            _mm256_storeu_pd(v + M + k, _mm256_xor_pd(im, SG));
+            const __m256d cb = _mm256_loadu_pd(ac + j), sb = _mm256_loadu_pd(as + j);
+            const __m256d ea = _mm256_fmadd_pd(ca, ar, _mm256_mul_pd(sa, ai));                       /* Y[2 (k + i)] */
+            const __m256d eb = _mm256_fmadd_pd(cb, br, _mm256_mul_pd(sb, bi));                       /* Y[2 (j + i)] */
+            const __m256d oa = _mm256_xor_pd(_mm256_fmsub_pd(sa, ar, _mm256_mul_pd(ca, ai)), SG);    /* Y[2 (j + 3 - i) + 1] */
+            const __m256d ob = _mm256_xor_pd(_mm256_fmsub_pd(sb, br, _mm256_mul_pd(cb, bi)), SG);    /* Y[2 (k + 3 - i) + 1] */
+            const __m256d oar = _mm256_permute4x64_pd(oa, 0x1B), obr = _mm256_permute4x64_pd(ob, 0x1B);
+            const __m256d l0 = _mm256_unpacklo_pd(ea, obr), h0 = _mm256_unpackhi_pd(ea, obr);
+            const __m256d l1 = _mm256_unpacklo_pd(eb, oar), h1 = _mm256_unpackhi_pd(eb, oar);
+            _mm256_storeu_pd(y + 2 * k, _mm256_permute2f128_pd(l0, h0, 0x20));
+            _mm256_storeu_pd(y + 2 * k + 4, _mm256_permute2f128_pd(l0, h0, 0x31));
+            _mm256_storeu_pd(y + 2 * j, _mm256_permute2f128_pd(l1, h1, 0x20));
+            _mm256_storeu_pd(y + 2 * j + 4, _mm256_permute2f128_pd(l1, h1, 0x31));
         }
     }
 #endif
-    for (; k < M; k++)
-    {
-        const double pr = R[2 * k], pi = R[2 * k + 1], qr = R[2 * (M - k)], qi = R[2 * (M - k) + 1];
-        const double a1 = pr + qr, a2 = pi - qi, b1 = pr - qr, b2 = pi + qi;
-        const double re = a1 * ac[k] + a2 * as[k] - b1 * gs[k] - b2 * gc[k];
-        const double im = a2 * ac[k] - a1 * as[k] + b1 * gc[k] - b2 * gs[k];
-        v[k] = re;
-        v[M + k] = sine ? im : -im;
+    for (m = k; m < M - k; m++)
+    {   /* the bins between the two ends */
+        const double zr = Z[2 * m], zi = Z[2 * m + 1];
+        const double o = as[m] * zr - ac[m] * zi;
+        y[2 * m] = ac[m] * zr + as[m] * zi;
+        y[N - 1 - 2 * m] = sine ? -o : o;
     }
 }
 
@@ -263,7 +272,7 @@ static inline void _t4_post_odd(const double *W, double *y, int N, int sine, int
 
 /* ── execute ────────────────────────────────────────────────────────────── */
 
-/* the transform of x into y (y may be x); `in` the buffer the real FFT reads, apart from x */
+/* the transform of x into y (y may be x) */
 static inline void _t4_run(const vfft_type4_t *d, const double *x, double *y)
 {
     const int N = d->N;
@@ -272,21 +281,23 @@ static inline void _t4_run(const vfft_type4_t *d, const double *x, double *y)
         y[0] = 1.41421356237309504880168872420969808 * x[0];   /* 2 cos(pi/4) = 2 sin(pi/4) */
         return;
     }
+    if (N & 1)
     {
         double *in = (y != x) ? y : d->V;   /* the caller's output holds the FFT's input when it is free */
-        if (N & 1)
+        _t4_pre_odd(x, in, N, d->sine, d->psign);
+        _vfft_exec6((vfft_plan)d->fft, VFFT_FORWARD, in, NULL, d->W, NULL);
+        _t4_post_odd(d->W, y, N, d->sine, d->s8);
+    }
+    else
+    {
+        const double *Z = d->V;             /* N = 2: the DFT of one point is the point */
+        _t4_pre_even(x, d->V, d->pc, d->ps, N, d->sine);
+        if (d->fft)
         {
-            _t4_pre_odd(x, in, N, d->sine, d->psign);
-            _vfft_exec6((vfft_plan)d->r2c, VFFT_FORWARD, in, NULL, d->W, NULL);
-            _t4_post_odd(d->W, y, N, d->sine, d->s8);
+            _vfft_exec6((vfft_plan)d->fft, VFFT_FORWARD, d->V, NULL, d->W, NULL);
+            Z = d->W;
         }
-        else
-        {
-            _t4_pre_even(x, in, d->pc, d->ps, N, d->sine);
-            _vfft_exec6((vfft_plan)d->r2c, VFFT_FORWARD, in, NULL, d->W, NULL);
-            _t4_rotate_even(d->W, d->V, d->ac, d->as, d->gc, d->gs, N, d->sine);
-            _dct_unreorder(d->V, y, N);
-        }
+        _t4_post_even(Z, y, d->ac, d->as, N, d->sine);
     }
 }
 
@@ -299,10 +310,10 @@ static int _k1x_type4(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *zi
     return 0;
 }
 
-/* ── the role, create and destroy ───────────────────────────────────────── */
+/* ── the role, the children, create and destroy ───────────────────────── */
 
-/* THE ROLE (il/real/real_role.h): one whole transform with the candidate FFT h inside, on the create's own
- * buffers x (the input) and y (the output), the plan's tables and work buffers. What every candidate of the
+/* THE ROLE OF AN ODD N (il/real/real_role.h): one whole transform with the candidate R2C h inside, on the
+ * create's own buffers x (the input) and y (the output) and the plan's work buffer. What every candidate of the
  * real door's races is timed as while the transform's FFT is created. */
 typedef struct
 {
@@ -313,28 +324,17 @@ static void _t4_role_run(void *ctx, struct vfft_plan_s *h)
 {
     const _t4_role_t *r = (const _t4_role_t *)ctx;
     const vfft_type4_t *d = r->d;
-    const int N = d->N;
-    if (N & 1)
-    {
-        _t4_pre_odd(r->x, r->y, N, d->sine, d->psign);
-        _real_il_exec_any(h, r->y, d->W);
-        _t4_post_odd(d->W, r->y, N, d->sine, d->s8);
-    }
-    else
-    {
-        _t4_pre_even(r->x, r->y, d->pc, d->ps, N, d->sine);
-        _real_il_exec_any(h, r->y, d->W);
-        _t4_rotate_even(d->W, d->V, d->ac, d->as, d->gc, d->gs, N, d->sine);
-        _dct_unreorder(d->V, r->y, N);
-    }
+    _t4_pre_odd(r->x, r->y, d->N, d->sine, d->psign);
+    _real_il_exec_any(h, r->y, d->W);
+    _t4_post_odd(d->W, r->y, d->N, d->sine, d->s8);
 }
 
 static void _vfft_type4_destroy(vfft_type4_t *d)
 {
     if (!d)
         return;
-    if (d->r2c)
-        vfft_destroy((vfft_plan)d->r2c);
+    if (d->fft)
+        vfft_destroy((vfft_plan)d->fft);
     vfft_child_store_free(d->S);
     vfft_aligned_free(d->W);
     vfft_aligned_free(d->V);
@@ -342,9 +342,58 @@ static void _vfft_type4_destroy(vfft_type4_t *d)
     free(d);
 }
 
+/* The C2C at N/2 of an even N, out of place, natural order, for the request cfg. est: planned by formulas. Else a
+ * child in role (il/wisdom/wisdom2_child.h): its private store d->S seeded from the cell's row in W (empty when
+ * the row carries no recipe, or there is no store), the create against it with nothing persisted; where the child
+ * raced, or the row did not carry it yet, the cell's row is banked afresh with the child's rows under its prefix
+ * (*changed = 1: the caller saves). NULL: the complex door's reason is on the record. */
+static struct vfft_plan_s *_t4_c2c_child(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, vfft_type4_t *d, int est,
+                                         int *changed)
+{
+    const char *pre = d->sine ? "dst_" : "dct_", *eng = d->sine ? "dst" : "dct";
+    const int t = d->sine ? VW2_T_DST4 : VW2_T_DCT4;
+    vfft_cfg_t c = *cfg;
+    c.transform = VFFT_C2C;
+    c.dims = 1;
+    c.n[0] = d->N / 2;
+    c.howmany = 1;
+    c.layout = VFI_LAYOUT_IL;
+    c.placement = VFFT_OUTOFPLACE;
+    c.order = VFI_ORDER_NATURAL;
+    c.batch_geom = VFFT_BATCH_DEFAULT;
+    c.owned_buffers = 0;
+    c.destroy_input = 0;
+    if (est)
+        return (struct vfft_plan_s *)_vfft_create_estimate(&c);
+    {
+        const int T = _vfft_plan_threads(cfg), usable = W && !W->vw2_off_oop;
+        struct vfft_plan_s *ch;
+        vw2_key_t pk;
+        vw2_r2r_key(&pk, t, d->N, T);
+        d->S = vfft_child_store_for(usable ? &W->vw2 : NULL, &pk, pre);
+        if (!d->S)
+        {
+            _vfft_warn("vfft_create: %s N=%d: out of memory (the complex FFT's store)", _vfft_tname(cfg->transform), d->N);
+            return NULL;
+        }
+        c.wisdom = (vfft_wisdom *)d->S;
+        c.wisdom_write = 0;   /* a private store's plan never saves (il/wisdom/wisdom2_child.h) */
+        ch = (struct vfft_plan_s *)_vfft_create_cfg(&c);
+        if (ch && usable && d->S->vw2.nrec > 0 &&
+            (vfft_child_store_raced(d->S) || !vfft_child_row_has(vfft_child_parent_row(&W->vw2, &pk), pre)))
+        {
+            if (vw2_r2r_bank(&W->vw2, &pk, eng, 0.0) == VW2_OK && vfft_child_row_update(&W->vw2, &pk, pre, d->S))
+                *changed = 1;
+            else
+                fprintf(stderr, "vfft: %s verdict NOT banked at N=%d -- the cell will re-race\n", vw2_t_name[t], d->N);
+        }
+        return ch;
+    }
+}
+
 /* THE DCT-IV / DST-IV DOOR: a VFFT_DCT4 or VFFT_DST4 request, 1D, one transform. est = 1
- * (VFFT_FLAG_ESTIMATE): the real FFT planned by formulas, nothing measured, no store (W unused); est = 0: a
- * child in role of the cell's row in W. NULL with the reason on the error record. */
+ * (VFFT_FLAG_ESTIMATE): the FFT planned by formulas, nothing measured, no store (W unused); est = 0: a child in
+ * role of the cell's row in W. NULL with the reason on the error record. */
 static vfft_plan _vfft_create_type4_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s *W, int est)
 {
     const int N = cfg->n[0], sine = cfg->transform == VFFT_DST4;
@@ -382,23 +431,13 @@ static vfft_plan _vfft_create_type4_il(const vfft_cfg_t *cfg, struct vfft_wisdom
     {
         const size_t M = (size_t)N / 2;
         const int even = !(N & 1);
-        double *x = NULL, *y = NULL;   /* the race's input and output (measured plans) */
-        _t4_role_t role;
-        _real_child_t rc;
         int changed = 0;
         d->W = (double *)vfft_aligned_alloc(((size_t)N + 2) * sizeof(double));
         d->V = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
         if (even)
-            d->tab = (double *)vfft_aligned_alloc(6 * M * sizeof(double));
-        if (!est)
+            d->tab = (double *)vfft_aligned_alloc(4 * M * sizeof(double));
+        if (!d->W || !d->V || (even && !d->tab))
         {
-            x = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
-            y = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
-        }
-        if (!d->W || !d->V || (even && !d->tab) || (!est && (!x || !y)))
-        {
-            vfft_aligned_free(x);
-            vfft_aligned_free(y);
             _vfft_type4_destroy(d);
             free(h);
             _vfft_warn("vfft_create: %s N=%d: out of memory (the work buffers)", tn, N);
@@ -410,48 +449,65 @@ static vfft_plan _vfft_create_type4_il(const vfft_cfg_t *cfg, struct vfft_wisdom
             d->ps = d->tab + M;
             d->ac = d->tab + 2 * M;
             d->as = d->tab + 3 * M;
-            d->gc = d->tab + 4 * M;
-            d->gs = d->tab + 5 * M;
             vfft_cs2pi_table(2LL * N, (long long)M, d->pc, d->ps);   /* cos, sin(2 pi m / 2N) */
             for (size_t k = 0; k < M; k++)
-            {   /* alpha_k = 2 pi (4k+1) / 8N; gamma_k = 2 pi (4k-1) / 8N, at k = 0 the angle -pi/4N as 8N - 1 */
+            {   /* alpha_k = 2 pi (4k+1) / 8N, the two doubled */
                 vfft_cs2pi_exact(4LL * (long long)k + 1, 8LL * N, d->ac + k, d->as + k);
-                vfft_cs2pi_exact(k ? 4LL * (long long)k - 1 : 8LL * N - 1, 8LL * N, d->gc + k, d->gs + k);
+                d->ac[k] *= 2.0;
+                d->as[k] *= 2.0;
             }
+            if (M > 1)
+                d->fft = _t4_c2c_child(cfg, W, d, est, &changed);
         }
         else
         {
+            double *x = NULL, *y = NULL;   /* the race's input and output (measured plans) */
+            _t4_role_t role;
+            _real_child_t rc;
             d->s8 = N & 7;                             /* an odd N is its own inverse mod 8 */
             d->psign = (N & 3) == 1 ? -1.0 : 1.0;
-        }
-        if (!est)
-        {
-            unsigned sd = 0x9e3779b9u ^ (unsigned)N;
-            for (int i = 0; i < N; i++)
+            if (!est)
             {
-                sd = sd * 1664525u + 1013904223u;
-                x[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
-                y[i] = 0.0;
+                x = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
+                y = (double *)vfft_aligned_alloc((size_t)N * sizeof(double));
+                if (!x || !y)
+                {
+                    vfft_aligned_free(x);
+                    vfft_aligned_free(y);
+                    _vfft_type4_destroy(d);
+                    free(h);
+                    _vfft_warn("vfft_create: %s N=%d: out of memory (the race's buffers)", tn, N);
+                    return NULL;
+                }
+                {
+                    unsigned sd = 0x9e3779b9u ^ (unsigned)N;
+                    for (int i = 0; i < N; i++)
+                    {
+                        sd = sd * 1664525u + 1013904223u;
+                        x[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+                        y[i] = 0.0;
+                    }
+                }
             }
+            role.d = d;
+            role.x = x;
+            role.y = y;
+            rc.t = sine ? VW2_T_DST4 : VW2_T_DCT4;
+            rc.N = N;
+            rc.pre = sine ? "dst_" : "dct_";
+            rc.eng = sine ? "dst" : "dct";
+            rc.n = N;
+            rc.is_c2r = 0;
+            rc.run = _t4_role_run;
+            rc.ctx = &role;
+            d->fft = _real_child_create(cfg, W, &rc, est, &d->S, &changed);
+            vfft_aligned_free(x);
+            vfft_aligned_free(y);
         }
-        role.d = d;
-        role.x = x;
-        role.y = y;
-        rc.t = sine ? VW2_T_DST4 : VW2_T_DCT4;
-        rc.N = N;
-        rc.pre = sine ? "dst_" : "dct_";
-        rc.eng = sine ? "dst" : "dct";
-        rc.n = N;
-        rc.is_c2r = 0;
-        rc.run = _t4_role_run;
-        rc.ctx = &role;
-        d->r2c = _real_child_create(cfg, W, &rc, est, &d->S, &changed);
-        vfft_aligned_free(x);
-        vfft_aligned_free(y);
         if (changed)
             _vw2_persist(W, cfg);   /* the row banked is the cell's, whatever follows */
-        if (!d->r2c)
-        {   /* the real door's own reason is on the record: it names the cell that could not be built */
+        if (!d->fft && (!even || M > 1))
+        {   /* the door's own reason is on the record: it names the cell that could not be built */
             _vfft_type4_destroy(d);
             free(h);
             return NULL;

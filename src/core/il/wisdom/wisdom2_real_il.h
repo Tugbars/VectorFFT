@@ -74,14 +74,16 @@ static inline void vw2_real_il_key(vw2_key_t *k, int realN, int is_c2r, int is_i
  *     t=dst1      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=t=r2c,n=<2(N+1)>,... | ran=1 ns=...
  *     t=dct1      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct dct_k1=t=r2c,n=<2(N-1)>,... | ran=1 ns=...
  *     t=dct2|dct3 n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct dct_k1=... dct_1_eng=... | ran=1 ns=...
- *     t=dct4      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct dct_k1=t=r2c,n=N,... | ran=1 ns=...
- *     t=dst4      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=t=r2c,n=N,... | ran=1 ns=...
+ *     t=dct4      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dct dct_k1=t=c2c,n=<N/2>,... (odd N: t=r2c,n=N) | ran=1
+ *     t=dst4      n=N q=1 ord=nat place=oop [nthreads=T] | eng=dst dst_k1=t=c2c,n=<N/2>,... (odd N: t=r2c,n=N) | ran=1
  * A DST-II is a reorder pass, an R2C at N and a rotation pass; a DST-III a rotation pass, a C2R at N and a
  * reorder pass (il/real/dst.h). A DST-I is an R2C at 2 (N + 1) of the input extended odd and a DCT-I an R2C at
  * 2 (N - 1) of the input extended even, each between the pass that extends and the pass that takes the
  * outputs from the half spectrum (il/real/dct1_dst1.h). A DCT-II and a DCT-III are the sine pair's steps
  * without the sign flip and the reversal (il/real/dct.h: an R2C's on dct2, a C2R's on dct3). A DCT-IV and a
- * DST-IV are an R2C at N between two passes (il/real/dct4_dst4.h). The real FFT inside is a CHILD IN ROLE
+ * DST-IV are one FFT between two passes, a C2C at N/2 at an even N and an R2C at N at an odd one
+ * (il/real/dct4_dst4.h; the C2C races in its private store as the complex door races a component, and its
+ * cell's row carries no ns). The real FFT inside is a CHILD IN ROLE
  * (il/wisdom/wisdom2_child.h, il/real/real_child.h): raced in the cell's own private store, each candidate
  * timed as the whole real-to-real transform (il/real/real_role.h), and its rows ride here under the cell's
  * prefix -- dst_ on the sine cells' rows (an R2C's on dst2 and dst1, a C2R's on dst3), dct_ on the cosine

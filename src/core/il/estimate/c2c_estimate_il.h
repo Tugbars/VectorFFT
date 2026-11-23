@@ -838,8 +838,8 @@ static vfft_plan _vfft_create_estimate(const vfft_cfg_t *cfg)
         return hd;
     }
     if (cfg->transform == VFFT_DCT4 || cfg->transform == VFFT_DST4)
-    {   /* DCT-IV / DST-IV (il/real/dct4_dst4.h): its real FFT at N planned here, as an R2C request; the
-         * plan around it measures nothing. The retain as above */
+    {   /* DCT-IV / DST-IV (il/real/dct4_dst4.h): its FFT planned here, a C2C request at N/2 at an even N and
+         * an R2C request at N at an odd one; the plan around it measures nothing. The retain as above */
         vfft_plan hd = _vfft_create_type4_il(cfg, NULL, 1);
         if (hd)
             thread_pool_plan_retain(((struct vfft_plan_s *)hd)->nthreads);
