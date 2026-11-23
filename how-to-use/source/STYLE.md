@@ -80,7 +80,7 @@ another chapter's files; report what you need instead.
   for the largest configurations, and saves the winner; later creates are served at once.
   `VFFT_FLAG_RECALIBRATE` measures again; `VFFT_FLAG_EXHAUSTIVE` is refused. The estimate,
   `VFFT_FLAG_ESTIMATE`, is the other way: it plans `VFFT_C2C`, `VFFT_R2C` and `VFFT_C2R` at
-  ranks 1 to 7 and the four real-to-real transforms in 1D by formulas, measures nothing, reads and saves no wisdom, and refuses what it
+  ranks 1 to 7 and the eight real-to-real transforms in 1D by formulas, measures nothing, reads and saves no wisdom, and refuses what it
   cannot plan (`ch10-sec-estimate`). Present it as the other method, for programs that must not
   measure or must not touch a wisdom store; never give a reason why measuring is the default,
   never recommend the estimate first, and say nothing about how long an estimate create takes.

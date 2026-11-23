@@ -8,7 +8,7 @@ tries to fill the gaps they leave. Like FFTW, it has a planner that measures can
 the winner as wisdom; like MKL, it also has an estimate (`VFFT_FLAG_ESTIMATE`) that plans without measuring, made to
 compete with the planner's plans. Its kernels are emitted the way FFTW's are, by a DAG FFT compiler, its own, for each
 instruction set. And like MKL, it is designed for high batch counts and for scaling across threads. It serves complex
-(c2c) and real (r2c, c2r) transforms in 1D to 7D and real-to-real (DCT, DST, DHT) transforms, in place or out of place, in
+(c2c) and real (r2c, c2r) transforms in 1D to 7D and real-to-real (DCT and DST, types I to IV) transforms, in place or out of place, in
 interleaved and split layouts, at lengths from 2 to 16M points (2^24) for complex transforms and to 32M (2^25) for
 real ones. A single-precision (FP32) part serves power-of-two lengths, to show that these strengths are not limited
 to double precision. As of 2026, on the latest AMD and Intel CPU microarchitectures, the estimate's plans beat or come
@@ -140,7 +140,7 @@ the tree is a native engine, a dash a refusal by contract.
   layout serves 1D to 3D at the lengths its footnote lists.
 - **Two ways to plan**, measuring by default or `VFFT_FLAG_ESTIMATE`. The
   estimate plans interleaved c2c, r2c and c2r in 1D to 7D (c2c at 2D and above in
-  natural order), their batches and threads, and the four real-to-real
+  natural order), their batches and threads, and the eight real-to-real
   transforms; a split plan is always measured.
 
 ![Two ways to plan](src/tools/plots/vectorfft-planning.svg)

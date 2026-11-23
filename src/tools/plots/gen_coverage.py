@@ -8,7 +8,8 @@ request vfft_create() serves, a dash one it refuses by contract; a letter beside
 transform names a condition written under the tree. Ranks that serve the same requests share one
 branch. The data table (LEAVES, NOTES) is written in the same form as the guide's figure
 (how-to-use/source/figures/ch03_coverage.py), so a change is made once in each. Every glyph was
-checked with vfft_create() on small sizes on 2026-11-14, the rows of rank 4 to 7 on 2026-11-22.
+checked with vfft_create() on small sizes on 2026-11-14, the rows of rank 4 to 7 on 2026-11-22, the
+real-to-real row's DCT-II, DCT-III, DCT-IV and DST-IV on 2026-11-23.
 
 The README shows vectorfft-coverage-0.7.svg; the earlier figure, vectorfft-coverage.svg, is no longer written.
 
@@ -44,7 +45,7 @@ LEAVES = [
     ("interleaved", "4D to 7D", ["c2r"], True, [R, S, R, S, S, S], {4: "a"}, None),
     ("split", "1D", ["c2c"], True, [S, S, R, S, S, S], {}, "b"),
     ("split", "2D, 3D", ["c2c"], True, [S, S, R, R, R, S], {}, "b"),
-    ("real-to-real", "1D", ["DCT-I, DST-I,", "DST-II, DST-III"], False, [S, S, S, R, R, S], {2: "c"}, None),
+    ("real-to-real", "1D", ["DCT-I to DCT-IV,", "DST-I to DST-IV"], False, [S, S, S, R, R, S], {2: "c"}, None),
 ]
 NOTES = [   # (letter, the note's lines; $...$ is Computer Modern mathtext)
     ("a", ["a lane-major batch of real arrays needs an even last extent of at least 4, every other extent at least 2"]),
