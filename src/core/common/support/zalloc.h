@@ -96,4 +96,41 @@ static inline void vfft_aligned_free(void *p)
 #endif
 }
 
+/* A BLOCK ONE THREAD WRITES WHILE OTHER THREADS WRITE THEIRS (2026-11-23): a small work buffer that belongs to one
+ * worker's plan and is walked again and again -- the flat DIT's staging plane on a row plan and its clones.
+ *
+ *   vfft_apart_alloc(bytes)    64-byte aligned like vfft_aligned_alloc, with VFFT_APART_BYTES of memory nothing uses
+ *                              before it and after it. NULL means failure.
+ *   vfft_apart_free(p)         releases it (ONLY this function does); NULL is a no-op.
+ *
+ * The heap hands out same-size blocks back to back once blocks of that size have been freed, so the buffers of a
+ * plan and its clones can sit one after the other, and whether they do turns on what the process allocated before.
+ * Eight workers each walking its own 16 KiB buffer then ran slower the closer the buffers were. Measured on the
+ * 14900KF (AVX2, 8 threads), the whole 2D transform with a flat row plan (1029- and 1050-point rows on 75x1029,
+ * 1029x1029, 150x1050 and 1050x1050), the eight staging buffers carved from one block at a set distance, against the
+ * same plans with their buffers far apart (outputs bitwise equal):
+ *
+ *   distance between two buffers     0      1 KiB     2 KiB     4 KiB     6 KiB     8 KiB     16 KiB
+ *   time, relative                1.12-1.23 1.08-1.16 1.05-1.20 0.99-1.06 0.98-1.01 0.99-1.01 0.98-0.99
+ *
+ * No cache line is shared at any of these distances and the cost fades over kilobytes; a neighbour's hardware
+ * prefetch running past the end of its buffer is the likely cause, not separated further. Two such blocks side by
+ * side are 2 * VFFT_APART_BYTES = 8 KiB apart, where the cost was gone. One thread: no difference at any distance. */
+#define VFFT_APART_BYTES 4096   /* a multiple of VFFT_ALIGNMENT */
+
+static inline void *vfft_apart_alloc(size_t bytes)
+{
+    char *raw;
+    if (bytes > SIZE_MAX - 2 * (size_t)VFFT_APART_BYTES)
+        return NULL;
+    raw = (char *)vfft_aligned_alloc(bytes + 2 * (size_t)VFFT_APART_BYTES);
+    return raw ? raw + VFFT_APART_BYTES : NULL;
+}
+
+static inline void vfft_apart_free(void *p)
+{
+    if (p)
+        vfft_aligned_free((char *)p - VFFT_APART_BYTES);
+}
+
 #endif /* VFFT_SUPPORT_ZALLOC_H */

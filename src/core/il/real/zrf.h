@@ -252,7 +252,7 @@ static inline vfft_zrf_plan_t *vfft_zrf_create(int N, const int *R, int K, int n
         fd->scr = 1;
         if (nomsz) for (s = 0; s < Kj; s++) fd->msz[s] = 0;
         vfft_ilfd_bind(fd);
-        vfft_aligned_free(fd->stg); /* the stages run on the level's plane */
+        vfft_apart_free(fd->stg); /* the stages run on the level's plane */
         fd->stg = 0;
         if (p->tile > 0)
         {   /* the widest legal stage span within the budget (spans shrink with the stage) */

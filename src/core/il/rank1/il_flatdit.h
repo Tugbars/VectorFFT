@@ -179,7 +179,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
     free(p->gorder);
     for (s = 0; s < VFFT_ILFD_MAX_K; s++) free(p->ipb[s]);
     free(p->natbase);
-    vfft_aligned_free(p->stg);
+    vfft_apart_free(p->stg);
     free(p->mtb);
     for (s = 0; s < VFFT_ILFD_MAX_K; s++) if (p->rd[s] && _ilfd_rd_free_hook) _ilfd_rd_free_hook(p->rd[s]);
     free(p);
@@ -460,7 +460,10 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             p->gord = !getenv("VFFT_ILFD_NO_GORD");
         }
     }
-    p->stg = (vfft_real *)vfft_aligned_alloc(2u * (size_t)N * sizeof(vfft_real));
+    /* the staging plane: every execute walks it stage after stage, and a row plan's clones each walk their own on
+     * another thread -- kept apart from the next plan's (zalloc.h vfft_apart_alloc: back to back, eight workers ran
+     * the transform 1.12-1.23 times slower) */
+    p->stg = (vfft_real *)vfft_apart_alloc(2u * (size_t)N * sizeof(vfft_real));
     if (!p->stg) { vfft_ilfd_destroy(p); return 0; }
     if (p->has_rd && _ilfd_rd_last_hook)
         for (s = 0; s < K; s++) if (p->rd[s]) _ilfd_rd_last_hook(p, s);
