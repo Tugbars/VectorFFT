@@ -36,7 +36,7 @@ for l in open(SRC):
     mx = re.search(r"contract: 2D (c2c|r2c|c2r)", l)
     if mx:
         XF = mx.group(1)
-    m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+(?:raced|replayed)\s+(\d+)\s+(\d+)\s+([\d.]+)", l)   # a replayed plane is a measured cell too: no --calibrate needed
+    m = re.match(r"\s+(\d+)x(\d+)\s+\S+\s+(\S+)\s+(?:raced|replayed|-)\s+(\d+)\s+(\d+)\s+([\d.]+)", l)   # a replayed plane is a measured cell too: no --calibrate needed; "-" = an --est run (the estimate's plan, nothing served)
     if m:
         a, b, r, o, c, x = m.groups()
         rows[(int(math.log2(int(a))), int(math.log2(int(b))))] = (r, float(x))

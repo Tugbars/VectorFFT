@@ -78,17 +78,17 @@ ratio below takes the **worse** of two timings with the engine order flipped.
 
 ![2D speedup matrix, VectorFFT vs MKL, every 2^a x 2^b plane](src/tools/plots/vectorfft-2d-pow2.svg)
 
-Every route is raced per plane by the planner and banked in
-wisdom. The record is
-[`gauntlet_2d-pow2grid6_rowkernels_20261108b`](gauntlet/results/gauntlet_2d-pow2grid6_rowkernels_20261108b/).
+Every plane runs the plan of VectorFFT's estimate (`VFFT_FLAG_ESTIMATE`), computed from formulas
+with nothing measured. The record is
+[`2d_pow2_est_avx2_2026-11-23`](gauntlet/results/2d_pow2_est_avx2_2026-11-23/).
 
 | Plane size | Cells | Median speedup | At or above parity | Best |
 |---|---|---|---|---|
-| up to 256 points | 28 | 5.17x | 100% | 18.31x (2x4) |
-| 257..4,096 | 38 | 1.66x | 95% | 4.79x (2x256) |
-| 4,097..65,536 | 48 | 1.38x | 100% | 2.56x (2x4096) |
-| 65,537..4M | 45 | 1.50x | 100% | 2.23x (8192x512) |
-| **all, 159 planes** | **159** | **1.52x** | **99%** | 18.31x (2x4) |
+| up to 256 points | 28 | 5.10x | 100% | 17.48x (2x4) |
+| 257..4,096 | 38 | 1.66x | 95% | 5.09x (2x256) |
+| 4,097..65,536 | 48 | 1.41x | 100% | 2.56x (2x4096) |
+| 65,537..4M | 45 | 1.49x | 98% | 2.25x (8192x512) |
+| **all, 159 planes** | **159** | **1.51x** | **98%** | 17.48x (2x4) |
 
 The same 159 planes at eight threads, MKL at eight threads too.
 
