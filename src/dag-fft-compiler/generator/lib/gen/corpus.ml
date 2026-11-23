@@ -51,11 +51,16 @@
    both families and at the lane-major family's ends (tv0tp, tvlfi: no lane
    lattice there), both directions: the staged forms of the 2^a*odd band and
    of the lane-major flat DIT (2026-11-06): zts = K=1 (split planes at the edges, the block
-   plane inside), ztv = lane-major K=VW (lane = transform). The fused drivers
+   plane inside), ztv = lane-major K=VW (lane = transform). At 8 lanes (avx512,
+   2026-11-23) the S ingest is radix 8 alone (it writes whole 8-lane blocks: R0 % VW = 0;
+   its masked column tail takes any N / R0) and the S in-place terminator has radix 2 as
+   well (N = 16 = 8.2 and the 2^4 * odd chains 8 . mids . 2): 72 files. The fused drivers
    in generated/fused_codelets (zts_drivers_ and ztv_drivers_ files) inline
    these bodies; cascade_z.ml emits both. File radixR_FAM_KIND[_bwd]_ISA.c,
    symbol radixR_FAM_KIND_fwd|bwd_ISA. *)
 let zts_cells (isa : string) : (string * string list) list =
+  let vw8 = isa = "avx512" in
+  let uarch = if vw8 then "sapphire_rapids_avx512" else "raptor_lake_" ^ isa in
   List.concat_map
     (fun (fam, pfx) ->
        List.concat_map
@@ -66,11 +71,13 @@ let zts_cells (isa : string) : (string * string list) list =
                    (fun bwd ->
                       let kind = pfx ^ String.sub base 1 (String.length base - 1) ^ if bwd then "b" else "" in
                       ( Printf.sprintf "radix%d_%s_%s%s_%s.c" r fam base (if bwd then "_bwd" else "") isa
-                      , [ string_of_int r; "--zp-" ^ kind; "--isa"; isa; "--uarch"; "raptor_lake_" ^ isa ] ))
+                      , [ string_of_int r; "--zp-" ^ kind; "--isa"; isa; "--uarch"; uarch ] ))
                    [ false; true ])
               (* the mids carry no lane lattice: the odd radices of the 2^a*odd band
                  (ztt_odd_design.md) join them, 2026-11-06; the ends stay 4/8 *)
-              (if base = "tmg" || (fam = "ztv" && base <> "tlf") then [ 4; 8; 3; 5; 7; 9; 15 ] else [ 4; 8 ]))
+              ((if vw8 && fam = "zts" && base = "t0tp" then [ 8 ] else [ 4; 8 ])
+               @ (if base = "tmg" || (fam = "ztv" && base <> "tlf") then [ 3; 5; 7; 9; 15 ] else [])
+               @ if vw8 && fam = "zts" && base = "tlfi" then [ 2 ] else []))
          [ "t0tp"; "tmg"; "tlf"; "tlfi" ])
     [ "zts", "ts"; "ztv", "tv" ]
 ;;
@@ -3073,6 +3080,7 @@ let matrix_files (quadrant : string) : (string * string list) list =
   | "oop-edges-avx2" -> oop_edges_avx2_cells
   | "oop-edges-avx512" -> oop_edges_avx512_cells
   | "ztt-avx2" -> zts_cells "avx2"
+  | "ztt-avx512" -> zts_cells "avx512"
   | "zil-boundary" -> zil_boundary_cells
   | "zil-pure" -> zil_pure_cells
   | q -> failwith ("Corpus.files: unknown quadrant " ^ q)
@@ -3082,6 +3090,7 @@ let quadrants =
   [ "oop-edges-avx2"
   ; "oop-edges-avx512"
   ; "ztt-avx2"
+  ; "ztt-avx512"
   ; "zil-boundary"
   ; "zil-pure"
   ; "zil-boundary-avx512"

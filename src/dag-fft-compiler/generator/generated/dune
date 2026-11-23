@@ -36,6 +36,16 @@
   (with-stdout-to zts_registry_avx2.h
    (run %{exe:../bin/emit_zts_registry.exe} --isa avx2))))
 
+; zturn-ts at 8 lanes (2026-11-23): the split library's avx512 registry; its fused
+; drivers are fused_codelets/avx512/zts_drivers_avx512_* and ztv_drivers_avx512_*
+(rule
+ (targets zts_registry_avx512.h)
+ (deps %{exe:../bin/emit_zts_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to zts_registry_avx512.h
+   (run %{exe:../bin/emit_zts_registry.exe} --isa avx512))))
+
 ; the avx512 IL + ztt registries (2026-09-26)
 (rule
  (targets il_registry_avx512.h)

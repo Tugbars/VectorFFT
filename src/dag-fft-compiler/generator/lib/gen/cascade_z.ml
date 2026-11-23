@@ -550,8 +550,11 @@ let emit_codelet
         L >= VW columns each and REINT-store each leg on its own -- the
         radix-agnostic edge the lattice law below names. Radix 2 closes the
         8-lane 2^4 * odd chains (8 . odd mids . 2: the ingest takes 2^3 and
-        leaves 2^1, which no 4/8 end can take) *)
-     && not ((k.base = "tlf" || k.base = "tlfi") && k.plane = P_block && radix = 2
+        leaves 2^1, which no 4/8 end can take). On the split planes too
+        (zturn-ts tslf / tslfi, 2026-11-23): the same combine with plane stores,
+        where it also closes N = 16 = 8.2 at 8 lanes. The lane-major family has
+        no lane law and no radix 2 *)
+     && not ((k.base = "tlf" || k.base = "tlfi") && k.plane <> P_vec && radix = 2
              && not (Isa.is_f32 isa))
   then
     failwith
@@ -559,7 +562,7 @@ let emit_codelet
        MIDS (msz/mszt; ZTURN-T's tmg/tmgb/tmgd since 2026-09-14, ztt_odd_design.md; \
        t0tp/tld are lane lattices and stay 4/8), which carry no lane geometry \
        and emit odd radices 3/5/7/9/15, and the FP64 natural terminators tlf/tlfi \
-       (block plane), which emit radix 2 as well";
+       (block plane and split planes), which emit radix 2 as well";
   let vw = isa.Isa.vec_width in
   if vw <> 4 && vw <> 8 && not (vw = 16 && Isa.is_f32 isa)
   then failwith (Printf.sprintf "codelet_zsplit: no block geometry at vec_width %d" vw);
@@ -575,6 +578,16 @@ let emit_codelet
       (Printf.sprintf
          "codelet_zsplit: %s radix %d is not a whole number of %d-lane blocks (law: R %% VW == 0)"
          k.base radix vw);
+  (* THE COLUMN TAIL of the 8-lane split ingest (ts0tp at FP64 AVX-512, 2026-11-23): a
+     column's run is whole blocks whatever the column count (R0 % VW = 0), so count % VW
+     is no law of the ingest: the 1..7 leftover columns run the same body once more with
+     k-masked plane loads (one bit a column: no read past a leg's end) and store only the
+     valid columns' blocks (rb[] read for those alone). Bitwise the same per column:
+     masking zeroes only the lanes of columns not stored. Every later stage's count is a
+     multiple of R0 = 8, so the ingest alone meets N / R0. It lets 8 lanes reach N = 16,
+     N = 32 and the 2^4 and 2^5 * odd lengths. The fused drivers' bodies carry it too:
+     their literal count leaves the compiler one of the two arms. *)
+  let split_coltail = k.plane = P_split && k.base = "t0tp" && vw = 8 && not (Isa.is_f32 isa) in
   let dir_s = if k.bwd then "bwd" else "fwd" in
   let fname = Printf.sprintf "radix%d_%s_%s_%s_%s" radix k.fam k.base dir_s isa.Isa.name in
   let sign : [ `Fwd | `Bwd ] = if k.bwd then `Bwd else `Fwd in
@@ -709,6 +722,8 @@ let emit_codelet
           Printf.sprintf
             (if vw = 4 then "count: ANY >= 1 (%d-column wide loop, then 2-column VEX-128 and 1-column scalar arms — il_odd_count_tail.md §3)" else "count: ANY >= 1 (%d-column wide loop, then ONE masked zmm arm for the 1..7 remainder)")
             vw
+        else if split_coltail
+        then "count: ANY >= 1 (8-column wide loop, then the 1..7 leftover columns k-masked: the split ingest's column tail)"
         else if k.base = "t0tp" && k.plane = P_block && vw = 8 && not (Isa.is_f32 isa)
         then "count: ANY >= 1 (8-column wide loop, then the 1..7 leftover columns k-masked: emit_t0tp8_vw8_body's column tail)"
         else Printf.sprintf "count %% %d == 0 (%d columns per iteration)" vw vw)
@@ -822,6 +837,7 @@ let emit_codelet
         ?(nisa : Isa.t option)
         ?(mode0 : Isa.ls_mode option)
         ?(mode1 : Isa.ls_mode option)
+        ?(coltail : string option)
         ~(open_line : string)
         ((assigns, scheduled, inline_set) :
           (Expr.elem_ref * Ir.t) list
@@ -839,6 +855,9 @@ let emit_codelet
       | None -> isa
     in
     let vw = isa.Isa.vec_width in
+    (* coltail = Some m: the split ingest's column tail -- the plane loads k-masked by m,
+       the run stores (and their rb[] reads) of the columns below _rem alone *)
+    let ctmode = Option.map (fun m -> Isa.LS_masked m) coltail in
     (* zturn-ts BLOCKED lane-major edges (2026-11-05): a kind whose caller edge is
        E_vplanes_ep walks nb lane groups per column -- the caller's planes at
        g*VW, the group planes at g*gp -- so one row visit reads or writes
@@ -934,11 +953,11 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" leg)
-                 (Isa.loadu_pd isa (sleg_addr "in_re" leg s)))
+                 (Isa.loadu_pd ?mode:ctmode isa (sleg_addr "in_re" leg s)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_im_%d" leg)
-                 (Isa.loadu_pd isa (sleg_addr "in_im" leg s))))
+                 (Isa.loadu_pd ?mode:ctmode isa (sleg_addr "in_im" leg s))))
        done
      | E_vplanes s ->
        (* ── zturn-ts lane-batched load edge: column k of leg l is ONE
@@ -1301,7 +1320,12 @@ let emit_codelet
           ^ String.concat
               ""
               (List.init vw (fun c ->
-                 Printf.sprintf "        const size_t _rbi_%d = (size_t)%d * rb[k + %d];\n" c (2 * radix) c))
+                 if coltail = None
+                 then Printf.sprintf "        const size_t _rbi_%d = (size_t)%d * rb[k + %d];\n" c (2 * radix) c
+                 else
+                   Printf.sprintf
+                     "        const size_t _rbi_%d = _rem > %d ? (size_t)%d * rb[k + %d] : 0;\n"
+                     c c (2 * radix) c))
         , Array.init quartets (fun q ->
             let slot j = (q * vw) + j in
             let sr =
@@ -1319,7 +1343,11 @@ let emit_codelet
               String.concat
                 ""
                 (List.init vw (fun c ->
-                   Printf.sprintf
+                   (fun st ->
+                      if coltail = None
+                      then st
+                      else Printf.sprintf "        if (_rem > %d) {\n%s        }\n" c st)
+                   @@ Printf.sprintf
                      "        %s;\n        %s;\n"
                      (Isa.storeu_pd
                         isa
@@ -1977,7 +2005,10 @@ let emit_codelet
         "    const double *const in_re0 = in_re, *const in_im0 = in_im;\n\
         \    double *const out_re0 = out_re, *const out_im0 = out_im;\n";
     (let ordered = function E_z _ -> not k.lanes_u | _ -> false in
-     let blocks = function E_blocks -> true | _ -> false in
+     (* the VW x VW turn (Isa.transpose): the block lattice, and the zturn-ts ingest's run
+        stores (E_sruns / E_bruns); its 8-lane form reads two index vectors declared here
+        (4 lanes declare nothing) *)
+     let blocks = function E_blocks | E_sruns | E_bruns -> true | _ -> false in
      Buffer.add_string
        buf
        (Isa.shuffle_consts isa ~deint:(ordered k.in_edge) ~reint:(ordered k.out_edge)
@@ -1985,7 +2016,20 @@ let emit_codelet
     let dag = prepare () in
     (* P_vec: one column (vector) per iteration; the others VW columns *)
     let step = if k.plane = P_vec then 1 else vw in
-    if not k.narrow_arms
+    if split_coltail
+    then (
+      Buffer.add_string buf "    size_t k = 0;\n";
+      emit_col_loop
+        ~open_line:(Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw)
+        dag;
+      emit_col_loop
+        ~coltail:"_tm"
+        ~open_line:
+          "    if (k < count) {   /* THE COLUMN TAIL: 1..7 leftover columns, k-masked */\n\
+          \        const size_t _rem = count - k;\n\
+          \        const __mmask8 _tm = (__mmask8)((1u << (unsigned)_rem) - 1u);\n"
+        dag)
+    else if not k.narrow_arms
     then
       emit_col_loop
         ~open_line:
