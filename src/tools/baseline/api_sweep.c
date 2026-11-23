@@ -66,7 +66,7 @@ static int NC;
 static const char *XN(vfft_transform_t x)
 {
     static const char *n[] = {"c2c", "r2c", "c2r", "dct1", "dct2", "dct3",
-                              "dct4", "dst1", "dst2", "dst3", "dht"};
+                              "dct4", "dst1", "dst2", "dst3", "dst4", "dht"};
     return n[x];
 }
 
@@ -367,7 +367,7 @@ static int parse_spec(const char *spec, cell_t *c)
 {
     char buf[512], *tok, *save = NULL;
     static const char *xn[] = {"c2c", "r2c", "c2r", "dct1", "dct2", "dct3",
-                               "dct4", "dst1", "dst2", "dst3", "dht"};
+                               "dct4", "dst1", "dst2", "dst3", "dst4", "dht"};
     int j;
     memset(c, 0, sizeof *c);
     c->K = 1; c->threads = 1; c->place = VFFT_OUTOFPLACE; c->dims = 1;
@@ -376,7 +376,7 @@ static int parse_spec(const char *spec, cell_t *c)
     snprintf(c->name, sizeof c->name, "spec");
     for (tok = strtok_r(buf, " ", &save); tok; tok = strtok_r(NULL, " ", &save)) {
         if (!strncmp(tok, "t=", 2)) {
-            for (j = 0; j < 11; j++) if (!strcmp(tok + 2, xn[j])) c->xf = (vfft_transform_t)j;
+            for (j = 0; j < 12; j++) if (!strcmp(tok + 2, xn[j])) c->xf = (vfft_transform_t)j;
         } else if (!strncmp(tok, "n=", 2)) {
             char *p = tok + 2;
             c->dims = 0;

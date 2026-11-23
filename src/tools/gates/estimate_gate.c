@@ -1477,10 +1477,8 @@ int main(int argc, char **argv)
         refused("R2C rank 2 own pitch", &c, "not with VFFT_FLAG_OWN_PITCH");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_R2C; c.order = VFFT_ORDER_SCRAMBLED;
         refused("R2C scrambled", &c, "a real plan is natural order only");
-        memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DCT2;
-        refused("DCT2", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 only, not VFFT_DCT2");
         memset(&c, 0, sizeof c); c.n[0] = 64; c.transform = VFFT_DHT;
-        refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 only, not VFFT_DHT");
+        refused("DHT", &c, "plans VFFT_C2C, VFFT_R2C, VFFT_C2R, VFFT_DCT1 to VFFT_DCT4 and VFFT_DST1 to VFFT_DST4 only, not VFFT_DHT");
         memset(&c, 0, sizeof c); c.rank = 8; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8;
         refused("rank 8", &c, "rank 8 out of range");
         memset(&c, 0, sizeof c); c.rank = 4; c.n[0] = 8; c.n[1] = 8; c.n[2] = 8; c.n[3] = 8; c.transform = VFFT_R2C; c.howmany = 2; c.placement = VFFT_PLACEMENT_IN;

@@ -207,6 +207,7 @@ ARGSTYLE = {
     "dst_gate":                ("flag", False),  # COLD: DST-II and DST-III (il/real/dst.h, 2026-11-14) against their definitions summed directly: every N to 300 and lengths to 2^20, both plan kinds, both placements, 1 and 8 threads, estimate and measured plans
     "wisdom2_selftest_gate":   ("flag", False),  # COLD: the wisdom store's own self-test (common/wisdom/wisdom2_selftest.h): the grammar, the merge law, the save's merge and lock, the stamp, and isa= on every row (v1.4)
     "dct1_dst1_gate":          ("flag", False),  # COLD: DCT-I and DST-I (il/real/dct1_dst1.h, 2026-11-14) against their definitions summed directly: every N to 300 and lengths to 2^20 + 1, both placements, 1 and 8 threads, estimate and measured plans
+    "dct_gate":                ("flag", False),  # COLD: DCT-II, DCT-III, DCT-IV and DST-IV (il/real/dct.h, dct4_dst4.h, 2026-11-23) against their definitions summed directly: every N to 300 and lengths to 2^20, both placements, 1 and 8 threads, estimate and measured plans
     # every zil kernel and ZTURN-T fused driver both ISAs list, avx512 against avx2 (twin_gate.c): no store
     "twin_gate":               ("none", False),
     # COLD: the FP32 library (include/vfftf.h, 2026-11-10): every served pow2 cell to 2^20 races and banks

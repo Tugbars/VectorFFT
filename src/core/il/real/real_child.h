@@ -2,8 +2,9 @@
  * Copyright (c) 2026 Tuğbars Heptaşkın */
 /* real_child.h -- THE REAL FFT INSIDE A REAL-TO-REAL PLAN, CREATED AS A CHILD IN ROLE (owner, 2026-11-14).
  *
- * A DST-II or DST-III plan (il/real/dst.h) and a DCT-I or DST-I plan (il/real/dct1_dst1.h) each run one 1D
- * real FFT between two passes of their own. That FFT is a component of the real-to-real cell, not a cell of
+ * A DST-II or DST-III plan (il/real/dst.h), a DCT-II or DCT-III plan (il/real/dct.h), a DCT-I or DST-I plan
+ * (il/real/dct1_dst1.h) and a DCT-IV or DST-IV plan (il/real/dct4_dst4.h) each run one 1D real FFT between
+ * two passes of their own. That FFT is a component of the real-to-real cell, not a cell of
  * its own (il/wisdom/wisdom2_child.h): it is created against a private store seeded from the cell's row,
  * replays the recipe there or races, and what it banked goes back onto the cell's row under the cell's
  * prefix. Its race runs in the cell's role (il/real/real_role.h): every candidate FFT is timed as one whole

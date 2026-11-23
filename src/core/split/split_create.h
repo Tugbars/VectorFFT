@@ -41,7 +41,7 @@ static vfft_plan _vfft_split_create(const vfft_cfg_t *cfg,
     if (_VFFT_IS_TRIG(cfg->transform))
     {
         _vfft_warn("vfft_create: %s N=%d is not served: of the real-to-real transforms this version "
-                   "serves VFFT_DCT1, VFFT_DST1, VFFT_DST2 and VFFT_DST3 (the others were retired with the split "
+                   "serves VFFT_DCT1 to VFFT_DCT4 and VFFT_DST1 to VFFT_DST4 (VFFT_DHT was retired with the split "
                    "stride engine)",
                    _vfft_tname(cfg->transform), N);
         return NULL;

@@ -74,12 +74,16 @@ extern "C"
    *   N of 1 or more.
    * - VFFT_DST3: Y[k] = (-1)^k X[N-1] + 2 sum_{n<=N-2} X[n] sin(pi (n+1)(2k+1) / 2N);
    *   inverse DST-II, scale 2N. N of 1 or more.
-   * NOT SERVED in this version (vfft_create refuses them, the enums stay for
-   * the contract):
-   * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); inverse DCT-III, scale 2N. Even N.
+   * - VFFT_DCT2: Y[k] = 2 sum x[n] cos(pi k (2n+1) / 2N); inverse DCT-III, scale 2N.
+   *   N of 1 or more.
    * - VFFT_DCT3: Y[k] = X[0] + 2 sum_{n>=1} X[n] cos(pi n (2k+1) / 2N); inverse DCT-II,
-   *   scale 2N. Even N.
-   * - VFFT_DCT4: Y[k] = 2 sum x[n] cos(pi (2k+1)(2n+1) / 4N); self-inverse, scale 2N. Even N.
+   *   scale 2N. N of 1 or more.
+   * - VFFT_DCT4: Y[k] = 2 sum x[n] cos(pi (2k+1)(2n+1) / 4N); self-inverse, scale 2N.
+   *   N of 1 or more.
+   * - VFFT_DST4: Y[k] = 2 sum x[n] sin(pi (2k+1)(2n+1) / 4N); self-inverse, scale 2N.
+   *   N of 1 or more.
+   * NOT SERVED in this version (vfft_create refuses it, the enum stays for
+   * the contract):
    * - VFFT_DHT: H[k] = sum x[n] (cos(2 pi n k / N) + sin(2 pi n k / N)); self-inverse, scale N.
    * VFFT_BACKWARD runs the inverse named above. Real-to-real plans take no
    * layout, order or batch geometry: those fields are ignored for them.
@@ -96,6 +100,7 @@ extern "C"
     VFFT_DST1,
     VFFT_DST2,
     VFFT_DST3,
+    VFFT_DST4,
     VFFT_DHT
   } vfft_transform_t;
 
@@ -187,8 +192,8 @@ extern "C"
                                             rank 1 to 7 in natural order (at rank 2 and
                                             3 not with VFFT_FLAG_OWN_PITCH). One transform
                                             or a batch of them (howmany > 1), contiguous or
-                                            lane-major. VFFT_DCT1, VFFT_DST1, VFFT_DST2 and
-                                            VFFT_DST3: the real transforms inside them
+                                            lane-major. VFFT_DCT1 to VFFT_DCT4 and VFFT_DST1
+                                            to VFFT_DST4: the real transforms inside them
                                             planned this way.
                                             vfft_create() refuses the flag on any
                                             other request, with VFFT_FLAG_PATIENT or

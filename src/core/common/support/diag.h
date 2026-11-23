@@ -107,6 +107,8 @@ static const char *_vfft_tname(int t)
         return "DST2";
     case VFFT_DST3:
         return "DST3";
+    case VFFT_DST4:
+        return "DST4";
     case VFFT_DHT:
         return "DHT";
     default:

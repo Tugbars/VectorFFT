@@ -17,6 +17,15 @@ version can change how a function behaves, so compile your program again with ea
 - Batches of real transforms of rank 4 to 7 (`howmany` above 1), out of place: contiguous
   transforms by default, or lane-major with `VFFT_BATCH_LANE_MAJOR` at an even last extent
   of at least 4.
+- DCT-II, DCT-III and DCT-IV (`VFFT_DCT2`, `VFFT_DCT3`, `VFFT_DCT4`) and the new DST-IV
+  (`VFFT_DST4`): 1D, any length from 1 up, one transform a plan, out of place or in place, on
+  one thread or several, with the measuring planner or with `VFFT_FLAG_ESTIMATE`. With them
+  every DCT and DST of types I to IV is served.
+
+### Changed: adjust your program
+
+- `VFFT_DST4` sits in `vfft_transform_t` after `VFFT_DST3`, so the number of `VFFT_DHT`
+  (not served) went from 10 to 11.
 
 ### Fixed
 

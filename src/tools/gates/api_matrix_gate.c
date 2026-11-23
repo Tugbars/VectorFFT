@@ -130,9 +130,13 @@ int main(int argc, char **argv) {
         { "4D c2c OOP SPLIT 8^4",                 0, VFFT_C2C, OOP, SP, NAT, 4, 8, 8, 8, 8, 1, 0 },
         { "4D c2c OOP SPLIT 8^4 SCRAMBLED",       0, VFFT_C2C, OOP, SP, SCR, 4, 8, 8, 8, 8, 1, 0 },
         /* ── real-to-real: 1D; layout, order and batch geometry are ignored ── */
-        { "DCT-II OOP 64",                        0, VFFT_DCT2, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* the real-to-real family went with the stride engine (2026-11-06) */
-        { "DCT-II OOP 64, SPLIT and SCRAMBLED",   0, VFFT_DCT2, OOP, SP, SCR, 1, 64, 0, 0, 0, 1, 0 },
+        { "DCT-II OOP 64",                        1, VFFT_DCT2, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* on the real FFT (il/real/dct.h, 2026-11-23) */
+        { "DCT-II OOP 64, SPLIT and SCRAMBLED",   1, VFFT_DCT2, OOP, SP, SCR, 1, 64, 0, 0, 0, 1, 0 },    /* layout and order are ignored */
         { "DCT-II 2D 64x64",                      0, VFFT_DCT2, OOP, IL, NAT, 2, 64, 64, 0, 0, 1, 0 },
+        { "DCT-IV OOP 64",                        1, VFFT_DCT4, OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* il/real/dct4_dst4.h (2026-11-23) */
+        { "DST-IV IP 63",                         1, VFFT_DST4, IP,  IL, NAT, 1, 63, 0, 0, 0, 1, 0 },
+        { "DST-IV howmany=2",                     0, VFFT_DST4, OOP, IL, NAT, 1, 64, 0, 0, 0, 2, 0 },
+        { "DHT OOP 64",                           0, VFFT_DHT,  OOP, IL, NAT, 1, 64, 0, 0, 0, 1, 0 },    /* the one real-to-real kind not served: it went with the stride engine (2026-11-06) */
     };
     const int n = (int)(sizeof C / sizeof C[0]);
     int fail = 0;

@@ -270,8 +270,9 @@ static int _vfft_plan_threads(const vfft_cfg_t *cfg)
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
 /* the real-to-real transforms that are served: the interleaved library's, each on a 1D real FFT
- * (il/real/dst.h: DST-II, DST-III; il/real/dct1_dst1.h: DCT-I, DST-I) */
-#define _VFFT_IS_R2R_SERVED(t) ((t) == VFFT_DST2 || (t) == VFFT_DST3 || (t) == VFFT_DCT1 || (t) == VFFT_DST1)
+ * (il/real/dct1_dst1.h: DCT-I, DST-I; il/real/dct.h: DCT-II, DCT-III; il/real/dst.h: DST-II, DST-III;
+ * il/real/dct4_dst4.h: DCT-IV, DST-IV): the enum's VFFT_DCT1 .. VFFT_DST4, every one but VFFT_DHT */
+#define _VFFT_IS_R2R_SERVED(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DST4)
 
 /* ════════════════════════════════════════════════════════════════════════
  * LIBRARY SINGLETONS (lazy)
@@ -632,6 +633,8 @@ static void _vfft_split_execute(vfft_plan h, vfft_dir_t dir, double *sre, double
 #include "il/real/real_create_il.h"  /* the 1D real door, interleaved (the bridge deleted 2026-11-06) */
 #include "il/real/dst.h"             /* DST-II / DST-III: one real FFT of length N between two passes (2026-11-14) */
 #include "il/real/dct1_dst1.h"       /* DCT-I / DST-I: one real FFT of the input extended even or odd (2026-11-14) */
+#include "il/real/dct.h"             /* DCT-II / DCT-III: the sine pair's machine without the sign flip and the reversal (2026-11-23) */
+#include "il/real/dct4_dst4.h"       /* DCT-IV / DST-IV: one real FFT of length N between two passes (2026-11-23) */
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
  * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
@@ -1268,7 +1271,7 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
      *  - padded batches are split-plane by construction (vfft_batch_planes'
      *    role table is split), so batch + INTERLEAVED cannot mean anything. */
     if (cfg->layout == VFI_LAYOUT_IL && _VFFT_IS_TRIG(cfg->transform) &&
-        !_VFFT_IS_R2R_SERVED(cfg->transform))   /* the served ones are the interleaved library's (il/real/dst.h, dct1_dst1.h) */
+        !_VFFT_IS_R2R_SERVED(cfg->transform))   /* the served ones are the interleaved library's (il/real/dst.h, dct.h, dct1_dst1.h, dct4_dst4.h) */
     {
         _vfft_warn("vfft_create: layout=INTERLEAVED is meaningless for the real->real %s "
                    "(real planes in, real planes out) — use VFFT_LAYOUT_SPLIT",
@@ -1593,6 +1596,10 @@ static vfft_plan _vfft_create_inner(const vfft_cfg_t *cfg)
         return _vfft_create_dst_il(cfg, W, 0); /* DST-II / DST-III: a real FFT at N in the DST's role, on the DST cell's own rows (il/real/dst.h) */
     if (cfg->transform == VFFT_DCT1 || cfg->transform == VFFT_DST1)
         return _vfft_create_type1_il(cfg, W, 0); /* DCT-I / DST-I: a real FFT of the extended input in the transform's role, on the cell's own row (il/real/dct1_dst1.h) */
+    if (cfg->transform == VFFT_DCT2 || cfg->transform == VFFT_DCT3)
+        return _vfft_create_dct_il(cfg, W, 0); /* DCT-II / DCT-III: a real FFT at N in the DCT's role, on the DCT cell's own rows (il/real/dct.h) */
+    if (cfg->transform == VFFT_DCT4 || cfg->transform == VFFT_DST4)
+        return _vfft_create_type4_il(cfg, W, 0); /* DCT-IV / DST-IV: a real FFT at N in the transform's role, on the cell's own row (il/real/dct4_dst4.h) */
 #endif
     /* ── THE LAYOUT FORK ── */
     if (cfg->layout == VFI_LAYOUT_IL)
