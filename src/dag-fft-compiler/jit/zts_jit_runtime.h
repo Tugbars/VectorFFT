@@ -1,7 +1,7 @@
 /* zts_jit_runtime.h — plan-time JIT for zturn-ts, the split library's 1D C2C
  * (split/rank1/zts.h). 2026-11-06.
  *
- * WHAT. The registry (generator/generated/zts_registry_avx2.h) holds a FUSED
+ * WHAT. The registry (generator/generated/zts_registry_<isa>.h) holds a FUSED
  * DRIVER for every pow2 cell of ZTURN-T's list: one whole-transform function
  * per (family, N, chain) with the stage kernels of codelets/split/ztt inlined
  * and literal trip counts (zts_drivers.ml). Every other cell — the odd band,
@@ -50,6 +50,19 @@
   #define VFFT_ZJIT_LIBEXT     "so"
 #endif
 
+/* ── THE ISA is the build's (build_isa.h through zts.h): the kernels' folder and file suffix,
+ * the lanes per vector, the codelet flags and the drivers' target attribute, as the baked
+ * drivers of that ISA carry them (zts_drivers.ml) ── */
+#if defined(VFFT_BUILD_ISA_AVX512)
+  #define VFFT_ZTS_JIT_ISA_DEFAULT "avx512"
+  #define VFFT_ZTS_JIT_ISA_FLAGS   "-mavx512f -mavx512dq"
+  #define VFFT_ZTS_JIT_TARGET      "avx512f"
+#else
+  #define VFFT_ZTS_JIT_ISA_DEFAULT "avx2"
+  #define VFFT_ZTS_JIT_ISA_FLAGS   "-mno-avx512f"   /* the avx2 clamp */
+  #define VFFT_ZTS_JIT_TARGET      "avx2,fma"
+#endif
+
 /* ── Config: the other JITs' platform defaults, all overridable ───────────── */
 #if defined(_WIN32)
   #ifndef VFFT_PROTO_JIT_REPO
@@ -64,8 +77,8 @@
   #ifndef VFFT_PROTO_JIT_PYTHON
   #define VFFT_PROTO_JIT_PYTHON "python"
   #endif
-  #ifndef VFFT_ZTS_JIT_CFLAGS      /* gauntlet/build.py's codelet flags, avx2 clamped */
-  #define VFFT_ZTS_JIT_CFLAGS "-O3 -mavx2 -mfma -march=native -mno-avx512f -fpermissive -w"
+  #ifndef VFFT_ZTS_JIT_CFLAGS      /* gauntlet/build.py's codelet flags at the build's ISA */
+  #define VFFT_ZTS_JIT_CFLAGS "-O3 -mavx2 -mfma -march=native " VFFT_ZTS_JIT_ISA_FLAGS " -fpermissive -w"
   #endif
   #define VFFT_ZTS_JIT_PIC ""
 #else
@@ -82,7 +95,7 @@
   #define VFFT_PROTO_JIT_PYTHON "python3"
   #endif
   #ifndef VFFT_ZTS_JIT_CFLAGS
-  #define VFFT_ZTS_JIT_CFLAGS "-O3 -mavx2 -mfma -march=native -mno-avx512f -fpermissive -w"
+  #define VFFT_ZTS_JIT_CFLAGS "-O3 -mavx2 -mfma -march=native " VFFT_ZTS_JIT_ISA_FLAGS " -fpermissive -w"
   #endif
   #define VFFT_ZTS_JIT_PIC "-fPIC"
 #endif
@@ -99,9 +112,9 @@
 #define VFFT_ZTS_JIT_VERSION 1
 #endif
 #ifndef VFFT_ZTS_JIT_ISA
-#define VFFT_ZTS_JIT_ISA "avx2"
+#define VFFT_ZTS_JIT_ISA VFFT_ZTS_JIT_ISA_DEFAULT
 #endif
-#define VFFT_ZTS_JIT_VW 4           /* the isa's lanes per vector (the V family's group) */
+#define VFFT_ZTS_JIT_VW VFFT_ZTS_VW   /* the isa's lanes per vector (the V family's group): zts.h's */
 
 /* ── The emitter: zts_drivers.ml emit_driver in C, one TU per (family, N, chain) ── */
 static int _zts_jit_tag(char *out, size_t cap, int N, const int *chain, int nf)
@@ -156,7 +169,7 @@ static void _zts_jit_emit_driver(FILE *f, int fam_v, int N, const int *chain, in
     }
     _zts_jit_tag(tag, sizeof tag, N, chain, nf);
     snprintf(name, sizeof name, "%s_%s_%s_plane_%s", fam, tag, bwd ? "bwd" : "fwd", VFFT_ZTS_JIT_ISA);
-    fprintf(f, "__attribute__((target(\"avx2,fma\")))\n");
+    fprintf(f, "__attribute__((target(\"" VFFT_ZTS_JIT_TARGET "\")))\n");
     if (!fam_v)
     {
         fprintf(f, "void %s(const double *in_re, const double *in_im, double *out_re, double *out_im, double *plane, const double *tw, const size_t *rb, size_t tile)\n{\n", name);
@@ -227,7 +240,7 @@ static void _zts_jit_emit_driver(FILE *f, int fam_v, int N, const int *chain, in
         fprintf(f, "    _ztstlfi%d%s_body(W, out_re, out_im, tw + %ld, (size_t)%ld, (size_t)%ld, (size_t)%ld);\n}\n\n",
                 chain[s], d, off[s], L[s], L[s], L[s]);
         /* the CONTIGUOUS batch twin, transform-major around the whole pipeline */
-        fprintf(f, "__attribute__((target(\"avx2,fma\")))\n");
+        fprintf(f, "__attribute__((target(\"" VFFT_ZTS_JIT_TARGET "\")))\n");
         fprintf(f, "void %s_batch(const double *in_re, const double *in_im, double *out_re, double *out_im, double *plane, const double *tw, const size_t *rb, size_t tile, size_t K)\n{\n", name);
         fprintf(f, "    for (size_t t = 0; t < K; t++)\n        %s(in_re + t * %d, in_im + t * %d, out_re + t * %d, out_im + t * %d, plane, tw, rb, tile);\n}\n\n",
                 name, N, N, N, N);

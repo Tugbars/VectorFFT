@@ -9,10 +9,10 @@ stride engine on 2026-11-06.
 ## What it does
 
 zturn-ts runs a cell in one of two forms. The registry
-(`generator/generated/zts_registry_avx2.h`) holds a **fused driver** for every
+(`generator/generated/zts_registry_<isa>.h`) holds a **fused driver** for every
 pow2 cell of ZTURN-T's list: one whole-transform function per (family, N,
-chain) with the stage kernels of `codelets/split/ztt` inlined and literal trip
-counts (`generator/lib/gen/zts_drivers.ml`, built at build time). Every other
+chain) with the stage kernels of `codelets/split/ztt/<isa>` inlined and literal
+trip counts (`generator/lib/gen/zts_drivers.ml`, built at build time). Every other
 cell — the odd band, the lane-major band, a pow2 chain outside the list — runs
 the **staged walk**: the same kernels called one by one through the plan's
 stage table.
@@ -24,7 +24,8 @@ The JIT gives a deployed plan of the second kind its fused driver at create:
    exactly as in the baked drivers (the emission is C, in the header; no
    Python);
 2. compiles it with the library's own codelet flags (`gcc -O3 -mavx2 -mfma
-   -march=native -mno-avx512f`), archives it, runs the kernels' stack
+   -march=native` and the build's ISA flags: `-mno-avx512f` in an AVX2 build,
+   `-mavx512f -mavx512dq` in an AVX-512 build), archives it, runs the kernels' stack
    alignment on it (`src/tools/build/align_kernel_stacks.py`, the step the
    library's own archive gets), links a shared library and loads it;
 3. hands the plan a registry cell: from then on the plan runs exactly as a
@@ -39,6 +40,15 @@ staged walk stays on any failure (no toolchain, a compile error, a missing
 symbol): the JIT is a speed cache, never a correctness dependency. The
 driver's arithmetic is the staged walk's (the in-tile test is
 `tile % (R*L) == 0`), so the two forms are bitwise.
+
+## The ISA
+
+The JIT follows the build's ISA (`common/support/build_isa.h`, through `zts.h`): an AVX2
+build includes the kernels of `codelets/split/ztt/avx2` and writes drivers for 4 lanes
+per vector, an AVX-512 build those of `codelets/split/ztt/avx512` and 8 lanes. The
+driver's text is the same at both; the folder, the file suffix, the lane-group width,
+the compiler flags and the `target` attribute change. The cache key carries the ISA, so
+the two builds' libraries sit side by side in `jit/generated/`.
 
 ## Switch, requirements, cost
 
