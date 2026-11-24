@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "common/wisdom/wisdom2.h"
+#include "common/wisdom/wisdom2_rank_rows.h"   /* vw2__2d_stamp_date: the shortlist record's date */
 #include "vfft_internal.h"
 
 static struct vfft_wisdom_s *vfft_child_store_new(void)
@@ -178,6 +179,32 @@ static int vfft_child_store_raced(const struct vfft_wisdom_s *S)
     return 0;
 }
 
+/* the store's rows as tokens of nr under pre (the child tokens above); 1 = all set */
+static int vfft__child_rows_onto(vw2_rec_t *nr, const char *pre, const struct vfft_wisdom_s *S)
+{
+    char nm[128], kb[320];
+    int i, t;
+    for (i = 0; i < S->vw2.nrec; i++)
+    {
+        const vw2_rec_t *r = &S->vw2.rec[i];
+        size_t j;
+        vw2__key_format(&r->key, kb, sizeof kb);
+        for (j = 0; kb[j]; j++)
+            if (kb[j] == ' ') kb[j] = ',';
+        if (snprintf(nm, sizeof nm, "%sk%d", pre, i + 1) >= (int)sizeof nm || vw2_rec_set(nr, 1, nm, kb) != VW2_OK)
+            return 0;
+        for (t = 0; t < r->ntok; t++)
+        {
+            if (r->tok[t].sect != 1)
+                continue;
+            if (snprintf(nm, sizeof nm, "%s%d_%s", pre, i + 1, r->tok[t].name) >= (int)sizeof nm ||
+                vw2_rec_set(nr, 1, nm, r->tok[t].val) != VW2_OK)
+                return 0;
+        }
+    }
+    return 1;
+}
+
 /* The store's rows onto the parent row under pre, the row's older tokens
  * under pre replaced; the parent row is re-banked (pointers into the store
  * are stale after). Done only when the child raced or the row carried no
@@ -189,8 +216,7 @@ static int vfft_child_row_update(vw2_store_t *st, const vw2_key_t *key, const ch
     const vw2_rec_t *row;
     const char *rest;
     vw2_rec_t nr;
-    char nm[128], kb[320];
-    int i, t, idx;
+    int i, idx;
     if (!S || !st || S->vw2.nrec == 0)
         return 0;
     row = vfft_child_parent_row(st, key);
@@ -207,24 +233,8 @@ static int vfft_child_row_update(vw2_store_t *st, const vw2_key_t *key, const ch
         if (vw2_rec_set(&nr, row->tok[i].sect, row->tok[i].name, row->tok[i].val) != VW2_OK)
             goto fail;
     }
-    for (i = 0; i < S->vw2.nrec; i++)
-    {
-        const vw2_rec_t *r = &S->vw2.rec[i];
-        size_t j;
-        vw2__key_format(&r->key, kb, sizeof kb);
-        for (j = 0; kb[j]; j++)
-            if (kb[j] == ' ') kb[j] = ',';
-        if (snprintf(nm, sizeof nm, "%sk%d", pre, i + 1) >= (int)sizeof nm || vw2_rec_set(&nr, 1, nm, kb) != VW2_OK)
-            goto fail;
-        for (t = 0; t < r->ntok; t++)
-        {
-            if (r->tok[t].sect != 1)
-                continue;
-            if (snprintf(nm, sizeof nm, "%s%d_%s", pre, i + 1, r->tok[t].name) >= (int)sizeof nm ||
-                vw2_rec_set(&nr, 1, nm, r->tok[t].val) != VW2_OK)
-                goto fail;
-        }
-    }
+    if (!vfft__child_rows_onto(&nr, pre, S))
+        goto fail;
     if (vw2_bank(st, &nr) != VW2_OK)
         goto fail;
     return 1;
@@ -232,6 +242,197 @@ fail:
     vw2_rec_free(&nr);
     fprintf(stderr, "[wisdom2] a child's recipe (%s) could not be put on its parent's row: "
                     "that child races again at the next create\n", pre);
+    return 0;
+}
+
+/* ── THE SHORTLIST (owner, 2026-11-24) ────────────────────────────────────
+ * The 1D plan a 2D plan runs as one of its passes -- the row plan at N2, the
+ * turn plan at N1, the skewed pass's row plan, the turned prime column plan --
+ * is raced as a 1D transform, and that race ranks its candidates the same on
+ * every plane with that length. It runs ONCE per length and placement: the
+ * first plans of its ranking are kept as one record, and each plane then
+ * times those candidates as its own pass, on its whole transform at its
+ * thread count (il/rank2/il2d_tier.h, _il2d_child_final), and banks the
+ * winner on its row under the child's prefix as before. Measured on 13 planes
+ * (rows of 150 to 4374 points): the 1D race's winner is 0-3 % behind the best
+ * candidate in the plane at one thread and 0-6 % at eight; the best is among
+ * the ranking's first 4 at one thread and within 1 % of its first 8 at eight.
+ *
+ * THE RECORD. Key: t=c2c n=<N> q=1 ord=nat place=ip|oop role=shortlist lay=il
+ * (nthreads=<T> on a real row plan's, a batch created at the plane's T)
+ * -- the 1D cell the candidates were raced as, under a role of its own and in
+ * the 2D shard (wisdom2.h vw2_shard_route): no 1D request reads it, and a 2D
+ * create still reads no 1D row. t=r2c / t=c2r: the 2D real tier's row plan,
+ * the batch of N1 real transforms at N2 -- its one candidate is the 1D real
+ * cell's recipe (the store's q = 1 rows; the batch's own row is each plane's).
+ * x0_ / x1_ on a real record: the recipe of the 2D real tier's zr2c ROW ENGINE at
+ * route 0 / route 1 -- its complex child raced in the real role
+ * (il/rank2/il2d_real_plan.h, _il2d_rowx_zr2c): the row engine race times its
+ * engines in every plane, and builds them from these. Payload: nc=<count> and, for candidate
+ * c = 1..nc in the race's order, that candidate's whole recipe as a child's
+ * rows under the prefix c<c>_ (c1_k1=<key>, c1_1_il_route=...). Candidate 1 is
+ * the race's winner with everything its create banked; the others carry their
+ * route row and, for a pair or a three-stage chain, their own raced backward
+ * forms (il/rank1/k1_commit.h, _k1_il_shortlist_stores).
+ *
+ * Only a store that names its build keeps one (a real store: vw2.isa != 0).
+ * A part plan's private store -- a 2D plane inside a 3D plan, a four-step's
+ * child -- has none, and its children race as they did. */
+#define VFFT_SHORTLIST_MAX 8
+
+/* 1 = a row of the store's ONE-TRANSFORM cells (q = 1) was banked by this process: the 1D plan raced. A batch child's
+ * store also holds its batch row (q = the batch), raced per plane and no part of the shortlist. */
+static int vfft_child_store_raced_q1(const struct vfft_wisdom_s *S)
+{
+    int i;
+    if (!S)
+        return 0;
+    for (i = 0; i < S->vw2.nrec; i++)
+        if (S->vw2.rec[i].own && S->vw2.rec[i].key.q == 1)
+            return 1;
+    return 0;
+}
+/* the store's q = 1 rows as a store of their own (seeded, not raced); NULL when it has none or memory runs out */
+static struct vfft_wisdom_s *vfft_child_store_q1(const struct vfft_wisdom_s *S)
+{
+    struct vfft_wisdom_s *C;
+    int i, t, n = 0;
+    if (!S || !(C = vfft_child_store_new()))
+        return NULL;
+    for (i = 0; i < S->vw2.nrec; i++)
+    {
+        const vw2_rec_t *r = &S->vw2.rec[i];
+        vw2_rec_t nr;
+        int ok = 1;
+        if (r->key.q != 1)
+            continue;
+        memset(&nr, 0, sizeof nr);
+        nr.key = r->key;
+        for (t = 0; t < r->ntok && ok; t++)
+            if (r->tok[t].sect == 1 && vw2_rec_set(&nr, 1, r->tok[t].name, r->tok[t].val) != VW2_OK)
+                ok = 0;
+        if (!ok || vw2_bank(&C->vw2, &nr) != VW2_OK)
+        {
+            vw2_rec_free(&nr);
+            vfft_child_store_free(C);
+            return NULL;
+        }
+        n++;
+    }
+    if (!n)
+    {
+        vfft_child_store_free(C);
+        return NULL;
+    }
+    vw2_disown(&C->vw2);
+    return C;
+}
+
+/* t: VW2_T_C2C, or VW2_T_R2C / VW2_T_C2R (a real row plan); T: the thread count the child plan is created at (a c2c
+ * child: one; the real row batch: the plane's, whose one-transform rows are raced and keyed at that count) */
+static void vfft_shortlist_key(int t, int N, int inplace, int T, vw2_key_t *k)
+{
+    memset(k, 0, sizeof *k);
+    k->t = (uint8_t)t;
+    k->nthreads = (uint8_t)(T > 1 ? T : 0);
+    k->rank = 1;
+    k->n[0] = N;
+    k->q = 1;
+    k->ord = VW2_ORD_NAT;
+    k->pl = inplace ? VW2_PL_IP : VW2_PL_OOP;
+    k->role = VW2_ROLE_SHORTLIST;
+    k->lay = VW2_LAY_IL;
+}
+/* how many candidates the record at (N, placement) names; 0 = no record */
+static int vfft_shortlist_count(const vw2_store_t *st, int t, int N, int inplace, int T)
+{
+    const vw2_rec_t *r;
+    const char *v;
+    vw2_key_t k;
+    int n;
+    if (!st)
+        return 0;
+    vfft_shortlist_key(t, N, inplace, T, &k);
+    r = vfft_child_parent_row(st, &k);
+    v = r ? vw2_rec_get(r, "nc") : NULL;
+    n = v ? atoi(v) : 0;
+    return n < 0 ? 0 : n > VFFT_SHORTLIST_MAX ? VFFT_SHORTLIST_MAX : n;
+}
+/* candidate c (1-based) as a private store a create replays; NULL when the record names no such candidate, or its
+ * recipe does not parse */
+static struct vfft_wisdom_s *vfft_shortlist_get(const vw2_store_t *st, int t, int N, int inplace, int T, int c)
+{
+    struct vfft_wisdom_s *S;
+    vw2_key_t k;
+    char pre[16];
+    if (c < 1 || c > vfft_shortlist_count(st, t, N, inplace, T))
+        return NULL;
+    vfft_shortlist_key(t, N, inplace, T, &k);
+    snprintf(pre, sizeof pre, "c%d_", c);
+    S = vfft_child_store_from_row(vfft_child_parent_row(st, &k), pre);
+    if (S && S->vw2.nrec == 0)
+    {
+        vfft_child_store_free(S);
+        S = NULL;
+    }
+    return S;
+}
+/* the record at (t, N, placement) exists: an empty one (nc=0) is banked where the store has none; 1 = it is there */
+static int vfft_shortlist_ensure(vw2_store_t *st, int t, int N, int inplace, int T)
+{
+    vw2_rec_t nr;
+    vw2_key_t k;
+    if (!st)
+        return 0;
+    vfft_shortlist_key(t, N, inplace, T, &k);
+    if (vfft_child_parent_row(st, &k))
+        return 1;
+    memset(&nr, 0, sizeof nr);
+    nr.key = k;
+    if (vw2_rec_set(&nr, 1, "nc", "0") != VW2_OK || vw2_rec_set(&nr, 2, "src", "race") != VW2_OK)
+    {
+        vw2_rec_free(&nr);
+        return 0;
+    }
+    vw2__2d_stamp_date(&nr);
+    if (vw2_bank(st, &nr) != VW2_OK)
+    {
+        vw2_rec_free(&nr);
+        return 0;
+    }
+    return 1;
+}
+/* the candidates' stores S[0..n) as the record at (N, placement), an older record replaced; 1 = banked (the caller
+ * saves the store) */
+static int vfft_shortlist_put(vw2_store_t *st, int t, int N, int inplace, int T, struct vfft_wisdom_s *const *S, int n)
+{
+    vw2_rec_t nr;
+    char pre[16], v[16];
+    int c;
+    if (!st || n < 1)
+        return 0;
+    if (n > VFFT_SHORTLIST_MAX)
+        n = VFFT_SHORTLIST_MAX;
+    memset(&nr, 0, sizeof nr);
+    vfft_shortlist_key(t, N, inplace, T, &nr.key);
+    snprintf(v, sizeof v, "%d", n);
+    if (vw2_rec_set(&nr, 1, "nc", v) != VW2_OK)
+        goto fail;
+    for (c = 0; c < n; c++)
+    {
+        snprintf(pre, sizeof pre, "c%d_", c + 1);
+        if (!S[c] || S[c]->vw2.nrec == 0 || !vfft__child_rows_onto(&nr, pre, S[c]))
+            goto fail;
+    }
+    if (vw2_rec_set(&nr, 2, "src", "race") != VW2_OK)
+        goto fail;
+    vw2__2d_stamp_date(&nr);
+    if (vw2_bank(st, &nr) != VW2_OK)
+        goto fail;
+    return 1;
+fail:
+    vw2_rec_free(&nr);
+    fprintf(stderr, "[wisdom2] the shortlist at N=%d could not be banked: the next plane with that length races it again\n", N);
     return 0;
 }
 

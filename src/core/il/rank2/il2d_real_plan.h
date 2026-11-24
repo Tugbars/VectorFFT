@@ -492,12 +492,13 @@ static void _il2d_rowx_name(vfft_il2p_fn lm, const struct vfft_plan_s *e, char *
  * _zr2c_bank writes: the row config's placement (the plane's, _il2d_rowx_cfg)
  * at one thread -- an in-place plane's child is place=ip (looked up out of
  * place it was never found, and every create raced it again) */
-static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_cfg_t *c, struct vfft_wisdom_s *S, int N2, int route)
+/* the engine at the route from the recipe store S banks for it; NULL where S banks none for this route */
+static struct vfft_plan_s *_il2d_rowx_zr2c_from(const vfft_cfg_t *c, struct vfft_wisdom_s *S, int N2, int route)
 {
     int r = 0, fmt = 0;
     vw2_zr2c_child_t ch;
     struct vfft_plan_s *e;
-    if (S && !c->recalibrate &&
+    if (S &&
         vw2_real_il_lookup_zr2c(&S->vw2, N2, c->transform == VFFT_C2R, c->placement == VFFT_INPLACE,
                                 _vfft_plan_threads(c), &r, &fmt, &ch) &&
         r == route)
@@ -511,9 +512,53 @@ static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_cfg_t *c, struct vfft_wisd
             (e = _zr2c_build_route(c, N2, route, &kc, &pr, fsS)) != NULL)
             return e;
     }
+    return NULL;
+}
+/* THE ROUTES' RECIPES, SHARED (owner, 2026-11-24; il/wisdom/wisdom2_child.h, the shortlist): a route's child is raced
+ * in the real role -- the same race in every plane with this row length. The store that keeps the shortlists (set
+ * by the row plan's entry below; NULL: none) holds each route's raced recipe on the real record at (N2, placement)
+ * under x<route>_: a plane whose row carries none builds the engine from there, and a route raced here lands there.
+ * The engines are still timed against each other in every plane (the row engine race). */
+static struct vfft_wisdom_s *_il2d_rx_sl = NULL;
+static const vfft_cfg_t *_il2d_rx_sl_cfg = NULL;
+static struct vfft_plan_s *_il2d_rowx_zr2c(const vfft_cfg_t *c, struct vfft_wisdom_s *S, int N2, int route)
+{
+    const int t = c->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C, ip = (c->placement == VFFT_INPLACE);
+    struct vfft_plan_s *e = (S && !c->recalibrate) ? _il2d_rowx_zr2c_from(c, S, N2, route) : NULL;
+    struct vfft_wisdom_s *X;
+    vw2_key_t sk;
+    char pre[8];
+    if (e)
+        return e;
+    vfft_shortlist_key(t, N2, ip, 1, &sk);   /* the row engines are one-thread plans */
+    snprintf(pre, sizeof pre, "x%d_", route);
+    if (_il2d_rx_sl && !c->recalibrate)
+    {
+        X = vfft_child_store_from_row(vfft_child_parent_row(&_il2d_rx_sl->vw2, &sk), pre);
+        if (X)
+        {
+            if (X->vw2.nrec)
+                e = _il2d_rowx_zr2c_from(c, X, N2, route);
+            vfft_child_store_free(X);
+        }
+        if (e)
+        {
+            if (S)
+                (void)_zr2c_bank(S, c, N2, e, 0.0);   /* as after a race: the engines' store holds the last engine built */
+            return e;
+        }
+    }
     e = _zr2c_build_route(c, N2, route, NULL, NULL, NULL);
     if (e && S)
         (void)_zr2c_bank(S, c, N2, e, 0.0);   /* the raced child's recipe into the engines' store */
+    if (e && _il2d_rx_sl && (X = vfft_child_store_new()) != NULL)
+    {   /* raced here: the route's recipe for every plane with this row length */
+        (void)_zr2c_bank(X, c, N2, e, 0.0);
+        if (X->vw2.nrec && vfft_shortlist_ensure(&_il2d_rx_sl->vw2, t, N2, ip, 1) &&
+            vfft_child_row_update(&_il2d_rx_sl->vw2, &sk, pre, X) && _il2d_rx_sl_cfg)
+            _vw2_persist(_il2d_rx_sl, _il2d_rx_sl_cfg);
+        vfft_child_store_free(X);
+    }
     return e;
 }
 
@@ -1176,14 +1221,20 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
 static void _il2d_real_rowplan(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                int N1, int N2, int ord, int T)
 {
+    _il2d_rx_sl = _il2d_shortlist_store(W, cfg, &_il2d_rx_sl_cfg);   /* the routes' recipes, shared (_il2d_rowx_zr2c) */
     _il2d_real_rowplan_dir(h, W, cfg, N1, N2, ord, T, 0);
+    _il2d_rx_sl = NULL;
+    _il2d_rx_sl_cfg = NULL;
 }
 /* the c2r twin: the backward row pass (the column-inverse plane's CCE rows ->
  * the real rows), in the row role, banked rx_c2r= / rxs_c2r= */
 static void _il2d_real_rowplan_c2r(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                                    int N1, int N2, int ord, int T)
 {
+    _il2d_rx_sl = _il2d_shortlist_store(W, cfg, &_il2d_rx_sl_cfg);
     _il2d_real_rowplan_dir(h, W, cfg, N1, N2, ord, T, 1);
+    _il2d_rx_sl = NULL;
+    _il2d_rx_sl_cfg = NULL;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

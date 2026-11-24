@@ -1,0 +1,10 @@
+2026-11-24 09:49:23 run: 72 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 09:49:23 calibrate: 72 cells (0 already done)
+2026-11-24 09:49:57   calibrated 25/72 (60x42), 33 s elapsed
+2026-11-24 09:50:32   calibrated 50/72 (98x150), 69 s elapsed
+2026-11-24 09:51:05   calibrated 72/72 (126x4374), 102 s elapsed
+2026-11-24 09:51:05 bench: 72 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 09:51:57   benched 25/72 (60x42), 50 s elapsed
+2026-11-24 09:52:47   benched 50/72 (98x150), 100 s elapsed
+2026-11-24 09:53:34   benched 72/72 (126x4374), 146 s elapsed
+2026-11-24 09:53:36 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_short_columns_avx2_2026-11-24\report_2d.md

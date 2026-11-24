@@ -1,0 +1,56 @@
+2026-11-24 03:14:18 run: 111 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 03:14:18 calibrate: 111 cells (0 already done)
+2026-11-24 03:22:05   calibrated 25/111 (35x35), 467 s elapsed
+2026-11-24 03:22:30   calibrated 50/111 (135x315), 492 s elapsed
+2026-11-24 03:23:17   calibrated 75/111 (525x2187), 539 s elapsed
+2026-11-24 03:24:22   calibrated 100/111 (4375x75), 604 s elapsed
+2026-11-24 03:26:14   calibrated 111/111 (8505x525), 716 s elapsed
+2026-11-24 03:26:14 bench: 111 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 03:27:05   benched 25/111 (35x35), 49 s elapsed
+2026-11-24 03:27:55   benched 50/111 (135x315), 99 s elapsed
+2026-11-24 03:28:58   benched 75/111 (525x2187), 162 s elapsed
+2026-11-24 03:30:37   benched 100/111 (4375x75), 261 s elapsed
+2026-11-24 03:31:34   benched 111/111 (8505x525), 318 s elapsed
+2026-11-24 03:31:36 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_avx2_2026-11-24\report_2d.md
+2026-11-24 03:31:36 run: 111 cells, contract 2D out of place, T=8, bin build/gauntlet
+2026-11-24 03:31:36 calibrate: 111 cells (0 already done)
+2026-11-24 03:31:57   calibrated 25/111 (35x35), 21 s elapsed
+2026-11-24 03:32:37   calibrated 50/111 (135x315), 61 s elapsed
+2026-11-24 03:35:47   calibrated 75/111 (525x2187), 251 s elapsed
+2026-11-24 03:40:36   calibrated 100/111 (4375x75), 539 s elapsed
+2026-11-24 03:50:36   calibrated 111/111 (8505x525), 1139 s elapsed
+2026-11-24 03:50:36 bench: 111 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 03:51:29   benched 25/111 (35x35), 51 s elapsed
+2026-11-24 03:52:23   benched 50/111 (135x315), 105 s elapsed
+2026-11-24 03:53:19   benched 75/111 (525x2187), 160 s elapsed
+2026-11-24 03:54:21   benched 100/111 (4375x75), 223 s elapsed
+2026-11-24 03:54:51   benched 111/111 (8505x525), 253 s elapsed
+2026-11-24 03:54:54 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_avx2_2026-11-24\report_2d_mt8.md
+2026-11-24 05:03:16 run: 111 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 05:03:16 calibrate: 111 cells (0 already done)
+2026-11-24 05:11:01   calibrated 25/111 (35x35), 466 s elapsed
+2026-11-24 05:11:32   calibrated 50/111 (135x315), 496 s elapsed
+2026-11-24 05:12:20   calibrated 75/111 (525x2187), 544 s elapsed
+2026-11-24 05:13:24   calibrated 100/111 (4375x75), 609 s elapsed
+2026-11-24 05:15:16   calibrated 111/111 (8505x525), 720 s elapsed
+2026-11-24 05:15:16 bench: 111 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 05:16:06   benched 25/111 (35x35), 49 s elapsed
+2026-11-24 05:16:56   benched 50/111 (135x315), 99 s elapsed
+2026-11-24 05:17:59   benched 75/111 (525x2187), 161 s elapsed
+2026-11-24 05:19:37   benched 100/111 (4375x75), 260 s elapsed
+2026-11-24 05:20:34   benched 111/111 (8505x525), 317 s elapsed
+2026-11-24 05:20:36 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_avx2_2026-11-24\report_2d.md
+2026-11-24 06:21:46 run: 111 cells, contract 2D out of place, T=8, bin build/gauntlet
+2026-11-24 06:21:46 calibrate: 111 cells (0 already done)
+2026-11-24 06:22:08   calibrated 25/111 (35x35), 22 s elapsed
+2026-11-24 06:22:49   calibrated 50/111 (135x315), 62 s elapsed
+2026-11-24 06:25:59   calibrated 75/111 (525x2187), 253 s elapsed
+2026-11-24 06:30:43   calibrated 100/111 (4375x75), 537 s elapsed
+2026-11-24 06:40:44   calibrated 111/111 (8505x525), 1138 s elapsed
+2026-11-24 06:40:44 bench: 111 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 06:41:37   benched 25/111 (35x35), 51 s elapsed
+2026-11-24 06:42:33   benched 50/111 (135x315), 106 s elapsed
+2026-11-24 06:43:29   benched 75/111 (525x2187), 162 s elapsed
+2026-11-24 06:44:32   benched 100/111 (4375x75), 226 s elapsed
+2026-11-24 06:45:03   benched 111/111 (8505x525), 257 s elapsed
+2026-11-24 06:45:05 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_odds_avx2_2026-11-24\report_2d_mt8.md

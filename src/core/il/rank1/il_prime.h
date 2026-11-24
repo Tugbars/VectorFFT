@@ -255,13 +255,20 @@ static inline void vfft_ilprime_destroy(vfft_ilprime_plan_t *p)
     vfft_aligned_free(p->kf);  vfft_aligned_free(p->kb);
     vfft_aligned_free(p->omf); vfft_aligned_free(p->omb);
     free(p->gpow); free(p->ginvpow);
-    vfft_aligned_free(p->za);  vfft_aligned_free(p->zb);
+    vfft_apart_free(p->za);  vfft_apart_free(p->zb);
     free(p);
 }
 
 static inline vfft_real *_ilprime_alloc(size_t doubles)
 {
     return (vfft_real *)vfft_aligned_alloc(doubles * sizeof(vfft_real));
+}
+/* the plan's two work planes: every transform walks them several times, and a threaded 2D plan runs one copy of
+ * this plan on each worker -- apart from the next copy's (common/support/zalloc.h, vfft_apart_alloc: the
+ * measurements). Released with vfft_apart_free. */
+static inline vfft_real *_ilprime_work_alloc(size_t doubles)
+{
+    return (vfft_real *)vfft_apart_alloc(doubles * sizeof(vfft_real));
 }
 
 /* Bluestein plan at convolution size M: any EVEN M >= 2N-1 (the packed
@@ -284,8 +291,8 @@ static inline vfft_ilprime_plan_t *_ilprime_create_bluestein_m(int N, int M)
     p->chb = _ilprime_alloc((size_t)2 * N);
     p->kf  = _ilprime_alloc((size_t)2 * M);
     p->kb  = _ilprime_alloc((size_t)2 * M);
-    p->za  = _ilprime_alloc((size_t)2 * M);
-    p->zb  = _ilprime_alloc((size_t)2 * M);
+    p->za  = _ilprime_work_alloc((size_t)2 * M);
+    p->zb  = _ilprime_work_alloc((size_t)2 * M);
     if (!p->chf || !p->chb || !p->kf || !p->kb || !p->za || !p->zb) {
         vfft_ilprime_destroy(p);
         return 0;
@@ -348,8 +355,8 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
     p->ginvpow = (int *)malloc((size_t)nm1 * sizeof(int));
     p->omf = _ilprime_alloc((size_t)2 * nm1);
     p->omb = _ilprime_alloc((size_t)2 * nm1);
-    p->za  = _ilprime_alloc((size_t)2 * nm1);
-    p->zb  = _ilprime_alloc((size_t)2 * nm1);
+    p->za  = _ilprime_work_alloc((size_t)2 * nm1);
+    p->zb  = _ilprime_work_alloc((size_t)2 * nm1);
     if (!p->gpow || !p->ginvpow || !p->omf || !p->omb || !p->za || !p->zb) {
         vfft_ilprime_destroy(p);
         return 0;

@@ -109,8 +109,10 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
         return NULL;
+    _il2d_part_depth++;   /* a plane of a batch: its finished rows keep the streamed store (il2d_tier.h) */
     h->pq_inner =
         (struct vfft_plan_s *)_vfft_create_cfg(&ic); /* warns itself */
+    _il2d_part_depth--;
     if (!h->pq_inner)
     {
         free(h);
@@ -212,8 +214,10 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
             _pq_probe_run(h->pq_inner, pd, ipq, ps, p0, h->pq_sdist);
             for (t = 0; t < T && ok; t++)
             {
+                _il2d_part_depth++;   /* a plane of the batch, as the primary */
                 h->pq_w[t] =
                     (struct vfft_plan_s *)_vfft_create_cfg(&ic);
+                _il2d_part_depth--;
                 if (!h->pq_w[t])
                 {
                     ok = 0;
@@ -279,7 +283,9 @@ static vfft_plan _vfft_create_pq_il(const vfft_cfg_t *cfg,
                         double mx, md;
                         int same;
                         ic.recalibrate = (t == 0) ? cfg->recalibrate : 0;
+                        _il2d_part_depth++;   /* a plane of the batch, as the primary */
                         h->pq_g[t] = (struct vfft_plan_s *)_vfft_create_cfg(&ic);
+                        _il2d_part_depth--;
                         ng = t + 1;
                         if (!h->pq_g[t])
                         {
@@ -411,6 +417,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     struct vfft_plan_s **il2d_tpcw = NULL; /* ... and its clones for the threaded form */
     int il2d_tpcw_n = 0;
     void *il2d_rd0 = NULL;                /* the Rader stage at stage 0 (il2d_col.h rd0) */
+    int il2d_axis_raced = 0;   /* the cell's axes were raced in this create (a cold cell) */
+    int il2d_row_due = 0, il2d_turn_due = 0, il2d_csk_due = 0;   /* a child whose recipe is new to this cell: the plane's final (il2d_tier.h, _il2d_child_final) */
     vfft_real *il2d_tpcscr = NULL;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                           * and the T it was raced at */
@@ -490,7 +498,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
+            il2d_row = il2d_rowS ? _il2d_child_create(W, cfg, &rc, &il2d_rowS, &il2d_row_due) : NULL;   /* il2d_tier.h: the shortlist */
             if (il2d_row && !il2d_blu && !il2d_tbl_done &&
                 _il2d_build_tables(N1, il2d_nst, il2d_R,
                                    il2d_L, il2d_tf, il2d_tb))
@@ -598,7 +606,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                 tc.wisdom = (vfft_wisdom *)il2d_turnS;
                 tc.wisdom_write = 0;
                 tc.recalibrate = cfg->recalibrate;
-                il2d_turn_plan = il2d_turnS ? (struct vfft_plan_s *)_vfft_create_cfg(&tc) : NULL;
+                il2d_turn_plan = il2d_turnS ? _il2d_child_create(W, cfg, &tc, &il2d_turnS, &il2d_turn_due) : NULL;
                 if (il2d_turn_plan)
                 {
                     il2d_turn_scr = (vfft_real *)vfft_aligned_alloc(2 * VFFT_IL2D_TURN_PITCH(N1) * (size_t)N2 * sizeof(vfft_real));
@@ -647,13 +655,49 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                     oc.wisdom = (vfft_wisdom *)il2d_cskS;
                     oc.wisdom_write = 0;
                     oc.recalibrate = cfg->recalibrate;
-                    il2d_csk_row = il2d_cskS ? (struct vfft_plan_s *)_vfft_create_cfg(&oc) : NULL;
+                    il2d_csk_row = il2d_cskS ? _il2d_child_create(W, cfg, &oc, &il2d_cskS, &il2d_csk_due) : NULL;
                 }
                 if (il2d_csk_scr && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_CSK") &&
                     vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "csk", 0) == 1)
                     il2d_csk = 1;
                 if (il2d_csk_scr && getenv("VFFT_IL2D_CSK") && atoi(getenv("VFFT_IL2D_CSK")) == 1)
                     il2d_csk = 1;
+            }
+            /* the ROWS-FIRST walk's out-of-place row plan (vfft_internal.h il2d_rfw; il2d_tier.h,
+             * _il2d_rfw_race_1t): a natural chain plan at one thread, out of place, moves its rows through
+             * the out-of-place K=1 plan at N2 -- the one the skewed pass builds above (csk_*). Where the
+             * skewed pass has none it is built here, when the cell's row names the walk (rfw=) or the cell
+             * is cold and the walk is an arm of its last race (the policy's widths); a cell that replays
+             * another walk builds none. */
+            if (il2d_row && !il2d_blu && il2d_nat && il2d_nst >= 2 && !il2d_csk_row && !il2d_csk_scr &&
+                cfg->placement == VFFT_OUTOFPLACE && il2d_T <= 1 && W && !W->vw2_off_2d)
+            {
+                int rw[3];
+                const int named = !cfg->recalibrate && vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "rfw", 0) > 0;
+                /* cold: the axis race runs below (its own condition; a row banked ro=1 re-races) */
+                const int cold = (il2d_bwl < 0 || il2d_bro < 0 || il2d_bro == 1) && !getenv("VFFT_IL2D_WL") &&
+                                 !getenv("VFFT_IL2D_CSK") && !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE");
+                const int pinned = getenv("VFFT_IL2D_RFW") && atoi(getenv("VFFT_IL2D_RFW")) > 0;   /* the probe pin */
+                if (pinned || (!getenv("VFFT_IL2D_RFW") &&
+                               (named || (cold && vfft_policy_il2d_rowsfirst_widths(N1, N2, il2d_T, rw, 3) > 0))))
+                {
+                    vfft_cfg_t oc;
+                    memset(&oc, 0, sizeof oc);
+                    oc.transform = VFFT_C2C;
+                    oc.placement = VFFT_OUTOFPLACE;
+                    oc.rigor = cfg->rigor;
+                    oc.dims = 1;
+                    oc.n[0] = N2;
+                    oc.howmany = 1;
+                    oc.order = VFI_ORDER_NATURAL;
+                    oc.layout = VFI_LAYOUT_IL;
+                    oc.nthreads = 1;
+                    il2d_cskS = vfft_child_store_for(&W->vw2, &il2d_pk, "csk_");   /* the out-of-place row plan in role (csk_*) */
+                    oc.wisdom = (vfft_wisdom *)il2d_cskS;
+                    oc.wisdom_write = 0;
+                    oc.recalibrate = cfg->recalibrate;
+                    il2d_csk_row = il2d_cskS ? _il2d_child_create(W, cfg, &oc, &il2d_cskS, &il2d_csk_due) : NULL;
+                }
             }
             /* the tile: the banked rbk= (KB of chunk scratch; 8 where a row
              * carries no token), VFFT_IL2D_RB2_KB pinning it for probes */
@@ -882,7 +926,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
+            il2d_row = il2d_rowS ? _il2d_child_create(W, cfg, &rc, &il2d_rowS, NULL) : NULL;   /* il2d_tier.h: the row race shared by every plane with this row length */
             if (il2d_row)
             {
                 il2d_orbuf = (vfft_real *)vfft_aligned_alloc(
@@ -944,7 +988,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             rc.wisdom = (vfft_wisdom *)il2d_rowS;
             rc.wisdom_write = 0;
             rc.recalibrate = cfg->recalibrate;
-            il2d_row = il2d_rowS ? (struct vfft_plan_s *)_vfft_create_cfg(&rc) : NULL;
+            il2d_row = il2d_rowS ? _il2d_child_create(W, cfg, &rc, &il2d_rowS, NULL) : NULL;   /* il2d_tier.h: the row race shared by every plane with this row length */
             /* PURITY GATE: the TC inner must be one of the interleaved
              * real engines — zr2c (the composite), the real pair, ZTT-r
              * or the real mono (il/real/zrp_build.h: the door's four
@@ -1116,6 +1160,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
         const int Rl = il2d_R[il2d_nst - 1];
         const int T = h->nthreads > 0 ? h->nthreads : 1;
         h->il2d_col.natstage = _il2d_stage_alloc(T, Rl, h->il2d_col.rn);
+        /* its finished rows through the cache on a plane the caches hold (policy_il.h, vfft_policy_il2d_rows_cached) */
+        h->il2d_rows_cached = !_il2d_part_depth && vfft_policy_il2d_rows_cached(N1, (long long)h->il2d_col.rn);
     }
     h->il2d_col.blu = il2d_blu;
     h->il2d_col.bluchf = il2d_bluchf;
@@ -1159,6 +1205,7 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
         double axns = 1e300;
         int axmt;
         memset(&axw, 0, sizeof axw);
+        il2d_axis_raced = 1;
         axmt = _il2d_axis_race(h, W, cfg, N1, N2, 0, &axw, &axns);
         if (h->nthreads > 1 && axmt && !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_FORMS"))
             /* THE CHAIN RACE AT T: every other chain of the pool in its threaded forms on the whole transform,
@@ -1212,6 +1259,34 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
         /* one thread: the leaf the row names, else staged. The measuring planner races no leaf at one thread and
          * writes no nls there; the estimate's recipe carries its LEAF rule's (est__leaf_staged, estimate_nd_il.h) */
         h->il2d_col.natst = vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "nls", 1) != 0;
+    /* THE LEAF AT ONE THREAD (il2d_tier.h, _il2d_leaf_race_1t): a cell whose axes were raced in this create times
+     * its natural leaf staged and strided on the whole transform and banks nls= */
+    if (il2d_axis_raced && h->transform == VFFT_C2C && h->il2d_row && h->nthreads <= 1)
+        _il2d_leaf_race_1t(h, W, cfg, N1, N2);
+    /* THE ROWS-FIRST WALK (il2d_tier.h, _il2d_rfw_race_1t): a cell whose axes were raced in this create times the
+     * walk it stands with against the rows-first walk on the whole transform and banks rfw=; a cell that replays
+     * its row takes the width it names */
+    if (h->transform == VFFT_C2C && h->il2d_row && h->nthreads <= 1 && W && !W->vw2_off_2d)
+    {   /* VFFT_IL2D_RFW=w pins the strip width for a PROBE (0 = the walk the axes name): env beats wisdom and
+         * never writes it; the other walk pins (WL, CSK, ROWOOP, TFUSE) keep the walk they name */
+        const char *re = getenv("VFFT_IL2D_RFW");
+        if (re)
+            _il2d_rfw_set(h, atoi(re));
+        else if (il2d_axis_raced)
+            _il2d_rfw_race_1t(h, W, cfg, N1, N2);
+        else if (!cfg->recalibrate && !getenv("VFFT_IL2D_WL") && !getenv("VFFT_IL2D_CSK") && !getenv("VFFT_IL2D_ROWOOP") &&
+                 !getenv("VFFT_IL2D_TFUSE"))
+            _il2d_rfw_set(h, vw2_2d_il_tok_geti(&W->vw2, N1, N2, il2d_ord, il2d_T, "rfw", 0));
+    }
+    /* THE CHILD'S FINAL (il2d_tier.h, _il2d_child_final): the plan's form is settled -- the candidates of the
+     * shortlist behind the 1D plan its route runs, timed on the whole transform; the winner stays */
+    if (h->transform == VFFT_C2C && h->il2d_row && W)
+    {
+        _il2d_child_final(h, W, cfg, N1, N2, il2d_row_due, il2d_turn_due, il2d_csk_due);
+        il2d_row = h->il2d_row; il2d_rowS = h->il2d_rowS;   /* the create's own names for them */
+        il2d_turn_plan = h->il2d_turn_plan; il2d_turnS = h->il2d_turnS;
+        il2d_csk_row = h->il2d_csk_row; il2d_cskS = h->il2d_cskS;
+    }
     /* the raced per-stage forms land on the c2c chain row HERE, the twin
      * of the real tier's re-bank below: the column build raced them
      * before the axis race wrote the row (vw2_2d_forms_rebank) */

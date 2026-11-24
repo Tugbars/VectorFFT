@@ -277,7 +277,20 @@ static int g_k1_direct_cell = 0;  /* the policy's admission for the direct K=1 c
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
-static int g_k3nat = 0;              /* --3dilnat (2026-09-24): the 3D interleaved gauntlet cell, the shape N1xN2xN3 in the N slot */
+/* THE THREADED CELL'S IDLE BEFORE ITS FIRST ARM (2026-11-24). A cell's correctness column runs the comparator once
+ * just before the timed arms, and MKL's team spins for KMP_BLOCKTIME (200 ms) after any compute (trap b). With ours
+ * first (flip 0) our arm was timed inside that window, beside the comparator's spinning workers: our time at flip 0
+ * over our time at flip 1, the 2D composites at eight threads, median 1.13 (planes in the L1d 1.00, in the L2 1.12,
+ * in the L3 1.22), MKL's own two flips 1.00; with KMP_BLOCKTIME=0 the two flips agreed (1050x1050 495 against 504
+ * us; at the default 591 against 500). So the idle the arms keep between them (cool_ms, floored at 300 in a threaded
+ * cell) is kept before the first arm too: either flip's first arm starts beside a parked comparator. At one thread
+ * the comparator runs on the calling thread, there is no team, and the cell goes straight to its arms. */
+static void k1z_first_arm_idle(int cool_ms)
+{
+    if (g_k1noop_mt)
+        pace(cool_ms);
+}
+static int g_k3nat = 0;             /* --3dilnat (2026-09-24): the 3D interleaved gauntlet cell, the shape N1xN2xN3 in the N slot */
 static int g_nd_rank = 0, g_nd_n[7]; /* --ndnat (2026-11-22): the rank-4 to 7 c2c cell, the shape N1x...xNr in the N slot: the 3D
                                       * cell's protocol (run_k2z_cell) at the rank and extents held here; 0 = the 2D / 3D cell */
 static int g_k2nat = 0;              /* --2dilnat (2026-09-23): the 2D interleaved gauntlet
@@ -898,6 +911,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     /* The comparator arm is no longer MKL-only: the FFTW arm binds at runtime,
      * so this A/B runs in every build. k1z_time_cmp returns 0 when none is
      * active, which reproduces the old no-MKL behaviour (ns only, ratio 0). */
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     { /* comparator first */
         mns = k1z_time_cmp(N, z0, total);
@@ -1433,6 +1447,7 @@ static void run_k1z_cell_f32(int N, size_t K, FILE *out, int cool_ms, int flip)
 #endif
 
     double vns = 0, mns = 0;
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     { /* comparator first */
         mns = k1z_time_cmp_f32(N, K, z0, total);
@@ -2022,6 +2037,7 @@ static void run_real_cell(const real_geo_t *g, FILE *out, int cool_ms, int flip)
  * worker dispatches */
 long vfft_il2d_row_mt_passes(void);   /* vfft.c: the 2D real row pass's threaded dispatches (not in the public header) */
 #define REAL_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes() + vfft_tc_mt_dispatches() + vfft_ilnd_mt_passes() + vfft_il2d_row_mt_passes())   /* + the rank-3 tiers' counter (the 3D real cell, 2026-10-07); + the 2D real row pass's (the in-place door route, 2026-10-08) */
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     { /* comparator first; --mt: the two-team protocol of the K=1 c2c cell (our pool down while the comparator runs) */
         mns = real_time_cmp(g, c2r, g_real_ip ? xp : x, ref);
@@ -2361,6 +2377,7 @@ static void run_dst_cell(int N, FILE *out, int cool_ms, int flip)
     real_ours_t oc = { h, VFFT_FORWARD, src, g_real_ip ? src : o };
 /* the threaded executes engaged in the timed arm: the real FFT's inside the DST */
 #define DST_ENG() (vfft_ztt_mt_passes() + vfft_il2d_col_mt_passes() + vfft_ilfd_mt_passes() + vfft_zfsr_mt_passes() + vfft_zr2c_fold_mt_passes() + vfft_zttr_mt_passes() + vfft_zrf_mt_passes())
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {   /* comparator first */
         mns = dst_time_cmp(N, kind, x);
@@ -2825,6 +2842,7 @@ static void run_k2z_cell(int N1, int N2, int N3, FILE *out, int cool_ms, int fli
     /* the A/B runs in every build, as the K=1 cell's does: the FFTW arm binds
      * at runtime, and k2z_time_cmp returns 0 when no comparator is active
      * (ns only, ratio 0, as a no-MKL build reported before) */
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = k2z_time_cmp(N1, N2, N3, z0, total);
@@ -3188,6 +3206,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
         if (h1) { pace(g_trial_pace_ms); lns = kzb_time_loop(h1, N, K, z0h, S, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = kzb_time_mkl(N, K, z0, total, 0);
@@ -3501,6 +3520,7 @@ static void run_lm2d_cell(int nd, const int *n, int K, FILE *out, int cool_ms, i
         if (h1) { pace(g_trial_pace_ms); lns = lm2d_time_loop(h1, P, K, z0h, S, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = lm2d_time_mkl(nd, n, K, z0, total, 0);
@@ -3669,6 +3689,7 @@ static void run_tcb_cell(int nd, const int *n, int K, FILE *out, int cool_ms, in
     } while (0)
 #ifdef VFFT_HAS_MKL
 #define TCB_MKL() (mns = nd > 1 ? lm2d_time_mkl(nd, n, K, z0, total, 1) : kzb_time_mkl(n[0], K, z0, total, 1))
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         TCB_MKL();
@@ -3954,6 +3975,7 @@ static void run_lm2dr_cell(int N1, int N2, int K, int c2r, FILE *out, int cool_m
         if (h1) { pace(g_trial_pace_ms); lns = lm2dr_time_loop(h1, N1, N2, K, c2r, in_h, S_h, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = lm2dr_time_mkl(N1, N2, K, c2r, in, zm, total, 0);
@@ -4250,6 +4272,7 @@ static void run_lm3dr_cell(int nd, const int *n, int K, int c2r, FILE *out, int 
                        eng_plane = (vfft_ilnd_mt_passes() - i0) + (vfft_il2d_col_mt_passes() - c0); } } \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = lm3dr_time_mkl(nd, n, K, c2r, in, zm, total, 0);
@@ -4387,6 +4410,7 @@ static void run_tcndr_cell(int nd, const int *n, int K, int c2r, FILE *out, int 
         if (T > 1) g_cell_engaged = TCR_ENG() - e0; \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = lm3dr_time_mkl(nd, n, K, c2r, in, zm, total, 1);
@@ -4664,6 +4688,7 @@ static void run_kzbr_cell(int N, int K, int c2r, FILE *out, int cool_ms, int fli
         if (h1) { pace(g_trial_pace_ms); lns = kzbr_time_loop(h1, N, K, c2r, in_h, S_h, total); } \
     } while (0)
 #ifdef VFFT_HAS_MKL
+    k1z_first_arm_idle(cool_ms);
     if (flip)
     {
         mns = kzbr_time_mkl(N, K, c2r, in, zm, total, 0);

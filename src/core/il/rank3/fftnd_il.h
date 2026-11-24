@@ -1127,7 +1127,10 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_cfg_t *cfg, int T, int 
             return 0;
         for (t = 0; t < n; t++)
         {
-            struct vfft_plan_s *c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+            struct vfft_plan_s *c;
+            _il2d_part_depth++;   /* a plane of the volume, as the primary child (_ilnd_build_child) */
+            c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+            _il2d_part_depth--;
             d->childw[t] = c;
             if (!c || !(d->rank == 3 ? _ilnd_child_equiv(d->child, c) : _ilnd_plan_equiv(d->child, c)) || c->nthreads > 1)
             {
@@ -1429,7 +1432,21 @@ static int _ilnd_build_child(vfft_ilnd_t *d, struct vfft_wisdom_s *W, const vfft
     cc.wisdom = (vfft_wisdom *)d->childS;
     cc.wisdom_write = 0;
     cc.recalibrate = cfg->recalibrate;
-    d->child = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+    {   /* the plane plan plans on its own store: its row races are shared through the shortlists of the store this
+         * create serves (il/rank2/il2d_tier.h, _il2d_shortlist_store) */
+        struct vfft_wisdom_s *const prev = _il2d_sl_root;
+        const vfft_cfg_t *const prevc = _il2d_sl_root_cfg;
+        if (!prev && _il2d_shortlist_on(W))
+        {
+            _il2d_sl_root = W;
+            _il2d_sl_root_cfg = cfg;
+        }
+        _il2d_part_depth++;   /* a plane of a volume: its finished rows keep the streamed store (il2d_tier.h) */
+        d->child = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+        _il2d_part_depth--;
+        _il2d_sl_root = prev;
+        _il2d_sl_root_cfg = prevc;
+    }
     return d->child != NULL;
 }
 
@@ -1473,7 +1490,7 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
                                           * recalibrate 3D IL create re-races the
                                           * parent but replays the flat child's
                                           * row */
-    d->row = (struct vfft_plan_s *)_vfft_create_cfg(&rc);
+    d->row = _il2d_child_create(W, cfg, &rc, &d->rowS, NULL);   /* the row race shared by every plan with this row length */
     if (!d->row)
     {
         _il2d_col_free(&d->ax1);

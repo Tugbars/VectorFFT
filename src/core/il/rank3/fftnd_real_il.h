@@ -1389,7 +1389,19 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
         cc.wisdom = (vfft_wisdom *)d->childS;
         cc.wisdom_write = 0;
         cc.recalibrate = cfg->recalibrate;
-        c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+        {   /* the plane plan plans on its own store: its row races are shared through the shortlists of the store this
+             * create serves (il/rank2/il2d_tier.h, _il2d_shortlist_store) */
+            struct vfft_wisdom_s *const prev = _il2d_sl_root;
+            const vfft_cfg_t *const prevc = _il2d_sl_root_cfg;
+            if (!prev && usable_w && _il2d_shortlist_on(W))
+            {
+                _il2d_sl_root = W;
+                _il2d_sl_root_cfg = cfg;
+            }
+            c = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+            _il2d_sl_root = prev;
+            _il2d_sl_root_cfg = prevc;
+        }
         _il2d_blu_ctx.W = W;     /* a nested create sets the context to its own store (il2d_real_axis.h):
                                   * the axis builds below bank their Bluestein verdicts on THIS cell's row */
         _il2d_blu_ctx.cfg = cfg;

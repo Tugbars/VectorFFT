@@ -704,6 +704,12 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     _il2d_csk_exec(h, dir, sre, dre);
                     return;
                 }
+                if (h->il2d_rfw > 0 && !h->il2d_fs_tw)
+                {   /* ROWS FIRST (2026-11-24): the rows source -> destination, then the
+                     * column chain in place on the destination in strips */
+                    _il2d_rfw_exec(h, dir, sre, dre);
+                    return;
+                }
                 if (h->il2d_col.blu && h->il2d_col.tpc)
                 {   /* PRIME N1: the TURNED pass (2026-09-24), then the rows */
                     _il2d_tpc_cols_range(&h->il2d_col, sre, dre, rn, 0, rn, !fwd);

@@ -1124,6 +1124,52 @@ static int _k1_il_plan_race_ex(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, i
     return lines;
 }
 
+/* THE RACE'S SHORTLIST (il/wisdom/wisdom2_child.h, the shortlist): after this process raced the natural K=1 cell at
+ * (N, placement) -- _k1_il_plan_race above, whose ranking the planner's context keeps -- the candidates behind its
+ * winner as recipes a create replays, one private store each, in the race's order: out[0..n), n <= max; the caller
+ * owns them. The race runs the backward form axis for its winner alone, so a pair or a three-stage chain gets its own
+ * raced here: a candidate that wins a plane's final then serves both directions as measured. Left out: a four-step
+ * and the prime cell (their recipes live in the race's own stores, gone with it). 0 when the context holds no such
+ * ranking (no race in this process, another placement, a role's race). */
+static int _k1_il_shortlist_stores(int N, int inplace, struct vfft_wisdom_s **out, int max)
+{
+    vfft_il_dp_context_t *ctx = &_k1_il_dp_ctx;
+    const vfft_il_dp_entry_t *e;
+    vfft_il_cand_t top[VFFT_IL_DP_TOPK_MAX];
+    int ntop, k, n = 0;
+    if (!_k1_il_dp_ctx_ready || _k1_il_dp_busy || N > ctx->max_N || max < 1 || ctx->role_run || ctx->role_key)
+        return 0;
+    ctx->inplace = inplace ? 1 : 0;   /* the cache's key, as the race set it */
+    e = _il_dp_lookup(ctx, N, VFFT_IL_ORD_NATURAL);
+    if (!e || e->n_top < 2)
+        return 0;
+    ntop = e->n_top;
+    memcpy(top, e->top, sizeof top);
+    _k1_il_dp_busy = 1;
+    for (k = 1; k < ntop && n < max; k++)
+    {
+        vfft_il_cand_t c = top[k];
+        struct vfft_wisdom_s *S;
+        if (c.cost_ns >= 1e17 || c.route <= VFFT_K1_IL_NONE || c.route == VFFT_K1_IL_FS || c.route == VFFT_K1_IL_PRIME)
+            continue;
+        if ((c.route == VFFT_K1_IL_2P_PURE || c.route == VFFT_K1_IL_CHAIN3) && !c.il_bkv_raced &&
+            _il_dp_ref_build(ctx, N) == 0)
+            (void)_il_dp_race_bwd(ctx, N, &c, 0);
+        S = vfft_child_store_new();
+        if (!S)
+            break;
+        if (vfft_il_dp_emit_wisdom(&S->vw2, N, inplace, &c, NULL) < 1)
+        {
+            vfft_child_store_free(S);
+            continue;
+        }
+        vw2_disown(&S->vw2);   /* a recipe to replay: nothing of it is "raced" in the store's sense */
+        out[n++] = S;
+    }
+    _k1_il_dp_busy = 0;
+    return n;
+}
+
 static vfft_k1fs_plan_t *_k1fs_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N, int scr, int ip,
                                       const vfft_oop_il_entry_t *ke);
 static int _k1fs_row_stale(struct vfft_wisdom_s *W, int N, int scr, int ip, int T, const vfft_oop_il_entry_t *ke);

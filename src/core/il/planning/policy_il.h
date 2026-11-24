@@ -388,6 +388,78 @@ static inline int vfft_policy_il2d_blocks_race(int N1, long long N2, int T)
     const int c = vfft_policy_il2d_colclass(N1), L = vfft_policy_il2d_level(N1, N2);
     return !(T > 1 && ((c == 1 && L == 4) || (c == 2 && L == 3)));
 }
+/* -- THE ROWS-FIRST WALK'S STRIP WIDTHS (2026-11-24) --
+ * A natural chain plan at one thread walks its column chain out of place twice over the plane (the stages into the
+ * pre-leaf plane, the leaf into the destination) and then runs the rows in place. On a composite or odd column the
+ * leaf's sweep costs the move, not the arithmetic: 14900KF, AVX2, one thread, a leaf's time over the plane against the
+ * same leaf on a block in the L1d -- 18x1050 (9.2) 5.9 us against 2.0, 42x1050 (7.6) 18.5 against 7.1, 35x1029 (7.5)
+ * 17.9 against 5.2 -- and the column pass as a whole ran 1.3 to 1.8 times MKL's on the same plane while the rows ran
+ * at MKL's time. The other order (il2d_tier.h, _il2d_rfw_exec): the rows first, source to destination, then the chain
+ * IN PLACE on the destination, strip by strip through the dense strip scratch, so each strip's stores land on the lines
+ * its loads just fetched. Same plans, kernels and tables, the whole forward transform, the served walk against the
+ * other order at its best width: 18x1050 37.97 -> 34.71 us (w 32), 42x1050 99.09 -> 85.01 (16), 70x1050 165.2 -> 148.3
+ * (16), 18x4374 228.1 -> 199.2 (32), 35x1029 91.41 -> 74.58 (16), 75x1029 198.4 -> 190.9 (8); 150x1050 0.97, 135x1029
+ * 0.96 and 270x1050 1.01 of the served walk (a strip of that many rows leaves the L1d at any width worth a kernel
+ * call). The best width was the widest whose strip, twice (the scratch and the plane's own lines), stays in about
+ * three quarters of the L1d.
+ * So the form is an ARM, raced on the whole transform against the walk the axis race crowned (_il2d_rfw_race_1t), at
+ * the widths below: the ladder's widths narrower than the plane whose strip fits the L1d twice, the widest `max` of
+ * them. One thread, composite and odd columns (the powers of two and the prime cells keep their walks: not measured).
+ * Returns the count (0: no arm). */
+static inline int vfft_policy_il2d_rowsfirst_widths(int N1, long long N2, int T, int *out, int max)
+{
+    static const int SW[] = { 8, 16, 32, 64, 128, 256 };
+    const long long l1 = vfft_cpu_l1d_bytes();
+    int i, n = 0, all[6];
+    if (T > 1 || !vfft_policy_il2d_colclass(N1) || l1 <= 0)
+        return 0;
+    for (i = 0; i < 6; i++)
+        if ((long long)SW[i] < N2 && 2LL * (long long)N1 * SW[i] * VFFT_CX_BYTES <= l1)
+            all[n++] = SW[i];
+    for (i = 0; i < n && i < max; i++)
+        out[i] = all[n - 1 - i];   /* the widest first */
+    return n < max ? n : max;
+}
+/* -- THE STAGED LEAF'S FINISHED ROWS: PAST THE CACHE, OR THROUGH IT (2026-11-24) --
+ * The natural leaf that runs a block's rows in its staging writes the finished rows to the plane with stores that
+ * bypass the cache (il2d_cols.h, _il2d_row_stream) or with cached stores. The bypass is right for a plane the caches
+ * cannot hold, where a cached store would first fetch the lines it overwrites; on a plane the caches hold it only
+ * pushes the result out of them, and whoever reads the result next fetches it from memory.
+ * 14900KF, AVX2, the same plan with the two stores, time streamed over time cached (above 1: the cached store is
+ * faster), in three protocols: out of place with the output never read (the gauntlet's), out of place with the
+ * output read once after each transform, in place on the evolving plane. ONE THREAD, THE BACKWARD (it always runs
+ * through the staging):
+ *      plane       18x150  150x42  128x128  128x256  256x256  384x384  150x1050  512x512  270x1050  512x640
+ *      bytes        42 K    98 K    256 K    512 K     1 M     2.3 M    2.4 M      4 M     4.3 M      5 M
+ *      unread       1.21    1.17    1.15     1.10     0.98     0.93     0.89      0.91     0.90      0.92
+ *      read         1.98    1.79    1.59     1.49     1.26     1.19     1.13      1.15     1.12      1.18
+ *      in place     2.79    2.22    1.96     1.45     1.31     1.08     1.06      0.92     0.95      1.01
+ *      plane      600x600  512x768  640x768  1024x512  768x768  1024x1024  2048x1024  2048x2048
+ *      bytes       5.5 M     6 M     7.5 M     8 M       9 M      16 M       32 M       64 M
+ *      unread       0.93     0.91     0.88     0.90     0.89      0.83       0.83       0.87
+ *      read         1.15     1.15     1.09     1.08     1.02      0.91       0.87       0.93
+ *      in place     0.98     1.00     0.95     0.93     0.98      0.94       0.82       0.90
+ * THE FORWARD with its leaf staged, on the ten planes of 1 M to 8 M above in their order, then 768x768 and 1024x1024:
+ *      unread       0.96  0.99  1.00  0.99  0.95  0.93  0.92  0.89  0.89  0.89  |  0.89  0.84
+ *      read         1.25  1.21  1.17  1.19  1.14  1.16  1.14  1.06  1.11  1.12  |  1.06  0.90
+ *      in place     1.32  1.16  1.10  1.04  1.01  0.98  0.95  0.95  0.97  0.98  |  0.95  0.93
+ * EIGHT THREADS: the stores are reached where a threaded backward runs its rows in the staging, and there the cached
+ * store is faster or equal in every protocol (256x256 1.49 / 1.42 / 1.23, 600x600 1.13 / 1.46 / 1.23, 640x768 0.99 /
+ * 1.50 / 1.24); the other threaded planes do not pass these stores.
+ * So up to 512 K the cached store is faster or equal in every protocol and both directions. From 1 M to 8 M it
+ * serves a caller that reads the output 6 to 26 % faster and a caller that never reads it up to 12 % slower; in
+ * place it is ahead below 4 M and within 8 % either way from there. At 9 M the reader's gain is 2 to 6 %, at 16 M
+ * the bypass wins in every protocol. A transform's output is computed to be read, so THE LAW serves the reader (the
+ * owner's ruling, 2026-11-24): the rows go THROUGH the cache where the walk's three planes (the source, the pre-leaf
+ * plane, the destination) fit the L2 together, or where the plane's input and output (32 bytes a point, the measure
+ * of vfft_policy_il2d_level) take less than half the L3 (a plane under 9 M here: 1024x512 in, 768x768 out), and past
+ * the cache everywhere else. A cache size the CPU does not report admits nothing by its term. */
+static inline int vfft_policy_il2d_rows_cached(int N1, long long lanes)
+{
+    const long long l2 = vfft_cpu_l2_bytes(), l3 = vfft_cpu_l3_bytes();
+    const long long plane = (long long)N1 * lanes * VFFT_CX_BYTES;
+    return (l2 > 0 && 3 * plane <= l2) || (l3 > 0 && 4 * plane < l3);
+}
 static inline int vfft_policy_lm_tile_ok(int w, size_t K, int nat)   /* K: the lanes, size_t (w a ladder width) */
 {
     return w < 0 || (size_t)w < K || nat;

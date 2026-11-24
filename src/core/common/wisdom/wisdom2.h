@@ -122,8 +122,14 @@ typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
  * row at the same (t,n,q,ord,place,lay) -- the in-place scrambled cell's.
  * A new value of an existing axis, as lay=lm was: no version bump (the
  * header check reads the major only, and a 1.3 reader carries a row with
- * an unknown role value opaque). */
-typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1, VW2_ROLE_METHOD = 2 } vw2_role_t;
+ * an unknown role value opaque).
+ * role=shortlist (2026-11-24): THE CANDIDATES of the 1D plan a 2D plan runs
+ * as one of its passes -- the first plans of the one-thread race at that
+ * length and placement, each a whole recipe (il/wisdom/wisdom2_child.h,
+ * vfft_shortlist_*). Keyed like the 1D cell it was raced as (t=c2c n=N q=1
+ * ord=nat place=ip|oop lay=il) and never served to a 1D request: the role
+ * differs, and it lives in the 2D shard (vw2_shard_route). */
+typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1, VW2_ROLE_METHOD = 2, VW2_ROLE_SHORTLIST = 3 } vw2_role_t;
 /* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the
  * interleaved-vs-split axis — keyed like its sibling placement. Layout
  * is a caller integration property (AoS/SoA), NEVER a strategy output:
@@ -709,6 +715,7 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
             } else if (!strcmp(tok, "role")) {
                 if (!strcmp(v, "comp")) k->role = VW2_ROLE_COMP;
                 else if (!strcmp(v, "method")) k->role = VW2_ROLE_METHOD;
+                else if (!strcmp(v, "shortlist")) k->role = VW2_ROLE_SHORTLIST;
                 else return 0;  /* future role values: opaque carry          */
             } else if (!strcmp(tok, "lay")) {
                 if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
@@ -748,7 +755,7 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
     if (k->dir != VW2_DIR_NONE)
         VW2__CAT(" dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
     if (k->role != VW2_ROLE_NONE)
-        VW2__CAT(" role=%s", k->role == VW2_ROLE_METHOD ? "method" : "comp");
+        VW2__CAT(" role=%s", k->role == VW2_ROLE_METHOD ? "method" : k->role == VW2_ROLE_SHORTLIST ? "shortlist" : "comp");
     if (k->lay != VW2_LAY_ANY)
         VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : k->lay == VW2_LAY_LM ? "lm"
                                                                    : k->lay == VW2_LAY_SLM ? "slm" : "il");
@@ -786,6 +793,7 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
 #endif
     if (k->rank == 2) return VW2_SHARD_2D;
     if (k->rank >= 3) return VW2_SHARD_3D;
+    if (k->role == VW2_ROLE_SHORTLIST) return VW2_SHARD_2D;   /* a 2D plan's pass candidates: the 2D tier's, never a 1D row */
     if (eng && (!strcmp(eng, "bluestein") || !strcmp(eng, "rader"))) return VW2_SHARD_PRIME;
     if (k->t == VW2_T_R2C || k->t == VW2_T_C2R) return VW2_SHARD_REAL;
     if (k->t == VW2_T_C2C) {

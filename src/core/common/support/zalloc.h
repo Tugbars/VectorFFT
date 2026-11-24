@@ -98,7 +98,8 @@ static inline void vfft_aligned_free(void *p)
 
 /* A BUFFER ONE THREAD WRITES WHILE OTHER THREADS WRITE THEIRS (2026-11-23): a small work buffer one worker walks
  * again and again while its neighbours walk theirs -- a row plan's and its clones' (the flat DIT's staging plane,
- * the two-pass plan's mid, the three-stage plan's mid1 and mid2) and the natural leaf's staging slots.
+ * the two-pass plan's mid, the three-stage plan's mid1 and mid2, the prime plan's za and zb) and the natural leaf's
+ * staging slots.
  *
  *   vfft_apart_alloc(bytes)            64-byte aligned like vfft_aligned_alloc, with VFFT_APART_BYTES of memory
  *                                      nothing uses before it and after it. NULL means failure.
@@ -122,6 +123,9 @@ static inline void vfft_aligned_free(void *p)
  *     back to back 1.02-1.11, 4 KiB apart 1.00-1.01
  *   the three-stage plan's mid1 and mid2, 3 to 16 KiB (200- to 1000-point rows, eight planes)
  *     back to back 1.00-1.04, 4 KiB apart 1.00-1.01
+ *   the prime plan's za and zb: Bluestein, 16 to 35 KiB (509- and 1031-point rows, four planes)
+ *     back to back 1.04-1.09, 4 KiB apart 0.99-1.03
+ *   and Rader, 2 to 33 KiB (127- to 2053-point rows, five planes): back to back 0.97-1.04
  *   the natural leaf's staging slots, T slots of R_last rows of N2 points cut one after the other from one block
  *   (the threaded tile; a slot of 1680, 672, 10000, 2160 or 6000 bytes ends inside a cache line, so two workers
  *   also shared that line)
@@ -136,7 +140,7 @@ static inline void vfft_aligned_free(void *p)
  * running past the end of its buffer is the likely cause, not separated further. Two such buffers side by side are
  * 2 * VFFT_APART_BYTES = 8 KiB apart, where the cost was gone. One thread: no difference at any distance. No cost
  * at any distance, measured the same way: ZTURN-T's plane (4 KiB of slack of its own), the threaded strips' dense
- * scratch, the two-pass rows' scratch. */
+ * scratch, the two-pass rows' scratch, the Rader column stage's scratch. */
 #define VFFT_APART_BYTES 4096   /* a multiple of VFFT_ALIGNMENT */
 
 static inline void *vfft_apart_alloc(size_t bytes)

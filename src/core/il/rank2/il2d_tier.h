@@ -1418,6 +1418,34 @@ static void _il2d_csk_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_rea
     _il2d_rows_exec2(h, 0, dir, T, P, dre, rn, rn, 0, 1, N1);
 }
 
+/* THE ROWS-FIRST WALK's execute (2026-11-24; vfft_internal.h il2d_rfw, the evidence at policy_il.h
+ * vfft_policy_il2d_rowsfirst_widths): the rows from the source into the destination (the rows are the move; an
+ * in-place plan runs them where they are), then the natural column chain IN PLACE on the destination, one strip of
+ * il2d_rfw columns after another through the dense strip scratch -- the threaded strips' walker
+ * (_il2d_col_pass_nat_strip) with source = destination, in place by construction (a strip is read whole into the
+ * scratch before any row of it is written). Both directions: the passes commute, and the walker's backward is the
+ * strips arm's. One thread (the scratch is one block). */
+static void _il2d_rfw_exec(struct vfft_plan_s *h, vfft_dir_t dir, const vfft_real *sre, vfft_real *dre)
+{
+    const vfft_ilcol_t *c = &h->il2d_col;
+    const size_t rn = (size_t)h->N2, w = (size_t)h->il2d_rfw;
+    const int fwd = (dir == VFFT_FORWARD);
+    size_t k;
+    _il2d_rows_exec2(h, 0, dir, sre, rn, dre, rn, rn, 0, 1, (size_t)h->N);
+    for (k = 0; k < rn; k += w)
+        _il2d_col_pass_nat_strip(dre, dre, c->N, rn, k, (rn - k < w) ? rn - k : w, c->nst, c->R, c->L,
+                                 fwd ? c->f : c->b, fwd ? c->tf : c->tb, !fwd, c->natperm, c->natsscr[0]);
+}
+/* the plan can run that walk: a natural chain of two stages or more at one thread, off the turn, the skewed pass and
+ * the prime-column routes, with a way to move its rows (in place; out of place the batched kernels or the
+ * out-of-place row plan) */
+static int _il2d_rfw_ok(const struct vfft_plan_s *h)
+{
+    return h->transform == VFFT_C2C && h->nthreads <= 1 && h->il2d_row && h->il2d_col.nat && h->il2d_col.nst >= 2 &&
+           h->il2d_col.natperm && !h->il2d_col.blu && !h->il2d_turn && !h->il2d_csk &&
+           (h->placement == VFFT_INPLACE || h->il2d_rowb || h->il2d_rowb2 || h->il2d_csk_row);
+}
+
 /* the scratch's row PITCH in complex: N1 + 8, so the N2 column streams never sit
  * a multiple of 4 KB apart (unskewed, at every N1 >= 256 they share one L1 set,
  * 12-way, for 8 or 16 streams -- the route's margin shrank from 2.3x at N2 = 2
@@ -1617,7 +1645,7 @@ static int _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
             const size_t nrow0 = (size_t)h->il2d_col.natperm[b * (size_t)Rl];
             ff(from + coff, NULL, stage, NULL, NULL, NULL, rn, 0, rn, 0, rn);
             _il2d_rows_exec(h, tid, dir, stage, rn, rn, nrow0, nstride_rows, (size_t)Rl);
-            _il2d_nat_stage_out_rev(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, 1, (size_t)h->N);
+            _il2d_nat_stage_out_rev(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, !h->il2d_rows_cached, (size_t)h->N);
         }
         return 1;
     }
@@ -1627,7 +1655,8 @@ static int _il2d_nat_leaf_blocks(struct vfft_plan_s *h, int tid, vfft_dir_t dir,
         const size_t nrow0 = (size_t)h->il2d_col.natperm[b * (size_t)Rl];
         fn(from + coff, NULL, stage, NULL, NULL, NULL, rn, 0, rn, 0, rn);
         _il2d_rows_exec(h, tid, dir, stage, rn, rn, nrow0, nstride_rows, (size_t)Rl);
-        _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, 1);   /* finished rows: streamed */
+        /* finished rows: streamed past the cache, or through it on a plane the caches hold (il2d_rows_cached) */
+        _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, 0, rn, !h->il2d_rows_cached);
     }
     return 1;
 }
@@ -3582,6 +3611,30 @@ static int _il2d_nat_sscr_build(vfft_ilcol_t *c, int N1, size_t N2, int T)
     }
     return 1;
 }
+/* the ROWS-FIRST walk's strip scratch (one thread, _il2d_rfw_exec): ONE block of N1 rows of _il2d_scr_cap(w)
+ * complexes, w the widest strip the plan runs; a block that already holds that width stays. 0 = out of memory. */
+static int _il2d_rfw_scr_build(vfft_ilcol_t *c, int N1, int w)
+{
+    if (!c->nat || w < 1)
+        return 0;
+    if (c->natsscr && c->nnatsscr >= 1 && c->natswcap >= w)
+        return 1;
+    _il2d_nat_sscr_free(c);
+    c->natsscr = (vfft_real **)calloc(1, sizeof *c->natsscr);
+    if (!c->natsscr)
+        return 0;
+    c->natsscr[0] = (vfft_real *)vfft_aligned_alloc(2 * (size_t)N1 * _il2d_scr_cap((size_t)w) * sizeof(vfft_real));
+    if (!c->natsscr[0])
+    {
+        free(c->natsscr);
+        c->natsscr = NULL;
+        return 0;
+    }
+    c->nnatsscr = 1;
+    c->natswcap = w;
+    c->natdense = 1;
+    return 1;
+}
 /* the real tier's strip-width ladder: the column count is odd (hp1) or a padded width, so no
  * divisor law -- every width under a worker's column block that keeps N1 x w x 16 B in L2; the
  * last sub-strip is narrower */
@@ -3924,6 +3977,102 @@ static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_cfg_t *cfg,
                            int N, int placement, int T, struct vfft_plan_s ***out, int *out_n, const char *what);   /* below */
 static void _il2d_clone_set_drop(struct vfft_plan_s ***arr, int *n);
+
+/* ── A CHILD PLAN AND ITS SHORTLIST (owner, 2026-11-24; il/wisdom/wisdom2_child.h, the shortlist) ──────────────
+ * The 1D plan of one of a 2D c2c plan's passes -- the row plan, the turn plan, the skewed pass's row plan, the
+ * turned prime column plan -- created in role on its own store *S (seeded from the cell's row by
+ * vfft_child_store_for; cc is its request, the store set here). Where the row carries no recipe for it:
+ *   - the store holds a shortlist at (the length, the placement): the child is created from its first candidate,
+ *     nothing raced;
+ *   - it holds none: the child races as a 1D transform, as it always did, and the race's first candidates are
+ *     banked as the shortlist -- the one race every plane with that length shares.
+ * *due = 1 when the child's recipe is new to this cell (from the shortlist, or raced here): the plane's final
+ * (_il2d_child_final) then times the shortlist's candidates in the plane. Returns the plan, NULL = none; *S is the
+ * store it was created on. A store that names no build keeps no shortlist: a part plan's children race as before. */
+static int _k1_il_shortlist_stores(int N, int inplace, struct vfft_wisdom_s **out, int max);   /* il/rank1/k1_commit.h */
+static int _il2d_shortlist_on(const struct vfft_wisdom_s *W)
+{
+    return W && W->vw2.isa != 0 && !W->vw2_off_2d;
+}
+/* THE STORE THAT KEEPS THE SHORTLISTS for a create on W: W itself when it is a real store; else the store of the 3D
+ * create this plan is a part of (il/rank3/fftnd_il.h sets it around its plane child's create: the 2D plane inside a
+ * 3D plan plans on a private store, and its row races are the same ones every plane with that row length runs).
+ * NULL = none: the child races as it always did (a four-step's 2D child; an estimate's replay). */
+/* above 0 while the 2D plan under creation is a PART of a larger plan (a volume's plane: fftnd_il.h; a batch's plane:
+ * the plane queue, fft2d_create_il.h): its plane fits the caches while the volume or the batch around it may not, so its
+ * staged leaf keeps the streamed store for its finished rows (vfft_internal.h il2d_rows_cached; the measurements
+ * behind the cached store are single planes, policy_il.h vfft_policy_il2d_rows_cached) */
+static int _il2d_part_depth = 0;
+static struct vfft_wisdom_s *_il2d_sl_root = NULL;
+static const vfft_cfg_t *_il2d_sl_root_cfg = NULL;
+static struct vfft_wisdom_s *_il2d_shortlist_store(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const vfft_cfg_t **pcfg)
+{
+    if (_il2d_shortlist_on(W))
+    {
+        *pcfg = cfg;
+        return W;
+    }
+    *pcfg = _il2d_sl_root_cfg;
+    return _il2d_sl_root;
+}
+static int _il2d_shortlist_t(const vfft_cfg_t *cc)   /* the record's transform */
+{
+    return cc->transform == VFFT_R2C ? VW2_T_R2C : cc->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_C2C;
+}
+static struct vfft_plan_s *_il2d_child_create(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, vfft_cfg_t *cc,
+                                              struct vfft_wisdom_s **S, int *due)
+{
+    const int N = cc->n[0], ip = (cc->placement == VFFT_INPLACE), t = _il2d_shortlist_t(cc);
+    const int Tc = cc->nthreads > 1 ? cc->nthreads : 1;   /* the child's own thread count: the record's */
+    const vfft_cfg_t *scfg = NULL;
+    struct vfft_wisdom_s *SW = _il2d_shortlist_store(W, cfg, &scfg);
+    struct vfft_plan_s *p;
+    int listed = 0;
+    if (due)
+        *due = 0;
+    if (!*S)
+        return NULL;
+    if (SW && (*S)->vw2.nrec == 0 && !cfg->recalibrate)
+    {
+        struct vfft_wisdom_s *c1 = vfft_shortlist_get(&SW->vw2, t, N, ip, Tc, 1);
+        if (c1)
+        {
+            vfft_child_store_free(*S);
+            *S = c1;
+            listed = 1;
+        }
+    }
+    cc->wisdom = (vfft_wisdom *)*S;
+    p = (struct vfft_plan_s *)_vfft_create_cfg(cc);
+    if (!p || !SW)
+        return p;
+    if (vfft_child_store_raced_q1(*S))
+    {   /* the 1D plan raced here (no shortlist yet; its first recipe did not build as written; a recalibrating
+         * create): the race's first candidates are the shortlist from now on -- the child's own one-transform rows
+         * its first; behind it, for a c2c plan, the planner's next candidates */
+        struct vfft_wisdom_s *cand[VFFT_SHORTLIST_MAX];
+        int n = 0, k;
+        cand[0] = vfft_child_store_q1(*S);
+        if (cand[0])
+        {
+            n = 1;
+            if (t == VW2_T_C2C && cc->howmany <= 1)
+                n += _k1_il_shortlist_stores(N, ip, cand + 1, VFFT_SHORTLIST_MAX - 1);
+            if (vfft_shortlist_put(&SW->vw2, t, N, ip, Tc, cand, n) && scfg)
+                _vw2_persist(SW, scfg);
+            for (k = 0; k < n; k++)
+                vfft_child_store_free(cand[k]);
+        }
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] shortlist %s N=%d (%s): raced here, %d candidate(s) banked\n",
+                    t == VW2_T_R2C ? "r2c" : t == VW2_T_C2R ? "c2r" : "c2c", N, ip ? "in place" : "out of place", n);
+        listed = 1;
+    }
+    if (due)
+        *due = listed;
+    return p;
+}
+
 static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const vw2_ilcol_key_t *key,
                            vfft_ilcol_t *c, int N, size_t rn)
 {
@@ -3950,7 +4099,11 @@ static int _il2d_tpc_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, const
     tc.wisdom = (vfft_wisdom *)c->tpcS;
     tc.wisdom_write = 0;
     tc.recalibrate = cfg->recalibrate;
-    c->tpcplan = (struct vfft_plan_s *)_vfft_create_cfg(&tc);
+    if (key->rank == 2 && !key->real && !key->lm)
+        /* a 2D c2c plane's: the prime cell at N raced once for every plane with that column length (the shortlist) */
+        c->tpcplan = _il2d_child_create(W, cfg, &tc, &c->tpcS, NULL);
+    else
+        c->tpcplan = (struct vfft_plan_s *)_vfft_create_cfg(&tc);
     if (!c->tpcplan)
         return 0;
     c->tpcscr = (vfft_real *)vfft_aligned_alloc(2 * VFFT_IL2D_TPC_PITCH(c->N) * rn * sizeof(vfft_real));
@@ -5743,6 +5896,384 @@ static void _il2d_c2c_drop_unneeded_clones(struct vfft_plan_s *h)
     }
     _il2d_clone_set_drop(&h->il2d_cskw, &h->il2d_cskw_n);
     _il2d_clone_set_drop(&h->il2d_turnw, &h->il2d_turnw_n);
+}
+
+/* ── THE LEAF AT ONE THREAD (2026-11-24) ────────────────────────────────────────────────────────────────────
+ * The natural leaf writes a block's rows into its staging and the rows run there (staged), or it stores them at
+ * their natural stride and the rows run in the plane (strided). The threaded forms race the two (nls=); the
+ * one-thread walk served the staged leaf unraced. Measured on the 14900KF (AVX2, one thread), the same plan with
+ * the strided leaf, outputs bitwise equal: 18x1050 44.8 -> 41.2 us, 42x2058 245 -> 220, 18x4374 254 -> 235,
+ * 42x8750 1211 -> 1096, 70x1050 186 -> 170, 150x1050 416 -> 375, 270x1050 862 -> 814 (6 to 10 % on short columns
+ * with long rows; the staging was fitted on power-of-two planes, whose strided stores alias).
+ * So a cold cell's one-thread plan times both on its whole forward transform, once its walk is settled: min of 7
+ * alternated samples of about 1 ms, an untimed execute before each. The winner stays and is banked as nls= on the
+ * cell's row, the token the door already reads at one thread. */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    vfft_real *z, *zo;
+    int natst;
+} _il2d_leaf_arm_t;
+static void _il2d_arm_leaf(void *v)
+{
+    _il2d_leaf_arm_t *c = (_il2d_leaf_arm_t *)v;
+    c->h->il2d_col.natst = c->natst;
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
+}
+static void _il2d_leaf_race_1t(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N1, int N2)
+{
+    const size_t PN = (size_t)N1 * (size_t)N2;
+    const int ord = vfft_policy_ord_rankn(cfg);
+    _il2d_leaf_arm_t la[2];
+    vfft_race_arm_t arms[2];
+    double ns[2] = { 0, 0 };
+    vfft_real *z, *zo, *zseed = NULL;
+    _il2d_ip_reset_t zrs;
+    size_t q;
+    int k, reps = 1, win = 0;
+    if (h->transform != VFFT_C2C || h->nthreads > 1 || !W || W->vw2_off_2d || !h->il2d_col.nat || !h->il2d_col.natstage ||
+        h->il2d_turn || h->il2d_csk || h->il2d_col.nst < 2)
+        return;
+    z = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real));
+    zo = (h->placement == VFFT_OUTOFPLACE) ? (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real)) : z;
+    if (!z || !zo)
+    {
+        if (zo != z) vfft_aligned_free(zo);
+        vfft_aligned_free(z);
+        return;
+    }
+    for (q = 0; q < 2 * PN; q++)
+        z[q] = 1.0 + 1e-6 * (double)(q & 1023);
+    memset(&zrs, 0, sizeof zrs);
+    if (zo == z && (zseed = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real))) != NULL)
+    {   /* in place: the plane re-laid before every sample */
+        memcpy(zseed, z, 2 * PN * sizeof(vfft_real));
+        zrs.p = z;
+        zrs.seed = zseed;
+        zrs.n = 2 * PN;
+    }
+    if (zo != z || zseed)
+    {
+        for (k = 0; k < 2; k++)
+        {
+            int r2;
+            la[k].h = h; la[k].z = z; la[k].zo = zo; la[k].natst = 1 - k;   /* arm 0 staged, arm 1 strided */
+            arms[k].name = k ? "strided" : "staged";
+            arms[k].run = _il2d_arm_leaf;
+            arms[k].ctx = &la[k];
+            if (zseed) _il2d_ip_reset(&zrs);
+            r2 = _il2d_race_reps_ns(_il2d_arm_leaf, &la[k], zseed ? (double)PN : 0.0, VFFT_IL2D_MT_SAMPLE_NS);
+            if (r2 > reps) reps = r2;
+        }
+        {
+            const vfft_race_proto_t proto = { 7, reps, VFFT_RACE_MIN, 1, 2, zseed ? _il2d_ip_reset : NULL,
+                                              zseed ? &zrs : NULL, 1, 1 };
+            vfft_race_run(&proto, arms, 2, ns);
+        }
+        win = ns[1] < ns[0];
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] leaf at one thread %dx%d: staged %.0f ns, strided %.0f ns -> %s\n", N1, N2, ns[0], ns[1],
+                    win ? "strided" : "staged");
+    }
+    h->il2d_col.natst = win ? 0 : 1;
+    if (vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, 1, "nls", h->il2d_col.natst) == 0)
+        _vw2_persist(W, cfg);
+    if (zo != z) vfft_aligned_free(zo);
+    vfft_aligned_free(z);
+    vfft_aligned_free(zseed);
+}
+
+/* ── THE ROWS-FIRST WALK AT ONE THREAD (2026-11-24) ─────────────────────────────────────────────────────────
+ * The walk of _il2d_rfw_exec (the rows source -> destination, then the column chain in place on the destination in
+ * strips) is an arm on a composite or odd column where a strip fits the L1d twice (policy_il.h,
+ * vfft_policy_il2d_rowsfirst_widths: the measurements and the widths). A cold cell's one-thread plan, its axes and
+ * its leaf settled, times the walk it stands with against the rows-first walk at each of those widths on its whole
+ * forward transform: min of 7 alternated samples of about 1 ms, an untimed execute before each. The winner stays and
+ * is banked as rfw= on the cell's row (the strip width; 0 = the walk the axes name), replayed by _il2d_rfw_set.
+ * Out of place on the per-row route the rows run through the out-of-place K=1 plan at N2 (il2d_csk_row, csk_* on the
+ * row: the create builds it for this arm where the skewed pass has none); when the walk loses, that plan and the
+ * strip scratch go. */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    vfft_real *z, *zo;
+    int rfw;
+} _il2d_rfw_arm_t;
+static void _il2d_arm_rfw(void *v)
+{
+    _il2d_rfw_arm_t *c = (_il2d_rfw_arm_t *)v;
+    c->h->il2d_rfw = c->rfw;
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
+}
+/* a banked width onto the plan: the walk when the plan can run it and its scratch builds, else off */
+static void _il2d_rfw_set(struct vfft_plan_s *h, int w)
+{
+    h->il2d_rfw = 0;
+    if (w > 0 && w < h->N2 && _il2d_rfw_ok(h) && _il2d_rfw_scr_build(&h->il2d_col, h->N, w))
+        h->il2d_rfw = w;
+}
+static void _il2d_rfw_race_1t(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N1, int N2)
+{
+    const size_t PN = (size_t)N1 * (size_t)N2;
+    const int ord = vfft_policy_ord_rankn(cfg);
+    _il2d_rfw_arm_t ra[4];
+    vfft_race_arm_t arms[4];
+    char nm[4][16];
+    double ns[4] = { 0, 0, 0, 0 };
+    vfft_real *z = NULL, *zo = NULL, *zseed = NULL;
+    _il2d_ip_reset_t zrs;
+    size_t q;
+    int wd[3], nw, k, reps = 1, win = 0;
+    h->il2d_rfw = 0;
+    if (!W || W->vw2_off_2d)
+        return;
+    nw = _il2d_rfw_ok(h) ? vfft_policy_il2d_rowsfirst_widths(N1, N2, h->nthreads, wd, 3) : 0;
+    if (nw > 0 && !_il2d_rfw_scr_build(&h->il2d_col, N1, wd[0]))   /* wd[0]: the widest */
+        nw = 0;
+    if (nw > 0)
+    {
+        z = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real));
+        zo = (h->placement == VFFT_OUTOFPLACE) ? (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real)) : z;
+    }
+    memset(&zrs, 0, sizeof zrs);
+    if (nw > 0 && z && zo)
+    {
+        for (q = 0; q < 2 * PN; q++)
+            z[q] = 1.0 + 1e-6 * (double)(q & 1023);
+        if (zo == z && (zseed = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real))) != NULL)
+        {   /* in place: the plane re-laid before every sample */
+            memcpy(zseed, z, 2 * PN * sizeof(vfft_real));
+            zrs.p = z;
+            zrs.seed = zseed;
+            zrs.n = 2 * PN;
+        }
+    }
+    if (nw > 0 && z && zo && (zo != z || zseed))
+    {
+        for (k = 0; k <= nw; k++)
+        {
+            int r2;
+            ra[k].h = h; ra[k].z = z; ra[k].zo = zo; ra[k].rfw = k ? wd[k - 1] : 0;   /* arm 0: the walk it stands with */
+            if (k) snprintf(nm[k], sizeof nm[k], "w%d", wd[k - 1]);
+            else snprintf(nm[k], sizeof nm[k], "served");
+            arms[k].name = nm[k];
+            arms[k].run = _il2d_arm_rfw;
+            arms[k].ctx = &ra[k];
+            if (zseed) _il2d_ip_reset(&zrs);
+            r2 = _il2d_race_reps_ns(_il2d_arm_rfw, &ra[k], zseed ? (double)PN : 0.0, VFFT_IL2D_MT_SAMPLE_NS);
+            if (r2 > reps) reps = r2;
+        }
+        {
+            const vfft_race_proto_t proto = { 7, reps, VFFT_RACE_MIN, 1, 2, zseed ? _il2d_ip_reset : NULL,
+                                              zseed ? &zrs : NULL, 1, 1 };
+            vfft_race_run(&proto, arms, nw + 1, ns);
+        }
+        for (k = 1; k <= nw; k++)
+            if (ns[k] < ns[win]) win = k;
+        if (getenv("VFFT_IL2D_LOG"))
+        {
+            fprintf(stderr, "[il2d] rows first at one thread %dx%d:", N1, N2);
+            for (k = 0; k <= nw; k++)
+                fprintf(stderr, " %s=%.0f%s", nm[k], ns[k], k == win ? "*" : "");
+            fprintf(stderr, "\n");
+        }
+    }
+    h->il2d_rfw = win ? wd[win - 1] : 0;
+    if (!h->il2d_rfw)
+    {   /* the walk the axes name stays: the strip scratch goes, and the out-of-place row plan built for this arm alone */
+        _il2d_nat_sscr_free(&h->il2d_col);
+        if (h->il2d_csk_row && !h->il2d_csk_scr)
+        {
+            vfft_destroy(h->il2d_csk_row);
+            h->il2d_csk_row = NULL;
+            vfft_child_store_free(h->il2d_cskS);
+            h->il2d_cskS = NULL;
+        }
+    }
+    if (nw > 0 && vw2_2d_il_tok_seti(&W->vw2, N1, N2, ord, 1, "rfw", h->il2d_rfw) == 0)
+        _vw2_persist(W, cfg);
+    if (zo != z) vfft_aligned_free(zo);
+    vfft_aligned_free(z);
+    vfft_aligned_free(zseed);
+}
+
+/* ── THE CHILD'S FINAL, IN THE PLANE (owner, 2026-11-24; il/wisdom/wisdom2_child.h, the shortlist) ─────────────
+ * The 1D plan the plan's banked route runs -- the row plan (the chain walk's rows), the skewed pass's row plan on
+ * its per-row route, the turn plan -- was created from the shortlist's first candidate: the winner of the 1D race
+ * at its length. The other candidates of that shortlist now run in its place, each on its own store with its own
+ * clones for the workers, and all of them are timed on the plan's WHOLE forward transform as it stands (its chain,
+ * walk and threaded form, at its thread count): min of 7 alternated samples of about 1 ms, an untimed execute before
+ * each. The fastest stays on the plan; the cell's row gets its recipe under the child's prefix (_il2d_children_put).
+ * due_*: the child's recipe is new to this cell (_il2d_child_create) -- a cell that replays its own row has no
+ * final. No final where the batched rows serve (no per-row plan runs) or the shortlist has one candidate. */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    vfft_real *z, *zo;
+    struct vfft_plan_s **slot;      /* the plan's field the child sits in */
+    struct vfft_plan_s ***wslot;    /* and its clones' */
+    struct vfft_plan_s *p;          /* this arm's child */
+    struct vfft_plan_s **w;         /* this arm's clones, wn of them */
+    int wn;
+    struct vfft_wisdom_s *S;        /* this arm's recipe */
+    char name[48];
+} _il2d_child_arm_t;
+static void _il2d_arm_child(void *v)
+{
+    _il2d_child_arm_t *c = (_il2d_child_arm_t *)v;
+    *c->slot = c->p;
+    *c->wslot = c->w;
+    _vfft_exec6((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->zo, NULL);
+}
+static void _il2d_child_final(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_cfg_t *cfg, int N1, int N2,
+                              int due_row, int due_turn, int due_csk)
+{
+    const int T = h->nthreads > 1 ? h->nthreads : 1;
+    const size_t PN = (size_t)N1 * (size_t)N2;
+    struct vfft_plan_s **slot, ***wslot;
+    struct vfft_wisdom_s **Sslot;
+    _il2d_child_arm_t ca[VFFT_SHORTLIST_MAX];
+    vfft_race_arm_t arms[VFFT_SHORTLIST_MAX];
+    double ns[VFFT_SHORTLIST_MAX], t0;
+    vfft_real *z = NULL, *zo = NULL, *zseed = NULL;
+    _il2d_ip_reset_t zrs;
+    const char *what;
+    int *wn, N, ip, due, nc, na = 0, k, win = 0, need_w;
+    const vfft_cfg_t *scfg = NULL;
+    struct vfft_wisdom_s *SW = _il2d_shortlist_store(W, cfg, &scfg);
+    if (h->transform != VFFT_C2C || !SW)
+        return;
+    if (h->il2d_turn)
+    {
+        slot = &h->il2d_turn_plan; wslot = &h->il2d_turnw; wn = &h->il2d_turnw_n; Sslot = &h->il2d_turnS;
+        N = N1; ip = 1; due = due_turn; what = "turn";
+    }
+    else if (h->il2d_rowb || h->il2d_rowb2)
+        return;
+    else if (h->il2d_csk || (h->il2d_rfw > 0 && h->placement == VFFT_OUTOFPLACE))
+    {   /* the out-of-place row plan: the skewed pass's rows, and the rows-first walk's move */
+        slot = &h->il2d_csk_row; wslot = &h->il2d_cskw; wn = &h->il2d_cskw_n; Sslot = &h->il2d_cskS;
+        N = N2; ip = 0; due = due_csk; what = h->il2d_csk ? "csk row" : "rows-first row";
+    }
+    else
+    {
+        slot = &h->il2d_row; wslot = &h->il2d_roww; wn = &h->il2d_roww_n; Sslot = &h->il2d_rowS;
+        N = N2; ip = 1; due = due_row; what = "row";
+    }
+    if (!due || !*slot || !*Sslot)
+        return;
+    nc = vfft_shortlist_count(&SW->vw2, VW2_T_C2C, N, ip, 1);
+    if (nc < 2)
+        return;
+    t0 = vfft_now_ns();   /* from here the create measures: a cell with no final reads no clock */
+    need_w = (T > 1 && *wn > 0);   /* the plan holds a clone a worker: every candidate brings its own */
+    memset(ca, 0, sizeof ca);
+    ca[0].p = *slot; ca[0].w = *wslot; ca[0].wn = *wn; ca[0].S = *Sslot;
+    snprintf(ca[0].name, sizeof ca[0].name, "1:%s", _vfft_plan_route((vfft_plan)*slot));
+    na = 1;
+    for (k = 2; k <= nc && na < VFFT_SHORTLIST_MAX; k++)
+    {   /* candidate k: its recipe replayed (a create that races it is not that candidate: left out) */
+        _il2d_child_arm_t *a = &ca[na];
+        vfft_cfg_t cc;
+        a->S = vfft_shortlist_get(&SW->vw2, VW2_T_C2C, N, ip, 1, k);
+        if (!a->S)
+            continue;
+        memset(&cc, 0, sizeof cc);
+        cc.transform = VFFT_C2C;
+        cc.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+        cc.rigor = cfg->rigor;
+        cc.dims = 1;
+        cc.n[0] = N;
+        cc.howmany = 1;
+        cc.order = VFI_ORDER_NATURAL;
+        cc.layout = VFI_LAYOUT_IL;
+        cc.nthreads = 1;
+        cc.wisdom = (vfft_wisdom *)a->S;
+        cc.wisdom_write = 0;
+        a->p = (struct vfft_plan_s *)_vfft_create_cfg(&cc);
+        if (a->p && !vfft_child_store_raced(a->S) && need_w &&
+            !_il2d_clone_set(a->p, a->S, cfg, N, cc.placement, T, &a->w, &a->wn, what))
+        {
+            vfft_destroy(a->p);
+            a->p = NULL;
+        }
+        if (!a->p || vfft_child_store_raced(a->S))
+        {
+            if (a->p)
+                vfft_destroy(a->p);
+            _il2d_clone_set_drop(&a->w, &a->wn);
+            vfft_child_store_free(a->S);
+            memset(a, 0, sizeof *a);
+            continue;
+        }
+        snprintf(a->name, sizeof a->name, "%d:%s", k, _vfft_plan_route((vfft_plan)a->p));
+        na++;
+    }
+    if (na >= 2)
+    {
+        z = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real));
+        zo = (h->placement == VFFT_OUTOFPLACE) ? (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real)) : z;
+    }
+    if (na >= 2 && z && zo)
+    {
+        size_t q;
+        int reps = 1;
+        for (q = 0; q < 2 * PN; q++)
+            z[q] = 1.0 + 1e-6 * (double)(q & 1023);
+        memset(&zrs, 0, sizeof zrs);
+        if (zo == z && (zseed = (vfft_real *)vfft_aligned_alloc(2 * PN * sizeof(vfft_real))) != NULL)
+        {   /* in place: the plane re-laid before every sample */
+            memcpy(zseed, z, 2 * PN * sizeof(vfft_real));
+            zrs.p = z;
+            zrs.seed = zseed;
+            zrs.n = 2 * PN;
+        }
+        for (k = 0; k < na; k++)
+        {
+            int r2;
+            ca[k].h = h; ca[k].z = z; ca[k].zo = zo; ca[k].slot = slot; ca[k].wslot = wslot;
+            arms[k].name = ca[k].name;
+            arms[k].run = _il2d_arm_child;
+            arms[k].ctx = &ca[k];
+            if (zseed) _il2d_ip_reset(&zrs);
+            r2 = _il2d_race_reps_ns(_il2d_arm_child, &ca[k], zseed ? (double)PN : 0.0, VFFT_IL2D_MT_SAMPLE_NS);
+            if (r2 > reps) reps = r2;   /* ~1 ms of the FASTEST arm */
+        }
+        if (zo != z || zseed)
+        {
+            const vfft_race_proto_t proto = { 7, reps, VFFT_RACE_MIN, 1, 2, zseed ? _il2d_ip_reset : NULL,
+                                              zseed ? &zrs : NULL, T > 1 ? 0 : 1, 1 };
+            vfft_race_run(&proto, arms, na, ns);
+            for (k = 1; k < na; k++)
+                if (ns[k] < ns[win]) win = k;
+            if (getenv("VFFT_IL2D_LOG"))
+            {
+                fprintf(stderr, "[il2d] %s final %dx%d T=%d: %d candidate(s) of the shortlist at N=%d, %.2f s:", what, N1, N2, T,
+                        na, N, (vfft_now_ns() - t0) / 1e9);
+                for (k = 0; k < na; k++)
+                    fprintf(stderr, " %s=%.0f%s", ca[k].name, ns[k], k == win ? "*" : "");
+                fprintf(stderr, "\n");
+            }
+        }
+    }
+    /* the winner onto the plan, its recipe the child's store; the others go */
+    for (k = 0; k < na; k++)
+    {
+        if (k == win)
+            continue;
+        vfft_destroy(ca[k].p);
+        _il2d_clone_set_drop(&ca[k].w, &ca[k].wn);
+        vfft_child_store_free(ca[k].S);
+    }
+    *slot = ca[win].p;
+    *wslot = ca[win].w;
+    *wn = ca[win].wn;
+    *Sslot = ca[win].S;
+    for (k = 0; k < ca[win].S->vw2.nrec; k++)
+        ca[win].S->vw2.rec[k].own = 1;   /* this cell's recipe now: onto its row (vfft_child_row_update) */
+    if (zo && zo != z) vfft_aligned_free(zo);
+    vfft_aligned_free(z);
+    vfft_aligned_free(zseed);
 }
 
 /* ── the c2c MT verdict race (same law as the real tier's): serial vs

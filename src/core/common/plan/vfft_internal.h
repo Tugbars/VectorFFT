@@ -462,6 +462,17 @@ struct vfft_plan_s
     struct vfft_plan_s **il2d_cskw;     /* the threaded csk rows on route 0: clones of il2d_csk_row, T-1 slots */
     int il2d_cskw_n;
     vfft_il2p_fn il2d_csk_f, il2d_csk_b; /* the route's own single column stage: the n1c pair at radix N1 */
+    /* ── THE ROWS-FIRST WALK (2026-11-24): a natural chain plan at one thread runs its rows FIRST, source ->
+     * destination (the batched kernels natively, the per-row route through the out-of-place K=1 plan above; an
+     * in-place plan its row child), then the column chain IN PLACE on the destination, strip by strip of il2d_rfw
+     * columns through the dense strip scratch (il2d_col.natsscr[0]). 0 = off: the walk the axes name. An arm of the
+     * one-thread create's last race, on the whole transform against the walk the axis race crowned, banked rfw=
+     * (il2d_tier.h, _il2d_rfw_race_1t; the evidence at policy_il.h, vfft_policy_il2d_rowsfirst_widths). */
+    int il2d_rfw;
+    /* the staged natural leaf's finished rows go to the plane THROUGH the cache (1) or past it (0, the streamed
+     * store): 1 where the walk's three planes fit the L2 or the plane's input and output take less than half the L3
+     * (policy_il.h, vfft_policy_il2d_rows_cached: the measurements); set at create with the staging */
+    int il2d_rows_cached;
     /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
      * row state. The serving row path is ONE shared child -- two
      * concurrent bands would interleave plan state

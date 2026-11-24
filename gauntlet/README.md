@@ -27,7 +27,9 @@ python gauntlet/gauntlet.py run --group pow2 --est           # the same cells, t
    or **refused** (no engine serves it).
 2. **bench** -- the verdict the calibrate stage banked, replayed: one process
    per cell, both engine orders, best-of-5 in two
-   timing windows, cachebust and a cool-down between engines, the caller pinned
+   timing windows, cachebust and a cool-down between engines (a threaded cell
+   keeps the same cool-down before its first engine too, so the comparator's
+   team from the correctness transform is parked by then), the caller pinned
    with its SMT sibling held, a control cell every 100 cells so a long run can
    be checked for drift. With MKL the ratio column; without it ns and GFLOPS.
    Correctness is measured on every cell (roundtrip error in the csv; `verify`
