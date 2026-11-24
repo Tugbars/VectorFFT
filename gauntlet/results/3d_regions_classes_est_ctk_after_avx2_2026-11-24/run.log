@@ -1,0 +1,11 @@
+2026-11-24 19:42:08 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-24 19:42:08 run: 160 cells, contract out of place, the estimate's plans, bin build/gauntlet
+2026-11-24 19:42:08 bench: 160 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-24 19:42:50   benched 25/160 (9x10x10), 40 s elapsed
+2026-11-24 19:43:42   benched 50/160 (10x525x420), 92 s elapsed
+2026-11-24 19:44:55   benched 75/160 (24x42x42), 165 s elapsed
+2026-11-24 19:46:14   benched 100/160 (45x630x135), 244 s elapsed
+2026-11-24 19:47:20   benched 125/160 (150x6x54), 310 s elapsed
+2026-11-24 19:48:38   benched 150/160 (420x18x150), 388 s elapsed
+2026-11-24 19:49:37   benched 160/160 (630x300x21), 447 s elapsed
+2026-11-24 19:49:39 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_regions_classes_est_ctk_after_avx2_2026-11-24\report_3d_est.md

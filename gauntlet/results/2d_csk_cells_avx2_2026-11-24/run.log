@@ -1,0 +1,6 @@
+2026-11-24 19:51:34 run: 22 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 19:51:34 calibrate: 22 cells (0 already done)
+2026-11-24 19:57:53   calibrated 22/22 (27x4096), 379 s elapsed
+2026-11-24 19:57:53 bench: 22 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 19:58:40   benched 22/22 (27x4096), 45 s elapsed
+2026-11-24 19:58:42 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_csk_cells_avx2_2026-11-24\report_2d.md

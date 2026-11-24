@@ -6,3 +6,6 @@
 2026-11-24 19:08:04   benched 75/160 (24x42x42), 170 s elapsed
 2026-11-24 19:09:27   benched 100/160 (45x630x135), 253 s elapsed
 2026-11-24 19:10:36   benched 125/160 (150x6x54), 322 s elapsed
+2026-11-24 19:11:59   benched 150/160 (420x18x150), 404 s elapsed
+2026-11-24 19:13:03   benched 160/160 (630x300x21), 468 s elapsed
+2026-11-24 19:13:05 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_regions_classes_est_ctk_before_avx2_2026-11-24\report_3d_est.md

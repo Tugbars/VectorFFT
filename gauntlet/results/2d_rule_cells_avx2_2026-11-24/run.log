@@ -1,0 +1,10 @@
+2026-11-24 19:18:59 run: 53 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 19:18:59 calibrate: 53 cells (0 already done)
+2026-11-24 19:19:55   calibrated 25/53 (63x1050), 56 s elapsed
+2026-11-24 19:20:41   calibrated 50/53 (1024x25), 102 s elapsed
+2026-11-24 19:20:45   calibrated 53/53 (4375x25), 106 s elapsed
+2026-11-24 19:20:45 bench: 53 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 19:21:39   benched 25/53 (63x1050), 51 s elapsed
+2026-11-24 19:22:31   benched 50/53 (1024x25), 104 s elapsed
+2026-11-24 19:22:38   benched 53/53 (4375x25), 110 s elapsed
+2026-11-24 19:22:40 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\2d_rule_cells_avx2_2026-11-24\report_2d.md
