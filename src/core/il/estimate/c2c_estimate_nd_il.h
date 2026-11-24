@@ -809,7 +809,9 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
         est_plan3d_t *p = (est_plan3d_t *)malloc(sizeof *p), *q = batch ? (est_plan3d_t *)malloc(sizeof *q) : NULL;
         if (!p || (batch && !q))
             snprintf(why, sizeof why, "out of memory");
-        else if (!est_plan_3d(m, cfg->n[0], cfg->n[1], cfg->n[2], p, why, sizeof why))
+        else if (!est_plan_3d_r(m, cfg->n[0], cfg->n[1], cfg->n[2],
+                                (cfg->nthreads <= 1 && cfg->howmany <= 1) ? EST_ND_R_ODDCT_ON : 0u,   /* rule ODDCT: one volume on one thread */
+                                p, why, sizeof why))
         {
             if (q)
             {
