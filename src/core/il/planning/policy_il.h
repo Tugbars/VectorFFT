@@ -388,6 +388,32 @@ static inline int vfft_policy_il2d_blocks_race(int N1, long long N2, int T)
     const int c = vfft_policy_il2d_colclass(N1), L = vfft_policy_il2d_level(N1, N2);
     return !(T > 1 && ((c == 1 && L == 4) || (c == 2 && L == 3)));
 }
+/* -- THE LONG CHAINS IN THE CHAIN RACE (owner, 2026-11-24: "clean the obsoleted old methods so that the code stays
+ * clean and the planner doesn't take hours") --
+ * On a 2D c2c composite or odd column at one thread the chain race takes the chains of at most
+ * VFFT_POLICY_IL2D_CHAIN_EXTRA stages more than the fewest stages (of two or more) that compose N1; a longer chain is
+ * neither built nor timed. A one-stage candidate is not under the law. A banked row that names a longer chain
+ * re-races (the chain, and the axis verdicts raced on it); it is never served (the owner, 2026-11-24: "prune them,
+ * throw away them too").
+ * Why they are obsolete: a chain of many small radices won where a stage of 15 legs or more crowded an L1d set, on
+ * rows that are a multiple of one L1d way (225x256 5.5.3.3, 315x256 7.5.3.3, 525x256 7.5.5.3 were the 14900KF
+ * planner's picks). The natural pass's own buffers lie at a padded row pitch since 2026-11-24 (il2d_col.h
+ * VFFT_IL2D_NAT_PITCH) and the crowding those chains dodged is gone.
+ * Evidence (14900KF, AVX2, one thread; docs/roadmap/3d_odd_composite_open_work.md): 427 planes, 61 composite and odd
+ * column lengths of 12 to 630 over rows of 16, 42, 64, 250, 256, 1024, 1050 (planes up to 10 MiB), every chain of the
+ * fewest stages and the eight most balanced of one, two and three stages more (3857 chains), the natural pass and the
+ * rows. The fastest chain's stages past the fewest: +0 at 358 planes, +1 at 68, +2 at 1 (within 3 % of the best of +0
+ * and +1), +3 at none; racing only +0 and +1 costs nothing past 3 % at any plane. With the buffers at the plane's
+ * pitch a chain of +2 was the fastest at 6 of the 183 planes on rows of 64, 256, 1024 (by up to 15 %): the law stands
+ * on the padded pitch. Not measured: T > 1 (the threaded forms are raced on the chain this race crowns), the powers of
+ * two, the prime cells, the real tier, the 3D tier's own passes, the lane-major batches: not under the law. */
+#ifndef VFFT_POLICY_IL2D_CHAIN_EXTRA
+#define VFFT_POLICY_IL2D_CHAIN_EXTRA 1
+#endif
+static inline int vfft_policy_il2d_chain_races(int N1, int T, int nst, int fewest)
+{   /* nst: the chain's stages; fewest: the fewest stages of two or more among the pool's chains at N1 */
+    return !(T <= 1 && nst >= 2 && nst > fewest + VFFT_POLICY_IL2D_CHAIN_EXTRA && vfft_policy_il2d_colclass(N1));
+}
 /* -- THE ROWS-FIRST WALK'S STRIP WIDTHS (2026-11-24) --
  * A natural chain plan at one thread walks its column chain out of place twice over the plane (the stages into the
  * pre-leaf plane, the leaf into the destination) and then runs the rows in place. On a composite or odd column the

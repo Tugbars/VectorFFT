@@ -4326,6 +4326,18 @@ static void _il2d_lmform_of(const vw2_ilcol_key_t *key, const vfft_cfg_t *cfg, _
  * Returns 1; 0 = REFUSED (loud), the descriptor freed. *oom (may be NULL) = 1
  * when the refusal is OUT OF MEMORY (the chain race's planes): the recorded
  * reason is that cause, and a caller keeps it rather than writing its own. */
+/* the fewest stages, of two or more, among the pool's chains at N (99: the pool holds none): what the long-chain
+ * pruning law counts from (policy_il.h vfft_policy_il2d_chain_races) */
+static int _il2d_chain_fewest(int N)
+{
+    int cand[VFFT_IL2D_POOL_MAX][8], lens[VFFT_IL2D_POOL_MAX];
+    int cur[8], n = 0, dropped = 0, i, k = 99;
+    _il2d_enum_rec(N, 0, cur, cand, lens, &n, &dropped);
+    for (i = 0; i < n; i++)
+        if (lens[i] >= 2 && lens[i] < k)
+            k = lens[i];
+    return k;
+}
 static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
                            vfft_ilcol_t *c, char *forms, size_t fsz,
@@ -4362,7 +4374,17 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                  _il2d_chain_prod(c->R, c->nst) ==
                      (il2d_bblu > 0 ? il2d_bblu : N) &&
                  _il2d_resolve(c->R, c->nst, c->f, c->b))
+        {
             chain_ok = 1;
+            if (il2d_bblu <= 0 && key->rank == 2 && !key->real && !key->lm && key->axis == 0 && c->nst >= 2 &&
+                !vfft_policy_il2d_chain_races(N, key->nthreads, c->nst, _il2d_chain_fewest(N)))
+            {   /* A BANKED LONG CHAIN (the pruning law, policy_il.h vfft_policy_il2d_chain_races): the law takes it out
+                 * of the race, so the row re-races -- the chain, and the axis verdicts that were raced on it (the
+                 * band, the fusion, the row route, the column threading); it is never served */
+                chain_ok = 0;
+                il2d_bwl = il2d_btf = il2d_bro = il2d_bcmt = il2d_bcmtt = -1;
+            }
+        }
         /* a replayed Bluestein row (il2d_bblu > 0) rebuilds its inner in the
          * N-arm block below -- at every rank. */
         if (!chain_ok)
@@ -4372,6 +4394,23 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
             _il2d_enum_rec(N, 0, cur, cand, lens, &ncand,
                            &dropped);
             /* (a capped pool warns from inside the enumerator) */
+            if (key->rank == 2 && !key->real && !key->lm && key->axis == 0)
+            {   /* THE LONG CHAINS (the pruning law, policy_il.h vfft_policy_il2d_chain_races): on a composite or odd
+                 * 2D c2c column at one thread a chain of more stages than the fewest and one is no candidate */
+                const int fewest = _il2d_chain_fewest(N);
+                int ci, cm = 0;
+                for (ci = 0; ci < ncand; ci++)
+                    if (vfft_policy_il2d_chain_races(N, key->nthreads, lens[ci], fewest))
+                    {
+                        if (cm != ci)
+                        {
+                            memcpy(cand[cm], cand[ci], sizeof cand[0]);
+                            lens[cm] = lens[ci];
+                        }
+                        cm++;
+                    }
+                ncand = cm;
+            }
             /* ncand >= 1, not > 1: one arm is still a race -- it is timed
              * and it banks, so the cell gets a row for its forms and widths
              * to hang off. */
