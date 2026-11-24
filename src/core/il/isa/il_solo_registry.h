@@ -142,6 +142,17 @@ static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
     default: break;
     }
 #endif
+#ifdef VFFT_IL_N1C_CT_PAIR_RADICES
+    /* the factored odd composite leaf where the corpus emits it (n1c_ct: 15, 21, 25, 27; 2026-11-24): it
+     * replaced the direct conjugate-pair kernel, here as in vfft_il2p_n1c_fn */
+    switch (N)
+    {
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_ct_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_ct_fwd);
+    VFFT_IL_N1C_CT_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     switch (N)
     {
 #define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_fwd);
@@ -195,9 +206,20 @@ static inline vfft_oop11_fn vfft_k1_mono_il_alias_fn(int N, vfft_oop11_fn bound_
  * pairs, in place, natural order, both directions. Call:
  *   fn(z, NULL, z, NULL, NULL, NULL, 1, pitch, 1, pitch, count)
  * (Ls = OLs = 1: the legs of one transform are contiguous). NULL where the
- * corpus has no pair at R -- the registry's PAIR list is the resolver. */
+ * corpus has no pair at R -- the registry's PAIR list is the resolver. At the
+ * odd composites 15, 21, 25, 27 the kernel is the factored one (n1ccs_ct, the
+ * generator's --cil-oddct; 2026-11-24), as the column leaf's (vfft_il2p_n1c_fn). */
 static inline vfft_oop11_fn vfft_il_n1ccs_fn(int R, int bwd)
 {
+#ifdef VFFT_IL_N1CCS_CT_PAIR_RADICES
+    switch (R)
+    {
+#define C(r) case r: return bwd ? VFFT_IL_SYM(radix##r##_z_n1ccs_ct_bwd) : VFFT_IL_SYM(radix##r##_z_n1ccs_ct_fwd);
+    VFFT_IL_N1CCS_CT_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     switch (R)
     {
 #define C(r) case r: return bwd ? VFFT_IL_SYM(radix##r##_z_n1ccs_bwd) : VFFT_IL_SYM(radix##r##_z_n1ccs_fwd);

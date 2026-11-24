@@ -1,7 +1,8 @@
 # shared/col/half/ — the forward column leaf's half-store twins
 
 32 files: `n1ch` at every `n1c` radix but 32 and 64 (where the monolithic
-leaf is never served), and `n1cb48h`, `n1cb84h`, `n1cb88h`; forward only. Each
+leaf is never served), `n1c_cth` at 15, 21, 25, 27 (the factored leaf `n1c_ct`'s
+twin; the form's name is still "h"), and `n1cb48h`, `n1cb84h`, `n1cb88h`; forward only. Each
 is its plain or blocked forward twin with one difference: the plane stores of
 the wide path leave as two 128-bit halves (`vmovupd xmm` + `vextractf128` to
 memory) instead of one 256-bit store. The loads, the body and the VEX-128

@@ -467,6 +467,14 @@ VFFT_IL_DECL(radix64_z_n1c_bwd_avx512_f32)
 #define VFFT_IL_N1C_BWD_RADICES(X) X(2) X(4) X(8) X(16) X(32) X(64)
 #define VFFT_IL_N1C_PAIR_RADICES(X) X(2) X(4) X(8) X(16) X(32) X(64)
 
+/* ── n1c_ct ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_N1C_CT_FWD_RADICES(X)
+#define VFFT_IL_N1C_CT_BWD_RADICES(X)
+#define VFFT_IL_N1C_CT_PAIR_RADICES(X)
+
+/* ── n1c_cth ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_N1C_CTH_FWD_RADICES(X)
+
 /* ── n1cb448 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix128_z_n1cb448_fwd_avx512_f32)
 VFFT_IL_DECL(radix128_z_n1cb448_bwd_avx512_f32)
@@ -520,6 +528,11 @@ VFFT_IL_DECL(radix64_z_n1cb88_bwd_avx512_f32)
 #define VFFT_IL_N1CCS_FWD_RADICES(X)
 #define VFFT_IL_N1CCS_BWD_RADICES(X)
 #define VFFT_IL_N1CCS_PAIR_RADICES(X)
+
+/* ── n1ccs_ct ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_N1CCS_CT_FWD_RADICES(X)
+#define VFFT_IL_N1CCS_CT_BWD_RADICES(X)
+#define VFFT_IL_N1CCS_CT_PAIR_RADICES(X)
 
 /* ── n1ch ── fwd 0 · bwd 0 · pair 0 */
 #define VFFT_IL_N1CH_FWD_RADICES(X)
@@ -702,6 +715,11 @@ VFFT_IL_DECL(radix64_z_t2c_bwd_avx512_f32)
 #define VFFT_IL_T2C_BWD_RADICES(X) X(4) X(8) X(32) X(64)
 #define VFFT_IL_T2C_PAIR_RADICES(X) X(4) X(8) X(32) X(64)
 
+/* ── t2c_ct ── fwd 0 · bwd 0 · pair 0 */
+#define VFFT_IL_T2C_CT_FWD_RADICES(X)
+#define VFFT_IL_T2C_CT_BWD_RADICES(X)
+#define VFFT_IL_T2C_CT_PAIR_RADICES(X)
+
 /* ── t2cb44 ── fwd 1 · bwd 1 · pair 1 */
 VFFT_IL_DECL(radix16_z_t2cb44_fwd_avx512_f32)
 VFFT_IL_DECL(radix16_z_t2cb44_bwd_avx512_f32)
@@ -851,6 +869,6 @@ VFFT_IL_DECL(radix8_z_tmg_bwd_avx512_f32)
  *   2  codelet_zsplit: t0tp/tld radix 8 is not a whole number of 16-lane blocks (law: R % VW == 0)
  *   8  codelet_zsplit: the kind has no 16-lane FP32 form (16 lanes = the natural class: t0tp, tmg, tlf, tlfi)
  */
-/* 202 declarations over 137 kinds */
+/* 202 declarations over 141 kinds */
 
 #endif

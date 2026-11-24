@@ -1,0 +1,36 @@
+2026-11-24 15:32:13 run: 160 cells, contract out of place, bin build/gauntlet
+2026-11-24 15:32:13 calibrate: 160 cells (0 already done)
+2026-11-24 15:35:29   calibrated 25/160 (9x10x10), 196 s elapsed
+2026-11-24 15:38:55   calibrated 50/160 (10x525x420), 402 s elapsed
+2026-11-24 15:41:36   calibrated 75/160 (24x42x42), 563 s elapsed
+2026-11-24 15:43:56   calibrated 100/160 (45x630x135), 704 s elapsed
+2026-11-24 15:45:54   calibrated 125/160 (150x6x54), 822 s elapsed
+2026-11-24 15:47:58   calibrated 150/160 (420x18x150), 946 s elapsed
+2026-11-24 15:48:55   calibrated 160/160 (630x300x21), 1002 s elapsed
+2026-11-24 15:48:55 bench: 160 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 15:49:50   benched 25/160 (9x10x10), 53 s elapsed
+2026-11-24 15:50:53   benched 50/160 (10x525x420), 116 s elapsed
+2026-11-24 15:52:18   benched 75/160 (24x42x42), 201 s elapsed
+2026-11-24 15:53:50   benched 100/160 (45x630x135), 293 s elapsed
+2026-11-24 15:55:08   benched 125/160 (150x6x54), 371 s elapsed
+2026-11-24 15:56:40   benched 150/160 (420x18x150), 463 s elapsed
+2026-11-24 15:57:44   benched 160/160 (630x300x21), 527 s elapsed
+2026-11-24 15:57:46 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_regions_classes_avx2_2026-11-24\report_3d.md
+2026-11-24 16:05:30 run: 160 cells, contract out of place, T=8, bin build/gauntlet
+2026-11-24 16:05:30 calibrate: 160 cells (0 already done)
+2026-11-24 16:06:25   calibrated 25/160 (9x10x10), 55 s elapsed
+2026-11-24 16:07:37   calibrated 50/160 (10x525x420), 127 s elapsed
+2026-11-24 16:08:53   calibrated 75/160 (24x42x42), 203 s elapsed
+2026-11-24 16:10:16   calibrated 100/160 (45x630x135), 286 s elapsed
+2026-11-24 16:11:25   calibrated 125/160 (150x6x54), 355 s elapsed
+2026-11-24 16:12:52   calibrated 150/160 (420x18x150), 442 s elapsed
+2026-11-24 16:13:50   calibrated 160/160 (630x300x21), 500 s elapsed
+2026-11-24 16:13:50 bench: 160 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 16:15:00   benched 25/160 (9x10x10), 67 s elapsed
+2026-11-24 16:16:09   benched 50/160 (10x525x420), 136 s elapsed
+2026-11-24 16:17:23   benched 75/160 (24x42x42), 210 s elapsed
+2026-11-24 16:18:40   benched 100/160 (45x630x135), 287 s elapsed
+2026-11-24 16:19:50   benched 125/160 (150x6x54), 358 s elapsed
+2026-11-24 16:21:04   benched 150/160 (420x18x150), 432 s elapsed
+2026-11-24 16:21:40   benched 160/160 (630x300x21), 468 s elapsed
+2026-11-24 16:21:43 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_regions_classes_avx2_2026-11-24\report_3d_mt8.md

@@ -13,6 +13,13 @@ column-stride `n1ccs` twin in [`../../rows/`](../../rows/).
 | `transforms/fftnd/fftnd_il.h` | axis 0 and axis 1 of the rank-3 tier | `chain=`, `chain1=` on the 3D row |
 | `oop/c2c_ip_create.h` | the in-place 1D MONO cell | `il_route=mono` |
 
+At the odd composite radices 15, 21, 25, 27 the two kinds are `n1c_ct` and `t2c_ct`
+(2026-11-24): the generator's `--cil-oddct` factors the radix (3x5, 3x7, 5x5, 3x9),
+with no spill array, and that is those radices' one body. The direct conjugate-pair
+kernels they replaced ((R-1)^2 / 2 multiplies as two passes through a spill array) are
+gone; the library's resolvers (`vfft_il2p_n1c_fn`, `vfft_il2p_t2c_fn`,
+`vfft_k1_mono_ilc_fn`) serve the factored kernel there.
+
 `blocked/` holds the radix-32 and radix-64 forms raced per cell (`b48`, `b84`,
 `b88`); the `b416` form was deleted on 2026-09-24 (it never won a cell). The
 radix-16 twiddle stage has no monolithic body since 2026-10-06: it is `t2cb44`

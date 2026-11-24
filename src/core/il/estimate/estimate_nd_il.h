@@ -101,8 +101,8 @@ typedef struct est_plan3d_s
     int s;                 /* [s] 1 = the 2D plan per plane, 2 = the flat tier (est__flat_plane) */
     int nf;                /* [nf] 1 = the cycle walk, 2 = the strips */
     int nsw;               /* [nsw] the strip width in columns (nf = 2); 0 = not written (nf = 1) */
-    est_plan2d_t plane;    /* [plane_] the 2D plan at N2 x N3, natural, with its own children; s = 2 writes
-                            * only its row plan, under rp_ */
+    est_plan2d_t plane;    /* [plane_] the 2D plan at N2 x N3, natural, with its own children (one volume on one
+                            * thread: the rows-first walk too, est_rfw_3d); s = 2 writes only its row plan, under rp_ */
     est_col_t col1;        /* [chain1 forms1 blu1] s = 2: axis 1, the plane plan's column pass unbanded (the
                             * door bands axis 0 alone, fftnd_il.h:1752) */
     est_recipe_t tpcp;     /* [tpc_] N1, in place, natural: col.tpc == 1 */
@@ -1701,10 +1701,10 @@ static inline void est_mt_2d_serial_1t(const est_machine_t *m, int T, est_plan2d
 /* ROWS FIRST (2026-11-24): the rows-first walk (vfft_internal.h il2d_rfw; il2d_tier.h _il2d_rfw_exec) on the plan of
  * ONE transform on ONE thread: the rows from the source into the destination, then the natural column chain in place
  * on the destination, a strip of w columns at a time through a dense scratch. The walk it replaces moves the plane
- * out of place twice (three planes); once those pass the L1d, strips that fit it keep the column chain inside. A
- * strip is its columns in the plane and in the scratch, 2 N1 w 16 B: the walk runs at the widest of 32, 16, 8
- * columns whose strip takes at most 1/2, 3/4, 2/3 of the L1d and is narrower than the row; where none does, the plan
- * keeps its walk.
+ * through three planes out of place (the source, the scratch, the destination) and two in place; once those pass the
+ * L1d, strips that fit it keep the column chain inside. A strip is its columns in the plane and in the scratch,
+ * 2 N1 w 16 B: the walk runs at the widest of 32, 16, 8 columns whose strip takes at most 1/2, 3/4, 2/3 of the L1d
+ * and is narrower than the row; where none does, the plan keeps its walk.
  * Evidence (14900KF, AVX2, L1d 48 KiB; docs/research/2d_composites_odds_2026_11_24.md): the estimate's own plan with
  * the walk switched as the planner's race switches it, at every width the L1d admits: 151 planes, composite and odd
  * columns of 18 to 150 over rows of 9 to 8750, both placements, two runs (the same ratio within 2 % run to run).
@@ -1716,21 +1716,23 @@ static inline void est_mt_2d_serial_1t(const est_machine_t *m, int T, est_plan2d
  * than 2 %; every plane, geometric mean 0.922 against 0.916 for the best arm per plane. The planner's race keeps the
  * walk on the same planes: 14 of 14 at columns to 24, 49 of 52 at 28 to 70, 29 of 50 at 75 to 126, 1 of 22 at 135
  * and 150, 1 of 13 within the L1d.
- * IN PLACE the rule is the same one (the owner's ruling, 2026-11-24): 116 planes on, median 0.89, every plane 0.916;
- * the in-place walk it replaces moves two planes, so on five planes of 1176 to 1260 points (18x70, 28x42, 30x42,
- * 35x35, 70x18) the walk is 5 to 9 % slower in place where it is 7 to 19 % faster out of place.
+ * IN PLACE the widths and their cut points are the same (the owner's ruling, 2026-11-24: one rule for both
+ * placements); the L1d line counts the two planes the in-place walk moves. With three planes counted there, five
+ * planes of 1176 to 1260 points (18x70, 28x42, 30x42, 35x35, 70x18) ran the walk 5 to 9 % slower in place (7 to 19 %
+ * faster out of place); with two they keep their walk and no other plane changes (163 planes, three runs each way:
+ * in place the walk on 123, median 0.88, worst 1.03, every plane 0.909; out of place on 128, median 0.89, 0.915).
  * Composite and odd columns alone (the planner races the walk nowhere else; the powers of two and the prime columns
- * are not measured), a natural chain of two stages or more, off the turn and the skewed pass. Not on a batch, a
- * plane of a volume or a threaded plan: none measured. Out of place the walk moves the rows through the out-of-place
- * plan at N2: the skewed pass's where the door builds one (has_csk), else its own under the same csk_ (rfw_row); a
- * row plan the 1D estimate refuses leaves the plan its walk. */
+ * are not measured), a natural chain of two stages or more, off the turn and the skewed pass. Not on a batch or a
+ * threaded plan: none measured; the plane plan of a volume: est_rfw_3d. Out of place the walk moves the rows through
+ * the out-of-place plan at N2: the skewed pass's where the door builds one (has_csk), else its own under the same
+ * csk_ (rfw_row); a row plan the 1D estimate refuses leaves the plan its walk. */
 #define EST_ND_RFW_W32_NUM 1   /* a strip of 32 columns: at most 1/2 of the L1d */
 #define EST_ND_RFW_W32_DEN 2
 #define EST_ND_RFW_W16_NUM 3   /* of 16 columns: at most 3/4 */
 #define EST_ND_RFW_W16_DEN 4
 #define EST_ND_RFW_W8_NUM 2    /* of 8 columns: at most 2/3 */
 #define EST_ND_RFW_W8_DEN 3
-static inline int est__rfw_2d(const est_machine_t *m, const est_plan2d_t *p)   /* the strip width, 0 = the plan's walk */
+static inline int est__rfw_2d(const est_machine_t *m, const est_plan2d_t *p, int oop)   /* the strip width, 0 = the plan's walk */
 {
     static const int W[3][3] = { { 32, EST_ND_RFW_W32_NUM, EST_ND_RFW_W32_DEN },
                                  { 16, EST_ND_RFW_W16_NUM, EST_ND_RFW_W16_DEN },
@@ -1740,7 +1742,7 @@ static inline int est__rfw_2d(const est_machine_t *m, const est_plan2d_t *p)   /
     if (p->T > 1 || !p->col.nat || p->col.blu > 0 || p->col.nst < 2 || p->col.rd_n || p->col.tpc == 1 || p->turn ||
         p->csk || !vfft_policy_il2d_colclass(p->N1))
         return 0;
-    if (3LL * 16 * N1 * N2 <= l1)   /* the walk it replaces fits the L1d with its three planes */
+    if ((oop ? 3LL : 2LL) * 16 * N1 * N2 <= l1)   /* the walk it replaces fits the L1d: three planes out of place, two in place */
         return 0;
     for (i = 0; i < 3; i++)
         if (W[i][0] < N2 && 2LL * N1 * W[i][0] * 16 * W[i][2] <= l1 * W[i][1])
@@ -1754,7 +1756,7 @@ static inline void est_rfw_2d(const est_machine_t *m, int oop, est_plan2d_t *p)
 {
     p->rfw = 0;
     p->rfw_row = 0;
-    if (!EST_ND_2D_RULE_RFW || !(p->rfw = est__rfw_2d(m, p)))
+    if (!EST_ND_2D_RULE_RFW || !(p->rfw = est__rfw_2d(m, p, oop)))
         return;
     if (oop && !p->has_csk)
     {
@@ -1763,6 +1765,24 @@ static inline void est_rfw_2d(const est_machine_t *m, int oop, est_plan2d_t *p)
         else
             p->rfw_row = 1;
     }
+}
+/* est_rfw_3d: the rows-first walk onto the PLANE PLAN of the one-thread plan p of ONE volume, where the structure is
+ * the 2D plan per plane (s = 1; the flat tier has no plane plan): est_rfw_2d's rule on the plane N2 x N3 as an
+ * out-of-place plan -- the door creates the plane plan out of place whatever the volume's placement (fftnd_il.h,
+ * _ilnd_build_child) and runs it on a plane where it lies or from one plane into another.
+ * Evidence (14900KF, AVX2; docs/research/2d_composites_odds_2026_11_24.md): the estimate's own 3D plan with the plane
+ * plan's walk switched at every width the L1d admits, the whole volume timed: 75 composite and odd volumes of 1080 to
+ * 4.2 M points, both placements, two runs; the flat tier serves 22 of them. The fastest width over the walk it
+ * replaces, by the plane's column length N2: 18 and 24 0.80-0.92; 42 to 70 0.83-0.98; 84 to 126 0.85-1.00; 150
+ * 1.02-1.18 on rows up to 150 (0.90 on rows of 1050). The 2D rule turns the walk on in 40 volumes: median 0.94 out of
+ * place, 0.93 in place, 0.79 to 1.02, none slower by more than 2 %; every volume, geometric mean 0.958 against 0.951
+ * for the best arm per volume. Left with their walk although the strips gain: the planes 18x42 and 24x42 (8 to 10 %,
+ * four volumes: alone the plane fits the L1d three times) and 18x150x1050 (10 %). Not on a batch of volumes, a
+ * threaded plan or the plane of a rank-4 to 7 plan: none measured. */
+static inline void est_rfw_3d(const est_machine_t *m, est_plan3d_t *p)
+{
+    if (p->s == 1 && p->T <= 1)
+        est_rfw_2d(m, /*oop=*/1, &p->plane);
 }
 /* the 3D structure: the flat tier (s=2) on a plane of at most EST_ND_FLAT_HI_PCT percent of the L2
  * (EST_ND_FLAT_HI_L3_PCT when the cube passes the L3) whose column pass is a plain chain (no Bluestein, no

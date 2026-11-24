@@ -1,0 +1,25 @@
+2026-11-24 15:00:23 run: 75 cells, contract out of place, bin build/gauntlet
+2026-11-24 15:00:23 calibrate: 75 cells (0 already done)
+2026-11-24 15:01:02   calibrated 25/75 (18x70x150), 39 s elapsed
+2026-11-24 15:01:51   calibrated 50/75 (70x24x42), 88 s elapsed
+2026-11-24 15:02:48   calibrated 75/75 (150x150x150), 145 s elapsed
+2026-11-24 15:02:48 bench: 75 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 15:03:45   benched 25/75 (18x70x150), 55 s elapsed
+2026-11-24 15:04:58   benched 50/75 (70x24x42), 127 s elapsed
+2026-11-24 15:06:21   benched 75/75 (150x150x150), 211 s elapsed
+2026-11-24 15:06:23 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_rows_first_volumes_avx2_2026-11-24\report_3d.md
+2026-11-24 15:09:30 run: 75 cells, contract out of place, T=8, bin build/gauntlet
+2026-11-24 15:09:30 calibrate: 75 cells (0 already done)
+2026-11-24 15:10:12   calibrated 25/75 (18x70x150), 42 s elapsed
+2026-11-24 15:11:05   calibrated 50/75 (70x24x42), 95 s elapsed
+2026-11-24 15:12:07   calibrated 75/75 (150x150x150), 156 s elapsed
+2026-11-24 15:12:07 bench: 75 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 15:13:15   benched 25/75 (18x70x150), 66 s elapsed
+2026-11-24 15:14:26   benched 50/75 (70x24x42), 137 s elapsed
+2026-11-24 15:15:37   benched 75/75 (150x150x150), 208 s elapsed
+2026-11-24 15:15:40 report: C:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_rows_first_volumes_avx2_2026-11-24\report_3d_mt8.md
+2026-11-24 15:26:15 run: 75 cells, contract out of place, T=8, bin build/gauntlet
+2026-11-24 15:26:15 calibrate: 0 cells (75 already done)
+2026-11-24 15:26:15 bench: 2 cells (73 already benched, 0 not banked -> not benched)
+2026-11-24 15:26:24   benched 2/2 (18x150x1050), 6 s elapsed
+2026-11-24 15:26:28 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\3d_rows_first_volumes_avx2_2026-11-24\report_3d_mt8.md

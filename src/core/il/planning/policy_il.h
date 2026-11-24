@@ -842,8 +842,15 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
  * VFFT_POLICY_IL2D_ROW_WHOLE_MAX points, half the register file (16 on AVX2:
  * 16 ymm of 2 points; 64 on AVX-512: 32 zmm of 4, where the one-pass row
  * kernels of 16, 32 and 64 are whole-row forms), or a split form
- * (vfft_il_row_split: AVX2 32 and 64, AVX-512 128). The odd rows of 25 and 27,
- * whose whole-row kernels spill on both, keep their race. AVX-512 takes the
+ * (vfft_il_row_split: AVX2 32 and 64, AVX-512 128). The odd rows of 25 and 27
+ * are inside the rule like every other length (the owner, 2026-11-24: "we can
+ * include them in ... larger kernels can benefit avx512 even more, because zmm
+ * registers are 32 there"): they kept their race while their whole-row kernels
+ * were the direct conjugate-pair form through a spill array; since 2026-11-24
+ * the row kernels of 15, 21, 25, 27 are the factored ones (n1ccs_ct, no spill
+ * array; alone 1.3 to 2.0 times faster on the 14900KF, AVX2). The change reaches
+ * AVX-512 alone (on AVX2 both lie past the 16 points of the whole-row bound) and
+ * is NOT MEASURED there. AVX-512 takes the
  * same rule by its own register file (owner, 2026-11-09: a fix for AVX2 is a
  * fix for AVX-512, adjusted as its data comes in; on Emerald Rapids the
  * two-pass rows the old bound left at 32 and 64 lost to MKL, 0.68-0.74).
@@ -859,7 +866,7 @@ static inline int vfft_policy_il2d_band_ok(int N, int nst, const int *L, int w)
 #define VFFT_POLICY_IL2D_ROW_WHOLE_MAX (VFFT_IL_VW == 8 ? 64 : 16)
 static inline int vfft_policy_il2d_row_fixed(int N2, int has_kernel, int split)
 {
-    return has_kernel && ((N2 <= VFFT_POLICY_IL2D_ROW_WHOLE_MAX && N2 != 25 && N2 != 27) || split);
+    return has_kernel && (N2 <= VFFT_POLICY_IL2D_ROW_WHOLE_MAX || split);
 }
 
 /* -- rank 2, real: the DESTROYING c2r -------------------------------------

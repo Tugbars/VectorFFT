@@ -246,6 +246,12 @@ static const twin_kernel_t _twin_kern[] = {
 #define TWIN_KIND n1c
     VFFT_IL_N1C_FWD_RADICES(TWIN_FX) VFFT_IL_N1C_BWD_RADICES(TWIN_BX)
 #undef TWIN_KIND
+#define TWIN_KIND n1c_ct
+    VFFT_IL_N1C_CT_FWD_RADICES(TWIN_FX) VFFT_IL_N1C_CT_BWD_RADICES(TWIN_BX)
+#undef TWIN_KIND
+#define TWIN_KIND n1c_cth
+    VFFT_IL_N1C_CTH_FWD_RADICES(TWIN_FX)
+#undef TWIN_KIND
 #define TWIN_KIND n1cb448
     VFFT_IL_N1CB448_FWD_RADICES(TWIN_FX) VFFT_IL_N1CB448_BWD_RADICES(TWIN_BX)
 #undef TWIN_KIND
@@ -275,6 +281,9 @@ static const twin_kernel_t _twin_kern[] = {
 #undef TWIN_KIND
 #define TWIN_KIND n1ccs
     VFFT_IL_N1CCS_FWD_RADICES(TWIN_FX) VFFT_IL_N1CCS_BWD_RADICES(TWIN_BX)
+#undef TWIN_KIND
+#define TWIN_KIND n1ccs_ct
+    VFFT_IL_N1CCS_CT_FWD_RADICES(TWIN_FX) VFFT_IL_N1CCS_CT_BWD_RADICES(TWIN_BX)
 #undef TWIN_KIND
 #define TWIN_KIND n1ch
     VFFT_IL_N1CH_FWD_RADICES(TWIN_FX)
@@ -353,6 +362,9 @@ static const twin_kernel_t _twin_kern[] = {
 #undef TWIN_KIND
 #define TWIN_KIND t2c
     VFFT_IL_T2C_FWD_RADICES(TWIN_FX) VFFT_IL_T2C_BWD_RADICES(TWIN_BX)
+#undef TWIN_KIND
+#define TWIN_KIND t2c_ct
+    VFFT_IL_T2C_CT_FWD_RADICES(TWIN_FX) VFFT_IL_T2C_CT_BWD_RADICES(TWIN_BX)
 #undef TWIN_KIND
 #define TWIN_KIND t2cb44
     VFFT_IL_T2CB44_FWD_RADICES(TWIN_FX) VFFT_IL_T2CB44_BWD_RADICES(TWIN_BX)
@@ -977,6 +989,7 @@ enum {
 enum { TW_NONE, TW_PAIR, TW_BCAST, TW_GEN2, TW_SPLAT, TW_LANE, TW_RPAIR };
 static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "n1", C_COL, TW_NONE },        { "n1c", C_COL, TW_NONE },       { "n1_ct", C_COL, TW_NONE },
+    { "n1c_ct", C_COL, TW_NONE },
     { "n1b216", C_COL, TW_NONE },    { "n1b416", C_COL, TW_NONE },    { "n1b48", C_COL, TW_NONE },
     { "n1b88", C_COL, TW_NONE },     { "n1cb48", C_COL, TW_NONE },    { "n1cb84", C_COL, TW_NONE },
     { "n1cb88", C_COL, TW_NONE },    { "n1cb448", C_COL, TW_NONE },   { "n1cb816", C_COL, TW_NONE },
@@ -992,14 +1005,15 @@ static const struct { const char *kind; int cls, tw; } KINDS[] = {
     { "n1tb", C_TRANS, TW_NONE },    { "n1tb44", C_TRANS, TW_NONE },  { "n1tb48", C_TRANS, TW_NONE },
     { "n1ttan", C_TRANS, TW_NONE },  { "n1tbw32", C_TRANS, TW_NONE }, { "n1tbw32t256", C_TRANS, TW_NONE },
     { "t2ttan", C_TRANS, TW_PAIR },
-    { "n1ccs", C_CS, TW_NONE },      { "t2cs", C_CS, TW_PAIR },
+    { "n1ccs", C_CS, TW_NONE },      { "n1ccs_ct", C_CS, TW_NONE },   { "t2cs", C_CS, TW_PAIR },
     { "t2csg", C_GEN2, TW_GEN2 },    { "t2csgt", C_GEN2, TW_GEN2 },
     { "t2csgn", C_GEN2N, TW_GEN2 },  { "t2csgnt", C_GEN2N, TW_GEN2 },
     { "t2csgh", C_HERM, TW_GEN2 },   { "t2csght", C_HERM, TW_GEN2 },  { "r1c", C_RLEAF, TW_NONE },
     { "n1r", C_ROWS, TW_NONE },      { "n1rtan", C_ROWS, TW_NONE },   { "t2r", C_ROWS, TW_PAIR },
     { "t2rtan", C_ROWS, TW_PAIR },   { "n1tr", C_ROWST, TW_NONE },    { "n1trtan", C_ROWST, TW_NONE },
     { "t2tr", C_ROWST, TW_PAIR },    { "t2trtan", C_ROWST, TW_PAIR },
-    { "t2c", C_DIGIT, TW_BCAST },    { "t2cp", C_DIGIT, TW_BCAST },   { "t2cb44", C_DIGIT, TW_BCAST },
+    { "t2c", C_DIGIT, TW_BCAST },    { "t2c_ct", C_DIGIT, TW_BCAST }, { "t2cp", C_DIGIT, TW_BCAST },
+    { "t2cb44", C_DIGIT, TW_BCAST },
     { "t2cb48", C_DIGIT, TW_BCAST }, { "t2cb84", C_DIGIT, TW_BCAST }, { "t2cb88", C_DIGIT, TW_BCAST },
     { "msz", C_SPLAT, TW_SPLAT },    { "mszt", C_SPLAT, TW_SPLAT },
     { "t0tp", C_T0TP, TW_NONE },     { "tmg", C_TMG, TW_LANE },       { "tmgd", C_TMG, TW_LANE },

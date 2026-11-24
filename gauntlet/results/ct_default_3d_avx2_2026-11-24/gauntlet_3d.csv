@@ -1,0 +1,3 @@
+N1,N2,N3,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,flip
+75,24,315,z:il3d,nat-oop,1515375,2223750,35.757,1.467,7.573e-16,-,0
+75,24,315,z:il3d,nat-oop,1528137,2196837,35.458,1.438,7.573e-16,-,1

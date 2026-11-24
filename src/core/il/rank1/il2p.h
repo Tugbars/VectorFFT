@@ -425,6 +425,19 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
     default: break;
     }
 #endif
+#ifdef VFFT_IL_N1C_CT_PAIR_RADICES
+    /* THE FACTORED ODD COMPOSITES (2026-11-24): at the radices the corpus emits the leaf factored (n1c_ct, the
+     * generator's --cil-oddct: 15 = 3x5, 21 = 3x7, 25 = 5x5, 27 = 3x9, no spill array) that is the radix's one
+     * body. It replaced the direct conjugate-pair kernel there ((R-1)^2 / 2 multiplies as two passes through a
+     * spill array): as a column leaf alone 1.1 to 2.0 times faster at every plane width (14900KF, AVX2,
+     * docs/roadmap/3d_odd_composite_open_work.md). */
+    switch (R) {
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_n1c_ct_bwd) : VFFT_IL_SYM(radix##R##_z_n1c_ct_fwd);
+    VFFT_IL_N1C_CT_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     /* EVERY OTHER RADIX FROM THE REGISTRY, never a hand-written list: a
      * kernel the registry declares and this switch omits ships and is never
      * selectable. The PAIR list (both directions exist) is the authority;
@@ -464,6 +477,15 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
                         : VFFT_IL_SYM(radix64_z_t2cb88_fwd);
     default: break;
     }
+#ifdef VFFT_IL_T2C_CT_PAIR_RADICES
+    /* the factored odd composite stage (t2c_ct: 15, 21, 25, 27), the radix's one body -- see n1c above */
+    switch (R) {
+#define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_t2c_ct_bwd) : VFFT_IL_SYM(radix##R##_z_t2c_ct_fwd);
+    VFFT_IL_T2C_CT_PAIR_RADICES(C)
+#undef C
+    default: break;
+    }
+#endif
     /* every other radix from the registry -- see n1c above */
     switch (R) {
 #define C(R) case R: return bwd ? VFFT_IL_SYM(radix##R##_z_t2c_bwd) : VFFT_IL_SYM(radix##R##_z_t2c_fwd);
@@ -480,7 +502,8 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
  * r32/r64 (standing rule), nor as the r16 twiddle stage since 2026-10-06 (its
  * one body is the blocked t2cb44, spelled "-"; the r16 leaf n1c stays
  * monolithic: it parks 8 vectors, the stage parked 40); every other radix has
- * one body, spelled "-".
+ * one body, spelled "-" (at the odd composites 15, 21, 25, 27 the factored one,
+ * n1c_ct / t2c_ct: vfft_il2p_n1c_fn).
  * The forward LEAF (n1c, the closing stage) has a second axis: the
  * HALF-STORE twin ("h", codelets/zil/<isa>/shared/col/half, 2026-10-01), the
  * same body with its plane stores as two 128-bit halves -- a column pass at
@@ -524,6 +547,9 @@ static inline int vfft_il2p_col_forms(int R, int half, const char **names /* [VF
             int has = 0;
 #define C(R_) if (R == R_) has = 1;
             VFFT_IL_N1CH_FWD_RADICES(C)
+#ifdef VFFT_IL_N1C_CTH_FWD_RADICES   /* the factored odd composite leaf's half-store twin (15, 21, 25, 27) */
+            VFFT_IL_N1C_CTH_FWD_RADICES(C)
+#endif
 #undef C
             if (has) names[n++] = "h";
         }
@@ -570,6 +596,11 @@ static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
 #define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1ch_fwd);
         VFFT_IL_N1CH_FWD_RADICES(C)
 #undef C
+#ifdef VFFT_IL_N1C_CTH_FWD_RADICES   /* the factored odd composite leaf's half-store twin */
+#define C(R_) case R_: return VFFT_IL_SYM(radix##R_##_z_n1c_cth_fwd);
+        VFFT_IL_N1C_CTH_FWD_RADICES(C)
+#undef C
+#endif
         default: return 0;
         }
 #endif

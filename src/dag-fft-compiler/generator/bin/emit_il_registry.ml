@@ -208,14 +208,19 @@ let () =
      roles where no twin exists (its store honours the turned pitches). *)
   let turned t = t <> "n1ccs" && starts_with "row" t && t.[String.length t - 1] = 't' in
   let choice name keep =
-    let row_tags = List.filter (fun t -> t = "n1ccs" || (starts_with "row" t && keep t)) tags in
+    (* n1ccs_ct (2026-11-24): the n1ccs construction of the odd composites 15, 21, 25, 27, emitted factored
+       (--cil-oddct); it is the n1ccs of its radix in both choices *)
+    let is_cs t = t = "n1ccs" || t = "n1ccs_ct" in
+    let row_tags = List.filter (fun t -> is_cs t || (starts_with "row" t && keep t)) tags in
     let row_radices = List.sort_uniq compare (List.concat_map pair_of row_tags) in
     Printf.printf "#define %s(X)" name;
     List.iter
       (fun r ->
-         match List.filter (fun t -> t <> "n1ccs" && List.mem r (pair_of t)) row_tags with
+         match List.filter (fun t -> (not (is_cs t)) && List.mem r (pair_of t)) row_tags with
          | [ t ] -> Printf.printf " X(%d, %s)" r t
-         | [] -> if List.mem r (pair_of "n1ccs") then Printf.printf " X(%d, n1ccs)" r
+         | [] ->
+           if List.mem r (pair_of "n1ccs") then Printf.printf " X(%d, n1ccs)" r
+           else if List.mem r (pair_of "n1ccs_ct") then Printf.printf " X(%d, n1ccs_ct)" r
          | l ->
            failwith
              (Printf.sprintf

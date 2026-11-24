@@ -1,0 +1,13 @@
+50x1050    banked      1472ms raced     chain3
+54x1050    banked      1350ms raced     chain3
+63x1050    banked      1365ms raced     chain3
+75x21      banked      1076ms raced     2p
+75x1029    banked      1396ms raced     flat
+100x42     banked      1362ms raced     2p
+100x1050   banked      1344ms raced     chain3
+105x42     banked      1281ms raced     2p
+105x1050   banked      1355ms raced     chain3
+108x1050   banked      1791ms raced     chain3
+135x21     banked      1067ms raced     2p
+135x35     banked      1255ms raced     2p
+150x1050   banked      1820ms raced     chain3

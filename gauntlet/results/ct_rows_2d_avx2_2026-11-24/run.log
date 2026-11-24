@@ -1,0 +1,6 @@
+2026-11-24 18:40:53 run: 11 cells, contract 2D out of place, bin build/gauntlet
+2026-11-24 18:40:53 calibrate: 11 cells (0 already done)
+2026-11-24 18:41:07   calibrated 11/11 (8505x21), 14 s elapsed
+2026-11-24 18:41:07 bench: 11 cells (0 already benched, 0 not banked -> not benched)
+2026-11-24 18:41:32   benched 11/11 (8505x21), 23 s elapsed
+2026-11-24 18:41:34 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\ct_rows_2d_avx2_2026-11-24\report_2d.md

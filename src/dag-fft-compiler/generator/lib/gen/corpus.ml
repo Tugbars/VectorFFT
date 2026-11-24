@@ -1320,14 +1320,6 @@ let zil_pure_cells : (string * string list) list =
     , [ "13"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_n1c_bwd_avx2.c"
     , [ "13"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_t2c_avx2.c"
-    , [ "15"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_t2c_bwd_avx2.c"
-    , [ "15"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_n1c_avx2.c"
-    , [ "15"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_n1c_bwd_avx2.c"
-    , [ "15"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_t2c_avx2.c"
     , [ "17"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_t2c_bwd_avx2.c"
@@ -1400,30 +1392,45 @@ let zil_pure_cells : (string * string list) list =
     , [ "29"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix31_z_n1c_bwd_avx2.c"
     , [ "31"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_t2c_avx2.c"
-    , [ "21"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_t2c_bwd_avx2.c"
-    , [ "21"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_n1c_avx2.c"
-    , [ "21"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_n1c_bwd_avx2.c"
-    , [ "21"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_t2c_avx2.c"
-    , [ "25"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_t2c_bwd_avx2.c"
-    , [ "25"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_n1c_avx2.c"
-    , [ "25"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_n1c_bwd_avx2.c"
-    , [ "25"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_t2c_avx2.c"
-    , [ "27"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_t2c_bwd_avx2.c"
-    , [ "27"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_n1c_avx2.c"
-    , [ "27"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_n1c_bwd_avx2.c"
-    , [ "27"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* THE COLUMN KERNELS AT 15, 21, 25, 27 (2026-11-24): the column stage and its leaf at the odd composite radices
+       are emitted with --cil-oddct -- dft_small factors the radix (3x5, 3x7, 5x5, 3x9), no spill array -- and those
+       are the radices' ONE body: the direct conjugate-pair cells (n1c / t2c, (R-1)^2 / 2 multiplies through the
+       blocked passes' spill array) are gone, as are their half-store leaves (n1c_cth below stands for n1ch there).
+       The kind keeps its tag (n1c_ct, t2c_ct); the library's resolvers serve it at those radices. The ROW kernels
+       of those radices are factored the same way: n1ccs_ct for n1ccs, and rowswap at 15 with --cil-oddct (the row
+       form's symbol carries no tag). *)
+  ; ( "radix15_z_t2c_ct_avx2.c"
+    , [ "15"; "--cil-t2c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_t2c_ct_bwd_avx2.c"
+    , [ "15"; "--cil-t2c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_n1c_ct_avx2.c"
+    , [ "15"; "--cil-n1c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_n1c_ct_bwd_avx2.c"
+    , [ "15"; "--cil-n1c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2c_ct_avx2.c"
+    , [ "21"; "--cil-t2c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2c_ct_bwd_avx2.c"
+    , [ "21"; "--cil-t2c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_n1c_ct_avx2.c"
+    , [ "21"; "--cil-n1c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_n1c_ct_bwd_avx2.c"
+    , [ "21"; "--cil-n1c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2c_ct_avx2.c"
+    , [ "25"; "--cil-t2c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2c_ct_bwd_avx2.c"
+    , [ "25"; "--cil-t2c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_n1c_ct_avx2.c"
+    , [ "25"; "--cil-n1c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_n1c_ct_bwd_avx2.c"
+    , [ "25"; "--cil-n1c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2c_ct_avx2.c"
+    , [ "27"; "--cil-t2c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2c_ct_bwd_avx2.c"
+    , [ "27"; "--cil-t2c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_n1c_ct_avx2.c"
+    , [ "27"; "--cil-n1c"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_n1c_ct_bwd_avx2.c"
+    , [ "27"; "--cil-n1c"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2c_avx2.c"
     , [ "32"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2c_bwd_avx2.c"
@@ -1900,26 +1907,26 @@ let zil_pure_cells : (string * string list) list =
     , [ "13"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix14_z_n1ch_avx2.c"
     , [ "14"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_n1ch_avx2.c"
-    , [ "15"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_n1c_cth_avx2.c"
+    , [ "15"; "--cil-n1c"; "--cil-oddct"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix16_z_n1ch_avx2.c"
     , [ "16"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_n1ch_avx2.c"
     , [ "17"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix19_z_n1ch_avx2.c"
     , [ "19"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_n1ch_avx2.c"
-    , [ "21"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_n1c_cth_avx2.c"
+    , [ "21"; "--cil-n1c"; "--cil-oddct"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix22_z_n1ch_avx2.c"
     , [ "22"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix23_z_n1ch_avx2.c"
     , [ "23"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_n1ch_avx2.c"
-    , [ "25"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_n1c_cth_avx2.c"
+    , [ "25"; "--cil-n1c"; "--cil-oddct"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix26_z_n1ch_avx2.c"
     , [ "26"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_n1ch_avx2.c"
-    , [ "27"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_n1c_cth_avx2.c"
+    , [ "27"; "--cil-n1c"; "--cil-oddct"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix29_z_n1ch_avx2.c"
     , [ "29"; "--cil-n1c"; "--cil-st128"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix31_z_n1ch_avx2.c"
@@ -2010,10 +2017,10 @@ let zil_pure_cells : (string * string list) list =
     , [ "13"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_n1ccs_bwd_avx2.c"
     , [ "13"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_n1ccs_avx2.c"
-    , [ "15"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_n1ccs_bwd_avx2.c"
-    , [ "15"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_n1ccs_ct_avx2.c"
+    , [ "15"; "--cil-n1ccs"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_n1ccs_ct_bwd_avx2.c"
+    , [ "15"; "--cil-n1ccs"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_n1ccs_avx2.c"
     , [ "17"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_n1ccs_bwd_avx2.c"
@@ -2050,18 +2057,18 @@ let zil_pure_cells : (string * string list) list =
     , [ "29"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix31_z_n1ccs_bwd_avx2.c"
     , [ "31"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_n1ccs_avx2.c"
-    , [ "21"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix21_z_n1ccs_bwd_avx2.c"
-    , [ "21"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_n1ccs_avx2.c"
-    , [ "25"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix25_z_n1ccs_bwd_avx2.c"
-    , [ "25"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_n1ccs_avx2.c"
-    , [ "27"; "--cil-n1ccs"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix27_z_n1ccs_bwd_avx2.c"
-    , [ "27"; "--cil-n1ccs"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_n1ccs_ct_avx2.c"
+    , [ "21"; "--cil-n1ccs"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_n1ccs_ct_bwd_avx2.c"
+    , [ "21"; "--cil-n1ccs"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_n1ccs_ct_avx2.c"
+    , [ "25"; "--cil-n1ccs"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_n1ccs_ct_bwd_avx2.c"
+    , [ "25"; "--cil-n1ccs"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_n1ccs_ct_avx2.c"
+    , [ "27"; "--cil-n1ccs"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_n1ccs_ct_bwd_avx2.c"
+    , [ "27"; "--cil-n1ccs"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* THE ROW FAMILY (2026-11-08, rows/row and rows/rowswap): the batched row kernels that beat n1ccs in the
        pinned race of 2026-11-08 at 256 bits, one winner per radix; n1ccs stays where it won (2 5 6 7 8 10 14
        26 and the odd lengths 17..47) and everywhere for the turn route's turned stores. row at 4 12 16; the
@@ -2084,8 +2091,8 @@ let zil_pure_cells : (string * string list) list =
   ; ( "radix11_z_rowswap_bwd_avx2.c", [ "11"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_rowswap_avx2.c", [ "13"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_rowswap_bwd_avx2.c", [ "13"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_rowswap_avx2.c", [ "15"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
-  ; ( "radix15_z_rowswap_bwd_avx2.c", [ "15"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswap_avx2.c", [ "15"; "--cil-rowswap"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_rowswap_bwd_avx2.c", [ "15"; "--cil-rowswap"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix22_z_rowswap_avx2.c", [ "22"; "--cil-rowswap"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix22_z_rowswap_bwd_avx2.c", [ "22"; "--cil-rowswap"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
     (* THE TURNED TWINS (--cil-turnst on the row kinds, 2026-11-08) are GENERATE-ABLE BUT NOT SHIPPED: the 2D turn
@@ -3166,8 +3173,8 @@ let zil_folder (name : string) : string option =
       in
       z
         (if base = "n1" then "shared"
-         else if base = "n1c" || base = "n1cconj" || base = "t2c" then "shared/col"
-         else if base = "n1ch"
+         else if base = "n1c" || base = "n1cconj" || base = "t2c" || base = "n1c_ct" || base = "t2c_ct" then "shared/col"
+         else if base = "n1ch" || base = "n1c_cth"
                  || (starts_with base "n1cb" && ends_with base "h"
                      && is_digits (String.sub base 4 (String.length base - 5)))
          then "shared/col/half"
@@ -3175,7 +3182,7 @@ let zil_folder (name : string) : string option =
          (* the 2D tier's batched ROW kernels (2026-11-08): one folder per construction under rows/ --
             n1ccs (lane loads), rowswap (whole-vector loads and swaps), row (one row per iteration, with its
             split forms rowb<m1><p1>) *)
-         else if base = "n1ccs" then "rows/n1ccs"
+         else if base = "n1ccs" || base = "n1ccs_ct" then "rows/n1ccs"
          else if starts_with base "rowswap" then "rows/rowswap"   (* rowswap, rowswapt (turned stores) *)
          else if starts_with base "row" then "rows/row"           (* row, rowb<m1><p1>, and their turned twins ...t *)
          else if List.mem base [ "n1r"; "n1tr"; "t2r"; "t2tr"; "n1rtan"; "n1trtan"; "t2rtan"; "t2trtan" ]

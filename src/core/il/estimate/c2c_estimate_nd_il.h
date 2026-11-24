@@ -817,6 +817,8 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
                 est_mt_3d(m, 1, q);
             }
             est_mt_3d(m, cfg->nthreads, p);
+            if (cfg->nthreads <= 1 && cfg->howmany <= 1)   /* ROWS FIRST on the plane plan: one volume on one thread */
+                est_rfw_3d(m, p);
             if (q)
                 p->pq = est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1] * (size_t)cfg->n[2], cfg->howmany,
                                         cfg->nthreads);
