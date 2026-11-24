@@ -771,12 +771,14 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                      * the reversed prefix wide scratch -> dre, the rows
                      * LAST on dre (unfused, bitwise with the strips arm).
                      * The width verdict is a forward measurement anyway. */
+                    /* THE PRE-LEAF PLANE AND THE STAGING AT THE NATURAL PASS'S OWN PITCH np
+                     * (il2d_col.h VFFT_IL2D_NAT_PITCH): the stage that moves between the
+                     * caller's plane and the scratch crosses the two pitches. */
                     const int cut = h->il2d_col.cut, nst = h->il2d_col.nst;
                     const int shape_fwd = fwd || _il2d_nat_bwd_fused(h);
                     const int Rl = h->il2d_col.R[nst - 1];
                     const size_t wl = (size_t)h->il2d_col.wl;
-                    const size_t nstride = (size_t)h->N / (size_t)Rl;
-                    const int *perm = h->il2d_col.natperm;
+                    const size_t np = VFFT_IL2D_NAT_PITCH(rn);
                     vfft_real *scr = h->il2d_col.natscr;
                     vfft_il2p_fn const *fns = shape_fwd ? h->il2d_col.f
                                                         : h->il2d_col.b;
@@ -785,27 +787,20 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     size_t b0;
                     if (shape_fwd)
                     {
-                        if (cut > 0)
-                            _il2d_col_stages(sre, scr, h->N, rn, 0, cut,
-                                             h->il2d_col.R, h->il2d_col.L, fns,
-                                             tabs, 0);
+                        _il2d_col_stages_x(sre, rn, scr, np, h->N, rn, 0, cut,
+                                           h->il2d_col.R, h->il2d_col.L, fns, tabs, 0);
                         for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
                         {
                             const size_t blo = b0 / (size_t)Rl;
                             const size_t bhi = (b0 + wl) / (size_t)Rl;
-                            const vfft_real *lf_from = (cut > 0) ? scr : sre;
-                            size_t b;
-                            if (cut < nst - 1)
-                            {
-                                _il2d_col_stages(lf_from + 2 * b0 * rn,
-                                                 scr + 2 * b0 * rn,
-                                                 (int)wl, rn, cut,
-                                                 nst - 1, h->il2d_col.R,
-                                                 h->il2d_col.L, fns, tabs, 0);
-                                lf_from = scr;
-                            }
-                            (void)_il2d_nat_leaf_blocks(h, 0, dir, lf_from, dre, blo, bhi,
-                                                        fwd ? h->il2d_col.tfuse : 1);
+                            if (cut > 0)
+                                _il2d_col_stages2(scr + 2 * b0 * np, scr + 2 * b0 * np, (int)wl, np, rn,
+                                                  cut, nst - 1, h->il2d_col.R, h->il2d_col.L, fns, tabs, 0);
+                            else
+                                _il2d_col_stages_x(sre + 2 * b0 * rn, rn, scr + 2 * b0 * np, np, (int)wl, rn,
+                                                   cut, nst - 1, h->il2d_col.R, h->il2d_col.L, fns, tabs, 0);
+                            (void)_il2d_nat_leaf_blocks(h, 0, dir, scr, dre, blo, bhi,
+                                                        fwd ? h->il2d_col.tfuse : 1, np);
                         }
                         if (fwd && !h->il2d_col.tfuse)
                             _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
@@ -815,18 +810,16 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                     {
                         const size_t blo = b0 / (size_t)Rl;
                         const size_t bhi = (b0 + wl) / (size_t)Rl;
-                        (void)_il2d_nat_leaf_blocks(h, 0, dir, sre, scr, blo, bhi, 0);
-                        if (cut < nst - 1)
-                            _il2d_col_stages(scr + 2 * b0 * rn,
-                                             (cut > 0 ? scr : dre) + 2 * b0 * rn,
-                                             (int)wl, rn, cut, nst - 1,
-                                             h->il2d_col.R, h->il2d_col.L, fns,
-                                             tabs, 1);
+                        (void)_il2d_nat_leaf_blocks(h, 0, dir, sre, scr, blo, bhi, 0, np);
+                        if (cut > 0)   /* the reversed suffix in place on the scratch */
+                            _il2d_col_stages2(scr + 2 * b0 * np, scr + 2 * b0 * np, (int)wl, np, rn,
+                                              cut, nst - 1, h->il2d_col.R, h->il2d_col.L, fns, tabs, 1);
+                        else           /* nothing left wide: its first stage run moves the band into dre */
+                            _il2d_col_stages_x(scr + 2 * b0 * np, np, dre + 2 * b0 * rn, rn, (int)wl, rn,
+                                               cut, nst - 1, h->il2d_col.R, h->il2d_col.L, fns, tabs, 1);
                     }
-                    if (cut > 0)
-                        _il2d_col_stages(scr, dre, h->N, rn, 0, cut,
-                                         h->il2d_col.R, h->il2d_col.L, fns, tabs,
-                                         1);
+                    _il2d_col_stages_x(scr, np, dre, rn, h->N, rn, 0, cut,
+                                       h->il2d_col.R, h->il2d_col.L, fns, tabs, 1);
                     _il2d_rows_exec(h, 0, dir, dre, rn, rn, 0, 1, (size_t)h->N);
                     return;
                 }
@@ -945,17 +938,16 @@ static void _vfft_il_execute(vfft_plan h, vfft_dir_t dir,
                      * staging with the backward rows fused, scattered to the
                      * rows (N1 - i) mod N1 -- no row sweep */
                     const int nst = h->il2d_col.nst, Rl = h->il2d_col.R[nst - 1];
+                    const size_t np = VFFT_IL2D_NAT_PITCH(rn);   /* the scratch and the staging at the natural pass's own pitch */
                     vfft_real *scr = h->il2d_col.natscr;
-                    int s;
-                    for (s = 0; s < nst - 1; s++)
-                        _il2d_col_stages(s == 0 ? sre : scr, scr, h->N, rn, s, s + 1,
-                                         h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
-                                         h->il2d_col.tf, 0);
-                    (void)_il2d_nat_leaf_blocks(h, 0, dir, scr, dre, 0, (size_t)h->N / (size_t)Rl, 1);
+                    _il2d_col_stages_x(sre, rn, scr, np, h->N, rn, 0, nst - 1,
+                                       h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                       h->il2d_col.tf, 0);
+                    (void)_il2d_nat_leaf_blocks(h, 0, dir, scr, dre, 0, (size_t)h->N / (size_t)Rl, 1, np);
                     return;
                 }
                 if (h->il2d_col.nat)
-                    _il2d_col_pass_nat(sre, dre, h->N, rn,
+                    _il2d_col_pass_nat(sre, dre, h->N, rn, VFFT_IL2D_NAT_PITCH(rn),
                                        h->il2d_col.nst, h->il2d_col.R,
                                        h->il2d_col.L,
                                        fwd ? h->il2d_col.f : h->il2d_col.b,

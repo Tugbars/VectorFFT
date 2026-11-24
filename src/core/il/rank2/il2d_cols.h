@@ -42,6 +42,7 @@
 #include <string.h>
 
 #include "il2p.h"             /* vfft_il2p_fn, the t2c/n1c kernel resolvers */
+#include "il2d_col.h"         /* VFFT_IL_SCR_PAD, the natural pass's own row pitch */
 #include "tw_exact.h"         /* once-rounded cos/sin(2*pi*p/n) for the column tables */
 #include "fft2d_real_il.h"    /* _il2d_row_cmul, used by the Bluestein pass */
 #include "common/support/diag.h"     /* _vfft_warn - the chain builder refuses loudly */
@@ -337,6 +338,60 @@ static void _il2d_col_stages(const vfft_real *src, vfft_real *dst, int nrows,
                       tabs, reverse);
 }
 
+/* ONE STAGE ACROSS TWO ROW PITCHES: stage s over nrows rows from src (row pitch spitch) into dst (row pitch dpitch),
+ * cnt lanes. The stage kernels advance input and output by ONE pitch per digit, so two pitches are a caller loop over
+ * the digits -- the table advanced one digit's records, (R - 1) t2c records (_il2d_build_tables' layout) -- as the
+ * strip form's stage 0 (_il2d_col_pass_nat_strip). Same kernel, table and values as the block call: bitwise. Equal
+ * pitches are the block call itself. The direction is the kernel set's and the table's. */
+static void _il2d_col_stage_x(const vfft_real *src, size_t spitch, vfft_real *dst, size_t dpitch, int nrows,
+                              size_t cnt, int s, const int *Rst, const int *Lst, vfft_il2p_fn const *fns,
+                              vfft_real *const *tabs)
+{
+    const int R = Rst[s], D = Lst[s] / R;
+    int b, d;
+    if (spitch == dpitch)
+    {
+        _il2d_col_stages2(src, dst, nrows, spitch, cnt, s, s + 1, Rst, Lst, fns, tabs, 0);
+        return;
+    }
+    if (s == 0 && !fns[0])
+    {   /* the Rader stage takes the two pitches itself */
+        _il2d_rd0_hook((const void *)tabs[0], src, spitch, dst, dpitch, 0, 0, cnt, 0, (size_t)D);
+        return;
+    }
+    for (b = 0; b < nrows / Lst[s]; b++)
+        for (d = 0; d < D; d++)
+        {
+            const size_t row = (size_t)b * Lst[s] + (size_t)d;
+            if (D == 1)
+                fns[s](src + 2 * row * spitch, NULL, dst + 2 * row * dpitch, NULL, NULL, NULL,
+                       spitch, 0, dpitch, 0, cnt);
+            else
+                fns[s](src + 2 * row * spitch, NULL, dst + 2 * row * dpitch, NULL,
+                       tabs[s] + (size_t)d * (R - 1) * VFFT_IL_T2CREC, NULL,
+                       (size_t)D * spitch, spitch, (size_t)D * dpitch, 1, cnt);
+        }
+}
+/* stages [s_lo, s_hi) as _il2d_col_stages2 runs them, src at spitch and dst at dpitch: the first stage run crosses
+ * the pitches (src -> dst), the others run in place on dst */
+static void _il2d_col_stages_x(const vfft_real *src, size_t spitch, vfft_real *dst, size_t dpitch, int nrows,
+                               size_t cnt, int s_lo, int s_hi, const int *Rst, const int *Lst,
+                               vfft_il2p_fn const *fns, vfft_real *const *tabs, int reverse)
+{
+    if (s_lo >= s_hi)
+        return;
+    if (spitch == dpitch)
+    {
+        _il2d_col_stages2(src, dst, nrows, spitch, cnt, s_lo, s_hi, Rst, Lst, fns, tabs, reverse);
+        return;
+    }
+    _il2d_col_stage_x(src, spitch, dst, dpitch, nrows, cnt, reverse ? s_hi - 1 : s_lo, Rst, Lst, fns, tabs);
+    if (reverse)
+        _il2d_col_stages2(dst, dst, nrows, dpitch, cnt, s_lo, s_hi - 1, Rst, Lst, fns, tabs, 1);
+    else
+        _il2d_col_stages2(dst, dst, nrows, dpitch, cnt, s_lo + 1, s_hi, Rst, Lst, fns, tabs, 0);
+}
+
 /* ── the natural leaf's STAGING (il2d_natural_leaf_design.md) ─────────────
  * The leaf's R output rows sit N1/R rows apart — 2 MB at 2048x2048 — and
  * map to the same L1/L2 sets, so stored at their stride the R streams
@@ -347,7 +402,9 @@ static void _il2d_col_stages(const vfft_real *src, vfft_real *dst, int nrows,
  * reads it. The kernels see the same values in the same order: bitwise
  * the strided leaf. `stage` NULL = the strided leaf: the callers that
  * carry no staging (the real tier, the 3D tier) and the threaded arm
- * whose raced verdict is the stride (nls=0). */
+ * whose raced verdict is the stride (nls=0). The staging's rows lie stp
+ * complexes apart (the caller's: the natural pass's own pitch, il2d_col.h
+ * VFFT_IL2D_NAT_PITCH, or the row itself). */
 static void _il2d_row_stream(vfft_real *dst, const vfft_real *src, size_t w, int nt)
 {   /* nt: the row is FINISHED (its plan ran in the staging) — bypass the
      * cache; else a cached copy, the row phase reads it back from L2 */
@@ -376,12 +433,12 @@ static void _il2d_row_stream(vfft_real *dst, const vfft_real *src, size_t w, int
 #endif
 }
 static void _il2d_nat_stage_out(const vfft_real *stage, vfft_real *dst, size_t nrow0,
-                                size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w, int nt)
+                                size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w, size_t stp, int nt)
 {
     int r;
     for (r = 0; r < R; r++)
         _il2d_row_stream(dst + 2 * ((nrow0 + (size_t)r * nstride_rows) * rn + k_lo),
-                         stage + 2 * (size_t)r * w, w, nt);
+                         stage + 2 * (size_t)r * stp, w, nt);
     if (nt) _mm_sfence();
 }
 /* the gather into the staging: the block's R natural rows copied, one row
@@ -394,7 +451,7 @@ static void _il2d_nat_stage_out(const vfft_real *stage, vfft_real *dst, size_t n
  * with its output index negated, so a natural backward runs the forward's
  * shape and kernels and only this scatter's addressing differs. */
 static void _il2d_nat_stage_out_rev(const vfft_real *stage, vfft_real *dst, size_t nrow0,
-                                    size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w,
+                                    size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w, size_t stp,
                                     int nt, size_t N1)
 {
     int r;
@@ -402,35 +459,37 @@ static void _il2d_nat_stage_out_rev(const vfft_real *stage, vfft_real *dst, size
     {
         const size_t i = nrow0 + (size_t)r * nstride_rows;
         const size_t j = i ? N1 - i : 0;
-        _il2d_row_stream(dst + 2 * (j * rn + k_lo), stage + 2 * (size_t)r * w, w, nt);
+        _il2d_row_stream(dst + 2 * (j * rn + k_lo), stage + 2 * (size_t)r * stp, w, nt);
     }
     if (nt) _mm_sfence();
 }
 static void _il2d_nat_stage_in(vfft_real *stage, const vfft_real *src, size_t nrow0,
-                               size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w)
+                               size_t nstride_rows, int R, size_t rn, size_t k_lo, size_t w, size_t stp)
 {
     int r;
     for (r = 0; r < R; r++)
-        memcpy(stage + 2 * (size_t)r * w,
+        memcpy(stage + 2 * (size_t)r * stp,
                src + 2 * ((nrow0 + (size_t)r * nstride_rows) * rn + k_lo),
                2 * w * sizeof(vfft_real));
 }
-static void _il2d_nat_leaf_block_st(const vfft_real *from, vfft_real *to, int N1, size_t rn,
+/* block b's leaf through the staging, lanes [k_lo, k_lo + w): the pre-leaf plane's rows lie sp complexes apart, the
+ * staging's stp, the natural plane's rn */
+static void _il2d_nat_leaf_block_st(const vfft_real *from, vfft_real *to, int N1, size_t rn, size_t sp,
                                     int Rl, vfft_il2p_fn fn, const int *perm, size_t b,
-                                    size_t k_lo, size_t w, int reverse, vfft_real *stage)
+                                    size_t k_lo, size_t w, size_t stp, int reverse, vfft_real *stage)
 {
     const size_t nstride_rows = (size_t)(N1 / Rl);
-    const size_t coff = 2 * (b * (size_t)Rl * rn + k_lo);
+    const size_t coff = 2 * (b * (size_t)Rl * sp + k_lo);
     const size_t nrow0 = (size_t)perm[b * (size_t)Rl];
     if (!reverse)
     {
-        fn(from + coff, NULL, stage, NULL, NULL, NULL, rn, 0, w, 0, w);
-        _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, k_lo, w, 0);   /* the rows come later: cached */
+        fn(from + coff, NULL, stage, NULL, NULL, NULL, sp, 0, stp, 0, w);
+        _il2d_nat_stage_out(stage, to, nrow0, nstride_rows, Rl, rn, k_lo, w, stp, 0);   /* the rows come later: cached */
     }
     else
     {
-        _il2d_nat_stage_in(stage, from, nrow0, nstride_rows, Rl, rn, k_lo, w);
-        fn(stage, NULL, to + coff, NULL, NULL, NULL, w, 0, rn, 0, w);
+        _il2d_nat_stage_in(stage, from, nrow0, nstride_rows, Rl, rn, k_lo, w, stp);
+        fn(stage, NULL, to + coff, NULL, NULL, NULL, stp, 0, sp, 0, w);
     }
 }
 /* the NATURAL leaf over a BLOCK RANGE [blo, bhi) (natural x MT): fwd
@@ -438,9 +497,11 @@ static void _il2d_nat_leaf_block_st(const vfft_real *from, vfft_real *to, int N1
  * perm[b*R] + r*(N1/R); bwd GATHERS them back into the scratch's comb.
  * Blocks own disjoint natural row sets (perm is a bijection), so any block
  * partition is a pure map => MT == ST bitwise. fwd: from = scratch, to =
- * dst plane; bwd: from = natural src, to = scratch. */
+ * dst plane; bwd: from = natural src, to = scratch. sp: the scratch's row
+ * pitch (the natural plane's is rn); the staging, where given, lies at it
+ * too. */
 static void _il2d_nat_leaf_range(const vfft_real *from, vfft_real *to, int N1,
-                                 size_t rn, int Rl, vfft_il2p_fn fn,
+                                 size_t rn, size_t sp, int Rl, vfft_il2p_fn fn,
                                  const int *perm, size_t blo, size_t bhi,
                                  int reverse, vfft_real *stage)
 {
@@ -449,19 +510,19 @@ static void _il2d_nat_leaf_range(const vfft_real *from, vfft_real *to, int N1,
     if (stage)
     {
         for (b = blo; b < bhi; b++)
-            _il2d_nat_leaf_block_st(from, to, N1, rn, Rl, fn, perm, b, 0, rn, reverse, stage);
+            _il2d_nat_leaf_block_st(from, to, N1, rn, sp, Rl, fn, perm, b, 0, rn, sp, reverse, stage);
         return;
     }
     for (b = blo; b < bhi; b++)
     {
-        const size_t coff = 2 * b * (size_t)Rl * rn;
+        const size_t coff = 2 * b * (size_t)Rl * sp;
         const size_t noff = 2 * (size_t)perm[b * (size_t)Rl] * rn;
         if (!reverse)
-            fn(from + coff, NULL, to + noff, NULL, NULL, NULL, rn, 0,
+            fn(from + coff, NULL, to + noff, NULL, NULL, NULL, sp, 0,
                nstride, 0, rn);
         else
             fn(from + noff, NULL, to + coff, NULL, NULL, NULL, nstride, 0,
-               rn, 0, rn);
+               sp, 0, rn);
     }
 }
 
@@ -677,9 +738,11 @@ static int *_il2d_nat_perm(const int *Rs, int nst, int N1)
 /* the natural column pass: standard stages, the LEAF redirected — fwd
  * stores block b's rows at perm[b*R] with OLs = (N1/R)*rn; bwd (the
  * Hermitian transpose, leaf first) GATHERS its legs from the natural
- * positions via Ls, the exact mirror. Unbanded, full plane. */
+ * positions via Ls, the exact mirror. Unbanded, full plane. sp: the row
+ * pitch of the pass's own buffers, the pre-leaf plane scr and the staging
+ * (rn, or the natural pass's own pitch: il2d_col.h VFFT_IL2D_NAT_PITCH). */
 static void _il2d_col_pass_nat(const vfft_real *src, vfft_real *dst, int N1,
-                               size_t rn, int nst, const int *Rst,
+                               size_t rn, size_t sp, int nst, const int *Rst,
                                const int *Lst, vfft_il2p_fn const *fns,
                                vfft_real *const *tabs, int reverse,
                                const int *perm, vfft_real *scr, vfft_real *stage)
@@ -690,52 +753,22 @@ static void _il2d_col_pass_nat(const vfft_real *src, vfft_real *dst, int N1,
      * GATHERS from the natural src into scr's comb, mids run in place,
      * and stage 0 writes scr -> dst (the kernels take separate bases —
      * no extra copy pass anywhere). The scatter/gather NEVER shares a
-     * plane with the stages still reading it. */
+     * plane with the stages still reading it. The stage that moves
+     * between the caller's plane and scr crosses the two pitches
+     * (_il2d_col_stage_x). */
     const int Rl = Rst[nst - 1];
-    int s, b;
     if (!reverse)
     {
-        for (s = 0; s < nst - 1; s++)
-        {
-            const int R = Rst[s], D = Lst[s] / R;
-            const vfft_real *s0 = (s == 0) ? src : scr;
-            if (s == 0 && !fns[0])
-            {   /* the Rader stage: src -> scr over the whole plane */
-                _il2d_rd0_hook((const void *)tabs[0], s0, rn, scr, rn, 0, 0, rn, 0, (size_t)D);
-                continue;
-            }
-            for (b = 0; b < N1 / Lst[s]; b++)
-            {
-                const size_t off = 2 * (size_t)b * Lst[s] * rn;
-                fns[s](s0 + off, NULL, scr + off, NULL, tabs[s], NULL,
-                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
-                       rn);
-            }
-        }
-        _il2d_nat_leaf_range(scr, dst, N1, rn, Rl, fns[nst - 1], perm, 0,
+        _il2d_col_stages_x(src, rn, scr, sp, N1, rn, 0, nst - 1, Rst, Lst, fns, tabs, 0);
+        _il2d_nat_leaf_range(scr, dst, N1, rn, sp, Rl, fns[nst - 1], perm, 0,
                              (size_t)(N1 / Rl), 0, stage);
     }
     else
     {
-        _il2d_nat_leaf_range(src, scr, N1, rn, Rl, fns[nst - 1], perm, 0,
+        _il2d_nat_leaf_range(src, scr, N1, rn, sp, Rl, fns[nst - 1], perm, 0,
                              (size_t)(N1 / Rl), 1, stage);
-        for (s = nst - 2; s >= 0; s--)
-        {
-            const int R = Rst[s], D = Lst[s] / R;
-            vfft_real *out = (s == 0) ? dst : scr;
-            if (s == 0 && !fns[0])
-            {   /* the Rader stage, backward: scr -> dst */
-                _il2d_rd0_hook((const void *)tabs[0], scr, rn, out, rn, 0, 0, rn, 0, (size_t)D);
-                continue;
-            }
-            for (b = 0; b < N1 / Lst[s]; b++)
-            {
-                const size_t off = 2 * (size_t)b * Lst[s] * rn;
-                fns[s](scr + off, NULL, out + off, NULL, tabs[s], NULL,
-                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
-                       rn);
-            }
-        }
+        _il2d_col_stages2(scr, scr, N1, sp, rn, 1, nst - 1, Rst, Lst, fns, tabs, 1);
+        _il2d_col_stage_x(scr, sp, dst, rn, N1, rn, 0, Rst, Lst, fns, tabs);
     }
 }
 
@@ -779,7 +812,7 @@ static void _il2d_col_pass_nat_range(const vfft_real *src, vfft_real *dst,
         }
         for (b = 0; b < N1 / Rl; b++)
             if (st)
-                _il2d_nat_leaf_block_st(scr, dst, N1, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, 0, stage);
+                _il2d_nat_leaf_block_st(scr, dst, N1, rn, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, w, 0, stage);
             else
                 fns[nst - 1](scr + 2 * ((size_t)b * Rl * rn + k_lo), NULL,
                              dst + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
@@ -789,7 +822,7 @@ static void _il2d_col_pass_nat_range(const vfft_real *src, vfft_real *dst,
     {
         for (b = 0; b < N1 / Rl; b++)
             if (st)
-                _il2d_nat_leaf_block_st(src, scr, N1, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, 1, stage);
+                _il2d_nat_leaf_block_st(src, scr, N1, rn, rn, Rl, fns[nst - 1], perm, (size_t)b, k_lo, w, w, 1, stage);
             else
                 fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
                              NULL, scr + 2 * ((size_t)b * Rl * rn + k_lo),
@@ -820,8 +853,8 @@ static void _il2d_col_pass_nat_range(const vfft_real *src, vfft_real *dst,
  * lane-major 64 x 256 batch at a 256-lane tile ran 0.98..1.52x the 32-lane tile by placement alone,
  * and 0.74..0.96x with the line; 2026-11-16). A narrower row keeps its pitch: there the line costs a
  * quarter or more of the scratch and bought nothing (8 and 16 lanes: 0.97..1.01x). Every builder of a
- * strip scratch sizes its rows for its widest strip plus the line (_il2d_scr_cap). */
-#define VFFT_IL_SCR_PAD ((size_t)(64 / (2 * sizeof(vfft_real))))   /* one cache line, in complexes */
+ * strip scratch sizes its rows for its widest strip plus the line (_il2d_scr_cap; VFFT_IL_SCR_PAD, one cache line
+ * in complexes: il2d_col.h). */
 static inline size_t _il2d_scr_pitch(size_t w)
 {
     return (w * 2 * sizeof(vfft_real)) % 512 == 0 ? w + VFFT_IL_SCR_PAD : w;

@@ -57,13 +57,13 @@ typedef struct {
     int msw;                  /* the threaded strips' sub-strip width in columns (0 = the
                                * worker's whole range); banked msw= beside cmt on the plan's row (v1.3) */
     int *natperm;             /* N entries, scr row -> natural row */
-    vfft_real *natscr;           /* 2*N*rn: the pre-leaf plane */
+    vfft_real *natscr;           /* the pre-leaf plane: N rows sized VFFT_IL2D_NAT_CAP(rn) complexes (below) */
     int natst;                /* the leaf STAGED (1) or at its natural stride (0): the serial
                                * walk's form is staged (dominant) unless its row names nls= (the
                                * estimate's LEAF rule, estimate_nd_il.h); the threaded arms race both,
                                * banked nls= beside cmt on the plan's row (il2d_natural_leaf_design.md) */
-    vfft_real *natstage;         /* the leaf's STAGING: T slots of R_last x rn complexes, one a
-                               * worker (_il2d_stage_alloc / _il2d_stage_slot below;
+    vfft_real *natstage;         /* the leaf's STAGING: T slots of R_last rows sized VFFT_IL2D_NAT_CAP(rn)
+                               * complexes, one a worker (_il2d_stage_alloc / _il2d_stage_slot below;
                                * il2d_natural_leaf_design.md);
                                * NULL = the leaf stores at its natural stride */
     vfft_real **natsscr;         /* the threaded strips' DENSE per-worker scratch:
@@ -102,15 +102,64 @@ typedef struct {
     int lmsw;
 } vfft_ilcol_t;
 
+/* THE NATURAL PASS'S OWN ROW PITCH (2026-11-24), in complexes: the row pitch of the two buffers the natural column
+ * pass owns, the pre-leaf plane (natscr) and the leaf's staging block, as the walks named below address them -- rn,
+ * and one cache line more where a row of rn complexes is a multiple of 512 B.
+ * WHY: a stage's legs are whole rows apart. Where a row is a multiple of 4 KiB (rn = 256: one L1d way on the 14900KF
+ * and on Zen 4) every leg of a stage meets in one L1d set, and a set holds 12 lines (8 on Zen 4): a stage of 15, 21,
+ * 25 or 27 legs throws out lines it is still reading, and at the plane's pitch the pre-leaf plane and the staging
+ * block inherit that from the caller's plane. With the line, legs D rows apart sit D lines apart in the set index:
+ * no two in one set for D < 64. Legs 64 rows apart (and its multiples) meet again whatever the line: the early stages
+ * of a long power-of-two column gain nothing from it. The caller's planes keep their pitch: the first stage's loads
+ * and a strided leaf's stores are theirs.
+ * WHO LAYS THEM AT IT: the c2c 2D plan's walks -- on one thread both directions, unbanded and banded (il_execute.h);
+ * threaded, the block and the tile partition (il2d_tier.h _il2d_c2c_mt; the strip partition has its own dense
+ * scratch at _il2d_scr_pitch, its wide-strip fallback on the shared plane stays at rn) -- and the serial natural arms
+ * of that cell's races (il2d_tier.h _il2d_key_np: the arm is the serving walk). A 3D plan's planes are such 2D plans;
+ * its flat tier runs the middle axis's stages inside the caller's volume and owns no buffer to lay out. Every other
+ * walker of a natural chain -- the real tier, the lane-major batches -- lays them at rn: not measured there.
+ * EVIDENCE (14900KF, AVX2, one thread; the same build with this defined (rn) beside):
+ *  - the column pass alone, forward, out of place, every chain of the pool within one stage of the fewest, five
+ *    planes of 75 to 525 columns on rows of 256, us at the plane's pitch -> at this one: 225x256 15.15 141.7 -> 65.2,
+ *    9.25 108.8 -> 69.7, 9.5.5 80.9 -> 63.9; 75x256 15.5 27.1 -> 15.8, 5.5.3 17.3 -> 16.0; 135x256 9.15 59.7 ->
+ *    31.5; 315x256 15.7.3 148.7 -> 99.5; 525x256 15.7.5 271.9 -> 176.8. Both buffers: the staging left at the
+ *    plane's pitch keeps a large leaf slow (75x256 5.15 29.9 against 16.3); N2 + 8 runs as N2 + 4.
+ *  - the whole transform on the estimate's plan, the plan the same in both builds, 37 planes, five alternated runs:
+ *    forward 0.981, backward 0.979 (geometric means of this over the plane's pitch; 45x256 0.93, 64x256 backward
+ *    0.92, 256x256 0.96); the three planes whose rows are no multiple of 512 B 0.98 to 1.01 (the pitch is rn there);
+ *    planes past the L2 (2187x256, 1000x512, 2048x1024) move 10 to 25 % run to run in either build, their medians
+ *    within 6 %. Bitwise the same output on all 37.
+ *  - the measuring planner from cold, each build its own store, 8 planes: forward 0.940, backward 0.947; the chain
+ *    changes at 6 (75x256 5.5.3 -> 15.5 0.92, 225x256 5.5.3.3 -> 9.5.5 0.89, 525x256 7.5.5.3 -> 15.7.5 0.89, 64x256
+ *    4.8.2 -> 16.4 0.91). 225x512 takes 15.15 where it took 9.5.5: forward 1.03 to 1.04, backward 0.89 to 0.92 (three
+ *    cold plans); 256x256's plan differs from one cold plan to the next (forward 0.96, 1.04, 1.07; the plan of
+ *    before every time at the plane's pitch) -- the chain race times the column walk without the rows.
+ *  - every chain of 427 planes (61 non-power-of-two columns over rows of 16 to 1050), the plain pass and the rows:
+ *    on the rows that get this pitch 1346 chains, 614 faster by more than 3 %, 720 within, 12 slower by 3 to 5 %
+ *    (rows of 256: 0.878, none slower; 1024: 0.906; 64: 0.973).
+ *  - eight threads, the estimate's plans, 22 planes, five alternated runs: 0.981 by the median, none slower by more
+ *    than 3 %; the tile partition with a radix of 15 or 25 in its chain 1050x256 0.81, 4375x256 0.82; the block
+ *    partition forced: 0.980, five planes faster by more than 3 %, none slower. 15 volumes at one and at eight
+ *    threads: 0.997 and 0.992. The same bits as at the plane's pitch in every case.
+ * A build may define it (a probe's A/B: (rn) is the plane's pitch); VFFT_IL2D_NAT_CAP is what the buffers' rows are
+ * sized for. */
+#define VFFT_IL_SCR_PAD ((size_t)(64 / (2 * sizeof(vfft_real))))   /* one cache line, in complexes */
+#ifndef VFFT_IL2D_NAT_PITCH
+#define VFFT_IL2D_NAT_PITCH(rn) \
+    ((((size_t)(rn)) * 2 * sizeof(vfft_real)) % 512 == 0 ? (size_t)(rn) + VFFT_IL_SCR_PAD : (size_t)(rn))
+#endif
+#define VFFT_IL2D_NAT_CAP(rn) ((size_t)(rn) + VFFT_IL_SCR_PAD)
+
 /* THE LEAF'S STAGING, ONE SLOT A WORKER: the leaf writes a block's R_last rows of rn complexes into its worker's slot
  * and the rows run there, so every worker walks its slot again and again beside its neighbours'. The slots are the
  * allocator's (common/support/zalloc.h, vfft_apart_slots_alloc: each on cache lines of its own, 8 KiB after the one
  * before ends -- the measurements are there). A slot's address follows from the chain's last radix and the lane
  * count alone: every walker of a chain finds the same slot, and a block built for the largest last radix serves a
- * chain with a smaller one. */
+ * chain with a smaller one. Its rows are sized for the natural pass's own pitch (above): a walker lays them at that
+ * pitch or at rn. */
 static inline size_t _il2d_stage_slot_bytes(int Rl, size_t rn)
 {
-    return 2 * (size_t)Rl * rn * sizeof(vfft_real);
+    return 2 * (size_t)Rl * VFFT_IL2D_NAT_CAP(rn) * sizeof(vfft_real);
 }
 static inline vfft_real *_il2d_stage_alloc(int T, int Rl, size_t rn)   /* T slots (one when T < 1); NULL = out of memory */
 {

@@ -1346,7 +1346,7 @@ static void _il2d_cxk_natleaf(const void *v, const vfft_real *scr, vfft_real *ds
     const struct vfft_plan_s *h = k->h;
     const vfft_ilcol_t *c = &h->il2d_col;
     const int Rl = c->R[c->nst - 1];
-    _il2d_nat_leaf_range(scr, dst, c->N, c->rn, Rl, c->f[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 0,
+    _il2d_nat_leaf_range(scr, dst, c->N, c->rn, c->rn, Rl, c->f[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 0,
                          h->il2d_cx_st ? c->natstage : NULL);
 }
 static inline void _il2d_cxk_run(_il2d_rowx_fn fn, const _il2d_cxk_t *k, const vfft_real *s, vfft_real *d, int stk)
@@ -1458,7 +1458,7 @@ static void _il2d_cxk_natleaf_bwd(const void *v, const vfft_real *src, vfft_real
     const struct vfft_plan_s *h = k->h;
     const vfft_ilcol_t *c = &h->il2d_col;
     const int Rl = c->R[c->nst - 1];
-    _il2d_nat_leaf_range(src, scr, c->N, c->rn, Rl, c->b[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 1, NULL);
+    _il2d_nat_leaf_range(src, scr, c->N, c->rn, c->rn, Rl, c->b[c->nst - 1], c->natperm, 0, (size_t)(c->N / Rl), 1, NULL);
 }
 static void _il2d_colx_perk_bwd(const struct vfft_plan_s *h, const vfft_real *src, vfft_real *dst)
 {

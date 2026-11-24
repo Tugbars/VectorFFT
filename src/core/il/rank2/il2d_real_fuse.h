@@ -82,7 +82,7 @@ static void _il2d_tf_body(const void *v, const double *x, double *z)
         double *tile = scr + 2 * t * D0 * hp1;
         if (nst > 2)
             _il2d_col_stages(tile, tile, (int)D0, hp1, 1, nst - 1, c->R, c->L, c->f, c->tf, 0);
-        _il2d_nat_leaf_range(scr, z, (int)N1, hp1, Rl, c->f[nst - 1], c->natperm,
+        _il2d_nat_leaf_range(scr, z, (int)N1, hp1, hp1, Rl, c->f[nst - 1], c->natperm,
                              t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 0, stage);
     }
 }
@@ -112,7 +112,7 @@ static void _il2d_tf_body_bwd(const void *v, const double *z, double *y)
     for (t = 0; t < (size_t)R0; t++)
     {
         double *tile = scr + 2 * t * D0 * hp1;
-        _il2d_nat_leaf_range(z, scr, (int)N1, hp1, Rl, c->b[nst - 1], c->natperm,
+        _il2d_nat_leaf_range(z, scr, (int)N1, hp1, hp1, Rl, c->b[nst - 1], c->natperm,
                              t * D0 / (size_t)Rl, (t + 1) * D0 / (size_t)Rl, 1, NULL);
         if (nst > 2)
             _il2d_col_stages(tile, tile, (int)D0, hp1, 1, nst - 1, c->R, c->L, c->b, c->tb, 1);

@@ -317,7 +317,7 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
              * produced) -- so the natural axis-1 pass runs its pre-leaf stages
              * THERE and natscr serves only the fixed points: one plane sweep
              * fewer per plane, the same arithmetic */
-            _il2d_col_pass_nat(src, dst, ax1->N, rn, ax1->nst, ax1->R, ax1->L,
+            _il2d_col_pass_nat(src, dst, ax1->N, rn, rn, ax1->nst, ax1->R, ax1->L,
                                rev ? ax1->b : ax1->f, rev ? ax1->tb : ax1->tf, rev,
                                ax1->natperm, rev ? dst : (double *)src, NULL);
         else
