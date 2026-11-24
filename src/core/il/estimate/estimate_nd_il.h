@@ -68,10 +68,15 @@ typedef struct est_plan2d_s
     int rbk;               /* [rbk] the two-pass rows' tile, KB */
     int turn;              /* [turn] the whole plane through the 1D plan at N1 */
     int csk;               /* [csk] the skewed column pass */
+    int rfw;               /* [rfw] the rows-first walk's strip width in columns, 0 = the walk the fields above name;
+                            * set for one transform on one thread alone (est_rfw_2d) */
     int has_turn;          /* the door builds the turn plan: natural, no Bluestein, N2 has an n1ccs
                             * kernel (fft2d_create_il.h:544) */
     int has_csk;           /* the door builds the skewed pass's row plan: no Bluestein, N1 has a mono
                             * kernel (fft2d_create_il.h:584-588) */
+    int rfw_row;           /* the door builds the rows-first walk's out-of-place row plan under csk_: rfw > 0 on an
+                            * out-of-place request whose column has no mono kernel (fft2d_create_il.h, the rows-first
+                            * block; with a mono kernel the skewed pass's row plan moves the rows, has_csk) */
     int T;                 /* the threads (est_mt_2d): 0 or 1 = one thread; T > 1 = the row's key nthreads=T and
                             * the threaded verdict below (fft2d_create_il.h:1144-1152) */
     int cmt;               /* [cmt] T > 1: the column pass threaded (1) or serial (0) */
@@ -82,7 +87,7 @@ typedef struct est_plan2d_s
                             * the LEAF rule's (est__leaf_staged), -1 = the door's staged default */
     est_recipe_t rp;       /* [rp_]   N2, in place, natural, T = 1: always */
     est_recipe_t turnp;    /* [turn_] N1, in place, natural: has_turn */
-    est_recipe_t cskp;     /* [csk_]  N2, out of place, natural: has_csk */
+    est_recipe_t cskp;     /* [csk_]  N2, out of place, natural: has_csk or rfw_row */
     est_recipe_t tpcp;     /* [tpc_]  N1, in place, natural: col.tpc == 1 */
     int pq;                /* [pq] a batch on T threads: 1 whole transforms per thread (the plane queue's copies),
                             * 0 all threads on each transform (est_batch_whole) */
@@ -180,6 +185,11 @@ typedef struct est_plan3d_s
 #endif
 #ifndef EST_ND_2D_RULE_LEAF
 #define EST_ND_2D_RULE_LEAF 1
+#endif
+/* ROWS FIRST (2026-11-24): est_rfw_2d below. Not one of the EST_ND_2D_R_* bits: it is decided after the plan, for one
+ * transform on one thread, with the request's placement (the out-of-place walk carries a row plan). */
+#ifndef EST_ND_2D_RULE_RFW
+#define EST_ND_2D_RULE_RFW 1
 #endif
 /* WIDE (2026-11-12, a HYPOTHESIS to be tested, the owner: "let this L2-size test be the hypothesis that will be
  * tested", on Zen 4 next): est__wide_fit below. Unlike the rules above it also reaches the 3D plane child and the
@@ -1688,6 +1698,72 @@ static inline void est_mt_2d_serial_1t(const est_machine_t *m, int T, est_plan2d
     if (!r.cmt)
         *p = r;
 }
+/* ROWS FIRST (2026-11-24): the rows-first walk (vfft_internal.h il2d_rfw; il2d_tier.h _il2d_rfw_exec) on the plan of
+ * ONE transform on ONE thread: the rows from the source into the destination, then the natural column chain in place
+ * on the destination, a strip of w columns at a time through a dense scratch. The walk it replaces moves the plane
+ * out of place twice (three planes); once those pass the L1d, strips that fit it keep the column chain inside. A
+ * strip is its columns in the plane and in the scratch, 2 N1 w 16 B: the walk runs at the widest of 32, 16, 8
+ * columns whose strip takes at most 1/2, 3/4, 2/3 of the L1d and is narrower than the row; where none does, the plan
+ * keeps its walk.
+ * Evidence (14900KF, AVX2, L1d 48 KiB; docs/research/2d_composites_odds_2026_11_24.md): the estimate's own plan with
+ * the walk switched as the planner's race switches it, at every width the L1d admits: 151 planes, composite and odd
+ * columns of 18 to 150 over rows of 9 to 8750, both placements, two runs (the same ratio within 2 % run to run).
+ * The fastest width: 32 at columns of 18, 20, 24; 16 at 28 to 70; 8 at 75 to 126 -- the three fractions are the cut
+ * points, found between 24 and 28, 70 and 75, 126 and 135. Time with the walk over without, out of place: columns
+ * to 24 0.80-0.91; 28 to 70 0.79-0.96 (70x270 1.03); 75 to 126 0.84-1.03; 135 and 150 1.01-1.11 on rows up to 588
+ * (0.78-0.99 on rows of 2000 and more: six planes, left with the walk they have); planes whose three planes fit the
+ * L1d 0.96-1.33. The rule turns the walk on in 116 of the 151 planes: median 0.90, worst 1.03, two slower by more
+ * than 2 %; every plane, geometric mean 0.922 against 0.916 for the best arm per plane. The planner's race keeps the
+ * walk on the same planes: 14 of 14 at columns to 24, 49 of 52 at 28 to 70, 29 of 50 at 75 to 126, 1 of 22 at 135
+ * and 150, 1 of 13 within the L1d.
+ * IN PLACE the rule is the same one (the owner's ruling, 2026-11-24): 116 planes on, median 0.89, every plane 0.916;
+ * the in-place walk it replaces moves two planes, so on five planes of 1176 to 1260 points (18x70, 28x42, 30x42,
+ * 35x35, 70x18) the walk is 5 to 9 % slower in place where it is 7 to 19 % faster out of place.
+ * Composite and odd columns alone (the planner races the walk nowhere else; the powers of two and the prime columns
+ * are not measured), a natural chain of two stages or more, off the turn and the skewed pass. Not on a batch, a
+ * plane of a volume or a threaded plan: none measured. Out of place the walk moves the rows through the out-of-place
+ * plan at N2: the skewed pass's where the door builds one (has_csk), else its own under the same csk_ (rfw_row); a
+ * row plan the 1D estimate refuses leaves the plan its walk. */
+#define EST_ND_RFW_W32_NUM 1   /* a strip of 32 columns: at most 1/2 of the L1d */
+#define EST_ND_RFW_W32_DEN 2
+#define EST_ND_RFW_W16_NUM 3   /* of 16 columns: at most 3/4 */
+#define EST_ND_RFW_W16_DEN 4
+#define EST_ND_RFW_W8_NUM 2    /* of 8 columns: at most 2/3 */
+#define EST_ND_RFW_W8_DEN 3
+static inline int est__rfw_2d(const est_machine_t *m, const est_plan2d_t *p)   /* the strip width, 0 = the plan's walk */
+{
+    static const int W[3][3] = { { 32, EST_ND_RFW_W32_NUM, EST_ND_RFW_W32_DEN },
+                                 { 16, EST_ND_RFW_W16_NUM, EST_ND_RFW_W16_DEN },
+                                 { 8, EST_ND_RFW_W8_NUM, EST_ND_RFW_W8_DEN } };
+    const long long l1 = m->l1d, N1 = p->N1, N2 = p->N2;
+    int i;
+    if (p->T > 1 || !p->col.nat || p->col.blu > 0 || p->col.nst < 2 || p->col.rd_n || p->col.tpc == 1 || p->turn ||
+        p->csk || !vfft_policy_il2d_colclass(p->N1))
+        return 0;
+    if (3LL * 16 * N1 * N2 <= l1)   /* the walk it replaces fits the L1d with its three planes */
+        return 0;
+    for (i = 0; i < 3; i++)
+        if (W[i][0] < N2 && 2LL * N1 * W[i][0] * 16 * W[i][2] <= l1 * W[i][1])
+            return W[i][0];
+    return 0;
+}
+/* est_rfw_2d: the rows-first walk onto the one-thread plan p of one transform, out of place (oop) or in place: the
+ * width (rfw) and, out of place on a column without the skewed pass's row plan, the walk's own row plan (rfw_row,
+ * cskp). p's other fields stay: the door builds the plan they name and runs this walk on it. */
+static inline void est_rfw_2d(const est_machine_t *m, int oop, est_plan2d_t *p)
+{
+    p->rfw = 0;
+    p->rfw_row = 0;
+    if (!EST_ND_2D_RULE_RFW || !(p->rfw = est__rfw_2d(m, p)))
+        return;
+    if (oop && !p->has_csk)
+    {
+        if (est__child_1d(m, p->N2, VFFT_PLACEMENT_OUT, &p->cskp, "the rows-first walk's row plan", NULL, 0))
+            p->rfw = 0;   /* no way to move the rows */
+        else
+            p->rfw_row = 1;
+    }
+}
 /* the 3D structure: the flat tier (s=2) on a plane of at most EST_ND_FLAT_HI_PCT percent of the L2
  * (EST_ND_FLAT_HI_L3_PCT when the cube passes the L3) whose column pass is a plain chain (no Bluestein, no
  * Rader stage) and that is either even -- N2 and N3 even, not both powers of two, at least
@@ -1911,9 +1987,9 @@ static inline int est__put_child(vw2_store_t *st, const vw2_key_t *key, const ch
 /* est_put_rows_2d: the 2D row into st -- the column tokens, sw rbk turn csk (il2d_tier.h:4201-4204), at
  * T > 1 under the key nthreads=T with the threaded verdict cmt mtarm msw nls (il2d_tier.h:4511-4517), at one
  * thread the LEAF rule's nls where it gave one (the door reads it, fft2d_create_il.h; the measuring planner races
- * no leaf at one thread and writes none), then
- * the children rp_ turn_ csk_ tpc_ (il2d_tier.h:4225-4228), one-thread rows as the door's. Returns 0, or -1
- * with the reason. */
+ * no leaf at one thread and writes none) and the rows-first walk's width rfw where the plan runs it, then
+ * the children rp_ turn_ csk_ tpc_ (il2d_tier.h:4225-4228; csk_ also for the rows-first walk's own row plan),
+ * one-thread rows as the door's. Returns 0, or -1 with the reason. */
 static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *why, size_t whylen)
 {
     vw2_ilcol_key_t ck;
@@ -1931,12 +2007,14 @@ static inline int est_put_rows_2d(vw2_store_t *st, const est_plan2d_t *p, char *
         return est_refuse(why, whylen, "the %dx%d row's threaded verdict was refused by the store's writers", p->N1, p->N2);
     if (p->T <= 1 && p->nls >= 0 && vw2_ilcol_tok_seti(st, &ck, "nls", p->nls) != VW2_OK)   /* LEAF */
         return est_refuse(why, whylen, "the %dx%d row's leaf verdict was refused by the store's writers", p->N1, p->N2);
+    if (p->rfw > 0 && vw2_ilcol_tok_seti(st, &ck, "rfw", p->rfw) != VW2_OK)   /* ROWS FIRST: the door replays the width */
+        return est_refuse(why, whylen, "the %dx%d row's rows-first width was refused by the store's writers", p->N1, p->N2);
     vw2__ilcol_key(&ck, &key);
     if (est__put_child(st, &key, "rp_", &p->rp, p->N2, VFFT_PLACEMENT_IN, why, whylen))
         return -1;
     if (p->has_turn && est__put_child(st, &key, "turn_", &p->turnp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
         return -1;
-    if (p->has_csk && est__put_child(st, &key, "csk_", &p->cskp, p->N2, VFFT_PLACEMENT_OUT, why, whylen))
+    if ((p->has_csk || p->rfw_row) && est__put_child(st, &key, "csk_", &p->cskp, p->N2, VFFT_PLACEMENT_OUT, why, whylen))
         return -1;
     if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
         return -1;

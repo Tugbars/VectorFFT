@@ -175,9 +175,16 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
         p->has_csk != (p->col.blu <= 0 && mono))
         return est_refuse(why, whylen, "%dx%d: the children the recipe carries are not the ones the door builds", p->N1,
                           p->N2);
+    if (p->rfw < 0 || (p->rfw_row && (!p->rfw || p->has_csk)) ||
+        (p->rfw > 0 && (p->T > 1 || !(p->col.nat && p->col.blu <= 0 && p->col.nst > 1) || p->col.tpc == 1 || p->turn ||
+                        p->csk || p->rfw >= p->N2)))   /* the door's admission of the walk (il2d_tier.h, _il2d_rfw_ok) */
+        return est_refuse(why, whylen, "%dx%d: rfw=%d is no walk the door serves here (one thread, a natural chain of two "
+                          "stages or more, no turn, no skew, a strip narrower than the row)", p->N1, p->N2, p->rfw);
     if (est__preflight_child(&p->rp, p->N2, VFFT_PLACEMENT_IN, "the row plan", why, whylen) ||
         (p->has_turn && est__preflight_child(&p->turnp, p->N1, VFFT_PLACEMENT_IN, "the turn plan", why, whylen)) ||
-        (p->has_csk && est__preflight_child(&p->cskp, p->N2, VFFT_PLACEMENT_OUT, "the skewed pass's row plan", why, whylen)) ||
+        ((p->has_csk || p->rfw_row) &&
+         est__preflight_child(&p->cskp, p->N2, VFFT_PLACEMENT_OUT,
+                              p->has_csk ? "the skewed pass's row plan" : "the rows-first walk's row plan", why, whylen)) ||
         (p->col.tpc == 1 && est__preflight_child(&p->tpcp, p->N1, VFFT_PLACEMENT_IN, "the turned prime pass", why, whylen)))
         return -1;
     if ((p->ro == 2 && !rowk) || (p->ro == 3 && !est__rowb2_twins(&p->rp, p->N2)) || (p->ro != 0 && p->ro != 2 && p->ro != 3))
@@ -446,12 +453,16 @@ static inline int est__check_2d(const struct vfft_plan_s *h, const est_plan2d_t 
         return est_refuse(why, whylen, "%dx%d: the door serves sw=%d rowb=%d rowb2=%d turn=%d csk=%d, the recipe sw=%d ro=%d "
                           "turn=%d csk=%d", p->N1, p->N2, h->il2d_col.wc, h->il2d_rowb, h->il2d_rowb2, h->il2d_turn,
                           h->il2d_csk, p->sw, p->ro, p->turn, p->csk);
-    if ((!p->has_turn && h->il2d_turn_plan) || (!p->has_csk && h->il2d_csk_row))
+    if (h->il2d_rfw != p->rfw)   /* ROWS FIRST */
+        return est_refuse(why, whylen, "%dx%d: the door serves the rows-first walk at rfw=%d, the recipe rfw=%d", p->N1,
+                          p->N2, h->il2d_rfw, p->rfw);
+    if ((!p->has_turn && h->il2d_turn_plan) || (!p->has_csk && !p->rfw_row && h->il2d_csk_row))
         return est_refuse(why, whylen, "%dx%d: the door built a child the recipe does not carry", p->N1, p->N2);
     if (est__check_child(h->il2d_row, &p->rp, p->N2, VFFT_PLACEMENT_IN, "row plan", why, whylen) ||
         (p->has_turn && est__check_child(h->il2d_turn_plan, &p->turnp, p->N1, VFFT_PLACEMENT_IN, "turn plan", why, whylen)) ||
-        (p->has_csk && est__check_child(h->il2d_csk_row, &p->cskp, p->N2, VFFT_PLACEMENT_OUT, "skewed pass's row plan", why,
-                                        whylen)) ||
+        ((p->has_csk || p->rfw_row) &&
+         est__check_child(h->il2d_csk_row, &p->cskp, p->N2, VFFT_PLACEMENT_OUT,
+                          p->has_csk ? "skewed pass's row plan" : "rows-first walk's row plan", why, whylen)) ||
         (p->col.tpc == 1 &&
          est__check_child(h->il2d_col.tpcplan, &p->tpcp, p->N1, VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen)))
         return -1;
@@ -784,6 +795,8 @@ static vfft_plan _vfft_create_estimate_nd(const est_machine_t *m, const vfft_cfg
                 est_mt_2d(m, 1, q);
             est_mt_2d(m, cfg->nthreads, p);
             est_mt_2d_serial_1t(m, cfg->nthreads, p);   /* serial at T: the one-thread request's plan */
+            if (cfg->nthreads <= 1 && cfg->howmany <= 1)   /* ROWS FIRST: one transform on one thread */
+                est_rfw_2d(m, cfg->placement == VFFT_OUTOFPLACE, p);
             if (q)
                 p->pq = est_batch_whole(m, 16 * (size_t)cfg->n[0] * (size_t)cfg->n[1], cfg->howmany, cfg->nthreads);
             h = est_build_nd(p, NULL, q, NULL, cfg, NULL, why, sizeof why);
