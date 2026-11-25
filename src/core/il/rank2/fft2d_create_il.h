@@ -1389,8 +1389,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     if (h->transform == VFFT_R2C && h->il2d_row)
         _il2d_real_rowplan(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* its c2r twin (2026-10-05): the backward row pass's own plan, raced in
-     * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r= */
-    if (h->transform == VFFT_C2R && h->il2d_row && !il2d_oddn2)
+     * the row role on a CCE plane and banked as the row's rx_c2r= / rxs_c2r=.
+     * Every N2 since 2026-11-25, as the r2c's: an odd N2 races the odd door's
+     * engines backward against the c2c child route (512 x 2039 at 8 threads:
+     * the route's rows ran on one thread, 0.17x MKL) */
+    if (h->transform == VFFT_C2R && h->il2d_row)
         _il2d_real_rowplan_c2r(h, W, cfg, N1, N2, il2d_ord, il2d_T);
     /* THE COLUMN VERDICT (il2d_real_mt.md §6.4): the whole transform in serving order -- the rows as
      * just bound, the columns serial / the matched partition / the column blocks at every width --

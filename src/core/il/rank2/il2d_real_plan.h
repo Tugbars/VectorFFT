@@ -57,10 +57,10 @@
  * its section; the destroying c2r (a request's destroy_input permission: the
  * one-kernel column pass in place on the caller's plane) at the last one.
  *
- * Every N2 (odd N2 since 2026-10-07, r2c; a c2r plan at an odd N2 keeps its
- * c2c child until its own piece). A threaded plan threads the pass by row
- * ranges through an engine's worker clones; the door route keeps its own
- * threading (the per-row door's slabs at an even N2; the odd child is serial).
+ * Every N2 (odd N2 since 2026-10-07 r2c, 2026-11-25 c2r). A threaded plan
+ * threads the pass by row ranges through an engine's worker clones; the door
+ * route keeps its own threading (the per-row door's slabs at an even N2; the
+ * odd child is serial).
  *
  * Included after il/real/zrp_build.h (the builders) and il2d_tier.h (the row
  * route, and the dispatcher that calls _il2d_rowx_fwd). */

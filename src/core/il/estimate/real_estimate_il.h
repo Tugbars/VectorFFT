@@ -617,8 +617,8 @@ static inline int est__real_zr2c(const est_machine_t *m, long long N, int c2r, i
  * the c2c estimate's own arm at N/2 and T (est_c2c keeps the route of T = 1 and adds the arm), and the fold threads with
  * it; r2c / c2r 30000 at T = 8 ran 1.0x with the child serial, 2.05 / 2.24x with it threaded. One transform only: a
  * batch's whole transforms and the 2D real rows run their copies one-thread (_tc_slab_role), and the batch rule reads
- * the recipe as it was fitted (est__real_threads_own). A four-step child stays one-thread here, but for the prime
- * sides below. */
+ * the recipe as it was fitted (est__real_threads_own). A four-step child takes the c2c estimate's own four-step at
+ * N/2 and T, below. */
 /* A PRIME CHILD'S FOUR-STEP INNER AT T (2026-11-19): the real plan at T > 1 builds its prime child's four-step inner
  * at its T, the inner's child seeded from the row under the keys of that T (zr2c_build.h _zr2c_kid_build), as the c2c
  * prime cell's row at T carries it (est_prime_route's fs_t). Any batch size: a batch's per-transform plan is that
@@ -648,13 +648,14 @@ static inline void est__real_zr2c_child_mt(const est_machine_t *m, long long N, 
     const int n = (int)(N / 2);
     if (strcmp(o->eng, "zr2c") || T < 2 || N < 64)
         return;
-    /* THE PRIME SIDES AT T (owner, 2026-11-20: "we should apply this to R2C/C2R as well"): where N/2 is a composite with
-     * a prime factor past the chain radices, the child is the c2c estimate's own plan at N/2 and T when that is the
-     * four-step -- the split with a prime side, its N1 as il_mt and its child at T (est_fs_route_prime) -- as the door's
-     * threaded arms build it: zr2c+fs where N/2 splits at T only (zrp_build.h; the one-thread child race never holds
-     * the four-step there), zr2c+mt's split race at T above VFFT_K1FS_MIN_N, where the one-thread child is the
-     * four-step already. The fold threads with it. A one-thread four-step child of any other N/2 is left as it was. */
-    if (vfft_k1fs_prime_composite(n) && vfft_k1fs_band_t(n, T) &&
+    /* THE FOUR-STEP CHILD AT T: where N/2 is in the four-step band at T, the child is the c2c estimate's own plan at
+     * N/2 and T when that is the four-step -- its threaded split's N1 as il_mt and its child at T (est_fs_route,
+     * est_fs_route_prime for a prime side) -- as the door's threaded arms build it: zr2c+mt's split race at T where
+     * the one-thread child is the four-step already, zr2c+fs where N/2 splits at T only (a prime side below
+     * VFFT_K1FS_MIN_N; zrp_build.h: the one-thread child race never holds the four-step there). The fold threads
+     * with it. (2026-11-25: the one-thread four-step child of a smooth N/2 ran 4.5-6.7x slower than the planner's
+     * threaded one at T = 8, 525000 - 2117682.) */
+    if (vfft_k1fs_band_t(n, T) &&
         (o->c.k1_il_route == VFFT_K1_IL_FS || !vfft_k1fs_band_t(n, 1)) &&
         est_c2c(m, n, 0, o->zr2c.route, T, &t, w2, sizeof w2) == 0 && t.k1_il_route == VFFT_K1_IL_FS && t.il_mt > 0)
     {

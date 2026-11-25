@@ -3,6 +3,21 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
+## 0.9.1 beta (unreleased)
+
+### Faster
+
+- 2D real backward transforms (C2R) on several threads whose last extent is odd, such as
+  512 x 2,039, 128 x 509 or 2,187 x 507: their rows now run on every thread, where only the
+  column pass did. With the measuring planner and with `VFFT_FLAG_ESTIMATE`.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: 1D real transforms (R2C, C2R) from about
+  524,288 points up whose half is not a power of two and has no prime factor above 47, such
+  as 525,000, 1,058,400 or 8,403,500. The measuring planner already ran them this way.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: 2D real transforms (R2C, C2R) on planes
+  larger than the CPU's L3 cache whose column length has a prime factor above 47, such as
+  2,049 x 4,096 or 514 x 16,383, and tall planes larger than the L3 cache, such as
+  8,192 x 1,024 or 8,193 x 1,018.
+
 ## 0.9.0 beta (2026-11-25)
 
 ### New

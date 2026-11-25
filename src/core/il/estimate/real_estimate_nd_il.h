@@ -194,6 +194,11 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     const long long hp1 = N2 / 2 + 1, bytes = 16LL * N1 * hp1;
     const int c2r128wide = c2r && T <= 1 && N1 == 128 && bytes > (long long)m->l2 * 5 / 8;
     const int tallmt = T > 1 && N1 != 2 && bytes > m->l1d / 2 && N1 >= 4LL * N2;   /* the threaded column of a tall plane */
+    /* ...run plain over a chain of two or more stages while the plane and the natural leaf's plane-sized scratch fit
+     * the L3: the door serves that plain column as the matched partition, one sweep of the plane per stage (2026-11-25:
+     * past the L3 the strips' one sweep won, 8192 x 1024 R2C 9.4 -> 5.8 ms at 8 threads, the planner's verdict there;
+     * a tie at 16.8 MB, the strips 1.25 - 1.79x faster from 33.6 MB on a 36 MB L3) */
+    const int tallplain = tallmt && (m->l3 <= 0 || 2 * bytes <= (long long)m->l3);
     char dummy[1];
     if (!why || !whylen) { why = dummy; whylen = sizeof dummy; }
     why[0] = 0;
@@ -243,13 +248,14 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
         p->col.R[1] = 8;
         p->col.nst = 2;
     }
-    if (tallmt && p->col.blu <= 0 && p->col.rd_n == 0)
+    if (tallplain && p->col.blu <= 0 && p->col.rd_n == 0)
     {   /* THE TALL PLANE AT T > 1 (2026-11-02): where N1 >= 4 N2 the threaded column runs plain (mtarm=0, below) over
          * the chain with the fewest stages (est__col_fewest), the planner's verdicts on such planes: mtarm=0 on all 62
-         * banked 8-thread rows with N1 >= 4 N2, its chains 16.32, 32.32, 32.64, 64.64, 64.10, 3.8.64. At 8 threads,
-         * 60 tall planes of 256 - 8192 rows, power of two or not, both directions: 2.071 -> 1.077 against the planner
-         * (its own column verdicts 1.045), 58 faster, one slower (C2R 3000 x 64, 1.02 -> 1.11); on the near-square
-         * 2048 x 1024, where the planner keeps the strips, it was slower (1.06 - 1.15 -> 1.22 - 1.41). */
+         * banked 8-thread rows with N1 >= 4 N2 (planes up to 8.5 MB), its chains 16.32, 32.32, 32.64, 64.64, 64.10,
+         * 3.8.64. At 8 threads, 60 tall planes of 256 - 8192 rows, power of two or not, both directions: 2.071 -> 1.077
+         * against the planner (its own column verdicts 1.045), 58 faster, one slower (C2R 3000 x 64, 1.02 -> 1.11); on
+         * the near-square 2048 x 1024, where the planner keeps the strips, it was slower (1.06 - 1.15 -> 1.22 - 1.41).
+         * Past the L3 (tallplain above) the column keeps the strips and its own chain. */
         int R[8];
         const int k = est__col_fewest(N1, R);
         if (k > 0)
@@ -277,18 +283,23 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     p->cmt = p->mtarm = p->msw = 0;
     if (p->T > 1 && N1 != 2 && bytes > m->l1d / 2)
     {   /* est_mt_2d's column rule at the real plane's bytes: threaded, the strips at their width */
-        /* a Rader column on a plane past the L3 runs plain too (2026-11-02, one plane: 4099 x 2048 at 8 threads, R2C
-         * 2.75 -> 1.17, C2R 2.62 -> 1.14; the only such plane banked -- the smaller Rader planes keep the strips, where
-         * the plain column was slower, 109 x 512 0.96 -> 1.26) */
-        const int plain = tallmt || (p->col.rd_n > 0 && m->l3 > 0 && bytes > (long long)m->l3);
+        /* a one-stage Rader column on a plane past the L3 runs plain too (2026-11-02, one plane: 4099 x 2048 at 8
+         * threads, R2C 2.75 -> 1.17, C2R 2.62 -> 1.14; the only such plane banked -- the smaller Rader planes keep the
+         * strips, where the plain column was slower, 109 x 512 0.96 -> 1.26). One stage: the door walks it by lane
+         * ranges. A chain of two or more stages takes the matched partition there, which splits a stage only by its
+         * digits (il2d_tier.h _il2d_stage_digits_mt_x): a Rader stage 0 of N1 / p < T digits ran on one thread
+         * (2026-11-25, 2049 x 4096 at 8 threads: 38.1 ms plain, the strips 5.8 - 6.2 ms, the planner's verdict), so
+         * such a chain keeps the strips past the L3, and plain only as the tall plane in the L3 (tallplain). */
+        const int onestage = p->col.blu > 0 || p->col.nst < 2;
+        const int plain = onestage ? tallmt || (p->col.rd_n > 0 && m->l3 > 0 && bytes > (long long)m->l3) : tallplain;
         p->cmt = 1;
         p->mtarm = plain ? 0 : 1;   /* the tall plane's plain threaded column (above) */
         p->msw = plain ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
     }
     p->rx[0] = p->rxs[0] = p->cx[0] = p->cxs[0] = 0;
-    int zrm_rows = 0;   /* R2C at an odd N2: the rows on the real mono kernel (below), in place of the real axis */
-    if (!c2r || !(N2 & 1))
-    {   /* C2R's row engines race at even N2 only (fft2d_create_il.h:1259) */
+    int zrm_rows = 0;   /* an odd N2: the rows on the real mono kernel (below), in place of the real axis */
+    {   /* the row engine, both directions at every N2 (C2R's at an odd N2 since 2026-11-25, the door's row plan,
+         * fft2d_create_il.h _il2d_real_rowplan_c2r) */
         /* the rows kernel out of place on one thread; at T > 1 the door's row child (the kernel 2.2 - 3.8 x slower at
          * 16 x 16 and 32 x 32 on 8 threads, the child 0.98 - 1.02) */
         snprintf(p->rx, sizeof p->rx, "%s", (!ip && p->T == 1 && est__rows_lm_ok(N2)) ? "lm" : "door");
@@ -298,7 +309,8 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             p->has_rxe = N2 >= 4 && !est_real(m, N2, c2r, 0, 1, &p->rxe, w2, sizeof w2);
         }
         if ((N2 & 1) && p->has_rxe && (!strcmp(p->rxe.eng, "zrf") || !strcmp(p->rxe.eng, "zrb")))
-        {   /* R2C at odd N2: the 1D real estimate's odd engine as the row engine (stage 3 study, 2026-11-02: the
+        {   /* at odd N2 (C2R too since 2026-11-25: its rows had run one-thread through the door's C2C child, 512 x 2039
+             * at 8 threads 0.17x MKL): the 1D real estimate's odd engine as the row engine (stage 3 study, 2026-11-02: the
              * door's C2C row child 1.46 / 1.52 against the planner, the odd chain 1.10 on 8 of 8 planes, Bluestein
              * 1.24 on 5 of 6; the planner's own row engine at odd N2 is one of the two); the small kernel at
              * N2 <= 64 stays on the child (5.3 x slower at 16x61) */
@@ -306,20 +318,21 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             if (est__rx_token(&p->rxe, tk, sizeof tk))
                 snprintf(p->rx, sizeof p->rx, "%s", tk);
         }
-        if (!c2r && (N2 & 1))
-        {   /* R2C at an odd N2 the 1D real estimate runs on the real mono kernel: the rows on it, at one thread up to 19
+        if (N2 & 1)
+        {   /* an odd N2 the 1D real estimate runs on the real mono kernel: the rows on it, at one thread up to 19
              * (out of place an odd prime from 13 keeps the real axis on N1, below), at T > 1 from 7 (study 1,
              * 2026-11-12: the estimate's recipe built with the rows on the door's C2C child and on the kernel, every
              * other choice the same, N1 16 - 512 and the 3D planes of 8x32, 32x64, both placements. One thread: the
              * kernel 0.42 - 0.92 of the child at 3 - 19, about 1 at 23 - 31, 1.1 - 3.3 from 37; out of place faster
              * than the real axis at 3, 5, 7, 11, even at 13, slower from 17. 8 threads: 0.25 - 0.89 from 7 to 61, the
              * child's odd rows never thread (il2d_tier.h:317-329); 1.0 - 1.45 at 3, 5. The planner's on 5, 7, 9, 13,
-             * 15, 31 in the store) */
+             * 15, 31 in the store). Fitted on R2C; C2R takes the same rule (2026-11-25), its rows the kernel's
+             * backward, and no real axis (R2C's) */
             est_real_recipe_t z;
             char w2[160];
             const int named = p->has_rxe ? !strcmp(p->rxe.eng, "zrm")
-                                         : (N2 >= 3 && !est_real(m, N2, 0, 0, 1, &z, w2, sizeof w2) && !strcmp(z.eng, "zrm"));
-            const int keep_rax = !ip && N1 >= 4 && !(N1 & 1) && N2 >= 13 && vfft_policy_is_prime(N2);
+                                         : (N2 >= 3 && !est_real(m, N2, c2r, 0, 1, &z, w2, sizeof w2) && !strcmp(z.eng, "zrm"));
+            const int keep_rax = !c2r && !ip && N1 >= 4 && !(N1 & 1) && N2 >= 13 && vfft_policy_is_prime(N2);
             if (named && (p->T == 1 ? N2 <= 19 && !keep_rax : N2 >= 7))
             {
                 snprintf(p->rx, sizeof p->rx, "zrm");
