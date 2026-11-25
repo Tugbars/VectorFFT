@@ -3,7 +3,7 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
-## Unreleased
+## 0.9.0 beta (unreleased)
 
 ### New
 
@@ -25,6 +25,34 @@ version can change how a function behaves, so compile your program again with ea
   and 3 at the lengths the AVX2 build serves, one transform, contiguous batches and
   lane-major batches, out of place or in place, on one thread or several. Until now an
   AVX-512 build refused every split request.
+- 1D complex transforms of lengths above 8,388,608 points with a prime factor above 47, such
+  as 16,777,215 or the primes 8,388,617 and 16,777,213. 0.8.1 refused them.
+
+### Faster
+
+- 1D complex transforms of composite lengths with a prime factor above 47, such as
+  2,097,151 or 4,194,305: above 262,144 points on one thread or several, and from 4,096
+  points on several threads.
+- 1D real transforms (R2C, C2R) on several threads whose length is twice such a length,
+  from about 524,288 points up, and the DCT and DST types computed through them.
+- 2D complex transforms on several threads: planes with composite or odd side lengths, such
+  as 1,029 x 1,029 or 1,050 x 1,050, and tall narrow planes such as 875 x 15 or 2,625 x 6.
+  Their speed no longer depends on where the threads' work buffers happen to sit in memory.
+- 2D complex transforms on one thread with a short composite or odd column length and
+  longer rows, such as 18 x 1,050, 42 x 1,050 or 35 x 1,029: out of place and in place,
+  forward and backward, with the measuring planner and with `VFFT_FLAG_ESTIMATE`. 3D
+  transforms made of such planes gain too.
+- 2D complex backward transforms, most of all in place, on planes that fit in the CPU's
+  caches.
+- Side lengths with factors of 15, 21, 25 or 27, such as 75, 135, 525 or 675, in 2D and 3D
+  transforms, and rows of 15, 21, 25 or 27 points.
+- 2D complex transforms in natural order whose rows are a multiple of 512 bytes (64, 256 or
+  1,024 points in double precision), such as 225 x 256 or 525 x 256, on one thread and on
+  several.
+- Planning 2D and 3D transforms with the measuring planner: the plan of a row length is
+  measured once and kept in the wisdom, and every later plane or volume with rows of that
+  length plans in a fraction of the time. Real transforms (R2C, C2R) share it where the
+  last extent is even. Candidate plans that never win are no longer timed.
 
 ### Changed: adjust your program
 

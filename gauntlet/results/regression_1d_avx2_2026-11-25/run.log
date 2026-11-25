@@ -1,0 +1,53 @@
+2026-11-25 04:20:46 run: 180 cells, contract out of place, T=8, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 04:20:46 calibrate: 180 cells (0 already done), RECALIBRATE (every cell re-raced)
+2026-11-25 04:23:31   calibrated 25/180 (126), 165 s elapsed
+2026-11-25 04:27:55   calibrated 50/180 (1014), 428 s elapsed
+2026-11-25 04:34:58   calibrated 75/180 (4375), 852 s elapsed
+2026-11-25 04:44:17   calibrated 100/180 (32769), 1410 s elapsed
+2026-11-25 05:09:06   calibrated 125/180 (262143), 2900 s elapsed
+2026-11-25 06:48:10   calibrated 150/180 (2097143), 8843 s elapsed
+2026-11-25 08:57:04 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-25 08:57:04 run: 180 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 08:57:04 bench: 180 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 08:58:04   benched 25/180 (126), 57 s elapsed
+2026-11-25 08:59:04   benched 50/180 (1014), 117 s elapsed
+2026-11-25 09:00:06   benched 75/180 (4375), 179 s elapsed
+2026-11-25 09:01:08   benched 100/180 (32769), 241 s elapsed
+2026-11-25 09:02:11   benched 125/180 (262143), 304 s elapsed
+2026-11-25 09:04:04   benched 150/180 (2097143), 417 s elapsed
+2026-11-25 09:12:14   benched 175/180 (8680203), 907 s elapsed
+2026-11-25 09:16:38   benched 180/180 (16777216), 1171 s elapsed
+2026-11-25 09:16:40 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_1d_avx2_2026-11-25\report_mt8_est.md
+2026-11-25 09:29:51 run: 180 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 09:29:51 bench: 180 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 09:30:52   benched 25/180 (126), 59 s elapsed
+2026-11-25 09:31:54   benched 50/180 (1014), 121 s elapsed
+2026-11-25 09:33:04   benched 75/180 (4375), 190 s elapsed
+2026-11-25 09:34:17   benched 100/180 (32769), 264 s elapsed
+2026-11-25 09:35:37   benched 125/180 (262143), 344 s elapsed
+2026-11-25 09:38:00   benched 150/180 (2097143), 487 s elapsed
+2026-11-25 09:52:35   benched 175/180 (8680203), 1362 s elapsed
+2026-11-25 09:55:02   benched 180/180 (16777216), 1508 s elapsed
+2026-11-25 09:55:05 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_1d_avx2_2026-11-25\report_r2c_mt8_est.md
+2026-11-25 10:10:42 run: 180 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 10:10:42 bench: 180 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 10:11:44   benched 25/180 (126), 59 s elapsed
+2026-11-25 10:12:47   benched 50/180 (1014), 122 s elapsed
+2026-11-25 10:13:56   benched 75/180 (4375), 192 s elapsed
+2026-11-25 10:15:11   benched 100/180 (32769), 266 s elapsed
+2026-11-25 10:16:32   benched 125/180 (262143), 347 s elapsed
+2026-11-25 10:18:53   benched 150/180 (2097143), 489 s elapsed
+2026-11-25 10:33:11   benched 175/180 (8680203), 1346 s elapsed
+2026-11-25 10:35:21   benched 180/180 (16777216), 1476 s elapsed
+2026-11-25 10:35:24 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_1d_avx2_2026-11-25\report_c2r_mt8_est.md
+2026-11-25 10:54:28 run: 180 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 10:54:28 bench: 180 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 10:55:28   benched 25/180 (126), 58 s elapsed
+2026-11-25 10:56:30   benched 50/180 (1014), 120 s elapsed
+2026-11-25 10:57:35   benched 75/180 (4375), 185 s elapsed
+2026-11-25 10:58:40   benched 100/180 (32769), 250 s elapsed
+2026-11-25 10:59:48   benched 125/180 (262143), 318 s elapsed
+2026-11-25 11:01:54   benched 150/180 (2097143), 444 s elapsed
+2026-11-25 11:11:24   benched 175/180 (8680203), 1014 s elapsed
+2026-11-25 11:16:41   benched 180/180 (16777216), 1331 s elapsed
+2026-11-25 11:16:44 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\regression_1d_avx2_2026-11-25\report_mt4_est.md
