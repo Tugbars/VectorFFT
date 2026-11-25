@@ -3,7 +3,7 @@
 What changed from one release to the next, newest first. VectorFFT is in beta: a new
 version can change how a function behaves, so compile your program again with each one.
 
-## 0.9.0 beta (unreleased)
+## 0.9.0 beta (2026-11-25)
 
 ### New
 
