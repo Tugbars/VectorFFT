@@ -1,0 +1,14 @@
+2026-11-25 15:10:55 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-25 15:10:55 run: 228 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 15:10:55 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 15:11:54   benched 25/228 (157), 57 s elapsed
+2026-11-25 15:12:55   benched 50/228 (639), 117 s elapsed
+2026-11-25 15:13:56   benched 75/228 (2560), 179 s elapsed
+2026-11-25 15:15:02   benched 100/228 (10243), 244 s elapsed
+2026-11-25 15:16:04   benched 125/228 (49115), 306 s elapsed
+2026-11-25 15:17:07   benched 150/228 (196608), 369 s elapsed
+2026-11-25 15:18:37   benched 175/228 (786431), 459 s elapsed
+2026-11-25 15:22:22   benched 200/228 (3145728), 684 s elapsed
+2026-11-25 15:35:32   benched 225/228 (14679275), 1474 s elapsed
+2026-11-25 15:36:09   benched 228/228 (14680065), 1512 s elapsed
+2026-11-25 15:36:12 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_mt8_est.md

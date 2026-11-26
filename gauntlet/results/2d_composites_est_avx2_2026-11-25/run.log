@@ -1,0 +1,5 @@
+2026-11-25 15:36:12 store: fresh copy of this CPU's shipped wisdom (C:\Users\Tugbars\Desktop\highSpeedFFT\src\wisdom\14900KF)
+2026-11-25 15:36:12 run: 134 cells, contract 2D out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-25 15:36:12 bench: 134 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-25 15:37:12   benched 25/134 (18x6), 58 s elapsed
+2026-11-25 15:38:09   benched 50/134 (70x10), 115 s elapsed
