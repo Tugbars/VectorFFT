@@ -24,6 +24,9 @@ version can change how a function behaves, so compile your program again with ea
   column length is computed with Bluestein's method, such as 2,063 x 263 or 8,219 x 557: on
   one thread or several, out of place or in place. C2R and complex transforms were not
   affected.
+- `vfft_destroy()` left part of a plan's memory allocated (a few megabytes a plan) for 2D
+  complex transforms on several threads, one transform or a contiguous batch, whose first
+  extent is computed with Bluestein's method, such as 2,063 x 64.
 
 ## 0.9.0 beta (2026-11-25)
 

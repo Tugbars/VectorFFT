@@ -448,7 +448,6 @@ void vfft_destroy(vfft_plan h)
             vfft_child_store_free(h->il2d_rowS); /* the children's private stores (il/wisdom/wisdom2_child.h) */
             vfft_child_store_free(h->il2d_turnS);
             vfft_child_store_free(h->il2d_cskS);
-            vfft_child_store_free(h->il2d_col.tpcS);
             for (s2 = 0; s2 < h->il2d_roww_n; s2++)
                 vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
             free(h->il2d_roww);
@@ -459,19 +458,9 @@ void vfft_destroy(vfft_plan h)
                 vfft_destroy(h->il2d_turnw[s2]); /* the threaded turn's N1 plan clones */
             free(h->il2d_turnw);
             vfft_aligned_free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
-            free(h->il2d_col.natperm);
-            vfft_aligned_free(h->il2d_col.natscr); /* aligned since 2026-09-24 */
-            _il2d_stage_free(h->il2d_col.natstage);   /* the leaf's staging slots (il2d_col.h) */
-            _il2d_nat_sscr_free(&h->il2d_col); /* the strips' dense scratch (2026-09-24) */
-            vfft_aligned_free(h->il2d_col.bluchf);
-            vfft_aligned_free(h->il2d_col.bluchb);
-            vfft_aligned_free(h->il2d_col.blukf);
-            vfft_aligned_free(h->il2d_col.blukb);
-            vfft_aligned_free(h->il2d_col.bluscr);
-            if (h->il2d_col.tpcplan)
-                vfft_destroy(h->il2d_col.tpcplan); /* the turned prime pass's 1D plan */
-            if (h->il2d_col.tpcscr)
-                vfft_aligned_free(h->il2d_col.tpcscr);
+            _il2d_stage_free(h->il2d_col.natstage);   /* the leaf's staging slots (il2d_col.h; not the column's own) */
+            _il2d_col_free(&h->il2d_col);   /* the column pass: its one owner frees every table, scratch, the Rader
+                                             * engine and the turned prime pass with its worker clones */
             vfft_aligned_free(h->il2d_rowb2_scr); /* the two-pass rows' chunk scratch (route 3) */
             if (h->il2d_turn_plan)
                 vfft_destroy(h->il2d_turn_plan); /* the turn route's N1 plan */
@@ -479,7 +468,6 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_csk_row)
                 vfft_destroy(h->il2d_csk_row); /* the skewed column pass's OOP row plan */
             vfft_aligned_free(h->il2d_csk_scr);
-            vfft_aligned_free(h->il2d_col.bandscr);
             vfft_aligned_free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rx_eng)
                 vfft_destroy((vfft_plan)h->il2d_rx_eng); /* the real tier's row engine */
@@ -494,17 +482,6 @@ void vfft_destroy(vfft_plan h)
             _il2d_rax_free(h);                  /* the real axis on N1: its planes, chain, batch and stores */
             _il2d_tf_free(h);                   /* the fused walk's staging */
             _il2d_rcsk_free(h);                 /* the skewed plane */
-            if (h->il2d_col.rd0)
-            {   /* the Rader stage's engine; its tags in the stage-0 slots go with the tables */
-                if (_il2d_rd0_free_hook)
-                    _il2d_rd0_free_hook(h->il2d_col.rd0);
-                h->il2d_col.rd0 = NULL;
-            }
-            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
-            {
-                vfft_aligned_free(h->il2d_col.tf[s2]);
-                vfft_aligned_free(h->il2d_col.tb[s2]);
-            }
         }
     }
     if (!h)
