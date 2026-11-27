@@ -420,6 +420,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
     int il2d_axis_raced = 0;   /* the cell's axes were raced in this create (a cold cell) */
     int il2d_row_due = 0, il2d_turn_due = 0, il2d_csk_due = 0;   /* a child whose recipe is new to this cell: the plane's final (il2d_tier.h, _il2d_child_final) */
     vfft_real *il2d_tpcscr = NULL;
+    vfft_ilcol_t il2d_rcol;   /* the real tier's built column, its one owner until the plan takes it (il2d_rcol_own) */
+    int il2d_rcol_own = 0;
     int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                           * and the T it was raced at */
     int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
@@ -887,6 +889,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                 il2d_natperm = col.natperm;
                 il2d_natscr = col.natscr;
                 il2d_rd0 = col.rd0;
+                il2d_tpc = col.tpc;   /* the turned prime pass (a Bluestein column whose verdict turned it) */
+                il2d_tpcplan = col.tpcplan;
+                il2d_tpcw = col.tpcw;
+                il2d_tpcw_n = col.tpcw_n;
+                il2d_tpcscr = col.tpcscr;
+                il2d_tpcS = col.tpcS;
+                il2d_rcol = col;      /* a refusal below frees the column through its owner (_il2d_col_free) */
+                il2d_rcol_own = 1;
                 /* the per-direction verdicts (wl cmt cmtt): from the
                  * row, this direction's tokens, never under recalibrate;
                  * -1 = unraced, and the wl race below fills it in */
@@ -945,6 +955,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                            "law)",
                            _vfft_tname(cfg->transform), N1, N2, N2);
                 vfft_child_store_free(il2d_rowS);
+                if (il2d_rcol_own)
+                    _il2d_col_free(&il2d_rcol);
                 return NULL;
             }
             if (cfg->transform == VFFT_C2R)
@@ -956,6 +968,8 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
                 {
                     vfft_destroy(il2d_row);
                     vfft_aligned_free(il2d_orbuf);
+                    if (il2d_rcol_own)
+                        _il2d_col_free(&il2d_rcol);
                     return NULL;
                 }
             }
@@ -1061,6 +1075,14 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
             if (!il2d_row)
                 rok = 0;
         }
+        if (!rok && il2d_rcol_own)
+        {   /* the column built for a cell that then refused: its owner frees every table, scratch, the Rader engine
+             * and the turned prime pass with its clones */
+            _il2d_col_free(&il2d_rcol);
+            il2d_rcol_own = 0;
+            il2d_rd0 = NULL;
+            il2d_nst = 0;
+        }
         if (!rok && il2d_nst)
         {
             /* tables built for a cell that then refused */
@@ -1101,8 +1123,11 @@ static vfft_plan _vfft_create_2d_il(const vfft_cfg_t *cfg,
         if (il2d_row)
             vfft_destroy(il2d_row);
         vfft_aligned_free(il2d_rscr);
+        if (il2d_rcol_own)
+            _il2d_col_free(&il2d_rcol);
         return NULL;
     }
+    il2d_rcol_own = 0;   /* the plan owns the column from here (h->il2d_col, freed at vfft_destroy) */
     h->transform = cfg->transform;
     h->placement = cfg->placement;
     h->layout = (int)cfg->layout;

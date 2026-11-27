@@ -17,6 +17,13 @@ version can change how a function behaves, so compile your program again with ea
   larger than the CPU's L3 cache whose column length has a prime factor above 47, such as
   2,049 x 4,096 or 514 x 16,383, and tall planes larger than the L3 cache, such as
   8,192 x 1,024 or 8,193 x 1,018.
+- Real transforms (R2C, C2R) whose first extent is computed with Bluestein's method (some
+  lengths with a large prime factor, such as 2,063, 2,809 or 8,219): 2D and 3D transforms,
+  ranks 4 to 7 and lane-major batches, on one thread or several, with the measuring planner
+  and with `VFFT_FLAG_ESTIMATE`. That axis now runs as it does in complex transforms, through
+  the 1D plan of its length on every column. 3D transforms with such a first extent now run on
+  several threads, where they ran on one. With the measuring planner, the first create of such
+  a transform times the new pass once and keeps the result in the wisdom.
 
 ### Fixed
 

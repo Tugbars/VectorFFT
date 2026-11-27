@@ -662,12 +662,13 @@ static int _il2d_tpc_cols_mt(const vfft_ilcol_t *c, const vfft_real *src, vfft_r
     thread_pool_run(T, _il2d_tpc_mt_tramp, a, sizeof a[0]);   /* caller = a[0] */
     return 1;
 }
-/* the turned pass as a race arm at the cell's T: threaded above 1 where it engages, else serial */
-static void _il2d_tpc_arm(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int T)
+/* the turned pass as a race arm at the cell's T: threaded above 1 where it engages, else serial; rev = the backward
+ * pass (a C2R plan's column) */
+static void _il2d_tpc_arm(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int T, int rev)
 {
-    if (T > 1 && _il2d_tpc_cols_mt(c, src, dst, rn, 0, T))
+    if (T > 1 && _il2d_tpc_cols_mt(c, src, dst, rn, rev, T))
         return;
-    _il2d_tpc_cols_range(c, src, dst, rn, 0, rn, 0);
+    _il2d_tpc_cols_range(c, src, dst, rn, 0, rn, rev);
 }
 
 /* THE COLUMN-ONLY SERIAL EXECUTE: the pass a rank-N IL plan runs on each
@@ -4011,14 +4012,36 @@ static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
     }
 }
 
-/* ── the tpc arm's build, race and replay (struct comment at c->tpc). c2c
- * axis 0 only: the real tier's CCE columns and a rank-3 axis 1 run
- * per-worker clones the one plan cannot serve. VFFT_IL2D_TPC=1|0 pins
- * (never banks). A row without a tpc= token races the arm on its next
+/* ── the tpc arm's build, race and replay (struct comment at c->tpc). Axis 0
+ * of every key, complex and real (the real tier's CCE plane since 2026-11-27:
+ * its column pass is a plane of rn lanes as the complex one, and the threaded
+ * form serves each worker through its own clone, _il2d_tpc_cols_mt). Not axis
+ * 1: the rank-3 c2c flat arm's per-worker copies of ax1 share one plan and one
+ * scratch (fftnd_il.h), and the tpc_ child prefix carries no axis. VFFT_IL2D_TPC
+ * =1|0 pins (never banks). A row without the token races the arm on its next
  * create. */
+static int _il2d_tpc_key_admits(const vw2_ilcol_key_t *key)
+{
+    return key->axis == 0;
+}
 static int _il2d_tpc_admits(const vw2_ilcol_key_t *key, const vfft_ilcol_t *c)
 {
-    return c->blu > 0 && !key->real && key->axis == 0;
+    return c->blu > 0 && _il2d_tpc_key_admits(key);
+}
+/* the verdict's token: a complex key's tpc=; a real key's per direction, as the shared real row spells its column
+ * verdicts (wisdom2_2d_il_reader.h vw2__rl_tok: tpc for R2C, tpc_c2r for C2R; door 2's _p set): each direction
+ * times its own pass (_il2d_tpc_race) */
+static const char *_il2d_tpc_tok(const vw2_ilcol_key_t *key, const vfft_cfg_t *cfg, char *buf, size_t sz)
+{
+    if (!key->real)
+        return "tpc";
+    snprintf(buf, sz, "%s%s", cfg->transform == VFFT_C2R ? "tpc_c2r" : "tpc", key->ip == 2 ? "_p" : "");
+    return buf;
+}
+/* the direction a column pass serves: a C2R plan's pass is the backward transform of its CCE plane */
+static int _il2d_tpc_rev(const vw2_ilcol_key_t *key, const vfft_cfg_t *cfg)
+{
+    return key->real && cfg->transform == VFFT_C2R;
 }
 static int _il2d_clone_set(const struct vfft_plan_s *prim, struct vfft_wisdom_s *S, const vfft_cfg_t *cfg,
                            int N, int placement, int T, struct vfft_plan_s ***out, int *out_n, const char *what);   /* below */
@@ -4190,8 +4213,9 @@ static void _il2d_blu_drop_tables(vfft_ilcol_t *c)
 }
 /* the tpc race's Bluestein arm: at the cell's T > 1 through the threaded pass the cell serves Bluestein with (each
  * worker its lanes: _il2d_blu_cols_range), else the serial pipeline (a one-thread race crowned the turned pass at
- * 12005 x 32 lanes at every T, 2026-11-18, the threading census); the turned arm likewise (_il2d_tpc_arm) */
-static void _il2d_tpc_blu_arm(const vfft_ilcol_t *c, vfft_real *z, vfft_real *zo, int N, size_t rn, int Tc)
+ * 12005 x 32 lanes at every T, 2026-11-18, the threading census); the turned arm likewise (_il2d_tpc_arm); rev = the
+ * backward pass (a C2R plan's column), the conjugated chirp and kernel */
+static void _il2d_tpc_blu_arm(const vfft_ilcol_t *c, vfft_real *z, vfft_real *zo, int N, size_t rn, int Tc, int rev)
 {
     if (Tc > 1)
     {
@@ -4208,23 +4232,28 @@ static void _il2d_tpc_blu_arm(const vfft_ilcol_t *c, vfft_real *z, vfft_real *zo
         memcpy(cv.tf, c->tf, sizeof cv.tf);
         memcpy(cv.tb, c->tb, sizeof cv.tb);
         cv.bluchf = c->bluchf;
+        cv.bluchb = c->bluchb;
         cv.blukf = c->blukf;
+        cv.blukb = c->blukb;
         cv.bluscr = c->bluscr;
-        if (_il2d_cols_mt_desc(&cv, N, z, zo, 0, Tc, NULL, -1))
+        if (_il2d_cols_mt_desc(&cv, N, z, zo, rev, Tc, NULL, -1))
             return;
     }
     _il2d_blu_cols(z, zo, N, rn, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
-                   c->bluchf, c->blukf, c->bluscr);
+                   rev ? c->bluchb : c->bluchf, rev ? c->blukb : c->blukf, c->bluscr);
 }
 static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                            const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
 {
     const char *pin = getenv("VFFT_IL2D_TPC");
     const int Tc = key->nthreads;   /* the cell's T: the Bluestein arm threaded above 1 */
+    const int rev = _il2d_tpc_rev(key, cfg);   /* each direction times its own pass */
     const size_t T = (size_t)N * rn;
     vfft_real *z, *zo, tb = 1e300, tt = 1e300;
     size_t i;
     int r;
+    char tkb[16];
+    const char *tk = _il2d_tpc_tok(key, cfg, tkb, sizeof tkb);
     if (!_il2d_tpc_admits(key, c))
         return;
     if (pin && atoi(pin) == 0)
@@ -4255,14 +4284,14 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     /* min of 3, alternated, both arms through their serving functions (both threaded at the cell's T) */
     if (Tc > 1)
         _vfft_pool_arm(Tc);
-    _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
-    _il2d_tpc_arm(c, z, zo, rn, Tc);
+    _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc, rev);
+    _il2d_tpc_arm(c, z, zo, rn, Tc, rev);
     for (r = 0; r < 3; r++)
     {
         const double t0 = vfft_now_ns();
-        _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc);
+        _il2d_tpc_blu_arm(c, z, zo, N, rn, Tc, rev);
         const double t1 = vfft_now_ns();
-        _il2d_tpc_arm(c, z, zo, rn, Tc);
+        _il2d_tpc_arm(c, z, zo, rn, Tc, rev);
         const double t2 = vfft_now_ns();
         if (t1 - t0 < tb) tb = t1 - t0;
         if (t2 - t1 < tt) tt = t2 - t1;
@@ -4271,9 +4300,10 @@ static void _il2d_tpc_race(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
     vfft_aligned_free(zo);
     c->tpc = (tt < tb);
     if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[il2d] tpc race at N=%d x %zu lanes, T=%d: blu %.0f us, turned %.0f us -> %s\n",
-                N, rn, Tc, tb / 1e3, tt / 1e3, c->tpc ? "TURNED" : "blu");
-    vw2_ilcol_tok_seti(&W->vw2, key, "tpc", c->tpc);
+        fprintf(stderr, "[il2d] tpc race at N=%d x %zu lanes, T=%d%s%s: blu %.0f us, turned %.0f us -> %s\n",
+                N, rn, Tc, key->real ? " real " : "", key->real ? (rev ? "c2r" : "r2c") : "", tb / 1e3, tt / 1e3,
+                c->tpc ? "TURNED" : "blu");
+    vw2_ilcol_tok_seti(&W->vw2, key, tk, c->tpc);
     _vw2_persist(W, cfg);
     if (c->tpc)
         _il2d_blu_drop_tables(c);
@@ -4284,10 +4314,11 @@ static void _il2d_tpc_replay(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                              const vw2_ilcol_key_t *key, vfft_ilcol_t *c, int N, size_t rn)
 {
     const char *pin = getenv("VFFT_IL2D_TPC");
+    char tkb[16];
     int want;
     if (!_il2d_tpc_admits(key, c))
         return;
-    want = pin ? atoi(pin) : vw2_ilcol_tok_geti(&W->vw2, key, "tpc", -1);
+    want = pin ? atoi(pin) : vw2_ilcol_tok_geti(&W->vw2, key, _il2d_tpc_tok(key, cfg, tkb, sizeof tkb), -1);
     if (want < 0)
     {   /* a row without the token: race it now */
         _il2d_tpc_race(W, cfg, key, c, N, rn);
@@ -4831,14 +4862,14 @@ static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_cfg_t *cfg,
                         for (i3 = 0; i3 < 2 * (size_t)N * rn; i3++)
                             tz[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
                         _il2d_n1arm_chain(&rc2);
-                        _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads);
+                        _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads, 0);
                         for (r3 = 0; r3 < 3; r3++)
                         {
                             const double t0 = vfft_now_ns();
                             double t1, t2;
                             _il2d_n1arm_chain(&rc2);
                             t1 = vfft_now_ns();
-                            _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads);
+                            _il2d_tpc_arm(c, tz, tzo, rn, key->nthreads, 0);
                             t2 = vfft_now_ns();
                             if (t1 - t0 < tch) tch = t1 - t0;
                             if (t2 - t1 < ttp) ttp = t2 - t1;
@@ -5853,8 +5884,19 @@ static void _il2d_real_children_put(struct vfft_wisdom_s *W, const vfft_cfg_t *c
     vw2__ilcol_key(&ck, &pk);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rp_c2r_" : "rp_", h->il2d_rowS);
     changed |= vfft_child_row_update(&W->vw2, &pk, h->transform == VFFT_C2R ? "rx_c2r_" : "rx_", h->il2d_rxS);
+    changed |= vfft_child_row_update(&W->vw2, &pk, "tpc_", h->il2d_col.tpcS);   /* the turned prime pass's 1D plan */
     if (h->il2d_rax_on)
     {   /* the real axis on N1 (il2d_real_axis.h): its column chain and its row batch, when the form serves */
+        if (h->il2d_rax_col.tpcS && h->il2d_raxS)
+        {   /* its column's turned prime pass: the 1D plan onto the column's row in the form's store (il2d_real_axis.h
+             * builds the column there, key {rank 2, M x N2, scrambled, one thread}), before that store goes on as rax_ */
+            vw2_ilcol_key_t rk;
+            vw2_key_t rkk;
+            memset(&rk, 0, sizeof rk);
+            rk.rank = 2; rk.n0 = h->il2d_rax_M; rk.n1 = N2; rk.ord = VW2_ORD_SCR; rk.nthreads = 1;
+            vw2__ilcol_key(&rk, &rkk);
+            (void)vfft_child_row_update(&h->il2d_raxS->vw2, &rkk, "tpc_", h->il2d_rax_col.tpcS);
+        }
         changed |= vfft_child_row_update(&W->vw2, &pk, "rax_", h->il2d_raxS);
         changed |= vfft_child_row_update(&W->vw2, &pk, "raxr_", h->il2d_rax_rowS);
     }

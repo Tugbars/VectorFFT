@@ -14,8 +14,9 @@
  * H = N2 / 2 + 1, natural. Rank 3 (il/rank3/lm_batch3dr_il.h): N1 blocks of the 2D real batch at (N2, N3, K), then the
  * first axis over N2 H K lanes, H = N3 / 2 + 1. Each rank plans on the batch's own row, both directions on one row:
  * t=r2c n=<shape> q=K ord=nat lay=lm nthreads=T (the column key with real set; rank 3 keys an in-place cell's own row):
- * the column builder's verdicts (the chain, its forms, a Rader stage, Bluestein; no turned prime pass on a real key,
- * il2d_tier.h _il2d_tpc_admits), the serial lane tile sw= and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race),
+ * the column builder's verdicts (the chain, its forms, a Rader stage, Bluestein and on it the turned prime pass, tpc=
+ * and tpc_c2r=: the door races each direction's, il2d_tier.h _il2d_tpc_tok; the recipe, both directions', writes the
+ * one rule's verdict under both names), the serial lane tile sw= and at T > 1 the threaded verdict cmt= mtarm= msw= (_lm_race),
  * the block child under rp_.
  *
  * THE RECIPE (est_plan_lmrn). Rank 1: the C2C lane-major recipe of rank 1 at M over K lanes in the scrambled class
@@ -165,7 +166,10 @@ static inline int est__lmr_first_axis(const est_machine_t *m, int N1, long long 
 {
     if (est__plan_lm(m, 1, N1, 0, 0, (size_t)lanes, 1, 1, T > 1 ? EST_LM_MT : 0, p, why, whylen))
         return -1;
-    p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
+    /* a Bluestein column: the turned prime pass by est__real_tpc (its 1D plan planned above, est__plan_lm); the door
+     * admits it on a real key's axis 0 (il2d_tier.h _il2d_tpc_admits) and threads it by lanes (_lm_cols) */
+    if (p->col.blu > 0)
+        p->col.tpc = est__real_tpc(N1, lanes, T);
     p->T = T;
     if (T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2)
         est__lm_threaded(m, p, lanes);
@@ -256,7 +260,8 @@ static inline int est__plan_lmrn_n(const est_machine_t *m, int rank, const int *
     M = N1 / 2;
     if (est__plan_lm(m, 1, (int)M, 0, 0, K, 1, 0, EST_LM_UNB, p, why, whylen))
         return -1;
-    p->col.tpc = -1;   /* a column Bluestein on a real key carries no turned prime pass (_il2d_tpc_admits) */
+    if (p->col.blu > 0)   /* a Bluestein pass at M: the turned prime pass by est__real_tpc (as the first axis above) */
+        p->col.tpc = est__real_tpc((int)M, (long long)K, out->T);
     p->T = out->T;
     if (out->T > 1)
     {

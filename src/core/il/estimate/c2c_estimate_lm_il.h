@@ -305,7 +305,9 @@ static inline int est__preflight_lm(const est_planlm_t *p, char *why, size_t why
         n = _il2d_sw_ladder(p->N1, (size_t)lanes, p->T, lad, 6);
         for (i = 0, in = (p->msw == 0); i < n; i++)
             in |= lad[i] == p->msw;
-        if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
+        /* a turned prime pass threads by lanes through its clones (il2d_tier.h _il2d_cols_mt_desc, since 2026-11-19):
+         * the threaded walk, mtarm 0 (the real batch's first axis names it; the C2C recipe keeps it serial) */
+        if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) ||
             (p->cmt && (p->mtarm == 1 ? p->col.blu > 0 || !in
                         : p->mtarm == 2 ? !est__lm_tile(p) || p->msw
                         : p->mtarm != 0 || p->msw || est__lm_tile(p))))   /* the walk only where the tile does not serve */
@@ -364,6 +366,10 @@ static inline int est__put_lm_row(vw2_store_t *st, const vw2_ilcol_key_t *ck, co
 {
     vw2_key_t key;
     if (est__put_col(st, ck, &p->col, -1, 0) || vw2_ilcol_tok_seti(st, ck, "sw", p->sw) != VW2_OK)
+        return est_refuse(why, whylen, "the lane-major batch %s: its row was refused by the store's writers", sh);
+    if (ck->real && p->col.tpc >= 0 && vw2_ilcol_tok_seti(st, ck, "tpc_c2r", p->col.tpc) != VW2_OK)
+        /* a real batch's row: its door reads the turned pass's verdict under the direction's name (tpc, tpc_c2r:
+         * il2d_tier.h _il2d_tpc_tok); the real recipe serves both directions, so both carry it */
         return est_refuse(why, whylen, "the lane-major batch %s: its row was refused by the store's writers", sh);
     if (p->T > 1 &&
         (vw2_ilcol_tok_seti(st, ck, "cmt", p->cmt) != VW2_OK || vw2_ilcol_tok_seti(st, ck, "mtarm", p->mtarm) != VW2_OK ||

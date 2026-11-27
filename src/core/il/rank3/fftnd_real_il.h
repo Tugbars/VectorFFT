@@ -828,7 +828,13 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
         if (d->prof) t0 = vfft_now_ns();
         _ilndr_mt_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp);
         if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.planes = t1 - t0; t0 = t1; }
-        if (nf == 3)
+        if (d->ax0.blu || d->ax0.tpc)
+        {   /* a Bluestein or turned axis 0 (arm 1 in place): the descriptor's own threaded pass by lanes from the
+             * caller, each worker its lanes (the turned pass through its clone), else serial */
+            if (!_il2d_cols_mt_desc(&d->ax0, d->N[0], out, out, 0, T, NULL, -1))
+                _il2d_col_exec(&d->ax0, out, out, 0);
+        }
+        else if (nf == 3)
         {   /* one fork-join per stage, every stage over the whole team */
             double ts = t0;
             int s;
@@ -867,7 +873,11 @@ static int _ilndr_execute_mt(const vfft_ilndr_t *d, const double *in, double *ou
                 return 0;   /* more pieces than buffers: serial -- decided before any phase touches the volume */
             if (d->prof) t0 = vfft_now_ns();
             if (d->ax0bwd)
-                _il2d_col_exec(&d->ax0, in, V, 1);   /* the Bluestein / turned axis's backward pass, on the caller (phase 4a: not cut yet) */
+            {   /* the Bluestein / turned axis's backward pass: the descriptor's own threaded pass by lanes from the
+                 * caller, else serial */
+                if (!_il2d_cols_mt_desc(&d->ax0, d->N[0], in, V, 1, T, NULL, -1))
+                    _il2d_col_exec(&d->ax0, in, V, 1);
+            }
             else
                 _ilndr_mt_phase(d, in, V, NULL, 2, arm, nf, P, Ts);
             if (d->prof) { t1 = vfft_now_ns(); _ilndr_prof.axis0 = t1 - t0; t0 = t1; }
@@ -928,6 +938,35 @@ static void _ilndr_group_stage(const vfft_ilndr_t *d, double *V, double *z, int 
     a.hi = units * (size_t)(member + 1) / (size_t)Tt;
     _ilndr_mt_tramp(&a);
 }
+/* this member's share of a Bluestein or turned axis 0 (the members are pool threads: no dispatch): the lanes cut
+ * as the descriptor's threaded pass cuts them over G (_il2d_cols_mt_desc: the turned pass at four-lane boundaries
+ * through the member's clone, _il2d_tpc_cols_mt; the Bluestein windows by lane range) */
+static void _ilndr_group_axis0(const vfft_ilndr_t *d, const double *in, double *out, int rev, int G, int member)
+{
+    const vfft_ilcol_t *c = &d->ax0;
+    const size_t rn = c->rn;
+    size_t lo, hi;
+    if (c->tpc)
+    {
+        const int Tt = (size_t)G > rn / 4 ? (int)(rn / 4) : G;
+        if (member >= Tt)
+            return;
+        lo = (rn * (size_t)member / (size_t)Tt) & ~(size_t)3;
+        hi = (member == Tt - 1) ? rn : (rn * (size_t)(member + 1) / (size_t)Tt) & ~(size_t)3;
+        if (lo < hi)
+            _il2d_tpc_cols_range_w(c, member, in, out, rn, lo, hi, rev);
+        return;
+    }
+    {
+        const int Tt = rn < (size_t)G ? (int)rn : G;
+        if (member >= Tt)
+            return;
+        lo = rn * (size_t)member / (size_t)Tt;
+        hi = rn * (size_t)(member + 1) / (size_t)Tt;
+        _il2d_blu_cols_range(in, out, d->N[0], rn, lo, hi, c->blu, c->nst, c->R, c->L, c->f, c->b, c->tf, c->tb,
+                             rev ? c->bluchb : c->bluchf, rev ? c->blukb : c->blukf, c->bluscr);
+    }
+}
 /* whether the plan (created at G threads) can run as one group of G members: _ilndr_execute_mt's engage
  * tests at T = G, and two the cooperative form cannot serve -- the in-place c2r walk (its pieces are dealt
  * per execute by mutating the descriptor), and a column plan carrying a Rader stage (il_rader_stage.h
@@ -941,6 +980,8 @@ static int _ilndr_group_ok(const vfft_ilndr_t *d, int G)
         return 0;
     if (d->ax0.rd0 || (d->mts == 2 && d->ax1_on && d->ax1.rd0))
         return 0;
+    if (d->ax0.tpc && (d->ax0.tpcw_n < G - 1 || !d->ax0.tpcplan))
+        return 0;   /* the turned axis's members each need a plan of their own (_ilndr_group_axis0) */
     if (!d->c2r)
     {
         if (d->mts == 1 && d->mtf == 1 && d->ax0n_on)
@@ -967,7 +1008,9 @@ static void _ilndr_execute_group(const vfft_ilndr_t *d, const double *in, double
         double *mid = arm == 2 ? d->V : out;
         _ilndr_group_phase(d, in, mid, NULL, 0, arm, nf, (size_t)d->N[0], Tp, member);
         _ilndr_group_sync(bar, &sense);
-        if (nf == 3)
+        if (d->ax0.blu || d->ax0.tpc)
+            _ilndr_group_axis0(d, out, out, 0, G, member);   /* a Bluestein or turned axis 0 by lanes */
+        else if (nf == 3)
         {   /* the stage-wise pass: a wait on the group's barrier between the stages, as the fork-joins above */
             int s;
             for (s = 0; s < d->ax0.nst; s++)
@@ -997,10 +1040,7 @@ static void _ilndr_execute_group(const vfft_ilndr_t *d, const double *in, double
         else
         {
             if (d->ax0bwd)
-            {   /* the Bluestein / turned axis's backward pass: on member 0, as on the caller above */
-                if (member == 0)
-                    _il2d_col_exec(&d->ax0, in, V, 1);
-            }
+                _ilndr_group_axis0(d, in, V, 1, G, member);   /* the Bluestein / turned axis's backward pass by lanes */
             else
                 _ilndr_group_phase(d, in, V, NULL, 2, arm, nf, P, Ts, member);
             _ilndr_group_sync(bar, &sense);
@@ -1116,6 +1156,8 @@ static int _ilndr_child_equiv(const struct vfft_plan_s *a, const struct vfft_pla
             if (strcmp(na, nb) != 0) why = "row engine recipe";
         }
         if (!why && a->il2d_row && b->il2d_row && !_tc_clone_equiv(a->il2d_row, b->il2d_row)) why = "row plan";
+        if (!why && x->tpc && (!x->tpcplan || !y->tpcplan || !_tc_clone_equiv(x->tpcplan, y->tpcplan)))
+            why = "turned prime pass";   /* the column's 1D plan at N1: the same recipe, or other bits */
         if (!why && (a->il2d_row != NULL) != (b->il2d_row != NULL)) why = "row plan";
     }
     if (why && getenv("VFFT_IL2D_LOG"))
@@ -1453,8 +1495,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
         /* the cycles of the planes' positions, for the serial walk and the workers' deal */
         return _ilndr_oom(d, cfg, "the in-place cycle tables");
     /* r2c: the in-place natural twin: the natural pass at two stages or more (a cube-sized pre-leaf
-     * scratch), or a Bluestein axis; a one-stage chain is natural-native in place as it is */
-    if (!c2r && (d->ax0.blu || d->ax0.tpc || d->ax0.nst >= 2))
+     * scratch); a one-stage chain is natural-native in place as it is, and so is a Bluestein or turned
+     * axis (natural by construction, il2d_tier.h _il2d_col_build): ax0 serves it, in place, serial or
+     * threaded by lanes (_ilndr_execute_mt; 2026-11-27, the twin had been a second Bluestein, scratch and
+     * all, and kept the transform serial) */
+    if (!c2r && !d->ax0.blu && !d->ax0.tpc && d->ax0.nst >= 2)
     {
         char fb[64];
         fb[0] = 0;
@@ -1943,8 +1988,11 @@ static vfft_plan _vfft_create_fftnd_real_il(const vfft_cfg_t *cfg, struct vfft_w
     h->nthreads = nthr;
     h->ilndr = d;
     if (usable_w)
-    {   /* the child's recipe onto the cell's row (raced here, or the row did not carry it yet) */
-        if (vfft_child_row_update(&W->vw2, &pk, "plane_", d->childS))
+    {   /* the child's recipe onto the cell's row (raced here, or the row did not carry it yet), and axis 0's turned
+         * prime pass's 1D plan (the clones replay it: without it each would plan its own) */
+        int ch = vfft_child_row_update(&W->vw2, &pk, "plane_", d->childS);
+        ch |= vfft_child_row_update(&W->vw2, &pk, "tpc_", d->ax0.tpcS);
+        if (ch)
             _vw2_persist(W, cfg);
     }
     if (log)

@@ -7,7 +7,7 @@
  * THE ROW (il/wisdom/wisdom2_2d_il_reader.h:335-521; one t=r2c row serves both directions, each direction's
  * verdicts under its own names, C2R's with _c2r):
  *   - the column pass at (N1, N2/2 + 1), natural: chain forms blu rd rdw, est_col_plan's (estimate_nd_il.h) as in
- *     C2C; no turned prime pass on a real row (il2d_tier.h:3278-3281);
+ *     C2C; on a Bluestein column the turned prime pass by est__real_tpc, tpc (tpc_c2r) with its 1D plan under tpc_;
  *   - the band wl (0, unbanded) and at T > 1 the threaded column verdict cmt mtarm msw (est_mt_2d's rule: threaded
  *     past half the L1d, the strips at est__msw_2d's width);
  *   - the row engine rx (the rows kernel lm where it is offered, else the door's row child) and rxs;
@@ -33,7 +33,8 @@
 typedef struct est_plan2dr_s
 {
     int N1, N2, T, c2r, ip;
-    est_col_t col;            /* [chain forms blu rd rdw] at (N1, N2/2 + 1), natural; tpc never */
+    est_col_t col;            /* [chain forms blu rd rdw tpc (_c2r)] at (N1, N2/2 + 1), natural */
+    est_recipe_t tpcp;        /* col.tpc == 1: tpc_, the turned prime pass's 1D plan at N1 (in place, natural) */
     int wl;                   /* [wl | wl_c2r] the band in rows, 0 = unbanded */
     int cmt, mtarm, msw;      /* [cmt mtarm msw (_c2r)] T > 1: threaded columns, 1 = the strips, their width */
     char rx[96], rxs[8];      /* [rx rxs (_c2r)] the row engine and its stack state; "" = not written */
@@ -182,6 +183,23 @@ static inline int est__chain_crowds(const est_machine_t *m, int N, const int *R,
     return 0;
 }
 
+/* THE TURNED PRIME PASS ON A REAL COLUMN (2026-11-27): a Bluestein column of N rows over `lanes` lanes at T threads
+ * takes the turned pass (the 1D plan at N on every lane, il2d_tier.h) where the pass threads (T > 1 and 8 lanes or
+ * more: _il2d_tpc_cols_mt's four-lane cuts) or where Bluestein's length M passes EST_REAL_TPC_BLU_M (N above 1024); else
+ * Bluestein keeps the column. The planner's own race (min of 3, alternated) on real planes, R2C and C2R: at 4 and 8
+ * threads over 13 - 129 lanes, nine columns 359 - 8219, the turned pass 3 - 9 times faster on every plane; at one thread
+ * over 9 - 513 lanes the turned pass's time 0.46 - 0.95 of Bluestein's at N = 1077 - 3127 (M = 4096, 8192), 0.81 - 1.22
+ * at N = 359 - 1019 (M = 1024, 2048: about even); at 8 threads over 3 - 6 lanes, where the turned pass runs serial, the
+ * same split (N 359 - 1019 0.70 - 1.21, 2063 and 8219 0.45 - 0.75). */
+#define EST_REAL_TPC_BLU_M 2048
+static inline int est__real_tpc(int N, long long lanes, int T)
+{
+    long long M = 16;
+    while (M < 2LL * N - 1)
+        M <<= 1;   /* est__col_blu's length */
+    return (T > 1 && lanes >= 8) || M > EST_REAL_TPC_BLU_M;
+}
+
 /* the real axis on N1 (raxis = n1, il/rank2/il2d_real_axis.h:212-300; R2C, one thread, out of place, even N1 >= 4, odd
  * N2): its two children's recipes, the C2C column chain at M = N1/2 down N2 columns in the scrambled class
  * (est_col_plan) and the C2C plan at N2 the batch of M + 1 folded rows runs. 0, or -1 with the reason. */
@@ -211,7 +229,12 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
     p->N1 = N1; p->N2 = N2; p->T = T > 1 ? T : 1; p->c2r = c2r; p->ip = ip;
     if (est_col_plan(m, N1, hp1, 1, &p->col, why, whylen))
         return -1;
-    p->col.tpc = -1;              /* no turned prime pass on a real row (il2d_tier.h:3278-3281) */
+    /* a Bluestein column: the turned prime pass by est__real_tpc, with its 1D plan at N1; the door admits it on the
+     * real plane's axis 0 and races it per direction (il2d_tier.h _il2d_tpc_admits, _il2d_tpc_tok) */
+    p->col.tpc = p->col.blu > 0 ? est__real_tpc(N1, hp1, p->T) : -1;
+    if (p->col.tpc == 1 &&
+        est__child_1d(m, N1, VFFT_PLACEMENT_IN, &p->tpcp, "the turned prime pass", why, whylen))
+        return -1;
     if (T > 1 && p->col.rd_n > 0)
     {   /* THE RADER WINDOW AT T (2026-11-02): 8 columns, not EST_ND_RD_W, clipped as est__rader clips it -- the
          * planner's window at every prime from 1031 up. 8 threads, 14 prime-column planes 53 x 64 - 4099 x 2048 both
@@ -292,9 +315,12 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
          * ranges. A chain of two or more stages takes the matched partition there, which splits a stage only by its
          * digits (il2d_tier.h _il2d_stage_digits_mt_x): a Rader stage 0 of N1 / p < T digits ran on one thread
          * (2026-11-25, 2049 x 4096 at 8 threads: 38.1 ms plain, the strips 5.8 - 6.2 ms, the planner's verdict), so
-         * such a chain keeps the strips past the L3, and plain only as the tall plane in the L3 (tallplain). */
+         * such a chain keeps the strips past the L3, and plain only as the tall plane in the L3 (tallplain). A
+         * Bluestein or turned column threads by lanes alone, its door's one threaded arm (il2d_tier.h
+         * _il2d_real_colmt_race: no strips on either; _il2d_cols_mt_desc: the turned pass through its clones). */
         const int onestage = p->col.blu > 0 || p->col.nst < 2;
-        const int plain = onestage ? tallmt || (p->col.rd_n > 0 && m->l3 > 0 && bytes > (long long)m->l3) : tallplain;
+        const int plain = p->col.blu > 0 ||
+                          (onestage ? tallmt || (p->col.rd_n > 0 && m->l3 > 0 && bytes > (long long)m->l3) : tallplain);
         p->cmt = 1;
         p->mtarm = plain ? 0 : 1;   /* the tall plane's plain threaded column (above) */
         p->msw = plain ? 0 : est__msw_2d(m, N1, (int)hp1, p->T);
@@ -458,6 +484,15 @@ static inline int est_put_rows_2d_real(vw2_store_t *st, const est_plan2dr_t *p, 
         if (!vw2_ilcol_forms_bank_base(st, &ck, "rdw", b))
             goto refused;
     }
+    if (p->col.tpc >= 0)
+    {   /* the turned prime pass's verdict under the direction's name (tpc, tpc_c2r: il2d_tier.h _il2d_tpc_tok) and its
+         * 1D plan on the column's row, where the door seeds it (_il2d_tpc_build) */
+        vw2_key_t ckk;
+        snprintf(b, sizeof b, "%d", p->col.tpc); EST_TOK("tpc", b);
+        vw2__ilcol_key(&ck, &ckk);
+        if (p->col.tpc == 1 && est__put_child(st, &ckk, "tpc_", &p->tpcp, N1, VFFT_PLACEMENT_IN, why, whylen))
+            return -1;
+    }
     if (T > 1)
     {
         snprintf(b, sizeof b, "%d", p->mtarm); EST_TOK("mtarm", b);
@@ -583,6 +618,12 @@ static inline int est__check_2d_real(const struct vfft_plan_s *h, const est_plan
             return !est_refuse(why, whylen, "the column chain differs from the recipe's at stage %d", i);
     if ((p->col.blu > 0) != (c->blu > 0))
         return !est_refuse(why, whylen, "the column pass's Bluestein arm differs from the recipe's");
+    if ((p->col.tpc == 1) != (c->tpc != 0) || (p->col.tpc == 1 && !c->tpcplan))
+        return !est_refuse(why, whylen, "the column's turned prime pass %s, the recipe's %s",
+                           c->tpc ? "serves" : "does not serve", p->col.tpc == 1 ? "does" : "does not");
+    if (p->col.tpc == 1 &&
+        est__check_child(c->tpcplan, &p->tpcp, p->N1, VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))
+        return 0;
     if (p->rx[0])
     {   /* the door's own spelling of what it bound */
         char nm[96];
@@ -670,7 +711,8 @@ out:
 typedef struct est_plan3dr_s
 {
     int N1, N2, N3, T, c2r, ip;
-    est_col_t col;            /* [chain forms blu rd rdw] axis 0 at (N1, N2 (N3/2 + 1)), the scrambled pass */
+    est_col_t col;            /* [chain forms blu rd rdw tpc (_c2r)] axis 0 at (N1, N2 (N3/2 + 1)), the scrambled pass */
+    est_recipe_t tpcp;        /* col.tpc == 1: tpc_, the turned prime pass's 1D plan at N1 (in place, natural) */
     int has_col1;             /* axis 1's pay-once chain is written (axis 0 a plain chain with a leaf kernel) */
     est_col_t col1;           /* [chain1 forms1 blu1 rd1 rdw1] axis 1 at (N2, N3/2 + 1) */
     int s, nf, nsw;           /* [s nf nsw (_c2r)] the one-thread structure (1 child) and form (1 in place, 2 strips) */
@@ -699,7 +741,13 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
     p->N1 = N1; p->N2 = N2; p->N3 = N3; p->T = T > 1 ? T : 1; p->c2r = c2r; p->ip = ip;
     if (est_col_plan(m, N1, w0, 0, &p->col, why, whylen))
         return -1;
-    p->col.tpc = -1;              /* no turned prime pass on a real row (il2d_tier.h:3278-3281) */
+    /* a Bluestein axis 0: the turned prime pass by est__real_tpc, with its 1D plan at N1 (the door admits it on a
+     * real key's axis 0, il2d_tier.h _il2d_tpc_admits; the volume's axis 0 serves it in place, serial or threaded by
+     * lanes, fftnd_real_il.h) */
+    p->col.tpc = p->col.blu > 0 ? est__real_tpc(N1, w0, p->T) : -1;
+    if (p->col.tpc == 1 &&
+        est__child_1d(m, N1, VFFT_PLACEMENT_IN, &p->tpcp, "the turned prime pass", why, whylen))
+        return -1;
     p->col.wl = 0;
     if (p->T == 1 && p->col.blu <= 0 && p->col.rd_n == 0 && p->col.nst >= 2)
     {   /* AXIS 0'S CHAIN BY ITS L1d SETS (2026-11-02, one thread, the banked volumes of 128 and 256 rows): the scrambled
@@ -775,9 +823,10 @@ static inline int est_plan_3d_real(const est_machine_t *m, int N1, int N2, int N
         if ((long long)N2 * N3 < mn) mn = (long long)N2 * N3;
         if (p->T < mn) mn = p->T;
         if (p->T > 1 && cube * (double)mn > 32768.0 * p->T)
-        {   /* the plane arm on the child; R2C with a natural twin (axis 0 natural at two stages or more, or a
-             * Bluestein axis) runs the child threaded only by the strips (fftnd_real_il.h:1830) */
-            const int twin = !c2r && (p->col.blu > 0 || p->col.nst >= 2);
+        {   /* the plane arm on the child; R2C with a natural twin (axis 0 natural at two stages or more) runs the
+             * child threaded only by the strips (fftnd_real_il.h); a Bluestein or turned axis 0 has no twin (natural
+             * by construction) and threads by lanes after the planes, both directions (since 2026-11-27) */
+            const int twin = !c2r && p->col.blu <= 0 && p->col.nst >= 2;
             p->cmt = 2;
             p->cmts = 1;
             /* the strips on a plain axis 0; a one-stage Rader axis 0 in place (stage 3 study, 2026-11-02, 8 threads:
@@ -826,8 +875,14 @@ static inline int est_put_rows_3d_real(vw2_store_t *st, const est_plan3dr_t *p, 
     ck.ord = VW2_ORD_NAT; ck.axis = 0; ck.real = 1; ck.nthreads = p->T; ck.ip = p->ip;
 #define EST_TOKI(BASE, VAL) do { snprintf(nm, sizeof nm, "%s%s", (BASE), sfx); \
         if (vw2_ilcol_tok_seti(st, &ck, nm, (VAL)) != VW2_OK) goto refused; } while (0)
-    if (est__put_col(st, &ck, &p->col, -1, 0))
-        goto refused;
+    {   /* axis 0's tokens; the turned prime pass's verdict under the direction's name (il2d_tier.h _il2d_tpc_tok) */
+        est_col_t c0 = p->col;
+        c0.tpc = -1;
+        if (est__put_col(st, &ck, &c0, -1, 0))
+            goto refused;
+        if (p->col.tpc >= 0)
+            EST_TOKI("tpc", p->col.tpc);
+    }
     EST_TOKI("s", p->s);
     EST_TOKI("nf", p->nf);
     if (p->nf == 2)
@@ -862,6 +917,8 @@ static inline int est_put_rows_3d_real(vw2_store_t *st, const est_plan3dr_t *p, 
     if (!ok)
         return est_refuse(why, whylen, "the plane child %dx%d could not be put on the %dx%dx%d row", p->N2, p->N3, p->N1,
                           p->N2, p->N3);
+    if (p->col.tpc == 1 && est__put_child(st, &key, "tpc_", &p->tpcp, p->N1, VFFT_PLACEMENT_IN, why, whylen))
+        return -1;   /* axis 0's turned prime pass's 1D plan on the volume's row (fftnd_real_il.h seeds it there) */
     return 0;
 refused:
     return est_refuse(why, whylen, "the %dx%dx%d real row was refused by the store's writers", p->N1, p->N2, p->N3);
@@ -878,6 +935,14 @@ static inline int est__check_3d_real(const struct vfft_plan_s *h, const est_plan
         return !est_refuse(why, whylen, "the door built another plan than the %dx%dx%d real volume", p->N1, p->N2, p->N3);
     if (d->ax0.nst != p->col.nst || ((p->col.blu > 0) != (d->ax0.blu > 0)))
         return !est_refuse(why, whylen, "axis 0 is not the recipe's chain");
+    if ((p->col.tpc == 1) != (d->ax0.tpc != 0) || (p->col.tpc == 1 && !d->ax0.tpcplan) ||
+        (p->col.blu > 0 && d->ax0n_on))
+        return !est_refuse(why, whylen, "axis 0's turned prime pass %s (a natural twin %s), the recipe's %s",
+                           d->ax0.tpc ? "serves" : "does not serve", d->ax0n_on ? "built" : "not built",
+                           p->col.tpc == 1 ? "does" : "does not");
+    if (p->col.tpc == 1 &&
+        est__check_child(d->ax0.tpcplan, &p->tpcp, p->N1, VFFT_PLACEMENT_IN, "turned prime pass's plan", why, whylen))
+        return 0;
     for (i = 0; i < d->ax0.nst; i++)
         if (d->ax0.R[i] != p->col.R[i])
             return !est_refuse(why, whylen, "axis 0's chain differs from the recipe's at stage %d", i);

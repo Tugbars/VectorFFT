@@ -970,6 +970,8 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             x->colmt != y->colmt || x->natarm != y->natarm || x->msw != y->msw ||
             memcmp(x->f, y->f, sizeof x->f) || memcmp(x->b, y->b, sizeof x->b))
             TC_NEQ("lane-major batch chain or verdicts");
+        if (x->tpc && (!x->tpcplan || !y->tpcplan || !_tc_clone_equiv(x->tpcplan, y->tpcplan)))
+            TC_NEQ("lane-major batch's turned prime pass");   /* its 1D plan at N1: the same recipe, or other bits */
         return 1;
     }
     if (!a->zfsr != !b->zfsr)

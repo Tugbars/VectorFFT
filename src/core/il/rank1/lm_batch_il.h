@@ -1573,6 +1573,14 @@ static vfft_plan _vfft_create_lmr_il(const vfft_cfg_t *cfg, struct vfft_wisdom_s
     h->k1_exec = c2r ? _lmc_exec : _lmr_exec;   /* the lean door: the direction's own executor, the other refused by the door */
     h->k1_go[VFFT_FORWARD] = c2r ? NULL : _lmr_exec;
     h->k1_go[VFFT_BACKWARD] = c2r ? _lmc_exec : NULL;
+    if (W && !W->vw2_off_2d && h->il2d_col.tpcS)
+    {   /* the turned prime pass's child recipe onto the cell's row, as the c2c batch's (above): without it the
+         * replay re-races the 1D prime cell at M and the worker clones may land elsewhere */
+        vw2_key_t pk;
+        vw2__ilcol_key(&ck, &pk);
+        if (vfft_child_row_update(&W->vw2, &pk, "tpc_", h->il2d_col.tpcS))
+            _vw2_persist(W, cfg);
+    }
     (void)bcmtt; (void)bwl; (void)btf; (void)bro; (void)bblu;
     return (vfft_plan)h;
 }
