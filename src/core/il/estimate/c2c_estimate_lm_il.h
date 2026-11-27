@@ -24,9 +24,10 @@
  *     power of two the set filter reads; a Rader-stage column on few lanes as Bluestein with the turned pass;
  *   - the serial lane tile: sw = 0, the walk (the owner, 2026-11-01: no width rule beat it);
  *   - at T > 1, est_mt_2d's test: threaded once the plane, 16 N1 lanes bytes, passes
- *     L1d / EST_ND_MT_SERIAL_L1_DIV, except a column of 2 and a column through the turned prime pass; then the
- *     strips at est__msw_2d's width where every worker gets a vector of lanes (the rule below), else the
- *     tile where the door's tile serves the pass (est__lm_tile), else the threaded walk;
+ *     L1d / EST_ND_MT_SERIAL_L1_DIV, except a column of 2 and a column through the turned prime pass on fewer than
+ *     EST_ND_TPC_MT_LANES lanes; then the strips at est__msw_2d's width where every worker gets a vector of lanes
+ *     (the rule below), else the tile where the door's tile serves the pass (est__lm_tile), else the threaded walk
+ *     (a turned column's one threaded form);
  *   - the block child: the lower-rank lane-major recipe on one thread, natural, in place.
  * THE BUILD (est_build_lm) takes the steps of c2c_estimate_nd_il.h: the pre-flight, the rows into a store held
  * in memory, the door's replay (est__replay), and the plan the door built checked against the recipe
@@ -259,8 +260,9 @@ static inline int est__plan_lm_n(const est_machine_t *m, int rank, const int *n,
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))
         return -1;
-    if (out->T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2 && out->col.tpc != 1)
-        est__lm_threaded(m, out, lanes);
+    if (out->T > 1 && 16LL * N1 * lanes > m->l1d / EST_ND_MT_SERIAL_L1_DIV && N1 != 2 &&
+        (out->col.tpc != 1 || lanes >= EST_ND_TPC_MT_LANES))
+        est__lm_threaded(m, out, lanes);   /* a turned column: the threaded walk by lanes (mtarm 0, est__lm_threaded) */
     if (rank >= 2)
     {
         if (!(out->child = (est_planlm_t *)calloc(1, sizeof *out->child)))

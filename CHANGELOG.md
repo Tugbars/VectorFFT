@@ -29,6 +29,11 @@ version can change how a function behaves, so compile your program again with ea
   the other threads cost more than it saved. With `VFFT_FLAG_ESTIMATE` (a last extent of at
   most 15 on a plane within half the CPU's L1 data cache) and with the measuring planner, which
   now times that form too.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: complex transforms (C2C) whose first axis is
+  computed through the 1D plan of its length (lengths with a large prime factor, such as 359,
+  2,063 or 8,219), 2D transforms of at least 8 columns and lane-major batches of at least 8
+  columns across: that axis now runs on every thread, and with it the rest of the transform,
+  where the whole transform ran on one. The measuring planner already ran them this way.
 
 ### Fixed
 

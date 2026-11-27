@@ -199,13 +199,15 @@ static inline int est__preflight_2d(const est_plan2d_t *p, char *why, size_t why
     {   /* the threaded verdict as the door serves it (fft2d_create_il.h:1144-1152, _il2d_c2c_mt il2d_tier.h:1492):
          * the skew and the turn one walk, the chain walk the strips (unbanded) at a width on the door's ladder,
          * the blocks (no width) or the tile (unbanded, no width, a natural chain of two stages or more:
-         * il2d_tier.h:1545), the turned prime pass serial; nls beside a natural leaf only */
+         * il2d_tier.h:1545), the turned prime pass by lanes (mtarm 0, no width: the door's turned branch,
+         * _il2d_c2c_mt); nls beside a natural leaf only */
         const int want_nat = p->col.nat && p->col.blu <= 0 && p->col.nst > 1;
         int lad[6], n, i, in = (p->msw == 0);
         n = _il2d_sw_ladder(p->N1, p->N2, p->T, lad, 6);
         for (i = 0; i < n; i++)
             in |= lad[i] == p->msw;
-        if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) || (p->cmt && p->col.tpc == 1) ||
+        if ((p->cmt != 0 && p->cmt != 1) || (!p->cmt && (p->mtarm || p->msw)) ||
+            (p->cmt && p->col.tpc == 1 && (p->mtarm || p->msw)) ||
             (p->cmt && (p->turn || p->csk) && (p->mtarm || p->msw)) ||
             (p->cmt && !p->turn && !p->csk &&
              (p->mtarm == 1   ? p->col.wl || !in

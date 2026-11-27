@@ -1703,11 +1703,18 @@ static inline int est__serial_2d_div(int N1, int N2, int T)
         return 1;
     return EST_ND_MT_SERIAL_2D_L1_DIV;
 }
+/* the lanes from which a column through the turned prime pass threads at T > 1 (the door's threaded form cuts the
+ * lanes at four-lane boundaries, two groups at least: il2d_tier.h _il2d_tpc_cols_mt). 2026-11-27, the estimate's own
+ * pick, the column serial (the rule before) against threaded: 2D C2C over 359 - 8219 rows by 8 - 256 columns, 4 and 8
+ * threads, 0.11 - 0.84 of the serial time (2063 x 64 at 8 threads 1.20 -> 0.21 ms, 0.35 -> 1.56 x MKL); at 4 and 6
+ * columns 0.95 - 1.08, the door serial there; lane-major 1D batches from K = 8 0.14 - 0.57, at K = 2 and 4 0.93 - 1.04;
+ * 2D and 3D lane-major batches 0.12 - 0.36 */
+#define EST_ND_TPC_MT_LANES 8
 /* est_mt_2d: the one-thread plan p (est_plan_2d) threaded at T (EST_ND_MT_*): the threaded verdict and,
  * where it threads, the turn on few columns, the blocks where the door would run the skewed pass serial,
  * the tile on a tall plane, or the strips with the unbanded walk's chain. A column through the turned
- * prime pass stays serial: the door runs that pass on one thread (il2d_tier.h:1503). T < 2 leaves p
- * one-thread. */
+ * prime pass threads by lanes through its clones, then the rows by slabs (il2d_tier.h _il2d_c2c_mt), from
+ * EST_ND_TPC_MT_LANES columns. T < 2 leaves p one-thread. */
 static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
 {
     const int nat = p->col.nat && p->col.blu <= 0;   /* the natural leaf, once the chain has two stages */
@@ -1716,7 +1723,13 @@ static inline void est_mt_2d(const est_machine_t *m, int T, est_plan2d_t *p)
     if (T < 2)
         return;   /* one thread: nls stays est_plan_2d_r's (LEAF) */
     p->nls = -1;
-    if (16LL * p->N1 * p->N2 > m->l1d / est__serial_2d_div(p->N1, p->N2, T) && p->N1 != 2 && p->col.tpc != 1)
+    if (p->col.tpc == 1)
+    {   /* the turned prime pass: its one threaded form, no turn, skew, tile or strips (the door's turned branch) */
+        if (16LL * p->N1 * p->N2 > m->l1d / est__serial_2d_div(p->N1, p->N2, T) && p->N2 >= EST_ND_TPC_MT_LANES)
+            p->cmt = 1;
+        return;
+    }
+    if (16LL * p->N1 * p->N2 > m->l1d / est__serial_2d_div(p->N1, p->N2, T) && p->N1 != 2)
     {
         const int tall = p->N1 >= (long long)EST_ND_MT_TILE_N1_PER_N2 * p->N2;
         int tile = 0;
