@@ -50,7 +50,11 @@ typedef struct est_plan2dr_s
     est_real_recipe_t rp;     /* even N2: the 1D real recipe at N2, at T */
     est_recipe_t rpc;         /* odd N2: the C2C recipe at N2 */
     int tcmt;                 /* T > 1, even N2: the row batch's verdict; -1 = not written */
+    int rxw;                  /* [rxw (_c2r)] T > 1, an odd N2's row engine: 1 = its rows on one thread, no clones */
 } est_plan2dr_t;
+/* the row of at most EST_REAL_RXW_BINS bins (two cache lines) on which an odd N2's row engine runs serial at T > 1, on a
+ * plane the column rule keeps serial too (est_plan_2d_real) */
+#define EST_REAL_RXW_BINS 8
 
 /* the lengths the estimate names the rows kernel at (the r2zr list, il_registry: 4 .. 32 at both ISAs). At 8
  * lanes as at 4 (2026-11-13, a 2-core Xeon at AVX-512, one thread: the planner banked the kernel on all 12 planes
@@ -374,6 +378,16 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
              * 64: 1.181 -> 1.023, 7 faster, none slower; over rows of 32 and 128, and in C2R, the door's row child
              * stays (no gap). Fitted at 4 lanes; at 8 the same rule, not yet timed there */
             snprintf(p->rx, sizeof p->rx, "zrp_4.16_a");
+        /* THE ODD ROWS ON ONE THREAD AT T (2026-11-27): an odd N2's row engine at T > 1 runs its rows serial (rxw=1, no
+         * worker clones, il2d_real_plan.h) where a row is at most EST_REAL_RXW_BINS bins and the column pass stays
+         * serial (the plane within half the L1d, the rule above): there the team's hand-off moves the plane to other
+         * cores and back for rows of little work. Timed with the estimate's own pick, the rows threaded against serial,
+         * 72 planes of 7 - 512 rows over odd N2 = 7 - 509, both directions, 4 and 8 threads (288 cells): this rule
+         * 1.009 against the better arm (rows threaded everywhere 1.387, worst 7.3 at C2R 7 x 7; serial wherever the
+         * column is serial 1.094, rows of 31 and more points lose up to 4.7 there), worst 1.37 (C2R 7 x 31 at 8 threads,
+         * threaded) */
+        p->rxw = p->T > 1 && (N2 & 1) && strcmp(p->rx, "door") && strcmp(p->rx, "lm") && hp1 <= EST_REAL_RXW_BINS &&
+                 bytes <= m->l1d / 2;
     }
     if (p->col.blu <= 0)
     {   /* no column form on a Bluestein pass (il2d_real_plan.h:1575) */
@@ -499,6 +513,7 @@ static inline int est_put_rows_2d_real(vw2_store_t *st, const est_plan2dr_t *p, 
         snprintf(b, sizeof b, "%d", p->msw); EST_TOK("msw", b);
     }
     if (p->rx[0]) { EST_TOK("rx", p->rx); EST_TOK("rxs", p->rxs); }
+    if (p->rxw) EST_TOK("rxw", "1");
     if (p->cx[0]) { EST_TOK("cx", p->cx); EST_TOK("cxs", p->cxs); }
     if (p->tf >= 0) { snprintf(b, sizeof b, "%d", p->tf); EST_TOK("tf", b); }
     if (p->raxis >= 0) EST_TOK_RAW("raxis", p->raxis ? "n1" : "n2");
@@ -630,6 +645,8 @@ static inline int est__check_2d_real(const struct vfft_plan_s *h, const est_plan
         _il2d_rowx_name(h->il2d_rx_lm, h->il2d_rx_eng, nm, sizeof nm);
         if (!h->il2d_rx_on || strcmp(nm, p->rx))
             return !est_refuse(why, whylen, "the row engine is %s, the recipe's %s", h->il2d_rx_on ? nm : "unbound", p->rx);
+        if (p->rxw && h->il2d_rxw_n > 0)
+            return !est_refuse(why, whylen, "the row engine %s runs threaded, the recipe's on one thread", p->rx);
     }
     if (p->cx[0] && !h->il2d_cx_on && !(p->c2r && !h->il2d_rscr))
         return !est_refuse(why, whylen, "the column form %s did not bind", p->cx);

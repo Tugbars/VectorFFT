@@ -24,6 +24,10 @@ version can change how a function behaves, so compile your program again with ea
   the 1D plan of its length on every column. 3D transforms with such a first extent now run on
   several threads, where they ran on one. With the measuring planner, the first create of such
   a transform times the new pass once and keeps the result in the wisdom.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: 2D real transforms (R2C, C2R) whose last
+  extent is odd and at most 15 and whose plane fits in half the CPU's L1 data cache, such as
+  9 x 9, 15 x 15 or 256 x 11: their rows run on one thread, where handing such short rows to
+  the other threads cost more than it saved.
 
 ### Fixed
 

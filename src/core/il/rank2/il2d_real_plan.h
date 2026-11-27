@@ -37,12 +37,14 @@
  * a residue that is plan input; the race times every engine at every state,
  * so no engine is judged at a state it would not be run at.
  *
- * WISDOM. Two tokens on the shared real IL row, r2c's own:
+ * WISDOM. The tokens on the shared real IL row, r2c's own:
  *   rx=   door | lm | zrm | zrp_R1.R2_a|b | zr2c_r0|r1 | zttr_<chain>_t<tile>_s<stk>
  *         | zrf_<chain>[_t]_w<tile> | zrb_<M>_<kind>:<shape>[_t<tw>]   (the odd
  *         engines, in their env pins' spelling with '_' for '/')
  *   rxs=  the row pass's stack state 0..3, or `any`: the four states raced
  *         within 3% (the kernels do not spill), the pass entered directly
+ *   rxw=  1: at T > 1 the engine runs its rows on one thread (no worker
+ *         clones); absent: threaded by row ranges (2026-11-27, the estimate's)
  * VFFT_IL2D_RX=<rx>[/s<state>] pins (beats the bank, never banks);
  * VFFT_IL2D_RX=off leaves the row route unbound (no aligned entry).
  * THE C2R TWIN (2026-10-05) is the same plan over the backward row pass (the
@@ -871,14 +873,21 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         if (tok)
         {
             const char *sv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, tk_rxs, ip);
+            /* rxw=1: the engine runs its rows on one thread at the plan's T, no worker clones (a plane whose rows
+             * cost less than the hand-off to the team); absent = threaded by row ranges */
+            const char *wv = vw2_2d_rl_tok_gets(&W->vw2, N1, N2, ord, T, c2r ? "rxw_c2r" : "rxw", ip);
+            const int serial = wv && atoi(wv) == 1;
             if (_il2d_rowx_build(cfg, h->il2d_rxS, N1, N2, tok, &lm, &eng, c2r))
             {
                 h->il2d_rx_lm = lm;
                 h->il2d_rx_eng = eng;
                 h->il2d_rx_stk = _il2d_plan_stk_parse(sv);
                 h->il2d_rx_on = 1;
-                if (eng && h->nthreads > 1)
+                if (eng && h->nthreads > 1 && !serial)
                     (void)_il2d_rowx_clones(cfg, h->il2d_rxS, N1, N2, tok, h->nthreads, c2r, &h->il2d_rxw, &h->il2d_rxw_n);
+                if (log && eng && h->nthreads > 1)
+                    fprintf(stderr, "[il2d-real] %srows %dx%d T=%d: %s %s\n", dn, N1, N2, h->nthreads, tok,
+                            serial ? "serial (rxw=1)" : "threaded by row ranges");
                 return;
             }
             /* a banked engine that no longer builds: the race */
