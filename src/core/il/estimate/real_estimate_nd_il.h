@@ -44,6 +44,7 @@ typedef struct est_plan2dr_s
                                * rx names it by est__rx_token, a zr2c engine with its child under rx_ */
     est_col_t rax_col;        /* raxis = 1 (n1): rax_, the C2C column chain at M = N1/2 down N2 columns, scrambled */
     est_recipe_t raxr;        /* raxis = 1: raxr_, the C2C plan at N2 the folded rows' batch runs (natural, out of place) */
+    est_recipe_t raxtpcp;     /* raxis = 1, rax_col.tpc == 1: rax_'s tpc_, the turned prime pass's 1D plan at M (in place) */
     int odd;                  /* odd N2: the row child is the C2C plan at N2 */
     est_real_recipe_t rp;     /* even N2: the 1D real recipe at N2, at T */
     est_recipe_t rpc;         /* odd N2: the C2C recipe at N2 */
@@ -415,7 +416,13 @@ static inline int est_plan_rax_real(const est_machine_t *m, struct est_plan2dr_s
         return est_refuse(why, whylen, "the real axis on N1 serves R2C out of place on one thread, even N1 >= 4, odd N2");
     if (est_col_plan(m, p->N1 / 2, p->N2, 0, &p->rax_col, why, whylen))
         return -1;
-    p->rax_col.tpc = -1;
+    /* the column at M is a C2C key (il2d_real_axis.h: rank 2, the scrambled class, one thread), whose door admits the
+     * turned prime pass: a Bluestein chain at M keeps est_col_plan's tpc = 1 with its 1D plan at M (rax_'s tpc_), as the
+     * C2C plane names it (2026-11-27: with tpc cleared the door raced it and the create was refused, 4126 x 127,
+     * 718 x 127, 1174 x 61, 4126 x 13, also in 0.9.0) */
+    if (p->rax_col.tpc == 1 &&
+        est__child_1d(m, p->N1 / 2, VFFT_PLACEMENT_IN, &p->raxtpcp, "the real axis's turned prime pass", why, whylen))
+        return -1;
     p->rax_col.wl = 0;
     est__rq1(&rq, p->N2, VFFT_PLACEMENT_OUT);
     return est_plan_1d(m, &rq, &p->raxr, why, whylen);
@@ -532,6 +539,13 @@ static inline int est_put_rows_2d_real(vw2_store_t *st, const est_plan2dr_t *p, 
             vfft_child_store_free(S);
             return est_refuse(why, whylen, "the real axis's column chain at %d was refused by the store's writers", N1 / 2);
         }
+        if (p->rax_col.tpc == 1)
+        {   /* the turned pass's 1D plan on the column's own row, where its door seeds it (il2d_tier.h _il2d_tpc_build) */
+            vw2_key_t rkk;
+            vw2__ilcol_key(&rk, &rkk);
+            if (est__put_child(&S->vw2, &rkk, "tpc_", &p->raxtpcp, N1 / 2, VFFT_PLACEMENT_IN, why, whylen))
+                goto child_out;
+        }
         ok = vfft_child_row_update(st, &key, "rax_", S);
         vfft_child_store_free(S);
         if (!ok)
@@ -582,6 +596,9 @@ static inline int est__check_2d_real(const struct vfft_plan_s *h, const est_plan
         return !est_refuse(why, whylen, "a one-thread form serves that the recipe did not ask for");
     if (p->raxis == 1 && !h->il2d_rax_on)
         return !est_refuse(why, whylen, "the real axis on N1 did not serve");
+    if (p->raxis == 1 && (h->il2d_rax_col.tpc != 0) != (p->rax_col.tpc == 1))
+        return !est_refuse(why, whylen, "the real axis's turned prime pass %s, the recipe's %s",
+                           h->il2d_rax_col.tpc ? "serves" : "does not serve", p->rax_col.tpc == 1 ? "does" : "does not");
     if (p->T > 1)
     {
         if (h->nthreads != p->T)
