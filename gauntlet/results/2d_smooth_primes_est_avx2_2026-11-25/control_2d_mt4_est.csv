@@ -1,0 +1,7 @@
+N1,N2,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err,route,engaged,flip
+64,64,z:il2d,nat-oop,3386,4893,72.589,1.445,3.119e-16,chain+rb,10510,0
+64,64,z:il2d,nat-oop,3412,4610,72.026,1.351,3.119e-16,chain+rb,10765,1
+64,64,z:il2d,nat-oop,3658,4903,67.184,1.340,3.119e-16,chain+rb,10444,0
+64,64,z:il2d,nat-oop,3617,4575,67.953,1.265,3.119e-16,chain+rb,8247,1
+64,64,z:il2d,nat-oop,3876,4695,63.412,1.211,3.119e-16,chain+rb,10387,0
+64,64,z:il2d,nat-oop,3675,4723,66.870,1.285,3.119e-16,chain+rb,10173,1

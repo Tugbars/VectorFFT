@@ -44,7 +44,8 @@
  *   rxs=  the row pass's stack state 0..3, or `any`: the four states raced
  *         within 3% (the kernels do not spill), the pass entered directly
  *   rxw=  1: at T > 1 the engine runs its rows on one thread (no worker
- *         clones); absent: threaded by row ranges (2026-11-27, the estimate's)
+ *         clones); 0 or absent: threaded by row ranges (2026-11-27: at an odd
+ *         N2 the race times each threaded engine's serial twin too)
  * VFFT_IL2D_RX=<rx>[/s<state>] pins (beats the bank, never banks);
  * VFFT_IL2D_RX=off leaves the row route unbound (no aligned entry).
  * THE C2R TWIN (2026-10-05) is the same plan over the backward row pass (the
@@ -901,6 +902,7 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
         double ns[4 * NARMS];
         _il2d_rowx_arm_t cand[NARMS];
         vfft_cfg_t c;
+        int twin_of[NARMS];   /* a serial twin's threaded original (the same engine, no clones); -1 = an original */
         int na = 0, best = 0, bd = 0, i, s;
         const size_t ON = c2r ? RN : CN;   /* the pass's output plane */
         /* T > 1: every arm runs the whole transform (the c2r reverse pass needs its plane) */
@@ -1146,13 +1148,32 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                     }
                 }
         }
+        for (i = 0; i < NARMS; i++)
+            twin_of[i] = -1;
+        if (h->nthreads > 1 && vfft_policy_il2d_rows_odd_door(N2))
+        {   /* THE SERIAL TWIN (2026-11-27): at an odd N2 each threaded engine raced on one thread too -- the same engine,
+             * no clones (its rows serial at the plan's T, the whole transform timed as served): on a plane of short rows
+             * the team's hand-off moved the plane between cores for little work (9 x 9 at 8 threads: 567 ns threaded,
+             * 97 serial). A twin that wins banks rxw=1 */
+            const int n0 = na;
+            for (i = 1; i < n0 && na < NARMS; i++)
+                if (cand[i].eng && cand[i].wn > 0)
+                {
+                    cand[na] = cand[i];
+                    cand[na].w = NULL;
+                    cand[na].wn = 0;
+                    memcpy(names[na], names[i], sizeof names[na]);
+                    twin_of[na] = i;
+                    na++;
+                }
+        }
         for (i = 0; i < na; i++)
             for (s = 0; s < 4; s++)
             {
                 const int x = 4 * i + s;
                 ctx[x] = cand[i];
                 ctx[x].stk = s;
-                snprintf(xn[x], sizeof xn[x], "%s/s%d", names[i], s);
+                snprintf(xn[x], sizeof xn[x], "%s/s%d%s", names[i], s, twin_of[i] >= 0 ? "/w1" : "");
                 arms[x].name = xn[x]; arms[x].run = _il2d_rowx_arm_run; arms[x].ctx = &ctx[x];
             }
         {
@@ -1197,18 +1218,29 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
                     int bs = 0;
                     for (s = 1; s < 4; s++)
                         if (ns[4 * i + s] < ns[4 * i + bs]) bs = s;
-                    fprintf(stderr, " %s=%.0f(s%d;%.0f/%.0f/%.0f/%.0f)", names[i], ns[4 * i + bs], bs,
-                            ns[4 * i], ns[4 * i + 1], ns[4 * i + 2], ns[4 * i + 3]);
+                    fprintf(stderr, " %s%s=%.0f(s%d;%.0f/%.0f/%.0f/%.0f)", names[i], twin_of[i] >= 0 ? "/w1" : "",
+                            ns[4 * i + bs], bs, ns[4 * i], ns[4 * i + 1], ns[4 * i + 2], ns[4 * i + 3]);
                 }
                 fprintf(stderr, " -> %s\n", xn[best]);
             }
         }
-        for (i = 1; i < na; i++)
-            if (i != best / 4 && cand[i].eng)
+        {   /* the losers go; a twin owns nothing (its engine is its original's): a serial twin's win keeps the
+             * original's engine and drops its clones */
+            const int wi = best / 4, wo = twin_of[wi] >= 0 ? twin_of[wi] : wi;
+            for (i = 1; i < na; i++)
             {
+                if (twin_of[i] >= 0 || !cand[i].eng)
+                    continue;
+                if (i == wo)
+                {
+                    if (wi != wo)
+                        _il2d_rowx_clones_drop(cand[i].w, cand[i].wn);
+                    continue;
+                }
                 _il2d_rowx_clones_drop(cand[i].w, cand[i].wn);
                 vfft_destroy((vfft_plan)cand[i].eng);
             }
+        }
         h->il2d_rx_lm = ctx[best].lm;
         h->il2d_rx_eng = ctx[best].eng;
         h->il2d_rxw = ctx[best].w;
@@ -1224,6 +1256,10 @@ static void _il2d_real_rowplan_dir(struct vfft_plan_s *h, struct vfft_wisdom_s *
             _il2d_plan_stk_str(h->il2d_rx_stk, sb, sizeof sb);
             _il2d_real_plan_bank(h, W, cfg, N1, N2, ord, T, tk_rx, names[best / 4], tk_rxs, sb, c2r);
         }
+        if (h->nthreads > 1 && h->il2d_rx_eng && W && !W->vw2_off_2d &&
+            vw2_2d_rl_tok_sets(&W->vw2, N1, N2, ord, T, c2r ? "rxw_c2r" : "rxw", twin_of[best / 4] >= 0 ? "1" : "0",
+                               h->il2d_ip) == 0)
+            _vw2_persist(W, cfg);   /* the engine's rows serial (a twin won) or threaded, on the row beside rx= */
         vfft_aligned_free(a); if (!ipw) vfft_aligned_free(z); vfft_aligned_free(ref); vfft_aligned_free(seed);
     }
 }

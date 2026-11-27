@@ -12,3 +12,68 @@
 2026-11-25 15:35:32   benched 225/228 (14679275), 1474 s elapsed
 2026-11-25 15:36:09   benched 228/228 (14680065), 1512 s elapsed
 2026-11-25 15:36:12 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_mt8_est.md
+2026-11-27 02:47:32 run: 228 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-27 02:47:32 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-27 02:48:34   benched 25/228 (157), 60 s elapsed
+2026-11-27 02:49:39   benched 50/228 (639), 124 s elapsed
+2026-11-27 02:50:48   benched 75/228 (2560), 193 s elapsed
+2026-11-27 02:52:02   benched 100/228 (10243), 267 s elapsed
+2026-11-27 02:53:16   benched 125/228 (49115), 341 s elapsed
+2026-11-27 02:54:44   benched 150/228 (196608), 429 s elapsed
+2026-11-27 02:56:43   benched 175/228 (786431), 548 s elapsed
+2026-11-27 03:02:53   benched 200/228 (3145728), 918 s elapsed
+2026-11-27 03:22:26   benched 225/228 (14679275), 2091 s elapsed
+2026-11-27 03:22:38   benched 228/228 (14680065), 2103 s elapsed
+2026-11-27 03:22:40 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_r2c_mt8_est.md
+2026-11-27 03:48:57 run: 228 cells, contract out of place, T=8, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-27 03:48:57 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-27 03:49:58   benched 25/228 (157), 59 s elapsed
+2026-11-27 03:51:03   benched 50/228 (639), 124 s elapsed
+2026-11-27 03:52:12   benched 75/228 (2560), 193 s elapsed
+2026-11-27 03:53:26   benched 100/228 (10243), 267 s elapsed
+2026-11-27 03:54:40   benched 125/228 (49115), 341 s elapsed
+2026-11-27 03:56:02   benched 150/228 (196608), 424 s elapsed
+2026-11-27 03:57:49   benched 175/228 (786431), 531 s elapsed
+2026-11-27 04:03:11   benched 200/228 (3145728), 852 s elapsed
+2026-11-27 04:21:24   benched 225/228 (14679275), 1945 s elapsed
+2026-11-27 04:21:36   benched 228/228 (14680065), 1957 s elapsed
+2026-11-27 04:21:38 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_c2r_mt8_est.md
+2026-11-27 04:49:03 run: 228 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-27 04:49:03 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-27 04:50:02   benched 25/228 (157), 57 s elapsed
+2026-11-27 04:51:02   benched 50/228 (639), 117 s elapsed
+2026-11-27 04:52:04   benched 75/228 (2560), 179 s elapsed
+2026-11-27 04:53:09   benched 100/228 (10243), 243 s elapsed
+2026-11-27 04:54:10   benched 125/228 (49115), 305 s elapsed
+2026-11-27 04:55:14   benched 150/228 (196608), 369 s elapsed
+2026-11-27 04:56:45   benched 175/228 (786431), 460 s elapsed
+2026-11-27 05:00:40   benched 200/228 (3145728), 695 s elapsed
+2026-11-27 05:14:06   benched 225/228 (14679275), 1501 s elapsed
+2026-11-27 05:14:53   benched 228/228 (14680065), 1548 s elapsed
+2026-11-27 05:14:55 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_mt4_est.md
+2026-11-27 05:47:01 run: 228 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-27 05:47:01 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-27 05:48:02   benched 25/228 (157), 59 s elapsed
+2026-11-27 05:49:07   benched 50/228 (639), 124 s elapsed
+2026-11-27 05:50:16   benched 75/228 (2560), 193 s elapsed
+2026-11-27 05:51:30   benched 100/228 (10243), 267 s elapsed
+2026-11-27 05:52:44   benched 125/228 (49115), 341 s elapsed
+2026-11-27 05:54:06   benched 150/228 (196608), 423 s elapsed
+2026-11-27 05:55:53   benched 175/228 (786431), 530 s elapsed
+2026-11-27 06:01:27   benched 200/228 (3145728), 863 s elapsed
+2026-11-27 06:21:11   benched 225/228 (14679275), 2048 s elapsed
+2026-11-27 06:21:24   benched 228/228 (14680065), 2061 s elapsed
+2026-11-27 06:21:27 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_r2c_mt4_est.md
+2026-11-27 06:48:51 run: 228 cells, contract out of place, T=4, the estimate's plans, bin c:\Users\Tugbars\Desktop\highSpeedFFT\build\gauntlet
+2026-11-27 06:48:51 bench: 228 cells (0 already benched, 0 not banked -> not benched), the estimate's plans
+2026-11-27 06:49:53   benched 25/228 (157), 60 s elapsed
+2026-11-27 06:50:58   benched 50/228 (639), 125 s elapsed
+2026-11-27 06:52:08   benched 75/228 (2560), 195 s elapsed
+2026-11-27 06:53:22   benched 100/228 (10243), 269 s elapsed
+2026-11-27 06:54:36   benched 125/228 (49115), 343 s elapsed
+2026-11-27 06:56:00   benched 150/228 (196608), 426 s elapsed
+2026-11-27 06:57:48   benched 175/228 (786431), 534 s elapsed
+2026-11-27 07:03:14   benched 200/228 (3145728), 860 s elapsed
+2026-11-27 07:21:44   benched 225/228 (14679275), 1971 s elapsed
+2026-11-27 07:21:58   benched 228/228 (14680065), 1984 s elapsed
+2026-11-27 07:22:01 report: c:\Users\Tugbars\Desktop\highSpeedFFT\gauntlet\results\1d_mid_octaves_est_avx2_2026-11-25\report_c2r_mt4_est.md
