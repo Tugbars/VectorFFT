@@ -264,8 +264,10 @@ static inline int est_plan_2d_real(const est_machine_t *m, int N1, int N2, int c
             p->col.nst = k;
         }
     }
-    if (p->col.blu <= 0)
-        est__col_forms_real(p->col.R, p->col.nst, c2r, p->col.forms, sizeof p->col.forms);
+    /* a Bluestein column too: its inner chain at M, banked as bluforms, where R2C's door adds the leaf's half-store
+     * twins as on any real column (il2d_tier.h _il2d_forms_serve_key; 2026-11-27: without it every R2C plane with a
+     * Bluestein column whose inner ends on a twin's radix, 2063 x N and 8219 x N, raced at create and was refused) */
+    est__col_forms_real(p->col.R, p->col.nst, c2r, p->col.forms, sizeof p->col.forms);
     if (!c2r && p->T == 1 && N1 == 16 && N2 % 512 == 0 && p->col.nst == 1)
     {   /* R2C's 16-point column over rows a multiple of 512: the leaf's half-store twin (2026-11-02: 16 x 512, 1024,
          * 1536, 4096, 8192 1.06 - 1.18 -> 0.95 - 1.02, 16 x 2048 flat; at 16 x 1000, 3000, 6000, 12000 it is 1 - 3 %

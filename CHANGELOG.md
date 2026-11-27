@@ -18,6 +18,13 @@ version can change how a function behaves, so compile your program again with ea
   2,049 x 4,096 or 514 x 16,383, and tall planes larger than the L3 cache, such as
   8,192 x 1,024 or 8,193 x 1,018.
 
+### Fixed
+
+- With `VFFT_FLAG_ESTIMATE`, `vfft_create()` refused 2D real forward transforms (R2C) whose
+  column length is computed with Bluestein's method, such as 2,063 x 263 or 8,219 x 557: on
+  one thread or several, out of place or in place. C2R and complex transforms were not
+  affected.
+
 ## 0.9.0 beta (2026-11-25)
 
 ### New
