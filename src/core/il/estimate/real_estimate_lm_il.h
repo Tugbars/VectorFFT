@@ -63,7 +63,11 @@ typedef struct est_planlmr_s
  *     threaded K = 4 and 32 batches the door ran 1.4 - 4 times slower threaded: 1.203 -> 0.995 against the planner
  *     (1.223 -> 1.012 against the best arm). With the calibration set and the 12 cells drawn after the rules, 194 cells
  *     at 8 threads: 1.036 -> 1.026 against the best arm (a Rader stage from K = 16: 2062 x 16 serial 1.3 - 1.5 times
- *     faster; past the L2 from K = 16: 62250 x 15 serial 1.27 times slower).
+ *     faster; past the L2 from K = 16: 62250 x 15 serial 1.27 times slower). A turned prime column is no strip: it
+ *     threads in the turned pass's own form (il2d_tier.h _il2d_tpc_cols_mt) from EST_ND_TPC_MT_LANES lanes, past the
+ *     same plane (2026-11-28, K = 2 - 32 below 8 T over 4126 and 16438 at 4 and 8 threads, R2C and C2R: 1.83 times
+ *     faster than serial, 60 cells, none slower; scored through this estimate's own pick on fresh cells, 2878, 4078
+ *     and 8158 at K = 2 - 20: 1.57 times, 72 cells, none slower).
  *   - THE SERIAL TILE: from K = EST_LMR_TILE_K, on a chain with no Rader stage (a tile there ran 1.7 times slower), the
  *     widest of the door's widths (_il2d_sw_ladder) up to EST_LMR_TILE_MAX lanes, below K, whose strip of 16 M w bytes
  *     fits the L2: the fused strip packs, chains and folds in the L2 and the plane is read and written once. One
@@ -268,7 +272,8 @@ static inline int est__plan_lmrn_n(const est_machine_t *m, int rank, const int *
         const long long k = (long long)K, w = EST_LMR_MT_LANES;
         p->cmt = p->mtarm = p->msw = 0;
         if (M != 2 && 16 * M * k > (long long)m->l1d / EST_ND_MT_SERIAL_L1_DIV &&
-            (k >= w * out->T || (k >= w && 16 * M * k > (long long)m->l2) || (k >= 4 * w && p->col.rd_n > 0)))
+            (k >= w * out->T || (k >= w && 16 * M * k > (long long)m->l2) || (k >= 4 * w && p->col.rd_n > 0) ||
+             (p->col.tpc == 1 && k >= EST_ND_TPC_MT_LANES)))
             est__lm_threaded(m, p, k);
         if (p->cmt && p->col.rd_n > 0)
         {   /* the threaded Rader window, clipped as est__rader clips one to the stage's columns */

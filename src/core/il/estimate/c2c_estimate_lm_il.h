@@ -47,6 +47,8 @@
  *     4099 (4098 = 2 3 683); where p - 1 is smooth the Rader stage wins from 3 lanes (131, 130 = 2 5 13; 2003 x 6
  *     at 8 threads, 2002 = 2 7 11 13: the turned pass 2.07 times the planner, an unseen cell, the p - 1 test added
  *     after it). Loss against the better of the two over the study's 50 prime cells: 1.009 (a fixed 4 lanes: 1.039).
+ *     On threads the switch also counts lanes a worker (est__lm_tpc_takes, 2026-11-28): the turned pass keeps the
+ *     column to EST_LM_TPC_MIN lanes a worker where a worker's share passes the serial bound.
  *   - THE STRIPS AT T > 1 only when every worker gets a vector of lanes (lanes >= the vector's complex count x T:
  *     2 x T on AVX2; 4 per worker scored 1.021),
  *     on a chain with no Rader stage (a Rader stage alone walks faster threaded; a Rader stage among two stages or
@@ -60,6 +62,7 @@
  *     2D or 3D batch over those rows and lanes, picked by the lane-major count (est__col_crowds: 1.13 times
  *     faster than the unbanded pick over 137 one-thread passes, 0.98 - 1.11 at 8 threads). */
 #define EST_LM_TPC_DIV 128
+#define EST_LM_TPC_MIN 2
 #define EST_LM_STRIP_MIN 8
 
 /* The lane-major batch's row, tokens in [brackets]. */
@@ -139,11 +142,28 @@ static inline const char *est__lm_shape(const est_planlm_t *p, char *b, size_t n
     return b;
 }
 /* the lanes up to which a column with a Rader stage at the prime p runs as Bluestein with the turned prime pass:
- * max(2, N / EST_LM_TPC_DIV) when p - 1 has a prime factor no chain radix carries (the stage's inner needs a prime
- * engine of its own, vfft_policy_prime_cell), else 2 */
+ * max(EST_LM_TPC_MIN, N / EST_LM_TPC_DIV) when p - 1 has a prime factor no chain radix carries (the stage's inner needs
+ * a prime engine of its own, vfft_policy_prime_cell), else EST_LM_TPC_MIN */
 static inline long long est__lm_tpc_lanes(int N, int p)
 {
-    return vfft_policy_prime_cell(p - 1) && N / EST_LM_TPC_DIV > 2 ? N / EST_LM_TPC_DIV : 2;
+    return vfft_policy_prime_cell(p - 1) && N / EST_LM_TPC_DIV > EST_LM_TPC_MIN ? N / EST_LM_TPC_DIV : EST_LM_TPC_MIN;
+}
+/* whether that column, over `lanes` lanes at T threads, takes the turned prime pass: at most est__lm_tpc_lanes lanes,
+ * and on threads at most EST_LM_TPC_MIN lanes a worker where a worker's share of the plane passes the serial bound,
+ * L1d / EST_ND_MT_SERIAL_L1_DIV. Both passes thread by lanes (the turned pass in its own form, il2d_tier.h
+ * _il2d_tpc_cols_mt; the Rader column by lane ranges), so each worker meets the one-thread choice at its own lanes; a
+ * share within the bound is too small to pay the turned pass's waits between its phases. 2026-11-28, 14900KF, the
+ * 518 cells over primes 67 - 7681 at 2 - 8 threads where the rule before kept the Rader column: 0.847 of its time,
+ * 184 faster, none 10 % slower (3 lanes a worker: 0.829, 7 up to 1.27 slower; without the share's bound: 67 and 131
+ * up to 1.9 slower). Scored through this estimate's own pick on fresh cells (primes 97 - 5281, K = 3 - 40, 2 - 8
+ * threads, in and out of place): 204 cells, 1.35 times faster, 74 faster, no moved cell slower */
+static inline int est__lm_tpc_takes(const est_machine_t *m, int N, int p, long long lanes, int T)
+{
+    long long L = est__lm_tpc_lanes(N, p);
+    if (T > 1 && 16LL * N * ((lanes + T - 1) / T) > (long long)m->l1d / EST_ND_MT_SERIAL_L1_DIV &&
+        L < (long long)EST_LM_TPC_MIN * T)
+        L = (long long)EST_LM_TPC_MIN * T;
+    return lanes <= L;
 }
 /* the recipe's block children, freed */
 static inline void est_free_lm(est_planlm_t *p)
@@ -255,7 +275,7 @@ static inline int est__plan_lm_n(const est_machine_t *m, int rank, const int *n,
     if (rank == 1 && (opts & EST_LM_UNB) && 16LL * N1 * lanes > m->l1d &&
         !(nat && est_is_pow2(N1) && est__col_set_reach(m, N1, lanes)))
         (void)est__col_unbanded(m, &out->col);
-    if ((opts & EST_LM_TPC) && out->col.rd_n > 0 && lanes <= est__lm_tpc_lanes(N1, out->col.R[0]) &&
+    if ((opts & EST_LM_TPC) && out->col.rd_n > 0 && est__lm_tpc_takes(m, N1, out->col.R[0], lanes, out->T) &&
         est__col_blu(m, &out->col, why, whylen))
         return -1;
     if (out->col.tpc == 1 && est__child_1d(m, N1, VFFT_PLACEMENT_IN, &out->tpcp, "the turned prime pass", why, whylen))

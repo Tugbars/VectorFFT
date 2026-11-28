@@ -41,6 +41,16 @@ version can change how a function behaves, so compile your program again with ea
   for every four columns. Complex and real transforms (C2C, R2C, C2R) of every rank and
   lane-major batches, in place and out of place, with the measuring planner and with
   `VFFT_FLAG_ESTIMATE`, wherever the plan runs that axis on several threads.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: transforms whose first axis is computed
+  through the 1D plan of its length (lengths with a large prime factor, such as 1,019, 2,063
+  or 4,079) now run that axis on several threads from 2 columns: 2D complex transforms (C2C)
+  of 2 to 7 columns, complex lane-major batches of 2 to 7 transforms across, and real
+  lane-major batches (R2C, C2R) of fewer than 8 transforms per thread, which ran that axis on
+  one thread. The measuring planner times both.
+- With `VFFT_FLAG_ESTIMATE`, on several threads: complex lane-major batches over a prime length
+  whose first pass is a Rader step, such as 1,153, 2,311 or 7,681, now run through the 1D plan
+  of that length up to 2 transforms per thread, where the Rader step took them from 3
+  transforms (more for some lengths). The measuring planner times both.
 
 ### Fixed
 

@@ -188,8 +188,9 @@ static inline int est__chain_crowds(const est_machine_t *m, int N, const int *R,
 }
 
 /* THE TURNED PRIME PASS ON A REAL COLUMN (2026-11-27): a Bluestein column of N rows over `lanes` lanes at T threads
- * takes the turned pass (the 1D plan at N on every lane, il2d_tier.h) where the pass threads (T > 1 and 8 lanes or
- * more: _il2d_tpc_cols_mt's four-lane cuts) or where Bluestein's length M passes EST_REAL_TPC_BLU_M (N above 1024); else
+ * takes the turned pass (the 1D plan at N on every lane, il2d_tier.h) at T > 1 on 8 lanes or more (where the pass
+ * threaded when this was measured: its form then cut four-lane groups; it threads from 2 lanes since 2026-11-28,
+ * _il2d_tpc_cols_mt) or where Bluestein's length M passes EST_REAL_TPC_BLU_M (N above 1024); else
  * Bluestein keeps the column. The planner's own race (min of 3, alternated) on real planes, R2C and C2R: at 4 and 8
  * threads over 13 - 129 lanes, nine columns 359 - 8219, the turned pass 3 - 9 times faster on every plane; at one thread
  * over 9 - 513 lanes the turned pass's time 0.46 - 0.95 of Bluestein's at N = 1077 - 3127 (M = 4096, 8192), 0.81 - 1.22
