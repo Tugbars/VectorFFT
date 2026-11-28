@@ -446,18 +446,18 @@ static inline __attribute__((always_inline)) void _il2d_turn4(const __m512d a0, 
     *o3 = _mm512_shuffle_f64x2(t1, t3, 0xDD);
 }
 #endif
-/* S[c][r] = src[r][c] for lanes c in [c0, c1), rows r < N (src pitch rn, S
- * pitch P): 2 x 2 complex blocks through one 128-bit lane permute (at 512 bits
- * 4 x 4 blocks first, _il2d_turn4), the rows blocked so a block's source lines
- * stay in L1 across the lane groups */
-static void _il2d_tpc_turn_in(const vfft_real *src, size_t rn, size_t N, size_t c0, size_t c1,
+/* S[c][r] = src[r][c] for lanes c in [c0, c1), rows r in [ra, rb) (src pitch
+ * rn, S pitch P): 2 x 2 complex blocks through one 128-bit lane permute (at 512
+ * bits 4 x 4 blocks first, _il2d_turn4), the rows blocked so a block's source
+ * lines stay in L1 across the lane groups */
+static void _il2d_tpc_turn_in(const vfft_real *src, size_t rn, size_t ra, size_t rb, size_t c0, size_t c1,
                               vfft_real *S, size_t P)
 {
     const size_t RB = 256;
     size_t r0, c, r;
-    for (r0 = 0; r0 < N; r0 += RB)
+    for (r0 = ra; r0 < rb; r0 += RB)
     {
-        const size_t r1 = (r0 + RB < N) ? r0 + RB : N;
+        const size_t r1 = (r0 + RB < rb) ? r0 + RB : rb;
         c = c0;
 #ifdef VFFT_IL2D_TURN4
         for (; c + 4 <= c1; c += 4)
@@ -608,7 +608,7 @@ static void _il2d_tpc_cols_range_w(const vfft_ilcol_t *c, int w, const vfft_real
     vfft_real *S = c->tpcscr;
     struct vfft_plan_s *pl = (w > 0 && w <= c->tpcw_n) ? c->tpcw[w - 1] : c->tpcplan;
     size_t l;
-    _il2d_tpc_turn_in(src, rn, N, c0, c1, S, P);
+    _il2d_tpc_turn_in(src, rn, 0, N, c0, c1, S, P);
     for (l = c0; l < c1; l++)
         _vfft_exec6((vfft_plan)pl, rev ? VFFT_BACKWARD : VFFT_FORWARD,
                      S + 2 * l * P, NULL, S + 2 * l * P, NULL);
@@ -619,35 +619,49 @@ static void _il2d_tpc_cols_range(const vfft_ilcol_t *c, const vfft_real *src, vf
 {
     _il2d_tpc_cols_range_w(c, 0, src, dst, rn, c0, c1, rev);
 }
-/* THE TURNED PRIME PASS THREADED (2026-11-18; serial, it ran 1.0x at every T: 2D 4099 x 256, lane-major 4099:32,
- * 4483:64): every worker its lanes -- the turn into its rows of the scratch, the 1D plan on each through its own
- * clone (worker 0 the plan's own: the clones carry its recipe, route-checked at build), the turn back -- cut at
- * four-lane boundaries (no destination line shared between two workers' lanes but at the plane's edge). The
- * values are the serial pass's, bit for bit. 1 = it ran threaded, 0 = the caller runs the serial pass (T < 2,
- * fewer clones than workers, fewer than two lane groups) */
+static void _il2d_turn_back_range(const vfft_real *T, size_t P, vfft_real *dst, size_t N2, size_t ra, size_t rb);
+/* THE TURNED PRIME PASS THREADED, in three phases (the TURN route's order, _il2d_turn_exec_mt): the turn in by
+ * source rows (every lane of a row range into its scratch rows), the 1D plan on each lane's scratch row by lanes
+ * through each worker's own clone (worker 0 the plan's own: the clones carry its recipe, route-checked at build),
+ * the turn out by destination rows (every lane of a row range, _il2d_turn_back_range). A worker writes whole
+ * destination rows, so the lanes take no cut: every worker takes part at any lane count, the plans on
+ * min(T, rn) of them. In place, the source is read in the first phase only, and the last writes the rows its
+ * worker read. The values are the serial pass's, bit for bit. 1 = it ran threaded, 0 = the caller runs the serial
+ * pass (T < 2, fewer than two lanes, fewer clones than the plan phase's workers) */
 typedef struct
 {
     const vfft_ilcol_t *c;
     const vfft_real *src;
     vfft_real *dst;
     size_t rn, lo, hi;
-    int rev, w;
+    int rev, w, ph;
 } _il2d_tpc_mt_arg;
 static void _il2d_tpc_mt_tramp(void *v)
 {
     const _il2d_tpc_mt_arg *a = (const _il2d_tpc_mt_arg *)v;
-    if (a->lo < a->hi)
-        _il2d_tpc_cols_range_w(a->c, a->w, a->src, a->dst, a->rn, a->lo, a->hi, a->rev);
+    const vfft_ilcol_t *c = a->c;
+    const size_t P = VFFT_IL2D_TPC_PITCH((size_t)c->N);
+    size_t l;
+    if (a->lo >= a->hi)
+        return;
+    if (a->ph == 0)   /* source rows [lo, hi), every lane */
+        _il2d_tpc_turn_in(a->src, a->rn, a->lo, a->hi, 0, a->rn, c->tpcscr, P);
+    else if (a->ph == 1)
+    {   /* lanes [lo, hi): the 1D plan on each one's scratch row, through worker w's plan */
+        struct vfft_plan_s *pl = a->w > 0 ? c->tpcw[a->w - 1] : c->tpcplan;
+        for (l = a->lo; l < a->hi; l++)
+            _vfft_exec6((vfft_plan)pl, a->rev ? VFFT_BACKWARD : VFFT_FORWARD, c->tpcscr + 2 * l * P, NULL,
+                         c->tpcscr + 2 * l * P, NULL);
+    }
+    else   /* destination rows [lo, hi), every lane */
+        _il2d_turn_back_range(c->tpcscr, P, a->dst, a->rn, a->lo, a->hi);
 }
-static int _il2d_tpc_cols_mt(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int rev, int T)
+/* one phase: `units` (rows or lanes) cut evenly over T workers, the caller as worker 0 */
+static void _il2d_tpc_mt_phase(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int rev,
+                               int ph, size_t units, int T)
 {
     _il2d_tpc_mt_arg a[THREAD_POOL_MAX_DISPATCH];
     int t;
-    T = thread_pool_workers_for(T);
-    if ((size_t)T > rn / 4)
-        T = (int)(rn / 4);
-    if (T < 2 || !c->tpcplan || c->tpcw_n < T - 1)   /* (the races time it before the verdict sets c->tpc) */
-        return 0;
     for (t = 0; t < T; t++)
     {
         a[t].c = c;
@@ -656,10 +670,23 @@ static int _il2d_tpc_cols_mt(const vfft_ilcol_t *c, const vfft_real *src, vfft_r
         a[t].rn = rn;
         a[t].rev = rev;
         a[t].w = t;
-        a[t].lo = (rn * (size_t)t / (size_t)T) & ~(size_t)3;
-        a[t].hi = (t == T - 1) ? rn : (rn * (size_t)(t + 1) / (size_t)T) & ~(size_t)3;
+        a[t].ph = ph;
+        a[t].lo = units * (size_t)t / (size_t)T;
+        a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
     thread_pool_run(T, _il2d_tpc_mt_tramp, a, sizeof a[0]);   /* caller = a[0] */
+}
+static int _il2d_tpc_cols_mt(const vfft_ilcol_t *c, const vfft_real *src, vfft_real *dst, size_t rn, int rev, int T)
+{
+    const size_t N = (size_t)c->N;
+    int Tl;
+    T = thread_pool_workers_for(T);
+    Tl = (size_t)T < rn ? T : (int)rn;   /* the plan phase's workers: a lane each at least */
+    if (Tl < 2 || !c->tpcplan || c->tpcw_n < Tl - 1)   /* (the races time it before the verdict sets c->tpc) */
+        return 0;
+    _il2d_tpc_mt_phase(c, src, dst, rn, rev, 0, N, T);
+    _il2d_tpc_mt_phase(c, src, dst, rn, rev, 1, rn, Tl);
+    _il2d_tpc_mt_phase(c, src, dst, rn, rev, 2, N, T);
     return 1;
 }
 /* the turned pass as a race arm at the cell's T: threaded above 1 where it engages, else serial; rev = the backward
@@ -1052,7 +1079,7 @@ static int _il2d_cols_mt_desc(const vfft_ilcol_t *c, int N1, const vfft_real *sr
      * bounds it by the live pool and the arg-array size. */
     T = thread_pool_workers_for(T);
     if (T >= 2 && c->tpc)
-        return _il2d_tpc_cols_mt(c, src, dst, hp1, reverse, T);   /* the turned prime pass: every worker its lanes */
+        return _il2d_tpc_cols_mt(c, src, dst, hp1, reverse, T);   /* the turned prime pass, threaded */
     if (T >= 2 && c->natarm == 1 && !c->blu && !c->tpc && (!c->nat || c->nst >= 2))
     {   /* mtarm = 1: the column blocks -- every worker the whole chain over its columns (the
          * sub-strip arm of the body); every class but the Bluestein and turned axes */
@@ -1983,8 +2010,8 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const vfft_real *sre,
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
     if (h->il2d_col.tpc)
-    {   /* the turned prime pass (2026-11-18): every worker its lanes through its own clone of the 1D plan, then the
-         * rows over row slabs -- the serial walk's order (il_execute.h) */
+    {   /* the turned prime pass threaded (_il2d_tpc_cols_mt: the turns by rows, the 1D plan by lanes through each
+         * worker's own clone), then the rows over row slabs -- the serial walk's order (il_execute.h) */
         const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
         if (!_il2d_tpc_cols_mt(&h->il2d_col, sre, dre, rn, !fwd, T))
             return 0;

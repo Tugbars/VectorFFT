@@ -938,9 +938,9 @@ static void _ilndr_group_stage(const vfft_ilndr_t *d, double *V, double *z, int 
     a.hi = units * (size_t)(member + 1) / (size_t)Tt;
     _ilndr_mt_tramp(&a);
 }
-/* this member's share of a Bluestein or turned axis 0 (the members are pool threads: no dispatch): the lanes cut
- * as the descriptor's threaded pass cuts them over G (_il2d_cols_mt_desc: the turned pass at four-lane boundaries
- * through the member's clone, _il2d_tpc_cols_mt; the Bluestein windows by lane range) */
+/* this member's share of a Bluestein or turned axis 0 (the members are pool threads: no dispatch): the turned pass
+ * cut at four-lane boundaries through the member's clone (_il2d_tpc_cols_range_w), the Bluestein windows by lane
+ * range as the descriptor's threaded pass cuts them over G (_il2d_cols_mt_desc) */
 static void _ilndr_group_axis0(const vfft_ilndr_t *d, const double *in, double *out, int rev, int G, int member)
 {
     const vfft_ilcol_t *c = &d->ax0;

@@ -229,8 +229,8 @@ static int _lm_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W, const vfft_c
     need_sw = plain && bsw < 0;
     if (bsw >= 0)
         c->wc = bsw;
-    /* a column through the turned prime pass threads in its own form (2026-11-18, il2d_tier.h _il2d_tpc_cols_mt:
-     * every worker its lanes through its own clone of the 1D plan), which the threaded column pass serves it with
+    /* a column through the turned prime pass threads in its own form (il2d_tier.h _il2d_tpc_cols_mt: the turns by
+     * rows, the 1D plan by lanes through each worker's own clone), which the threaded column pass serves it with
      * before any other -- it once ran the Bluestein columns over the tables the turned pass dropped (12005 x 32 and
      * 4099 x 32 at 8 threads, 2026-11-01). Its threaded arm is the "threaded" one: no tile, no strips. */
     need_mt = workers >= 2 && !(usable && bcmt >= 0);

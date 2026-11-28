@@ -34,6 +34,13 @@ version can change how a function behaves, so compile your program again with ea
   2,063 or 8,219), 2D transforms of at least 8 columns and lane-major batches of at least 8
   columns across: that axis now runs on every thread, and with it the rest of the transform,
   where the whole transform ran on one. The measuring planner already ran them this way.
+- On several threads: transforms whose first axis is computed through the 1D plan of its
+  length (lengths with a large prime factor, such as 2,063, 4,099 or 8,219) and has fewer than
+  four columns per thread, such as a 2,063 x 8 plane or a lane-major batch of 16 transforms of
+  4,099 points on 8 threads: that axis now runs on every thread, where it ran on one thread
+  for every four columns. Complex and real transforms (C2C, R2C, C2R) of every rank and
+  lane-major batches, in place and out of place, with the measuring planner and with
+  `VFFT_FLAG_ESTIMATE`, wherever the plan runs that axis on several threads.
 
 ### Fixed
 

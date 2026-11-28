@@ -87,8 +87,9 @@ typedef struct {
      * plan at N on every row of it, transposed back. blu stays = M as the
      * prime-column marker (natural out, no chain); the Bluestein tables are
      * not kept when tpc serves. Raced at create, banked tpc= on the column
-     * row. Threaded (2026-11-18): every worker its lanes through its own clone
-     * of the plan (_il2d_tpc_cols_mt), the clones built at the cell's T. */
+     * row. Threaded: the turns by rows on every worker, the plan by lanes
+     * through each worker's own clone (_il2d_tpc_cols_mt), the clones built at
+     * the cell's T. */
     int tpc;
     struct vfft_plan_s *tpcplan;
     vfft_real *tpcscr;           /* rn x VFFT_IL2D_TPC_PITCH(N) complex */
